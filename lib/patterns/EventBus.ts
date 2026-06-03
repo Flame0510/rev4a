@@ -5,7 +5,6 @@ import type { StreamMessage, Session, SessionEvent, Costs } from '../types';
 import { SessionFactory, EventFactory } from './SessionFactory';
 import { adaptCosts } from './ApiAdapter';
 
-const TOKEN = 'change-me';
 
 // ── Observer interface ─────────────────────────────────────────────────────
 
@@ -43,7 +42,7 @@ class OlympusEventBusClass {
 
   private connect(): void {
     this.disconnect();
-    this.source = new EventSource(`/api/stream?token=${TOKEN}`);
+    this.source = new EventSource('/api/stream');
 
     this.source.onmessage = (e: MessageEvent<string>) => {
       try {
