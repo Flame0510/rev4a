@@ -7,7 +7,7 @@ const JWT_SECRET = new TextEncoder().encode(
 
 const TOKEN = process.env.OLYMPUS_TOKEN ?? 'change-me';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public paths — no auth required
