@@ -104,6 +104,7 @@ export default function LoginPage() {
             size="md"
             loading={loading}
             disabled={!password}
+            className="login-submit-btn"
 
           >
             {loading ? 'ACCESSO...' : 'ACCEDI'}
