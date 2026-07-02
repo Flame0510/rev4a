@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
-import { Pill } from '../components/ui';
+import { Button, Pill } from '../components/ui';
 import OlympusLoader from '../components/OlympusLoader';
 import type { Tone } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
@@ -63,10 +63,10 @@ function statusHint(status: string): string {
 }
 
 function statusDot(status: string): string {
-  if (status === 'working' || status === 'active') return '#22c55e';
-  if (status === 'completed') return '#60a5fa';
-  if (status === 'error') return '#ef4444';
-  return '#555';
+  if (status === 'working' || status === 'active') return 'var(--green)';
+  if (status === 'completed') return 'var(--blue)';
+  if (status === 'error') return 'var(--red)';
+  return 'var(--gray)';
 }
 
 function formatTs(ms: number, timezone: string): string {
@@ -198,25 +198,18 @@ export default function CronsPage() {
   }, []);
 
   return (
-    <div style={{
-      height: '100vh', background: 'var(--bg)', color: 'var(--text)',
-      fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
-    }}>
-      <div style={{
-        height: '48px', padding: '0 14px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexShrink: 0, boxSizing: 'border-box'
-      }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>CRONS</span>
-        <span style={{ fontSize: 10, color: '#555' }}>{sessions.length} runs in history</span>
+    <div className="crons-page">
+      <div className="crons-header">
+        <span className="crons-header__title">CRONS</span>
+        <span className="crons-header__meta">{sessions.length} runs in history</span>
       </div>
 
       {loading && <OlympusLoader label="LOADING CRONS" compact />}
 
       {isMobile && (
-        <div style={{ display: 'flex', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
-          <button onClick={() => setTab('jobs')} style={{ fontSize: 10, padding: '6px 8px', border: '1px solid var(--border)', background: tab === 'jobs' ? 'var(--bg3)' : 'transparent', color: tab === 'jobs' ? 'var(--copper)' : '#888' }}>JOBS</button>
-          <button onClick={() => setTab('runs')} style={{ fontSize: 10, padding: '6px 8px', border: '1px solid var(--border)', background: tab === 'runs' ? 'var(--bg3)' : 'transparent', color: tab === 'runs' ? 'var(--copper)' : '#888' }}>RUNS</button>
+        <div className="crons-mobile-tabs">
+          <Button variant={tab === 'jobs' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('jobs')}>JOBS</Button>
+          <Button variant={tab === 'runs' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('runs')}>RUNS</Button>
         </div>
       )}
 
