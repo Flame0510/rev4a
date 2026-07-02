@@ -1,6 +1,6 @@
 # Olympus — VPS Dashboard
 
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-02
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on this VPS.
 
@@ -224,11 +224,17 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 
 **Step 3 — Deploy:** `POST /api/agents/create` creates the Docker container and returns the Traefik URL with the shared gateway token.
 
-**Post-creation:**
+**Post-creation pipeline:**
 1. The container boots with the **nexus-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
-2. The entrypoint generates `openclaw.json` with `gateway.mode: local`, the gateway token, and the selected model primary ref (if provided via `OPENCLAW_MODEL_PRIMARY` env var).
-3. `POST /api/agents/create` calls `syncAgent(name)` to write `models.providers.olympus` into the container.
-4. The agent's control UI is immediately accessible at `https://<name>.example.com#token=<gateway-token>`.
+2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
+3. The route waits for the gateway to be fully ready (health check poll, up to 20 s).
+4. Once ready, the route writes:
+   - `gateway.controlUi.allowedOrigins` — Olympus dashboard URL + Traefik hostname (required for browser Control UI access)
+   - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
+5. `syncAgent(name)` writes `models.providers.olympus` into the container.
+6. The agent's control UI is immediately accessible at `https://<name>.example.com#token=<gateway-token>`.
+
+**Key difference from the old pipeline:** the entrypoint no longer generates `openclaw.json`. The bootstrap config (including `controlUi.allowedOrigins`) is written by the create route after the gateway has already started. This eliminates the race condition where the entrypoint would overwrite synced provider config on boot.
 
 ---
 
@@ -244,15 +250,10 @@ Built from `node:24-bookworm-slim`, includes:
 - Custom entrypoint `/agent-entrypoint.sh`
 
 **Entrypoint behavior:**
-- On every boot, generates `/root/.openclaw/openclaw.json` with bootstrap keys:
-  - `gateway.mode: local`, `gateway.auth.token` (local random), `gateway.remote` pointing to Olympus
-  - `controlUi.dangerouslyDisableDeviceAuth: true`
-  - `agents.defaults.userTimezone: Europe/Rome`
-  - If `OPENCLAW_MODEL_PRIMARY` env var is set, writes `agents.defaults.model.primary = olympus/<model-id>`
-- Does NOT write `models.providers` — that is handled by the Gateway sync
-- Starts OpenClaw gateway in foreground: `openclaw gateway --bind lan --port 3000`
-
-**External persistence:** `models.providers.olympus` and `agents.*.model` are written by the sync module and the Gateway Agents Tab. The entrypoint always regenerates bootstrap keys, so external sync must run after creation.
+- Minimal bootstrap: only resolves the auth token (file > env > local random)
+- Does NOT generate `openclaw.json` — OpenClaw creates its own default config on first boot
+- Starts OpenClaw gateway with `--allow-unconfigured`: `openclaw gateway --bind lan --port 3000 --auth token --token "<token>" --allow-unconfigured`
+- Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 
 ### Template directories
 Located in `agent-templates/`. Each subdirectory (e.g. `prometheus/`, `atlas/`) contains:

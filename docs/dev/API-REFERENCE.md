@@ -1,6 +1,6 @@
 # Olympus API Reference
 
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-02
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -667,11 +667,14 @@ Create a new agent container from a template.
 }
 ```
 
-**Post-creation:**
-1. Entrypoint generates `openclaw.json` — if `model` was provided, sets `agents.defaults.model.primary = olympus/<model>`
-2. The route calls `syncAgent(name)` to write `models.providers.olympus` into the container
-3. Gateway restarts automatically (the container is new — no stale PID)
-4. Traefik labels are set for HTTPS via Let's Encrypt
+**Post-creation pipeline:**
+1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
+2. The route waits for the gateway to be fully up (health check poll, up to 20 s)
+3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
+4. Calls `syncAgent(name)` to write `models.providers.olympus` into the container
+5. Traefik labels are set for HTTPS via Let's Encrypt
+
+> **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are volume-mounted from the template directory
@@ -679,6 +682,29 @@ Create a new agent container from a template.
 - An event is logged to `data/events.db` if available
 
 **Error:** `400` for validation errors, `409` if name/port already in use
+
+---
+
+### `GET /api/agents/config-json`
+Read the full `openclaw.json` from a running agent container (token masked).
+Useful for inspecting the container config without SSH or terminal.
+
+**Query params:** `name` (required) — Docker container name
+
+**Response:**
+```json
+{
+  "name": "my-agent",
+  "config": {
+    "gateway": { "controlUi": { "allowedOrigins": ["..."], "dangerouslyDisableDeviceAuth": true } },
+    "agents": { "defaults": { "model": { "primary": "olympus/deepseek/deepseek-v4-flash", "fallbacks": [] } } },
+    "models": { "providers": { "olympus": { "baseUrl": "...", "apiKey": "***", "models": [...] } } }
+  }
+}
+```
+
+**Error (404):** `{ "error": "Config file not found or empty in container" }`
+**Error (400):** `{ "error": "name query param is required" }`
 
 ---
 

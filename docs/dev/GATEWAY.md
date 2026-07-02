@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-02
 
 The Gateway page (`/gateway`) is the central control panel for managing provider
 configurations and agent model assignments across all Docker containers.
@@ -267,11 +267,16 @@ Restart the Olympus server (via systemd).
    Gateway UI.
 
 4. **No gateway restart after model sync** — The sync module writes `models.providers`
-   to the file directly without restarting the gateway. The agent container's
-   entrypoint regenerates bootstrap keys on every boot, so external sync must
-   run after container creation.
+   to the file directly without restarting the gateway.
 
-5. **Model ref written at container creation** — When the wizard creates an agent,
-   the entrypoint receives `OPENCLAW_MODEL_PRIMARY` and writes the model ref at
-   boot time. The Gateway sync (`PUT /api/gateway/provider`) never touches model
-   references — only `models.providers` is synced.
+5. **Entrypoint does not generate openclaw.json** — The entrypoint is minimal:
+   it resolves the auth token and starts the gateway with `--allow-unconfigured`.
+   OpenClaw generates its own default config on first boot.
+   All post-creation config (controlUi, model refs, providers) is written by
+   the create route (`POST /api/agents/create`) after the gateway is fully ready.
+
+6. **Model ref written after gateway readiness** — When the wizard creates an agent,
+   the create route waits for gateway health check, then writes
+   `agents.defaults.model.primary` + fallbacks and `gateway.controlUi.allowedOrigins`,
+   then calls `syncAgent(name)`. The Gateway sync (`PUT /api/gateway/provider`)
+   never touches model references — only `models.providers` is synced.
