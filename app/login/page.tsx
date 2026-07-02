@@ -104,7 +104,7 @@ export default function LoginPage() {
             size="md"
             loading={loading}
             disabled={!password}
-            style={{ width: '100%', borderRadius: 10, padding: '0.82rem', fontSize: 13 }}
+
           >
             {loading ? 'ACCESSO...' : 'ACCEDI'}
           </Button>

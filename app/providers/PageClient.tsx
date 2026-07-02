@@ -1420,8 +1420,8 @@ export default function ProvidersPage() {
               <div style={{ fontSize: 10, color: '#d55', marginBottom: 8 }}>{apiKeyError}</div>
             )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Button variant="secondary" size="sm" onClick={() => { setApiKeyModal(null); setApiKeyInput(''); setApiKeyError(''); }} style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>CANCEL</Button>
-              <Button variant="secondary" size="sm" onClick={() => handleApiKeyConnect(selectedProvider)} disabled={!apiKeyInput.trim() || loginLoading === selectedProvider} style={{ background: '#1a3a4a', border: '1px solid #2a5a7a', borderRadius: 4, color: loginLoading === selectedProvider ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading === selectedProvider ? 'wait' : 'pointer' }}>{loginLoading === selectedProvider ? 'CONNECTING...' : 'CONNECT'}</Button>
+              <Button variant="ghost" size="sm" onClick={() => { setApiKeyModal(null); setApiKeyInput(''); setApiKeyError(''); }}>CANCEL</Button>
+              <Button variant="primary" size="sm" onClick={() => handleApiKeyConnect(selectedProvider)} disabled={!apiKeyInput.trim() || loginLoading === selectedProvider} loading={loginLoading === selectedProvider}>{loginLoading === selectedProvider ? 'CONNECTING...' : 'CONNECT'}</Button>
             </div>
           </div>
         </div>

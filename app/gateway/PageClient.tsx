@@ -237,10 +237,16 @@ function AgentEditForm({
               border: '1px solid var(--border)',
               borderRadius: 4,
               fontSize: 11,
-              padding: '6px 8px',
+              padding: '6px 28px 6px 8px',
               fontFamily: 'var(--font-mono-stack)',
               cursor: 'pointer',
               outline: 'none',
+              WebkitAppearance: 'none',
+              MozAppearance: 'none',
+              appearance: 'none',
+              backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12'><path fill='%238a8a92' d='M6 8L1 3h10z'/></svg>\")",
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 8px center',
             }}
           >
             <option value="" disabled>Select model…</option>
