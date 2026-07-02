@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Page, PageHeader, Surface, Pill } from '../components/ui';
+import { Button, Input, Page, PageHeader, Surface, Pill } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 interface EnvVars {
@@ -177,21 +177,10 @@ export default function ConfigPageClient() {
                           style={{ flex: 1 }}
                         />
                       ) : (
-                        <input
-                          type="text"
+                        <Input
                           value={value}
                           onChange={(e) => handleChange(key, e.target.value)}
                           placeholder={meta.placeholder}
-                          style={{
-                            flex: 1,
-                            padding: '10px 12px',
-                            borderRadius: 6,
-                            border: '1px solid var(--border)',
-                            background: 'var(--surface)',
-                            color: 'var(--text)',
-                            fontSize: 13,
-                            fontFamily: 'var(--font-mono-stack)',
-                          }}
                         />
                       )}
                     </div>
@@ -209,7 +198,10 @@ export default function ConfigPageClient() {
               marginBottom: 20,
             }}
           >
-            <button
+            <Button
+              variant="primary"
+              size="md"
+              loading={restarting}
               onClick={async () => {
                 if (!confirm('You are about to restart the Olympus server. Continue?')) return;
                 setRestarting(true);
@@ -237,21 +229,9 @@ export default function ConfigPageClient() {
                   setRestarting(false);
                 }
               }}
-              disabled={restarting}
-              style={{
-                padding: '12px 28px',
-                borderRadius: 6,
-                border: '2px solid var(--copper)',
-                background: 'var(--copper)',
-                color: '#fff',
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: 'pointer',
-                opacity: restarting ? 0.5 : 1,
-              }}
             >
               {restarting ? 'Restarting...' : 'Save everything and restart Olympus'}
-            </button>
+            </Button>
           </div>
         </>
       )}
