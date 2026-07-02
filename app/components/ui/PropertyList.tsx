@@ -11,7 +11,7 @@ export function PropertyList({ rows }: PropertyListProps) {
   return (
     <div className="ui-property-list">
       {rows.map((r, i) => (
-        <div key={i} className="ui-property-row">
+        <div key={i} >
           <span className="ui-property-label">{r.label}</span>
           <span
             className="ui-property-value"
