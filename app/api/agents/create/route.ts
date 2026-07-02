@@ -4,6 +4,30 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { syncAgent } from '../../gateway/sync';
 
+/**
+ * Wait for a Docker container gateway to be ready.
+ * Checks that the gateway is responding on port 3000 inside the container.
+ * Polls every 2s, gives up after timeoutMs.
+ * Returns true if the gateway is reachable, false on timeout.
+ */
+function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      execSync(
+        `docker exec ${name} sh -c 'curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1 || wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1'`,
+        { timeout: 5000 },
+      );
+      return true;
+    } catch {
+      // gateway not ready yet
+    }
+    // Sleep 2s
+    execSync('sleep 2', { timeout: 3000 });
+  }
+  return false;
+}
+
 export const dynamic = 'force-dynamic';
 
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
@@ -209,11 +233,63 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // DB logging is optional, ignore failures
     }
 
-    // Sync provider models to the new container (no restart — file is live)
-    try {
-      syncAgent(name);
-    } catch {
-      // sync failure is non-fatal; models can be synced manually from Gateway page
+    // Wait for container gateway to be fully up before syncing
+    const ready = waitForContainerReady(name);
+    if (ready) {
+      try {
+        // Step 1: Read current config (OpenClaw has already written its default)
+        const raw = execSync(
+          `docker exec ${name} cat /root/.openclaw/openclaw.json`,
+          { timeout: 8000, encoding: 'utf-8' },
+        ).trim();
+        const config = JSON.parse(raw);
+
+        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access
+        // Must be done after OpenClaw's first boot since OpenClaw discards it
+        const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
+        gatewaySection.controlUi = {
+          allowedOrigins: [
+            'https://olympus.example.com',
+            `https://${name}.example.com`,
+          ],
+          dangerouslyDisableDeviceAuth: true,
+        };
+        config.gateway = gatewaySection;
+
+        // Step 3: Set primary model reference if provided by the wizard
+        if (model) {
+          const modelRef = model.startsWith('olympus/') ? model : `olympus/${model}`;
+          const fallbackRefs = (fallbacks || []).map((fb: string) =>
+            fb.startsWith('olympus/') ? fb : `olympus/${fb}`,
+          );
+
+          const agents = (config.agents || {}) as Record<string, unknown>;
+          const defaults = (agents.defaults || {}) as Record<string, unknown>;
+          defaults.model = {
+            primary: modelRef,
+            fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
+          };
+          agents.defaults = defaults;
+          config.agents = agents;
+        }
+
+        // Write the merged config back
+        execSync(
+          `docker exec -i ${name} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+          { timeout: 15000, input: JSON.stringify(config, null, 2) },
+        );
+
+        // Step 4: Sync provider config (models.providers.olympus)
+        // This is done AFTER writing controlUi + model ref so syncAgent's
+        // readContainerJson sees a stable config with gateway section intact
+        try {
+          syncAgent(name);
+        } catch {
+          // sync failure is non-fatal; models can be synced manually from Gateway page
+        }
+      } catch {
+        // post-creation config is non-fatal; can be synced manually
+      }
     }
 
     return NextResponse.json({

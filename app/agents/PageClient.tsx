@@ -358,10 +358,80 @@ export default function AgentsPageClient() {
   );
 }
 
+// ─── Config modal ───
+function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const [raw, setRaw] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/agents/config-json?name=${agent.name}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+        setRaw(JSON.stringify(data.config, null, 2));
+      } catch (e: unknown) {
+        setErr((e as Error).message || 'Failed to load config');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [agent.name]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.65)', padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: 800, width: '100%', maxHeight: '85vh',
+          background: '#111', border: '1px solid var(--border)',
+          borderRadius: 8, display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '10px 14px', borderBottom: '1px solid var(--border)',
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json — {agent.name}</span>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', color: '#888',
+            fontSize: 16, cursor: 'pointer', lineHeight: 1,
+          }}>✕</button>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 14 }}>
+          {loading && (
+            <div style={{ textAlign: 'center', color: '#888', fontSize: 12, padding: 20 }}>Loading config...</div>
+          )}
+          {err && (
+            <div style={{ color: '#ef4444', fontSize: 12 }}>{err}</div>
+          )}
+          {raw && (
+            <pre style={{
+              margin: 0, fontSize: 11, lineHeight: 1.5, color: '#ccc',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              fontFamily: 'var(--font-mono-stack)',
+            }}>{raw}</pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Detail panel (shared between mobile & desktop) ───
 function DetailPanel({ agent }: { agent: Agent }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [showConfig, setShowConfig] = useState(false);
 
   const handleDelete = async () => {
     if (!confirm(`Delete agent "${agent.name}"? This will stop and remove the container.`)) return;
@@ -421,6 +491,26 @@ function DetailPanel({ agent }: { agent: Agent }) {
         ))}
       </div>
 
+      {/* Config — View openclaw.json */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
+        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>CONFIG</div>
+        <div style={{ padding: '12px 14px' }}>
+          <button
+            onClick={() => setShowConfig(true)}
+            style={{
+              padding: '6px 16px', borderRadius: 4, border: '1px solid var(--border)',
+              background: 'var(--bg3)', color: 'var(--copper)', fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            View openclaw.json
+          </button>
+          <div style={{ fontSize: 10, color: '#666', marginTop: 6 }}>
+            Inspect the full container config — providers, models, auth mode.
+          </div>
+        </div>
+      </div>
+
       {/* Access — Traefik URL (token inline nel link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
@@ -433,6 +523,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
           </div>
         </div>
       )}
+
+      {/* Config modal */}
+      {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
