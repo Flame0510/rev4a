@@ -152,6 +152,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   };
 
   return (
+    <div style={{ minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 54, boxSizing: 'border-box' }}>
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '24px 16px' }}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
@@ -422,6 +423,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           </button>
         </div>
       )}
+    </div>
     </div>
   );
 }

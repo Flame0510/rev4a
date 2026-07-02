@@ -210,8 +210,8 @@ export default function AgentsPageClient() {
   if (isMobile) {
     if (!showList && selected) {
       return (
-        <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Mobile header back */}
+        <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
+          {/* Mobile header back — fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <button onClick={backToList} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
@@ -219,14 +219,17 @@ export default function AgentsPageClient() {
             </button>
             <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
           </div>
-          <DetailPanel agent={selected} />
+          {/* Scrollable content */}
+          <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <DetailPanel agent={selected} />
+          </div>
         </div>
       );
     }
 
     // Mobile: lista
     return (
-      <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
@@ -255,7 +258,7 @@ export default function AgentsPageClient() {
             >{f}</button>
           ))}
         </div>
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
             <button key={agent.id} onClick={() => selectAgent(agent)}
@@ -453,7 +456,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   };
 
   return (
-    <div style={{ display: 'grid', gap: 12, maxWidth: 600, margin: '16px auto' }}>
+    <div style={{ display: 'grid', gap: 12, maxWidth: 600, margin: '16px auto', paddingBottom: 24 }}>
       {/* Status */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', padding: '14px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
