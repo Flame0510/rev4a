@@ -1586,6 +1586,59 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   .ui-toast { font-size: 12px; padding: 10px 16px; }
 }
 
+/* ── Spinner ──────────────────────────────────────────────────── */
+.ui-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(212,155,53,0.2);
+  border-top-color: var(--copper);
+  border-radius: 50%;
+  animation: ui-spin 0.7s linear infinite;
+}
+.ui-spinner--lg {
+  width: 36px;
+  height: 36px;
+  border-width: 3px;
+}
+@keyframes ui-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Filter Bar ──────────────────────────────────────────────── */
+.ui-filter-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+
+/* ── Property List ───────────────────────────────────────────── */
+.ui-property-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 11px;
+}
+.ui-property-label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ui-property-value[data-tone="dim"] {
+  color: #555;
+}
+.ui-property-value[data-tone="success"] {
+  color: var(--green);
+}
+.ui-property-value[data-tone="warning"] {
+  color: var(--yellow);
+}
+.ui-property-value[data-tone="danger"] {
+  color: var(--red);
+}
+.ui-property-value[data-tone="accent"] {
+  color: var(--copper);
+}
+
 /* --- Mobile Bottom Navigation --- */
 .mobile-bottom-nav {
   display: none;

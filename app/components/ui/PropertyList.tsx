@@ -1,0 +1,24 @@
+'use client';
+
+import type { ReactNode } from 'react';
+import type { Tone } from './tokens';
+
+interface PropertyListProps {
+  rows: { label: string; value: ReactNode; tone?: Tone; dim?: boolean }[];
+}
+
+export function PropertyList({ rows }: PropertyListProps) {
+  return (
+    <div className="ui-property-list">
+      {rows.map((r, i) => (
+        <div key={i} className="ui-property-row">
+          <span className="ui-property-label">{r.label}</span>
+          <span
+            className="ui-property-value"
+            data-tone={r.tone || (r.dim ? 'dim' : '')}
+          >{r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
