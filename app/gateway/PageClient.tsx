@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Metric, Page, PageHeader, Pill, Surface, type Tone } from '../components/ui';
+import { Button, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 /* ------------------------------------------------------------------ */
@@ -48,36 +48,7 @@ interface ProviderApiResponse {
 /*  Overlay Loader Component                                          */
 /* ------------------------------------------------------------------ */
 function LoadingOverlay({ message }: { message: string }) {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 9999,
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
-        background: 'rgba(0,0,0,0.35)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        gap: 16,
-      }}
-    >
-      <div
-        style={{
-          width: 36,
-          height: 36,
-          border: '3px solid rgba(212,155,53,0.25)',
-          borderTopColor: 'var(--copper)',
-          borderRadius: '50%',
-          animation: 'spin 0.7s linear infinite',
-        }}
-      />
-      <div style={{ color: 'var(--text)', fontSize: 14, letterSpacing: '0.03em' }}>{message}</div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  );
+  return <LoadingSpinner label={message} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -182,14 +153,14 @@ function FallbackSelector({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
-                  background: isSel ? 'rgba(34,197,94,0.06)' : 'transparent',
+                  background: isSel ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
                 }}
               >
                 <input
                   type="checkbox"
                   checked={isSel}
                   readOnly
-                  style={{ accentColor: '#22C55E', pointerEvents: 'none' }}
+                  style={{ accentColor: 'var(--green)', pointerEvents: 'none' }}
                 />
                 <div>
                   <div style={{ fontWeight: isSel ? 500 : 400 }}>{m.name}</div>
@@ -259,26 +230,7 @@ function AgentEditForm({
           <select
             value={modelInput}
             onChange={(e) => setModelInput(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '9px 10px',
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              fontSize: 12,
-              cursor: 'pointer',
-              outline: 'none',
-              WebkitAppearance: 'none',
-              MozAppearance: 'none',
-              appearance: 'none',
-              backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\'><path fill=\'%238a8a92\' d=\'M6 8L1 3h10z\'/></svg>")',
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'right 10px center',
-              paddingRight: 30,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-              transition: 'border-color 0.15s',
-            }}
+            className="gateway-agent-select"
           >
             <option value="" disabled>Select model…</option>
             {allModels.map((m) => (
@@ -340,28 +292,12 @@ function AgentEditForm({
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={() => onSave(modelInput, fallbacks)}
-          disabled={saving || !modelInput.trim()}
-          style={{
-            padding: '8px 16px', borderRadius: 6, border: 'none',
-            background: 'var(--copper)', color: '#fff',
-            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            opacity: saving || !modelInput.trim() ? 0.5 : 1,
-          }}
-        >
+        <Button variant="primary" size="sm" loading={saving} disabled={!modelInput.trim()} onClick={() => onSave(modelInput, fallbacks)}>
           {saving ? 'Salvataggio…' : 'Salva'}
-        </button>
-        <button
-          onClick={onCancel}
-          style={{
-            padding: '8px 16px', borderRadius: 6,
-            border: '1px solid var(--border)', background: 'transparent',
-            color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer',
-          }}
-        >
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onCancel}>
           Annulla
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -662,7 +598,7 @@ export default function GatewayPageClient() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{
               width: 8, height: 8, borderRadius: '50%',
-              background: olympusKeyConfigured ? '#22C55E' : '#6B7280',
+              background: olympusKeyConfigured ? 'var(--green)' : 'var(--gray)',
               flexShrink: 0,
             }} />
             <div style={{ fontWeight: 600, fontSize: 14 }}>OLYMPUS API KEY</div>
@@ -676,23 +612,19 @@ export default function GatewayPageClient() {
               placeholder="OLYMPUS_API_KEY"
               style={{ flex: 1, minWidth: 200 }}
             />
-            <button onClick={() => handleSaveOlympusKey()}
-              disabled={overlay.active || apiKeyInputs['olympus']?.trim() === originalKeys['olympus']?.trim()}
-              style={{
-                padding: '10px 16px', borderRadius: 6, border: 'none',
-                background: '#4F46E5', color: '#fff', fontSize: 12,
-                fontWeight: 600, cursor: 'pointer',
-                opacity: overlay.active || apiKeyInputs['olympus']?.trim() === originalKeys['olympus']?.trim() ? 0.5 : 1,
-              }}>
+            <Button variant="primary" size="sm"
+              loading={overlay.active}
+              disabled={apiKeyInputs['olympus']?.trim() === originalKeys['olympus']?.trim()}
+              onClick={() => handleSaveOlympusKey()}>
               Salva
-            </button>
+            </Button>
 
             {messages['olympus'] && (
               <div style={{
                 flex: '1 1 100%', padding: '6px 10px', borderRadius: 4,
                 fontSize: 12, fontWeight: 500,
-                background: messages['olympus']!.type === 'success' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                color: messages['olympus']!.type === 'success' ? '#22C55E' : '#EF4444',
+                background: messages['olympus']!.type === 'success' ? 'rgba(var(--green-rgb,34,197,94),0.1)' : 'rgba(var(--red-rgb,239,68,68),0.1)',
+                color: messages['olympus']!.type === 'success' ? 'var(--green)' : 'var(--red)',
               }}>
                 {messages['olympus']!.text}
               </div>
@@ -705,13 +637,7 @@ export default function GatewayPageClient() {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
         {(['providers', 'agents'] as Tab[]).map((t) => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: '12px 16px', background: 'none', border: 'none',
-            borderBottom: tab === t ? '2px solid var(--copper)' : '2px solid transparent',
-            color: tab === t ? 'var(--copper)' : 'var(--text-dim)',
-            fontSize: 13, fontWeight: tab === t ? 600 : 400, letterSpacing: '0.04em',
-            cursor: 'pointer', textTransform: 'capitalize',
-          }}>
+          <button key={t} onClick={() => setTab(t)} className={'gateway-tab' + (tab === t ? ' gateway-tab--active' : '')}>
             {t === 'providers' ? `Provider (${configuredCount}/${providers.filter(p => p.provider !== 'olympus').length})` : `Agenti (${agentCount})`}
           </button>
         ))}
@@ -730,7 +656,7 @@ export default function GatewayPageClient() {
                 <div style={{ padding: '16px 18px', display: 'grid', gap: 14 }}>
                   {/* Header */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.configured ? '#22C55E' : '#6B7280', flexShrink: 0 }} />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.configured ? 'var(--green)' : 'var(--gray)', flexShrink: 0 }} />
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
                     {p.configured ? <Pill tone="success">Connesso</Pill> : <Pill tone="warning">Non configurato</Pill>}
                     {enabledCount > 0 ? <Pill tone="accent">{enabledCount} modelli attivi</Pill> : <Pill>{enabledCount} modelli attivi</Pill>}
@@ -744,21 +670,16 @@ export default function GatewayPageClient() {
                       placeholder={`API Key ${p.label}`}
                       style={{ flex: 1, minWidth: 200 }}
                     />
-                    <button onClick={() => handleSave(p.provider)}
-                      disabled={overlay.active || apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim()}
-                      style={{
-                        padding: '10px 16px', borderRadius: 6, border: 'none',
-                        background: '#4F46E5', color: '#fff', fontSize: 12, fontWeight: 600,
-                        cursor: 'pointer',
-                        opacity: overlay.active || apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim() ? 0.5 : 1,
-                      }}>
+                    <Button variant="primary" size="sm"
+                      loading={overlay.active}
+                      disabled={apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim()}
+                      onClick={() => handleSave(p.provider)}>
                       Salva
-                    </button>
+                    </Button>
                     {p.configured && (
-                      <button onClick={() => handleRemove(p.provider)} disabled={overlay.active}
-                        style={{ padding: '10px 16px', borderRadius: 6, border: '1px solid #EF4444', background: 'transparent', color: '#EF4444', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: overlay.active ? 0.5 : 1 }}>
+                      <Button variant="danger" size="sm" disabled={overlay.active} onClick={() => handleRemove(p.provider)}>
                         Remove
-                      </button>
+                      </Button>
                     )}
                   </div>
 
@@ -779,18 +700,18 @@ export default function GatewayPageClient() {
                           return (
                             <label key={m.id} style={{
                               display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 6,
-                              background: m.enabled ? 'rgba(34,197,94,0.06)' : 'transparent',
+                              background: m.enabled ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
                               cursor: overlay.active ? 'wait' : 'pointer', fontSize: 13,
                             }}>
                               <input type="checkbox" checked={m.enabled} disabled={overlay.active}
                                 onChange={(e) => handleToggleModel(m.id, e.target.checked)}
-                                style={{ accentColor: '#22C55E', cursor: 'pointer' }} />
+                                style={{ accentColor: 'var(--green)', cursor: 'pointer' }} />
                               <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
                                 <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>{m.id}</div>
                               </div>
                               {modelMsg && (
-                                <span style={{ fontSize: 11, color: modelMsg.type === 'success' ? '#22C55E' : '#EF4444' }}>
+                                <span style={{ fontSize: 11, color: modelMsg.type === 'success' ? 'var(--green)' : 'var(--red)' }}>
                                   {modelMsg.text}
                                 </span>
                               )}
@@ -802,7 +723,7 @@ export default function GatewayPageClient() {
                   )}
 
                   {msg && (
-                    <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: msg.type === 'success' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: msg.type === 'success' ? '#22C55E' : '#EF4444' }}>
+                    <div className={msg.type === 'success' ? 'msg-success' : 'msg-error'}>
                       {msg.text}
                     </div>
                   )}
@@ -849,7 +770,7 @@ export default function GatewayPageClient() {
                   <Surface key={agent.containerName} variant="panel">
                     <div style={{ padding: '16px 18px', display: 'grid', gap: 12 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: agent.state === 'running' ? '#22C55E' : '#EF4444', flexShrink: 0 }} />
+                        <div className={'gateway-agent-dot' + (agent.state === 'running' ? ' gateway-agent-dot--ok' : ' gateway-agent-dot--err')} />
                         <div style={{ fontWeight: 600 }}>{agent.agentId}</div>
                         <Pill>{agent.containerName}</Pill>
                         <Pill tone={agent.state === 'running' ? 'success' : 'danger'}>{agent.state}</Pill>
@@ -871,13 +792,12 @@ export default function GatewayPageClient() {
                           onCancel={() => setEditingAgent(null)}
                         />
                       ) : (
-                        <button onClick={() => { setEditingAgent(agent.containerName); setAgentModelInput(agent.defaultModel || ''); setAgentFallbackInput(agent.fallbacks.join(', ')); }}
-                          style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--copper)', fontSize: 12, cursor: 'pointer', alignSelf: 'flex-start' }}>
+                        <Button variant="secondary" size="sm" onClick={() => { setEditingAgent(agent.containerName); setAgentModelInput(agent.defaultModel || ''); setAgentFallbackInput(agent.fallbacks.join(', ')); }}>
                           ✏️ Change model
-                        </button>
+                        </Button>
                       )}
                       {msg && (
-                        <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: msg.type === 'success' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: msg.type === 'success' ? '#22C55E' : '#EF4444' }}>
+                        <div className={msg.type === 'success' ? 'msg-success' : 'msg-error'}>
                           {msg.text}
                         </div>
                       )}
