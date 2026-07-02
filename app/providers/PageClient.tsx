@@ -954,22 +954,19 @@ export default function ProvidersPage() {
                 </div>
                 <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                   {selected.presetAuth === 'oauth' && (
-                    <button onClick={() => handleOAuthLogin(selectedProvider)} disabled={!!loginLoading}
-                      style={{ background: loginLoading === selectedProvider ? '#1a2a33' : '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: loginLoading === selectedProvider ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                      {loginLoading === selectedProvider ? <>⌛</> : '🔑'} LOGIN WITH {selectedProvider.toUpperCase()}
-                    </button>
+                    <Button variant="secondary" size="sm" loading={loginLoading === selectedProvider} disabled={!!loginLoading} onClick={() => handleOAuthLogin(selectedProvider)}>
+                      LOGIN WITH {selectedProvider.toUpperCase()}
+                    </Button>
                   )}
                   {selectedProvider === 'claude-cli' && (
-                    <button onClick={handleClaudeSetupTokenStart} disabled={!!loginLoading}
-                      style={{ background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: loginLoading ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer' }}>
-                      {loginLoading === 'claude-cli' ? '⌛' : '◆'} SET UP CLAUDE CLI
-                    </button>
+                    <Button variant="secondary" size="sm" disabled={!!loginLoading} onClick={handleClaudeSetupTokenStart}>
+                      SET UP CLAUDE CLI
+                    </Button>
                   )}
                   {selected.presetAuth === 'api-key' && selectedProvider !== 'claude-cli' && (
-                    <button onClick={() => setApiKeyModal(selectedProvider)}
-                      style={{ background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>
+                    <Button variant="secondary" size="sm" onClick={() => setApiKeyModal(selectedProvider)}>
                       + ADD API KEY
-                    </button>
+                    </Button>
                   )}
                   {selected.presetAuth === 'token' && (
                     <span style={{ fontSize: 10, color: '#888' }}>🪙 Token provider — configure in Core or agent directly</span>
@@ -1001,23 +998,20 @@ export default function ProvidersPage() {
                   <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                     {/* OAuth: LOGIN/REFRESH/LOGOUT */}
                     {selectedOAuth && selectedOAuth.status !== 'ok' && (selected?.profiles?.count ?? 0) === 0 && (
-                      <button onClick={() => handleOAuthLogin(selectedProvider)} disabled={!!loginLoading}
-                        style={{ background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: loginLoading === selectedProvider ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                        {loginLoading === selectedProvider ? '⌛' : '🔑'} LOGIN WITH {selectedProvider.toUpperCase()}
-                      </button>
+                      <Button variant="secondary" size="sm" loading={loginLoading === selectedProvider} disabled={!!loginLoading} onClick={() => handleOAuthLogin(selectedProvider)}>
+                        LOGIN WITH {selectedProvider.toUpperCase()}
+                      </Button>
                     )}
 
                     {selectedOAuth && selectedOAuth.status === 'expired' && (selected?.profiles?.count ?? 0) > 0 && (
                       <>
                         <span style={{ fontSize: 10, color: '#d66' }}>⚠️ Token expired</span>
-                        <button onClick={() => handleRefreshOAuth(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: '#2a3a22', border: '1px solid #3a5a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#666' : '#8d8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                          {loginLoading === selectedProvider ? '⌛' : '🔄'} REFRESH TOKEN
-                        </button>
-                        <button onClick={() => handleDisconnect(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: 'transparent', border: '1px solid #5a3a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#833' : '#d66', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                          {loginLoading === selectedProvider ? '⌛' : '🚪'} LOGOUT
-                        </button>
+                        <Button variant="secondary" size="sm" loading={loginLoading === selectedProvider} disabled={!!loginLoading} onClick={() => handleRefreshOAuth(selectedProvider)}>
+                          REFRESH TOKEN
+                        </Button>
+                        <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
+                          LOGOUT
+                        </Button>
                       </>
                     )}
 
@@ -1053,10 +1047,9 @@ export default function ProvidersPage() {
                             {loginLoading === 'claude-cli' ? '⌛' : '◆'} SET UP CLAUDE CLI
                           </button>
                         )}
-                        <button onClick={() => handleDisconnect(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: 'transparent', border: '1px solid #5a3a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#833' : '#d66', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                          {loginLoading === selectedProvider ? '⌛' : '🚪'} DISCONNECT
-                        </button>
+                        <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
+                          DISCONNECT
+                        </Button>
                       </>
                     )}
 
@@ -1075,10 +1068,9 @@ export default function ProvidersPage() {
                       selectedOAuth.profiles?.some((p: { type?: string }) => p?.type && p.type !== 'token') && (
                       <>
                         <span style={{ fontSize: 10, color: '#4a8' }}>✅ Connected{selectedOAuth.profiles?.[0]?.label ? ' via ' + selectedOAuth.profiles[0].label : ''}</span>
-                        <button onClick={() => handleDisconnect(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: 'transparent', border: '1px solid #5a3a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#833' : '#d66', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                          {loginLoading === selectedProvider ? '⌛' : '🚪'} DISCONNECT
-                        </button>
+                        <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
+                          DISCONNECT
+                        </Button>
                       </>
                     )}
 
@@ -1090,18 +1082,15 @@ export default function ProvidersPage() {
                     )) && selectedProvider !== 'claude-cli' && (
                       <>
                         {(selected?.profiles?.count ?? 0) > 0 && <span style={{ fontSize: 10, color: '#4a8' }}>✅ Connected</span>}
-                        <button onClick={() => handleRevealKey(selectedProvider)} disabled={revealLoading === selectedProvider}
-                          style={{ background: revealedFor === selectedProvider ? '#2a3a22' : '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: revealedFor === selectedProvider ? '#8d8' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: revealLoading === selectedProvider ? 'wait' : 'pointer', opacity: revealLoading === selectedProvider ? 0.7 : 1 }}>
-                          {revealLoading === selectedProvider ? '⌛ LOADING' : revealedFor === selectedProvider ? '🔒 HIDE KEY' : '👁 SHOW KEY'}
-                        </button>
-                        <button onClick={() => setApiKeyModal(selectedProvider)}
-                          style={{ background: (selected?.profiles?.count ?? 0) > 0 ? '#2a3a22' : '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>
+                        <Button variant="secondary" size="sm" onClick={() => handleRevealKey(selectedProvider)} disabled={revealLoading === selectedProvider} loading={revealLoading === selectedProvider}>
+                          {revealedFor === selectedProvider ? '🔒 HIDE KEY' : '👁 SHOW KEY'}
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setApiKeyModal(selectedProvider)}>
                           {(selected?.profiles?.count ?? 0) > 0 ? '✏️ CHANGE API KEY' : '+ ADD API KEY'}
-                        </button>
-                        <button onClick={() => handleDisconnect(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: 'transparent', border: '1px solid #5a3a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#833' : '#d66', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
-                          {loginLoading === selectedProvider ? '⌛' : '🗑️'} REMOVE KEY
-                        </button>
+                        </Button>
+                        <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
+                          REMOVE KEY
+                        </Button>
                         {revealedFor === selectedProvider && revealedKey && (
                           <div style={{ width: '100%', marginTop: 8, padding: '8px 10px', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4, fontSize: 11, color: '#8d8', wordBreak: 'break-all', fontFamily: 'monospace' }}>
                             {revealedKey}
@@ -1123,7 +1112,7 @@ export default function ProvidersPage() {
                       <div style={{ fontSize: 10, color: '#da3', marginBottom: 4 }}>⚠️ TTY Required</div>
                       <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>This provider requires an interactive terminal for OAuth. Run this command on the server:</div>
                       <code style={{ fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '6px 8px', borderRadius: 4, display: 'block', wordBreak: 'break-all', marginTop: 4 }}>{ttyCommand}</code>
-                      <button onClick={() => setTtyCommand(null)} style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '4px 8px', cursor: 'pointer', marginTop: 6 }}>DISMISS</button>
+                      <Button variant="ghost" size="sm" onClick={() => setTtyCommand(null)}>DISMISS</Button>
                     </div>
                   )}
 
