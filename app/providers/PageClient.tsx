@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useResponsive } from '../design-system';
-import { Pill, Surface, toneVars } from '../components/ui';
-import OlympusLoader from '../components/OlympusLoader';
+import { Button, Input, Pill, Surface, LoadingSpinner, toneVars } from '../components/ui';
 import type { Tone } from '../components/ui';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
@@ -883,13 +882,13 @@ export default function ProvidersPage() {
         </span>
       </div>
 
-      {loading && <OlympusLoader label="LOADING PROVIDERS" compact />}
+      {loading && <LoadingSpinner compact />}
       {error && <div style={{ padding: 20, color: '#ef4444', fontSize: 12 }}>{error}</div>}
 
       {isMobile && data && (
         <div style={{ display: 'flex', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
-          <button onClick={() => setTab('providers')} style={{ fontSize: 10, padding: '6px 8px', border: '1px solid var(--border)', background: tab === 'providers' ? 'var(--bg3)' : 'transparent', color: tab === 'providers' ? 'var(--copper)' : '#888' }}>PROVIDERS</button>
-          <button onClick={() => setTab('details')} style={{ fontSize: 10, padding: '6px 8px', border: '1px solid var(--border)', background: tab === 'details' ? 'var(--bg3)' : 'transparent', color: tab === 'details' ? 'var(--copper)' : '#888' }}>DETAILS</button>
+          <Button variant={tab === 'providers' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('providers')}>PROVIDERS</Button>
+          <Button variant={tab === 'details' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('details')}>DETAILS</Button>
         </div>
       )}
 

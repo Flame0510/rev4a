@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { TOOL_CATALOG, TOTAL_TOOL_COUNT, type ToolStatus } from './tools-catalog';
-import { Pill } from '../components/ui';
-import OlympusLoader from '../components/OlympusLoader';
+import { Button, Input, Pill, LoadingSpinner } from '../components/ui';
 import type { Tone } from '../components/ui';
 
 const API_FETCH_OPTIONS: RequestInit = {
@@ -159,7 +158,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
             ))}
           </section>
 
-          {loading && <OlympusLoader label="LOADING TOOLS" compact />}
+          {loading && <LoadingSpinner compact />}
 
           {!loading && audio && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
@@ -177,20 +176,24 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
                     </label>
                   </div>
                   <div style={formGridStyle}>
-                    <Field label="Timeout (seconds)"><input type="number" value={audio.timeoutSeconds ?? ''} onChange={(e) => setAudio((p) => (p ? { ...p, timeoutSeconds: Number(e.target.value) } : p))} style={inputStyle} /></Field>
-                    <Field label="Max bytes"><input type="number" value={audio.maxBytes ?? ''} onChange={(e) => setAudio((p) => (p ? { ...p, maxBytes: Number(e.target.value) } : p))} style={inputStyle} /></Field>
+                    <Field label="Timeout (seconds)"><Input type="number" value={audio.timeoutSeconds ?? ''} onChange={(e) => setAudio((p) => (p ? { ...p, timeoutSeconds: Number(e.target.value) } : p))} /></Field>
+                    <Field label="Max bytes"><Input type="number" value={audio.maxBytes ?? ''} onChange={(e) => setAudio((p) => (p ? { ...p, maxBytes: Number(e.target.value) } : p))} /></Field>
                   </div>
                   <div style={subsectionStyle}>
                     <p style={subsectionTitleStyle}>Model (primary)</p>
                     <div style={formGridStyle}>
-                      <Field label="Provider"><input type="text" value={model.provider} onChange={(e) => updateModel('provider', e.target.value)} style={inputStyle} /></Field>
-                      <Field label="Model"><input type="text" value={model.model} onChange={(e) => updateModel('model', e.target.value)} style={inputStyle} /></Field>
-                      <Field label="Base URL"><input type="text" value={model.baseUrl ?? ''} onChange={(e) => updateModel('baseUrl', e.target.value)} style={inputStyle} /></Field>
+                      <Field label="Provider"><Input type="text" value={model.provider} onChange={(e) => updateModel('provider', e.target.value)} /></Field>
+                      <Field label="Model"><Input type="text" value={model.model} onChange={(e) => updateModel('model', e.target.value)} /></Field>
+                      <Field label="Base URL"><Input type="text" value={model.baseUrl ?? ''} onChange={(e) => updateModel('baseUrl', e.target.value)} /></Field>
                     </div>
                   </div>
                   {error && <p style={{ color: 'var(--destructive, #ef4444)', fontSize: '13px', margin: '16px 0 0' }}>{error}</p>}
                   {success && <p style={{ color: 'var(--success, #22c55e)', fontSize: '13px', margin: '16px 0 0' }}>Saved successfully.</p>}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}><button onClick={() => void handleSave()} disabled={saving} style={buttonStyle(saving)}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
+                    <Button variant="primary" size="sm" loading={saving} onClick={() => void handleSave()}>
+                      {saving ? 'Saving…' : 'Save changes'}
+                    </Button>
+                  </div>
                 </div>
               </section>
 
@@ -206,13 +209,13 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
                   <div style={formGridStyle}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <label style={fieldLabelStyle}>Time zone</label>
-                      <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                      <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }} className="ui-select">
                         {TIMEZONE_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                       </select>
                     </div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
-                    <button onClick={async () => {
+                    <Button variant="primary" size="sm" loading={saving} onClick={async () => {
                       setSaving(true); setError(null); setSuccess(false);
                       try {
                         const res = await fetch('/api/tools-config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ timezone }) });
@@ -222,7 +225,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
                         setTimeout(() => setSuccess(false), 3000);
                       } catch (e: unknown) { setError((e as Error).message); }
                       finally { setSaving(false); }
-                    }} disabled={saving} style={buttonStyle(saving)}>{saving ? 'Saving…' : 'Save timezone'}</button>
+                    }}>{saving ? 'Saving…' : 'Save timezone'}</Button>
                   </div>
                 </div>
               </section>
@@ -298,5 +301,4 @@ const categoryHeaderStyle: CSSProperties = { display: 'flex', justifyContent: 's
 const countPillStyle: CSSProperties = { border: '1px solid var(--border)', borderRadius: '999px', padding: '3px 8px', color: 'var(--text-dim)', fontSize: '11px', fontWeight: 700 };
 const toolListStyle: CSSProperties = { display: 'flex', flexDirection: 'column' };
 const toolRowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'flex-start', padding: '12px 16px', borderTop: '1px solid rgba(148, 163, 184, 0.12)' };
-const buttonStyle = (saving: boolean): CSSProperties => ({ padding: '9px 18px', borderRadius: '8px', border: '1px solid transparent', background: saving ? 'var(--text-dim)' : 'var(--primary, #6366f1)', color: '#fff', fontSize: '14px', fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer' });
 const inputStyle: CSSProperties = { padding: '7px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--input)', color: 'var(--foreground)', fontSize: '14px', width: '100%' };

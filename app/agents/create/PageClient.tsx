@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Button, Input } from '../../components/ui';
 
 interface TemplateInfo {
   id: string;
@@ -66,6 +67,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
     models.length > 0 ? models[0].id : ''
   );
   const [fallbacks] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<{ name: string; containerId: string; traefikUrl: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -106,6 +108,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     setStep('creating');
     setErrorMsg('');
 
@@ -129,9 +132,11 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       if (!res.ok || !data.success) {
         setErrorMsg(data.error || 'Unknown error');
         setStep('error');
+        setSubmitting(false);
         return;
       }
 
+      setSubmitting(false);
       setResult(data);
       setStep('done');
       setToast({ message: `Agent "${agentName}" deployed successfully`, type: 'success' });
@@ -168,17 +173,12 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           </div>
           <div style={{ display: 'grid', gap: 8 }}>
             {templates.map((t) => (
-              <button
+              <Button
                 key={t.id}
+                variant={selectedTemplate === t.id ? 'primary' : 'ghost'}
+                size="md"
                 onClick={() => handleSelectTemplate(t.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '14px 16px',
-                  background: selectedTemplate === t.id ? 'rgba(212,155,53,0.1)' : 'var(--bg)',
-                  border: `1px solid ${selectedTemplate === t.id ? 'var(--copper)' : 'var(--border)'}`,
-                  borderRadius: 6, cursor: 'pointer', textAlign: 'left',
-                  color: 'var(--text)', fontSize: 14,
-                }}
+                style={{ display: 'flex', padding: '14px 16px', width: '100%', textAlign: 'left', fontSize: 14 }}
               >
                 <span style={{
                   width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -196,30 +196,16 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                     port {TEMPLATE_DEFAULT_PORTS[t.id]}
                   </span>
                 )}
-              </button>
+              </Button>
             ))}
           </div>
           <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
-            <button
-              onClick={() => router.push('/agents')}
-              style={{
-                padding: '10px 20px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
-                background: 'transparent', color: '#888', fontSize: 14,
-              }}
-            >
+            <Button variant="ghost" size="md" onClick={() => router.push('/agents')}>
               Cancel
-            </button>
-            <button
-              onClick={() => setStep('config')}
-              disabled={!canProceed()}
-              style={{
-                padding: '10px 24px', borderRadius: 6, border: 'none', cursor: canProceed() ? 'pointer' : 'not-allowed',
-                background: canProceed() ? 'var(--copper)' : 'var(--border)', color: canProceed() ? '#111' : '#666',
-                fontSize: 14, fontWeight: 500,
-              }}
-            >
+            </Button>
+            <Button variant="primary" size="md" onClick={() => setStep('config')} disabled={!canProceed()}>
               Next
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -233,17 +219,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
           {/* Name */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 6 }}>Agent Name</label>
-            <input
+            <Input
+              label="Agent Name"
               value={agentName}
               onChange={(e) => setAgentName(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9._-]/g, ''))}
               placeholder="e.g. my-agent"
-              style={{
-                width: '100%', padding: '10px 12px', borderRadius: 6, border: `1px solid ${nameError ? '#ef4444' : 'var(--border)'}`,
-                background: 'var(--bg)', color: 'var(--text)', fontSize: 14, outline: 'none', boxSizing: 'border-box',
-              }}
+              error={nameError}
             />
-            {nameError && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{nameError}</div>}
           </div>
 
           {/* Template info */}
@@ -253,15 +235,9 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                 <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>TEMPLATE</div>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>{selectedTemplate}</div>
               </div>
-              <button
-                onClick={() => setStep('template')}
-                style={{
-                  fontSize: 11, color: 'var(--copper)', background: 'none', border: '1px solid var(--border)',
-                  borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
-                }}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setStep('template')}>
                 Change
-              </button>
+              </Button>
             </div>
             <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{templateDescription(selectedTemplate)}</div>
           </div>
@@ -278,16 +254,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               Expose Port
             </label>
             {portEnabled && (
-              <input
+              <Input
                 value={port}
                 onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
                 placeholder={`${TEMPLATE_DEFAULT_PORTS[selectedTemplate] || DEFAULT_PORT}`}
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 6, border: `1px solid ${portError ? '#ef4444' : 'var(--border)'}`,
-                  background: 'var(--bg)', color: 'var(--text)', fontSize: 14, outline: 'none', boxSizing: 'border-box',
-                }}
+                error={portError}
               />
-            )}
+            )} 
             {portError && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{portError}</div>}
           </div>
 
@@ -310,26 +283,12 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
           {/* Buttons */}
           <div style={{ marginTop: 24, display: 'flex', gap: 12, justifyContent: 'space-between' }}>
-            <button
-              onClick={() => setStep('template')}
-              style={{
-                padding: '10px 20px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
-                background: 'transparent', color: '#888', fontSize: 14,
-              }}
-            >
+            <Button variant="ghost" size="md" onClick={() => setStep('template')}>
               Back
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!canProceed()}
-              style={{
-                padding: '10px 24px', borderRadius: 6, border: 'none', cursor: canProceed() ? 'pointer' : 'not-allowed',
-                background: canProceed() ? 'var(--copper)' : 'var(--border)', color: canProceed() ? '#111' : '#666',
-                fontSize: 14, fontWeight: 500,
-              }}
-            >
+            </Button>
+            <Button variant="primary" size="md" onClick={handleSubmit} disabled={!canProceed() || submitting} loading={submitting}>
               Deploy Agent
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -367,36 +326,21 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             )}
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            <button
-              onClick={() => {
-                setToast(null);
-                router.push('/agents');
-              }}
-              style={{
-                flex: 1, padding: '10px 20px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
-                background: 'transparent', color: 'var(--text)', fontSize: 14,
-              }}
-            >
+            <Button variant="ghost" size="md" onClick={() => { setToast(null); router.push('/agents'); }} style={{ flex: 1 }}>
               View All Agents
-            </button>
-            <button
-              onClick={() => {
-                setToast(null);
-                setStep('template');
-                setSelectedTemplate('');
-                setAgentName('');
-                setPort('');
-                setPortEnabled(false);
-                setSelectedModel('');
-                setResult(null);
-              }}
-              style={{
-                flex: 1, padding: '10px 20px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                background: 'var(--copper)', color: '#111', fontSize: 14, fontWeight: 500,
-              }}
-            >
+            </Button>
+            <Button variant="primary" size="md" onClick={() => {
+              setToast(null);
+              setStep('template');
+              setSelectedTemplate('');
+              setAgentName('');
+              setPort('');
+              setPortEnabled(false);
+              setSelectedModel('');
+              setResult(null);
+            }} style={{ flex: 1 }}>
               Create Another
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -412,15 +356,9 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               {errorMsg}
             </div>
           </div>
-          <button
-            onClick={() => setStep('config')}
-            style={{
-              padding: '10px 24px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
-              background: 'transparent', color: 'var(--text)', fontSize: 14,
-            }}
-          >
+          <Button variant="ghost" size="md" onClick={() => setStep('config')}>
             Back to Config
-          </button>
+          </Button>
         </div>
       )}
     </div>

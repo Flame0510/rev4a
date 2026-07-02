@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Select } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -425,10 +426,10 @@ export default function WorkspaceClient() {
       {/* Header */}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         {isMobile === 'phone' && mobileView === 'editor' ? (
-          <button onClick={() => setMobileView('tree')} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: '#888', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>
+          <Button variant="ghost" size="sm" onClick={() => setMobileView('tree')}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
             BACK
-          </button>
+          </Button>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--copper)' }}>WORKSPACE</span>
@@ -446,6 +447,7 @@ export default function WorkspaceClient() {
                 setMobileView('tree');
                 setSaveState('idle');
               }}
+              className="ui-select-workspace"
               style={{
                 background: 'var(--bg3)',
                 color: 'var(--copper)',
@@ -468,13 +470,13 @@ export default function WorkspaceClient() {
         {selectedPath && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {isMarkdown(selectedNode?.name ?? '') && (
-              <button onClick={() => setPreviewMode(!previewMode)} style={{ border: '1px solid var(--border)', borderRadius: 4, background: previewMode ? '#1a1208' : 'var(--bg3)', color: previewMode ? 'var(--copper)' : '#888', fontSize: 10, padding: '4px 10px', cursor: 'pointer' }}>
+              <Button variant={previewMode ? 'primary' : 'ghost'} size="sm" onClick={() => setPreviewMode(!previewMode)}>
                 {previewMode ? 'EDIT' : 'PREVIEW'}
-              </button>
+              </Button>
             )}
-            <button onClick={() => void saveFile()} disabled={!dirty || saveState === 'saving'} style={{ border: '1px solid var(--border)', borderRadius: 4, background: saveState === 'saved' ? '#143018' : 'var(--bg3)', color: !dirty ? '#555' : saveState === 'error' ? '#ef4444' : saveState === 'saved' ? '#22c55e' : 'var(--copper)', fontSize: 10, padding: '4px 10px', cursor: dirty ? 'pointer' : 'default' }}>
+            <Button variant={saveState === 'saved' ? 'success' : 'primary'} size="sm" onClick={() => void saveFile()} disabled={!dirty || saveState === 'saving'} loading={saveState === 'saving'}>
               {saveBtnLabel}
-            </button>
+            </Button>
           </div>
         )}
       </div>

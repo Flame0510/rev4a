@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Surface, Pill, toneVars } from './ui';
+import { Button, Pill } from './ui';
 import PasswordInput from './PasswordInput';
 import { apiFetch } from '@/lib/apiFetch';
 
@@ -175,35 +175,6 @@ export default function VaultPanel() {
   if (loading) return <div style={{ padding: 12, color: '#888', fontSize: 11 }}>Loading vault...</div>;
   if (error) return <div style={{ padding: 12, color: '#ef4444', fontSize: 11 }}>{error}</div>;
 
-  const tabStyle = (isActive: boolean): React.CSSProperties => ({
-    background: isActive ? 'var(--bg3)' : 'transparent',
-    border: '1px solid var(--border)',
-    color: isActive ? 'var(--copper)' : '#888',
-    fontSize: 10,
-    padding: '4px 10px',
-    cursor: 'pointer',
-  });
-
-  const btnStyle: React.CSSProperties = {
-    background: '#1a2a33',
-    border: '1px solid #2a4a5a',
-    borderRadius: 4,
-    color: '#d6e2e8',
-    fontSize: 10,
-    padding: '4px 10px',
-    cursor: 'pointer',
-  };
-
-  const dangerBtnStyle: React.CSSProperties = {
-    background: 'transparent',
-    border: '1px solid #5a3a3a',
-    borderRadius: 4,
-    color: '#d66',
-    fontSize: 9,
-    padding: '2px 6px',
-    cursor: 'pointer',
-  };
-
   const inputStyle: React.CSSProperties = {
     width: '100%',
     background: '#0A0A0B',
@@ -224,9 +195,9 @@ export default function VaultPanel() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}>
-        <button onClick={() => setTab('providers')} style={tabStyle(tab === 'providers')}>PROVIDERS</button>
-        <button onClick={() => setTab('services')} style={tabStyle(tab === 'services')}>SERVICES</button>
-        <button onClick={() => setTab('permissions')} style={tabStyle(tab === 'permissions')}>PERMISSIONS</button>
+        <Button variant={tab === 'providers' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('providers')}>PROVIDERS</Button>
+        <Button variant={tab === 'services' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('services')}>SERVICES</Button>
+        <Button variant={tab === 'permissions' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('permissions')}>PERMISSIONS</Button>
       </div>
 
       <div style={{ padding: '8px 12px', maxHeight: 320, overflow: 'auto' }}>
@@ -234,19 +205,19 @@ export default function VaultPanel() {
         {tab === 'providers' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-              <button onClick={() => setShowAddProvider(!showAddProvider)} style={btnStyle}>
+              <Button variant="secondary" size="sm" onClick={() => setShowAddProvider(!showAddProvider)}>
                 {showAddProvider ? '✕ CANCEL' : '+ ADD PROVIDER'}
-              </button>
+              </Button>
             </div>
 
             {showAddProvider && (
               <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                <input placeholder="Provider (es: openai-codex)" value={providerForm.provider} onChange={e => setProviderForm(p => ({ ...p, provider: e.target.value }))} style={inputStyle} />
+                <input placeholder="Provider" value={providerForm.provider} onChange={e => setProviderForm(p => ({ ...p, provider: e.target.value }))} style={inputStyle} />
                 <PasswordInput value={providerForm.apiKey} onChange={v => setProviderForm(p => ({ ...p, apiKey: v }))} placeholder="API Key" inputStyle={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
-                <input placeholder="Base URL (opzionale)" value={providerForm.baseUrl} onChange={e => setProviderForm(p => ({ ...p, baseUrl: e.target.value }))} style={inputStyle} />
-                <button onClick={handleAddProvider} disabled={saving === 'provider'} style={btnStyle}>
-                  {saving === 'provider' ? 'SAVING...' : '💾 SAVE'}
-                </button>
+                <input placeholder="Base URL" value={providerForm.baseUrl} onChange={e => setProviderForm(p => ({ ...p, baseUrl: e.target.value }))} style={inputStyle} />
+                <Button variant="primary" size="sm" loading={saving === 'provider'} onClick={handleAddProvider}>
+                  SAVE
+                </Button>
               </div>
             )}
 
@@ -265,9 +236,9 @@ export default function VaultPanel() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 9, color: '#555' }}>{formatDate(p.updatedAt)}</span>
-                  <button onClick={() => handleRemoveProvider(p.provider)} disabled={saving === `del-${p.provider}`} style={dangerBtnStyle}>
-                    {saving === `del-${p.provider}` ? '...' : '✕'}
-                  </button>
+                  <Button variant="danger" size="sm" loading={saving === `del-${p.provider}`} onClick={() => handleRemoveProvider(p.provider)}>
+                    ✕
+                  </Button>
                 </div>
               </div>
             ))}
@@ -278,19 +249,19 @@ export default function VaultPanel() {
         {tab === 'services' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-              <button onClick={() => setShowAddService(!showAddService)} style={btnStyle}>
+              <Button variant="secondary" size="sm" onClick={() => setShowAddService(!showAddService)}>
                 {showAddService ? '✕ CANCEL' : '+ ADD SERVICE'}
-              </button>
+              </Button>
             </div>
 
             {showAddService && (
               <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                <input placeholder="Service (es: github)" value={serviceForm.service} onChange={e => setServiceForm(s => ({ ...s, service: e.target.value }))} style={inputStyle} />
+                <input placeholder="Service" value={serviceForm.service} onChange={e => setServiceForm(s => ({ ...s, service: e.target.value }))} style={inputStyle} />
                 <PasswordInput value={serviceForm.token} onChange={v => setServiceForm(s => ({ ...s, token: v }))} placeholder="Token" inputStyle={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
-                <input placeholder="User (opzionale)" value={serviceForm.user} onChange={e => setServiceForm(s => ({ ...s, user: e.target.value }))} style={inputStyle} />
-                <button onClick={handleAddService} disabled={saving === 'service'} style={btnStyle}>
-                  {saving === 'service' ? 'SAVING...' : '💾 SAVE'}
-                </button>
+                <input placeholder="User" value={serviceForm.user} onChange={e => setServiceForm(s => ({ ...s, user: e.target.value }))} style={inputStyle} />
+                <Button variant="primary" size="sm" loading={saving === 'service'} onClick={handleAddService}>
+                  SAVE
+                </Button>
               </div>
             )}
 
@@ -309,9 +280,9 @@ export default function VaultPanel() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 9, color: '#555' }}>{formatDate(s.updatedAt)}</span>
-                  <button onClick={() => handleRemoveService(s.service)} disabled={saving === `del-svc-${s.service}`} style={dangerBtnStyle}>
-                    {saving === `del-svc-${s.service}` ? '...' : '✕'}
-                  </button>
+                  <Button variant="danger" size="sm" loading={saving === `del-svc-${s.service}`} onClick={() => handleRemoveService(s.service)}>
+                    ✕
+                  </Button>
                 </div>
               </div>
             ))}
@@ -322,19 +293,19 @@ export default function VaultPanel() {
         {tab === 'permissions' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-              <button onClick={() => setShowAddPermission(!showAddPermission)} style={btnStyle}>
+              <Button variant="secondary" size="sm" onClick={() => setShowAddPermission(!showAddPermission)}>
                 {showAddPermission ? '✕ CANCEL' : '+ ADD PERMISSION'}
-              </button>
+              </Button>
             </div>
 
             {showAddPermission && (
               <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                <input placeholder="Agent ID (es: ops)" value={permissionForm.agentId} onChange={e => setPermissionForm(p => ({ ...p, agentId: e.target.value }))} style={inputStyle} />
+                <input placeholder="Agent ID" value={permissionForm.agentId} onChange={e => setPermissionForm(p => ({ ...p, agentId: e.target.value }))} style={inputStyle} />
                 <input placeholder="Providers (csv: openai-codex, anthropic, * = all)" value={permissionForm.providers} onChange={e => setPermissionForm(p => ({ ...p, providers: e.target.value }))} style={inputStyle} />
-                <input placeholder="Services (csv: github, vercel, * = all)" value={permissionForm.services} onChange={e => setPermissionForm(p => ({ ...p, services: e.target.value }))} style={inputStyle} />
-                <button onClick={handleAddPermission} disabled={saving === 'perm'} style={btnStyle}>
-                  {saving === 'perm' ? 'SAVING...' : '💾 SAVE'}
-                </button>
+                <input placeholder="Services (csv)" value={permissionForm.services} onChange={e => setPermissionForm(p => ({ ...p, services: e.target.value }))} style={inputStyle} />
+                <Button variant="primary" size="sm" loading={saving === 'perm'} onClick={handleAddPermission}>
+                  SAVE
+                </Button>
               </div>
             )}
 
@@ -348,9 +319,9 @@ export default function VaultPanel() {
               <div key={perm.agentId} style={{ padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 11 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--copper)', fontWeight: 600 }}>{perm.agentId}</span>
-                  <button onClick={() => handleRemovePermission(perm.agentId)} disabled={saving === `del-perm-${perm.agentId}`} style={dangerBtnStyle}>
-                    {saving === `del-perm-${perm.agentId}` ? '...' : '✕'}
-                  </button>
+                  <Button variant="danger" size="sm" loading={saving === `del-perm-${perm.agentId}`} onClick={() => handleRemovePermission(perm.agentId)}>
+                    ✕
+                  </Button>
                 </div>
                 <div style={{ marginTop: 4 }}>
                   <span style={{ color: '#666', fontSize: 9 }}>Providers: </span>

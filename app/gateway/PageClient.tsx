@@ -230,7 +230,18 @@ function AgentEditForm({
           <select
             value={modelInput}
             onChange={(e) => setModelInput(e.target.value)}
-            className="gateway-agent-select"
+            style={{
+              width: '100%',
+              background: 'var(--bg3)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '6px 8px',
+              fontFamily: 'var(--font-mono-stack)',
+              cursor: 'pointer',
+              outline: 'none',
+            }}
           >
             <option value="" disabled>Select model…</option>
             {allModels.map((m) => (
@@ -637,9 +648,9 @@ export default function GatewayPageClient() {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
         {(['providers', 'agents'] as Tab[]).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={'gateway-tab' + (tab === t ? ' gateway-tab--active' : '')}>
+          <Button key={t} variant={tab === t ? 'primary' : 'ghost'} size="sm" onClick={() => setTab(t)}>
             {t === 'providers' ? `Provider (${configuredCount}/${providers.filter(p => p.provider !== 'olympus').length})` : `Agenti (${agentCount})`}
-          </button>
+          </Button>
         ))}
       </div>
 

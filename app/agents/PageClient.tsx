@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
+import { Button, Input, Pill, LoadingSpinner } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 interface Agent {
@@ -152,22 +153,9 @@ export default function AgentsPageClient() {
           disabled={tokenSaving || tokenLoading}
           style={{ flex: '1 1 280px', minWidth: 180 }}
         />
-        <button
-          onClick={saveToken}
-          disabled={tokenSaving || tokenLoading}
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            background: 'var(--bg3)',
-            color: tokenSaving || tokenLoading ? '#666' : 'var(--copper)',
-            fontSize: 12,
-            padding: '8px 16px',
-            cursor: tokenSaving || tokenLoading ? 'not-allowed' : 'pointer',
-            textTransform: 'uppercase',
-          }}
-        >
+        <Button variant="secondary" size="sm" loading={tokenSaving} disabled={tokenLoading} onClick={saveToken}>
           {tokenSaving ? 'Saving...' : 'Save & Sync'}
-        </button>
+        </Button>
       </div>
       {tokenStatus && (
         <div style={{ marginTop: 8, fontSize: 11, color: tokenStatus.type === 'success' ? '#22c55e' : '#ef4444' }}>
@@ -193,15 +181,9 @@ export default function AgentsPageClient() {
     return (
       <div style={{ padding: 40, textAlign: 'center' }}>
         <div style={{ color: '#ef4444', fontSize: 14, marginBottom: 10 }}>{error}</div>
-        <button
-          onClick={load}
-          style={{
-            border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg3)',
-            color: 'var(--copper)', fontSize: 12, padding: '8px 16px', cursor: 'pointer',
-          }}
-        >
+        <Button variant="secondary" size="sm" onClick={load}>
           RETRY
-        </button>
+        </Button>
       </div>
     );
   }
@@ -213,10 +195,10 @@ export default function AgentsPageClient() {
         <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
           {/* Mobile header back — fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <button onClick={backToList} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Button variant="ghost" size="sm" onClick={backToList}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
               BACK
-            </button>
+            </Button>
             <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
           </div>
           {/* Scrollable content */}
@@ -233,40 +215,22 @@ export default function AgentsPageClient() {
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
-          <button
-            onClick={() => router.push('/agents/create')}
-            style={{
-              border: '1px solid var(--copper)', borderRadius: 4,
-              background: 'rgba(212,155,53,0.12)', color: 'var(--copper)',
-              fontSize: 10, padding: '4px 10px', cursor: 'pointer',
-              textTransform: 'uppercase',
-            }}
-          >
+          <Button variant="ghost" size="sm" onClick={() => router.push('/agents/create')}>
             + NEW
-          </button>
+          </Button>
         </div>
         {tokenSection}
         <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)' }}>
           {(['all', 'running', 'exited'] as const).map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-              style={{
-                border: '1px solid var(--border)', borderRadius: 4,
-                background: filter === f ? 'rgba(212,155,53,0.15)' : 'transparent',
-                color: filter === f ? 'var(--copper)' : '#888', fontSize: 10,
-                padding: '4px 10px', cursor: 'pointer', textTransform: 'uppercase',
-              }}
-            >{f}</button>
+            <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
+              {f}
+            </Button>
           ))}
         </div>
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
-            <button key={agent.id} onClick={() => selectAgent(agent)}
-              style={{
-                width: '100%', textAlign: 'left', background: 'transparent',
-                border: 'none', borderBottom: '1px solid var(--border)',
-                color: 'var(--text)', padding: '12px 14px', cursor: 'pointer',
-              }}
+            <button key={agent.id} className="agent-list-item" onClick={() => selectAgent(agent)}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
@@ -293,30 +257,17 @@ export default function AgentsPageClient() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
-          <button
-            onClick={() => router.push('/agents/create')}
-            style={{
-              border: '1px solid var(--copper)', borderRadius: 4,
-              background: 'rgba(212,155,53,0.12)', color: 'var(--copper)',
-              fontSize: 10, padding: '4px 10px', cursor: 'pointer',
-              textTransform: 'uppercase', marginRight: 8,
-            }}
-          >
+          <Button variant="ghost" size="sm" onClick={() => router.push('/agents/create')}>
             + NEW
-          </button>
+          </Button>
         </div>
       </div>
       {tokenSection}
       <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         {(['all', 'running', 'exited'] as const).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            style={{
-              border: '1px solid var(--border)', borderRadius: 4,
-              background: filter === f ? 'rgba(212,155,53,0.15)' : 'transparent',
-              color: filter === f ? 'var(--copper)' : '#888', fontSize: 10,
-              padding: '4px 10px', cursor: 'pointer', textTransform: 'uppercase',
-            }}
-          >{f}</button>
+          <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
+            {f}
+          </Button>
         ))}
       </div>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -325,13 +276,7 @@ export default function AgentsPageClient() {
           {filtered.map((agent) => {
             const isSelected = selected?.id === agent.id;
             return (
-              <button key={agent.id} onClick={() => setSelected(agent)}
-                style={{
-                  width: '100%', textAlign: 'left',
-                  background: isSelected ? '#1a1208' : 'transparent',
-                  border: 'none', borderBottom: '1px solid var(--border)',
-                  color: 'var(--text)', padding: '10px 14px', cursor: 'pointer',
-                }}
+              <button key={agent.id} className="agent-list-item" onClick={() => setSelected(agent)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
@@ -405,10 +350,9 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           padding: '10px 14px', borderBottom: '1px solid var(--border)',
         }}>
           <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json — {agent.name}</span>
-          <button onClick={onClose} style={{
-            background: 'transparent', border: 'none', color: '#888',
-            fontSize: 16, cursor: 'pointer', lineHeight: 1,
-          }}>✕</button>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            ✕
+          </Button>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 14 }}>
           {loading && (
@@ -498,16 +442,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
       <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>CONFIG</div>
         <div style={{ padding: '12px 14px' }}>
-          <button
-            onClick={() => setShowConfig(true)}
-            style={{
-              padding: '6px 16px', borderRadius: 4, border: '1px solid var(--border)',
-              background: 'var(--bg3)', color: 'var(--copper)', fontSize: 11,
-              cursor: 'pointer',
-            }}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setShowConfig(true)}>
             View openclaw.json
-          </button>
+          </Button>
           <div style={{ fontSize: 10, color: '#666', marginTop: 6 }}>
             Inspect the full container config — providers, models, auth mode.
           </div>
@@ -537,17 +474,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
             Delete this agent. This will stop and remove the Docker container. This action cannot be undone.
           </div>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            style={{
-              padding: '6px 16px', borderRadius: 4, border: '1px solid #ef4444',
-              background: deleting ? 'rgba(239,68,68,0.1)' : 'transparent',
-              color: deleting ? '#666' : '#ef4444', fontSize: 11, cursor: deleting ? 'not-allowed' : 'pointer',
-            }}
-          >
+          <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
             {deleting ? 'Deleting...' : 'Delete Agent'}
-          </button>
+          </Button>
           {deleteError && (
             <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{deleteError}</div>
           )}

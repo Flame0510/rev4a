@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
 
 export default function LoginPage() {
@@ -69,35 +70,20 @@ export default function LoginPage() {
             PASSWORD
           </div>
           <div style={{ position: 'relative', marginBottom: 12 }}>
-            <input
+            <Input
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Inserisci la password"
               autoFocus
-              style={{
-                width: '100%',
-                padding: '0.8rem 2.8rem 0.8rem 0.95rem',
-                background: 'var(--bg2)',
-                border: '1px solid var(--border)',
-                borderRadius: 10,
-                color: 'var(--text)',
-                fontSize: 14,
-                boxSizing: 'border-box',
-                outline: 'none',
-              }}
             />
-            <button
-              type="button"
+            <span
               onClick={() => setShowPassword(!showPassword)}
-              aria-label={showPassword ? 'Nascondi password' : 'Mostra password'}
               style={{
                 position: 'absolute',
                 right: 10,
                 top: '50%',
                 transform: 'translateY(-50%)',
-                background: 'none',
-                border: 'none',
                 color: 'var(--copper)',
                 cursor: 'pointer',
                 padding: '4px',
@@ -107,29 +93,21 @@ export default function LoginPage() {
               }}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
-            </button>
+            </span>
           </div>
           {error && (
             <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>
           )}
-          <button
+          <Button
             type="submit"
-            disabled={loading || !password}
-            style={{
-              width: '100%',
-              padding: '0.82rem',
-              background: loading || !password ? 'rgba(212,155,53,0.18)' : 'var(--copper)',
-              border: '1px solid transparent',
-              borderRadius: 10,
-              color: '#0b0b0b',
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: loading || !password ? 'not-allowed' : 'pointer',
-              letterSpacing: '0.08em',
-            }}
+            variant="primary"
+            size="md"
+            loading={loading}
+            disabled={!password}
+            style={{ width: '100%', borderRadius: 10, padding: '0.82rem', fontSize: 13 }}
           >
             {loading ? 'ACCESSO...' : 'ACCEDI'}
-          </button>
+          </Button>
           <div style={{ marginTop: 14, fontSize: 10, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: '0.06em' }}>
             Accesso interno Olympus
           </div>
