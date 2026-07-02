@@ -904,12 +904,12 @@ export default function ProvidersPage() {
               const quotaKey = resolveQuotaProviderKey(usageData?.quotas, p.provider, activeAliases);
               const quotaMetrics = quotaKey ? usageData?.quotas?.[quotaKey] : null;
               return (
-                <button
+                <Button variant="secondary" size="sm"
                   key={p.provider}
                   onClick={() => {
                     setSelectedProvider(p.provider);
                 setApiKeyModal(null);
-                    if (isMobile) setTab('details');
+                    if (isMobile) setTab("details");
                   }}
                   style={{
                     width: '100%', textAlign: 'left',
@@ -937,7 +937,7 @@ export default function ProvidersPage() {
                     )}
                     {!p.active && <span style={{ fontSize: 9, color: '#555' }}>{p.presetAuth}</span>}
                   </div>
-                </button>
+                </Button>
               );
             })}
           </section>
@@ -1018,10 +1018,10 @@ export default function ProvidersPage() {
                     {selectedOAuth && selectedOAuth.status === 'expiring' && selectedOAuth.remainingMs !== undefined && (
                       <>
                         <span style={{ fontSize: 10, color: '#da3' }}>⚠️ Expiring ({formatRemaining(selectedOAuth.remainingMs)} left)</span>
-                        <button onClick={() => handleRefreshOAuth(selectedProvider)} disabled={!!loginLoading}
+                        <Button variant="secondary" size="sm" onClick={() => handleRefreshOAuth(selectedProvider)} disabled={!!loginLoading}
                           style={{ background: '#2a3a22', border: '1px solid #3a5a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#666' : '#8d8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
                           {loginLoading === selectedProvider ? '⌛' : '🔄'} REFRESH
-                        </button>
+                        </Button>
                       </>
                     )}
 
@@ -1031,7 +1031,7 @@ export default function ProvidersPage() {
                         {selected?.profiles?.count > 0 ? (
                           <span style={{ fontSize: 10, color: '#4a8' }}>✅ Connected (setup token saved)</span>
                         ) : (
-                          <button
+                          <Button variant="secondary" size="sm"
                             onClick={handleClaudeSetupTokenStart}
                             disabled={!!loginLoading}
                             style={{
@@ -1045,7 +1045,7 @@ export default function ProvidersPage() {
                             }}
                           >
                             {loginLoading === 'claude-cli' ? '⌛' : '◆'} SET UP CLAUDE CLI
-                          </button>
+                          </Button>
                         )}
                         <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
                           DISCONNECT
@@ -1167,7 +1167,7 @@ export default function ProvidersPage() {
                       const changed = draft.trim() !== model;
                       return (
                         <div key={alias} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-                          <button
+                          <Button variant="secondary" size="sm"
                             onClick={() => handleRemoveAlias(alias)}
                             disabled={aliasSaving === alias}
                             style={{
@@ -1175,7 +1175,7 @@ export default function ProvidersPage() {
                               cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1,
                             }}
                             title={`Remove alias ${alias}`}
-                          >{aliasSaving === alias ? '…' : '✕'}</button>
+                          >{aliasSaving === alias ? '…' : '✕'}</Button>
                           <span style={{ color: '#D49B35', minWidth: 90 }}>{alias}</span>
                           <input
                             value={draft}
@@ -1186,7 +1186,7 @@ export default function ProvidersPage() {
                               padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                             }}
                           />
-                          <button
+                          <Button variant="secondary" size="sm"
                             onClick={() => handleUpdateAlias(alias)}
                             disabled={aliasSaving === `save:${alias}` || !draft.trim() || !changed}
                             style={{
@@ -1194,7 +1194,7 @@ export default function ProvidersPage() {
                               border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8',
                               fontSize: 10, padding: '4px 8px', cursor: 'pointer',
                             }}
-                          >{aliasSaving === `save:${alias}` ? '…' : 'SAVE'}</button>
+                          >{aliasSaving === `save:${alias}` ? '…' : 'SAVE'}</Button>
                         </div>
                       );
                     })}
@@ -1217,7 +1217,7 @@ export default function ProvidersPage() {
                           padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                         }}
                       />
-                      <button
+                      <Button variant="secondary" size="sm"
                         onClick={handleAddAlias}
                         disabled={aliasSaving === 'add' || !aliasForm.name.trim() || !aliasForm.model.trim()}
                         style={{
@@ -1225,7 +1225,7 @@ export default function ProvidersPage() {
                           border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8',
                           fontSize: 10, padding: '4px 8px', cursor: 'pointer',
                         }}
-                      >{aliasSaving === 'add' ? '…' : '+NEW'}</button>
+                      >{aliasSaving === 'add' ? '…' : '+NEW'}</Button>
                     </div>
                   </div>
                 </Surface>
@@ -1279,11 +1279,11 @@ export default function ProvidersPage() {
                 <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>2. Enter this code:</div>
                 <div style={{ position: 'relative', fontSize: 24, fontWeight: 'bold', color: '#fff', letterSpacing: 6, textAlign: 'center', padding: '12px 16px', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <span>{oauthFlow.userCode}</span>
-                  <button onClick={() => navigator.clipboard.writeText(oauthFlow.userCode!).then(() => { const el = document.getElementById('code-copied-' + oauthFlow.provider); if (el) { el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 1500); } })}
+                  <Button variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(oauthFlow.userCode!).then(() => { const el = document.getElementById('code-copied-' + oauthFlow.provider); if (el) { el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 1500); } })}
                     style={{ position: 'relative', background: 'transparent', border: 'none', color: '#4a8', fontSize: 14, cursor: 'pointer', padding: '4px', lineHeight: 1, flexShrink: 0 }}>
                     📋
                     <span id={'code-copied-' + oauthFlow.provider} style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)', background: '#1a3a4a', color: '#8d8', fontSize: 10, padding: '2px 6px', borderRadius: 3, opacity: 0, transition: 'opacity 0.2s', whiteSpace: 'nowrap', pointerEvents: 'none' }}>Copied!</span>
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -1294,10 +1294,10 @@ export default function ProvidersPage() {
               <span style={{ color: '#4a8' }}>polling every 3s</span>
             </div>
 
-            <button onClick={() => { setOauthFlow(null); if (oauthTimerRef.current) { clearInterval(oauthTimerRef.current); oauthTimerRef.current = null; } }}
+            <Button variant="secondary" size="sm" onClick={() => { setOauthFlow(null); if (oauthTimerRef.current) { clearInterval(oauthTimerRef.current); oauthTimerRef.current = null; } }}
               style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
               CANCEL
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -1342,10 +1342,10 @@ export default function ProvidersPage() {
                       <code style={{ display: 'block', fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '10px 12px', borderRadius: 4, wordBreak: 'break-all', border: '1px solid #1a2a33' }}>
                         {claudeSetupFlow.command}
                       </code>
-                      <button
+                      <Button variant="secondary" size="sm"
                         onClick={() => navigator.clipboard.writeText(claudeSetupFlow.command || '')}
                         style={{ position: 'absolute', top: 4, right: 4, background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: '#8ab', fontSize: 10, padding: '4px 8px', cursor: 'pointer' }}
-                      >📋 COPY</button>
+                      >📋 COPY</Button>
                     </div>
                   </div>
                 )}
@@ -1361,7 +1361,7 @@ export default function ProvidersPage() {
 
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>Then paste the token here:</div>
-                  <input
+                  <Input
                     value={claudeTokenInput}
                     onChange={(e) => setClaudeTokenInput(e.target.value)}
                     placeholder="sk-ant-oat01-..."
@@ -1377,21 +1377,13 @@ export default function ProvidersPage() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
+                  <Button variant="secondary" size="sm" onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
                     style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>
                     CANCEL
-                  </button>
-                  <button
-                    onClick={handleClaudeSetupTokenSave}
-                    disabled={claudeTokenInput.trim().length < 20 || loginLoading === 'claude-cli:save'}
-                    style={{
-                      background: claudeTokenInput.trim().length >= 20 ? '#2a3a22' : 'transparent',
-                      border: '1px solid #3a5a3a', borderRadius: 4,
-                      color: claudeTokenInput.trim().length >= 20 ? '#8d8' : '#555',
-                      fontSize: 10, padding: '6px 12px', cursor: claudeTokenInput.trim().length >= 20 ? 'pointer' : 'default',
-                    }}>
-                    {loginLoading === 'claude-cli:save' ? '⌛ SAVING...' : '💾 SAVE TOKEN'}
-                  </button>
+                  </Button>
+                  <Button variant="primary" size="sm" disabled={claudeTokenInput.trim().length < 20 || loginLoading === "claude-cli:save"} loading={loginLoading === "claude-cli:save"} onClick={handleClaudeSetupTokenSave}>
+                    SAVE TOKEN
+                  </Button>
                 </div>
               </>
             )}
@@ -1408,10 +1400,10 @@ export default function ProvidersPage() {
 
             {/* ── Close button for non-input states ── */}
             {(claudeSetupFlow.status === 'claude_not_found' || claudeSetupFlow.status === 'already_provisioned' || claudeSetupFlow.status === 'unknown' || claudeSetupFlow.status === 'error') && (
-              <button onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
+              <Button variant="secondary" size="sm" onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
                 style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
                 CLOSE
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -1422,14 +1414,14 @@ export default function ProvidersPage() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 8, padding: 20, minWidth: 320 }}>
             <div style={{ fontSize: 12, color: '#d6e2e8', marginBottom: 12 }}>Add API Key for <strong>{selectedProvider}</strong></div>
-            <input value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder="sk-..."
+            <Input value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder="sk-..."
               style={{ width: '100%', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4, padding: '8px 10px', color: '#d6e2e8', fontSize: 11, marginBottom: 12, boxSizing: 'border-box' }} />
             {apiKeyError && (
               <div style={{ fontSize: 10, color: '#d55', marginBottom: 8 }}>{apiKeyError}</div>
             )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setApiKeyModal(null); setApiKeyInput(''); setApiKeyError(''); }} style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>CANCEL</button>
-              <button onClick={() => handleApiKeyConnect(selectedProvider)} disabled={!apiKeyInput.trim() || loginLoading === selectedProvider} style={{ background: '#1a3a4a', border: '1px solid #2a5a7a', borderRadius: 4, color: loginLoading === selectedProvider ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading === selectedProvider ? 'wait' : 'pointer' }}>{loginLoading === selectedProvider ? 'CONNECTING...' : 'CONNECT'}</button>
+              <Button variant="secondary" size="sm" onClick={() => { setApiKeyModal(null); setApiKeyInput(''); setApiKeyError(''); }} style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>CANCEL</Button>
+              <Button variant="secondary" size="sm" onClick={() => handleApiKeyConnect(selectedProvider)} disabled={!apiKeyInput.trim() || loginLoading === selectedProvider} style={{ background: '#1a3a4a', border: '1px solid #2a5a7a', borderRadius: 4, color: loginLoading === selectedProvider ? '#888' : '#d6e2e8', fontSize: 10, padding: '6px 12px', cursor: loginLoading === selectedProvider ? 'wait' : 'pointer' }}>{loginLoading === selectedProvider ? 'CONNECTING...' : 'CONNECT'}</Button>
             </div>
           </div>
         </div>
