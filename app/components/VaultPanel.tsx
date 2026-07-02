@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Button, Pill } from './ui';
+import { Button, Input, Pill } from './ui';
 import PasswordInput from './PasswordInput';
 import { apiFetch } from '@/lib/apiFetch';
 
