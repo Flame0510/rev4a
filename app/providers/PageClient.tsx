@@ -1031,20 +1031,8 @@ export default function ProvidersPage() {
                         {selected?.profiles?.count > 0 ? (
                           <span style={{ fontSize: 10, color: '#4a8' }}>✅ Connected (setup token saved)</span>
                         ) : (
-                          <Button variant="secondary" size="sm"
-                            onClick={handleClaudeSetupTokenStart}
-                            disabled={!!loginLoading}
-                            style={{
-                              background: '#1a2a33',
-                              border: '1px solid #2a4a5a',
-                              borderRadius: 4,
-                              color: loginLoading && loginLoading !== 'claude-cli' ? '#888' : '#d6e2e8',
-                              fontSize: 10, padding: '6px 12px',
-                              cursor: loginLoading ? 'wait' : 'pointer',
-                              opacity: loginLoading && loginLoading !== 'claude-cli' ? 0.4 : 1,
-                            }}
-                          >
-                            {loginLoading === 'claude-cli' ? '⌛' : '◆'} SET UP CLAUDE CLI
+                          <Button variant="secondary" size="sm" loading={loginLoading === 'claude-cli'} disabled={!!loginLoading} onClick={handleClaudeSetupTokenStart}>
+                            SET UP CLAUDE CLI
                           </Button>
                         )}
                         <Button variant="danger" size="sm" disabled={!!loginLoading} onClick={() => handleDisconnect(selectedProvider)}>
@@ -1217,15 +1205,9 @@ export default function ProvidersPage() {
                           padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                         }}
                       />
-                      <Button variant="secondary" size="sm"
-                        onClick={handleAddAlias}
-                        disabled={aliasSaving === 'add' || !aliasForm.name.trim() || !aliasForm.model.trim()}
-                        style={{
-                          background: aliasSaving === 'add' || !aliasForm.name.trim() || !aliasForm.model.trim() ? 'transparent' : '#1a2a33',
-                          border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8',
-                          fontSize: 10, padding: '4px 8px', cursor: 'pointer',
-                        }}
-                      >{aliasSaving === 'add' ? '…' : '+NEW'}</Button>
+                      <Button variant="secondary" size="sm" onClick={handleAddAlias} disabled={aliasSaving === "add" || !aliasForm.name.trim() || !aliasForm.model.trim()}>
+                          +NEW
+                        </Button>
                     </div>
                   </div>
                 </Surface>
