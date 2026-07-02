@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Button, Pill } from '../components/ui';
 
 interface ContainerInfo {
   id: string;
@@ -39,23 +40,23 @@ export default function ContainersPage() {
       <h1 style={{ fontSize: 22, fontWeight: 400, color: 'var(--copper)', letterSpacing: 2, marginBottom: 4 }}>CONTAINERS</h1>
       <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 20 }}>
         {containers.length} container · {new Date().toLocaleTimeString('it-IT')}
-        <button onClick={load} style={{ marginLeft: 12, background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 12 }}>↻</button>
+        <Button variant="ghost" size="sm" onClick={load}>↻</Button>
       </p>
 
       {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
-      {error && <p style={{ color: '#ef4444' }}>{error}</p>}
+      {error && <p className="error-text">{error}</p>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {containers.map(c => (
           <div key={c.id} style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{
               width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-              background: c.state === 'running' ? '#22c55e' : (c.state === 'restarting' ? '#f59e0b' : '#ef4444')
+              background: c.state === 'running' ? 'var(--green)' : (c.state === 'restarting' ? 'var(--yellow)' : 'var(--red)')
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</span>
-                {c.agentId && <span style={{ fontSize: 11, background: 'rgba(212,155,53,0.15)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 3, border: '1px solid rgba(212,155,53,0.3)' }}>{c.agentId}</span>}
+                {c.agentId && <Pill tone="accent">{c.agentId}</Pill>}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <span>{c.image}</span>
@@ -67,15 +68,7 @@ export default function ContainersPage() {
               {c.state === 'running' && (
                 <a
                   href={`/containers/terminal/${encodeURIComponent(c.name)}`}
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 4,
-                    background: 'transparent',
-                    color: 'var(--copper)',
-                    fontSize: 10,
-                    padding: '4px 8px',
-                    textDecoration: 'none',
-                  }}
+                  className="container-terminal-link"
                 >
                   TERMINAL
                 </a>
