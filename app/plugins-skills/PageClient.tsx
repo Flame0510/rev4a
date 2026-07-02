@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Pill, LoadingSpinner, Surface } from '../components/ui';
+import { Button, Pill, LoadingSpinner } from '../components/ui';
 
 type BadgeColor = 'green' | 'red' | 'gray' | 'copper' | 'blue';
 

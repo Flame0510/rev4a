@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill } from '../components/ui';
-import OlympusLoader from '../components/OlympusLoader';
+import { LoadingSpinner } from '../components/ui';
 import type { Tone } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
@@ -204,7 +204,7 @@ export default function CronsPage() {
         <span className="crons-header__meta">{sessions.length} runs in history</span>
       </div>
 
-      {loading && <OlympusLoader label="LOADING CRONS" compact />}
+      {loading && <LoadingSpinner compact />}
 
       {isMobile && (
         <div className="crons-mobile-tabs">

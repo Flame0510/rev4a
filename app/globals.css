@@ -1186,9 +1186,6 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ui-tone--danger { border-color: #7f1d1d; }
 .ui-muted { color: var(--text-dim); }
 .ui-metric-value { margin-top: 14px; font-size: 26px; font-weight: 800; color: var(--text); }
-.ui-tone--accent .ui-metric-value { color: var(--copper); }
-.ui-tone--success .ui-metric-value { color: var(--green); }
-.ui-tone--warning .ui-metric-value { color: #f59e0b; }
 .ui-tone--danger .ui-metric-value { color: var(--red); }
 .ui-metric-subtitle { margin-top: 8px; font-size: 11px; }
 .ui-card-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
