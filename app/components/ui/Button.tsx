@@ -3,7 +3,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import type { Tone } from './tokens';
 
-type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
+type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'success';
 type ButtonSize = 'sm' | 'md';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -19,6 +19,7 @@ const variantClasses: Record<ButtonVariant, string> = {
   secondary: 'ui-btn--secondary',
   danger: 'ui-btn--danger',
   ghost: 'ui-btn--ghost',
+  success: 'ui-btn--success',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
