@@ -69,7 +69,7 @@ export default function LoginPage() {
           <img src="/olympus-logo.png" alt="Olympus" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14 }} />
           <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--copper)' }}>OLYMPUS</div>
           <div style={{ marginTop: 8, color: 'var(--text-dim)', fontSize: 11, letterSpacing: '0.12em' }}>
-            AGENCY MONITOR — ACCESSO RISERVATO
+            AGENCY MONITOR — RESTRICTED ACCESS
           </div>
         </div>
 
@@ -83,7 +83,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Inserisci la password"
+              placeholder="Enter admin password"
               autoFocus
             />
             <span
@@ -107,19 +107,15 @@ export default function LoginPage() {
           {error && (
             <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>
           )}
-          <Button
+          <button
             type="submit"
-            variant="primary"
-            size="md"
-            loading={loading}
-            disabled={!password || loading}
             className="login-submit-btn"
-
+            disabled={!password || loading}
           >
-            {loading ? 'ACCESSO...' : 'ACCEDI'}
-          </Button>
+            {loading ? 'ACCESSING...' : 'LOGIN'}
+          </button>
           <div style={{ marginTop: 14, fontSize: 10, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: '0.06em' }}>
-            Accesso interno Olympus
+            Internal Olympus access
           </div>
         </form>
       </div>
