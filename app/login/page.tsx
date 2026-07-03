@@ -103,7 +103,7 @@ export default function LoginPage() {
             variant="primary"
             size="md"
             loading={loading}
-            disabled={!password}
+            disabled={!password || loading}
             className="login-submit-btn"
 
           >
