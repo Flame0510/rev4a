@@ -69,7 +69,6 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on thi
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
-| `/chat` | Chat interface |
 | `/crons` | Scheduled jobs |
 | `/providers` | LLM provider configuration |
 | `/plugins` | Plugin manager |

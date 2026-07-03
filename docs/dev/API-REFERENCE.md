@@ -1,6 +1,6 @@
 # Olympus API Reference
 
-> **Last updated:** 2026-07-02
+> **Last updated:** 2026-07-03
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -235,131 +235,6 @@ Restart the Olympus server (via systemd).
 **Auth:** browser cookie
 
 **Response:** `{ "status": "ok", "message": "Service restarted" }`
-
----
-
-## Chat
-
-### `POST /api/chat`
-Send a message to an agent session and receive the reply as Server-Sent Events.
-
-**Auth:** browser cookie
-
-**Body:**
-```json
-{
-  "message": "Summarize the latest failures",
-  "agentId": "ops",
-  "sessionKey": "agent:ops:chat:web:existing-session",
-  "model": "openai/gpt-5.4"
-}
-```
-
-**Notes:**
-- `message` is required.
-- If `sessionKey` is omitted or set to `"new"`, the server creates a new key.
-- The backend invokes `openclaw agent ...` and stores both sides of the conversation in `chat_messages`.
-
-**Response:** `text/event-stream`
-
-The first event contains session metadata:
-```json
-{ "sessionKey": "agent:ops:chat:web:..." }
-```
-
-Subsequent events stream OpenAI-style chunks:
-```json
-{ "choices": [{ "delta": { "content": "Hello" } }] }
-```
-
-The stream ends with:
-```text
-data: [DONE]
-```
-
-**Error:** `400` if the JSON body is invalid or `message` is missing.
-
-### `GET /api/chat/history?sessionKey=<key>&limit=100`
-Return stored chat messages for one session.
-
-**Auth:** browser cookie
-
-**Query params:**
-- `sessionKey` (required)
-- `limit` (optional, default `100`, max `500`)
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "ts": 1751270000000,
-    "user_id": "user",
-    "role": "user",
-    "content": "Hello",
-    "openclaw_session_id": "agent:ops:chat:web:...",
-    "model": "openai/gpt-5.4"
-  }
-]
-```
-
-**Error:** `400` if `sessionKey` is missing.
-
-### `GET /api/chat/sessions?agentId=<id>&limit=30`
-List recent chat-capable OpenClaw sessions, enriched with message counts and source labels.
-
-**Auth:** browser cookie
-
-**Query params:**
-- `agentId` (optional)
-- `limit` (optional, default `30`, max `100`)
-
-**Response:**
-```json
-[
-  {
-    "sessionId": "session_123",
-    "key": "agent:ops:chat:web:...",
-    "label": "Chat Jun 30",
-    "msgCount": 8,
-    "preview": "Summarize the latest failures",
-    "lastTs": 1751270000000,
-    "source": "web",
-    "model": "openai/gpt-5.4",
-    "kind": "direct",
-    "inputTokens": 1200,
-    "outputTokens": 320
-  }
-]
-```
-
-**Notes:**
-- Results are cached in memory for 10 seconds.
-- On upstream failure, the route returns stale cached data if available.
-
-### `POST /api/chat/delete-session`
-Mark a session as archived from the UI perspective.
-
-**Auth:** browser cookie
-
-**Body:**
-```json
-{ "sessionKey": "agent:ops:chat:web:..." }
-```
-
-**Response:**
-```json
-{
-  "ok": true,
-  "message": "Session archived. OpenClaw manages session lifecycle automatically."
-}
-```
-
-**Notes:**
-- This route does not delete data from OpenClaw or SQLite.
-- It acknowledges the request because session lifecycle is managed upstream.
-
-**Error:** `400` if `sessionKey` is missing.
 
 ---
 
@@ -1353,16 +1228,38 @@ Chat with the built-in AI assistant (PYTHIA).
 **Body:**
 ```json
 {
-  "message": "What is the total cost this month?",
-  "page": "/",
-  "history": [ { "role": "user", "content": "..." }, { "role": "assistant", "content": "..." } ]
+  "message": "What can I do on the Agents page?",
+  "page": "/agents",
+  "model": "deepseek/deepseek-v4-flash",
+  "history": []
 }
 ```
 
-**Response:**
-```json
-{ "reply": "The total cost this month is $6.40 across 47 sessions." }
+| Field     | Type                    | Required | Description                                      |
+|-----------|-------------------------|----------|--------------------------------------------------|
+| `message` | string                  | yes      | The user's question                              |
+| `page`    | string                  | no       | Current page path (used for contextual prompts)  |
+| `model`   | string                  | no       | AI model to use (e.g. `deepseek/deepseek-v4-flash`) |
+| `history` | `{role, content}[]`     | no       | Recent conversation history (up to 10 messages)  |
+
+**Response:** `text/event-stream` (Server-Sent Events)
+
+PYTHIA streams the assistant response as SSE chunks. Each chunk follows the
+[OpenAI streaming format](https://platform.openai.com/docs/api-reference/chat/streaming):
+```text
+data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}
+
+data: {"choices":[{"delta":{"content":"! How can"},"index":0}]}
+
+data: [DONE]
 ```
+
+**Errors:** JSON `{ "error": "..." }` with the appropriate HTTP status code.
+
+**Notes:**
+- PYTHIA routes the request **directly to the upstream provider** (not via the local Provider Gateway), using the API key from `data/provider-keys.json`.
+- The system prompt is built dynamically based on `PAGE_CONTEXT` (hardcoded in the route handler) — no database access.
+- PYTHIA does **not** have access to live data; she only knows page descriptions and navigation links.
 
 ---
 
