@@ -66,7 +66,7 @@ export default function LoginPage() {
         }}
       >
         <div style={{ padding: '22px 24px 18px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-          <img src="/olympus-logo.png" alt="Olympus" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14 }} />
+          <img src="/olympus-logo.png" alt="Olympus" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(212,155,53,0.25))' }} />
           <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--copper)' }}>OLYMPUS</div>
           <div style={{ marginTop: 8, color: 'var(--text-dim)', fontSize: 11, letterSpacing: '0.12em' }}>
             AGENCY MONITOR — RESTRICTED ACCESS
@@ -113,7 +113,7 @@ export default function LoginPage() {
             size="md"
             loading={loading}
             disabled={!password || loading}
-            className="login-submit-btn"
+            style={{ width: '100%' }}
           >
             {loading ? 'ACCESSING...' : 'LOGIN'}
           </Button>
