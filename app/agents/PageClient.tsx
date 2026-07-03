@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button } from '../components/ui';
+import { Button, ListItem, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 interface Agent {
@@ -230,20 +230,19 @@ export default function AgentsPageClient() {
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
-            <button key={agent.id} className="agent-list-item" onClick={() => selectAgent(agent)}
-            >
+            <ListItem key={agent.id} onClick={() => selectAgent(agent)} style={{ padding: '12px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.name}</span>
                 {agent.template && (
-                  <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 3, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
+                  <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                 )}
               </div>
               <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
                 {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
                 {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
               </div>
-            </button>
+            </ListItem>
           ))}
         </div>
       </div>
@@ -276,13 +275,12 @@ export default function AgentsPageClient() {
           {filtered.map((agent) => {
             const isSelected = selected?.id === agent.id;
             return (
-              <button key={agent.id} className="agent-list-item" onClick={() => setSelected(agent)}
-              >
+              <ListItem key={agent.id} onClick={() => setSelected(agent)} active={isSelected} style={{ padding: '12px 14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
                   <span style={{ color: isSelected ? 'var(--copper)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.name}</span>
                   {agent.template && (
-                    <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 3, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
+                    <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: '#666', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -290,7 +288,7 @@ export default function AgentsPageClient() {
                   {agent.ip && <span>{agent.ip}</span>}
                   {agent.ports && <span style={{ color: '#888' }}>{agent.ports}</span>}
                 </div>
-              </button>
+              </ListItem>
             );
           })}
         </div>
@@ -341,7 +339,7 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
         style={{
           maxWidth: 800, width: '100%', maxHeight: '85vh',
           background: '#111', border: '1px solid var(--border)',
-          borderRadius: 8, display: 'flex', flexDirection: 'column',
+          borderRadius: 0, display: 'flex', flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
@@ -402,7 +400,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   return (
     <div style={{ display: 'grid', gap: 12, maxWidth: 600, margin: '16px auto', paddingBottom: 24 }}>
       {/* Status */}
-      <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', padding: '14px 16px' }}>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', padding: '14px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
           <span style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
           <div>
@@ -410,7 +408,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
             <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{agent.status}</div>
           </div>
           {agent.template && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(212,155,53,0.25)' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '3px 8px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>
               template: {agent.template}
             </span>
           )}
@@ -418,7 +416,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       </div>
 
       {/* Properties */}
-      <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>PROPERTIES</div>
         {([
           ['Agent ID', agent.agentId],
@@ -439,7 +437,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       </div>
 
       {/* Config — View openclaw.json */}
-      <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>CONFIG</div>
         <div style={{ padding: '12px 14px' }}>
           <Button variant="secondary" size="sm" onClick={() => setShowConfig(true)}>
@@ -453,8 +451,8 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Access — Traefik URL (token inline nel link) */}
       {agent.traefikUrl && (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ACCESSO</div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ACCESS TOKEN</div>
           <div style={{ padding: '7px 14px', fontSize: 12 }}>
             <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
             <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
@@ -468,7 +466,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
       {/* Delete */}
-      <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
+      <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(239,68,68,0.15)', color: '#ef4444', fontSize: 10, letterSpacing: '0.08em' }}>DANGER ZONE</div>
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
@@ -485,7 +483,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Env */}
       {agent.env.length > 0 && (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', overflow: 'hidden' }}>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
           <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ENV (AGENT_ / MODEL_)</div>
           {agent.env.map((e) => (
             <div key={e} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: '#aaa', fontFamily: 'var(--font-mono-stack)' }}>

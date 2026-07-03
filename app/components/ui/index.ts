@@ -12,3 +12,5 @@ export * from './StatusCard';
 export * from './Surface';
 export * from './Toast';
 export * from './tokens';
+export * from './Tabs';
+export * from './ItemList';

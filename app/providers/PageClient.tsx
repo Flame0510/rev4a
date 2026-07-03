@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Input, Pill, Surface, LoadingSpinner, toneVars } from '../components/ui';
+import { Button, Input, Pill, Surface, LoadingSpinner, toneVars, ListItem } from '../components/ui';
 import type { Tone } from '../components/ui';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
@@ -862,7 +862,7 @@ export default function ProvidersPage() {
                 setSelectedProvider('');
               }}
               style={{
-                background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4,
+                background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 0,
                 color: '#d6e2e8', fontSize: 10, padding: '3px 6px', outline: 'none', cursor: 'pointer',
               }}
             >
@@ -904,19 +904,13 @@ export default function ProvidersPage() {
               const quotaKey = resolveQuotaProviderKey(usageData?.quotas, p.provider, activeAliases);
               const quotaMetrics = quotaKey ? usageData?.quotas?.[quotaKey] : null;
               return (
-                <Button variant="secondary" size="sm"
-                  key={p.provider}
+                <ListItem key={p.provider}
+                  active={isActive}
+                  /* disabled={!p.active} — allow selection even when inactive for setup */
                   onClick={() => {
                     setSelectedProvider(p.provider);
                 setApiKeyModal(null);
                     if (isMobile) setTab("details");
-                  }}
-                  style={{
-                    width: '100%', textAlign: 'left',
-                    background: isActive ? '#1a1208' : 'transparent',
-                    border: 'none', borderBottom: '1px solid var(--border)',
-                    color: 'var(--text)', padding: '10px 12px', cursor: 'pointer',
-                    opacity: p.active ? 1 : 0.6,
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -937,7 +931,7 @@ export default function ProvidersPage() {
                     )}
                     {!p.active && <span style={{ fontSize: 9, color: '#555' }}>{p.presetAuth}</span>}
                   </div>
-                </Button>
+                </ListItem>
               );
             })}
           </section>
@@ -1019,7 +1013,7 @@ export default function ProvidersPage() {
                       <>
                         <span style={{ fontSize: 10, color: '#da3' }}>⚠️ Expiring ({formatRemaining(selectedOAuth.remainingMs)} left)</span>
                         <Button variant="secondary" size="sm" onClick={() => handleRefreshOAuth(selectedProvider)} disabled={!!loginLoading}
-                          style={{ background: '#2a3a22', border: '1px solid #3a5a3a', borderRadius: 4, color: loginLoading === selectedProvider ? '#666' : '#8d8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
+                          style={{ background: '#2a3a22', border: '1px solid #3a5a3a', borderRadius: 0, color: loginLoading === selectedProvider ? '#666' : '#8d8', fontSize: 10, padding: '6px 12px', cursor: loginLoading ? 'wait' : 'pointer', opacity: loginLoading && loginLoading !== selectedProvider ? 0.4 : 1 }}>
                           {loginLoading === selectedProvider ? '⌛' : '🔄'} REFRESH
                         </Button>
                       </>
@@ -1080,12 +1074,12 @@ export default function ProvidersPage() {
                           REMOVE KEY
                         </Button>
                         {revealedFor === selectedProvider && revealedKey && (
-                          <div style={{ width: '100%', marginTop: 8, padding: '8px 10px', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4, fontSize: 11, color: '#8d8', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+                          <div style={{ width: '100%', marginTop: 8, padding: '8px 10px', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 0, fontSize: 11, color: '#8d8', wordBreak: 'break-all', fontFamily: 'monospace' }}>
                             {revealedKey}
                           </div>
                         )}
                         {revealError && (
-                          <div style={{ width: '100%', marginTop: 8, padding: '8px 10px', background: '#1a1010', border: '1px solid #4a2525', borderRadius: 4, fontSize: 11, color: '#e88' }}>
+                          <div style={{ width: '100%', marginTop: 8, padding: '8px 10px', background: '#1a1010', border: '1px solid #4a2525', borderRadius: 0, fontSize: 11, color: '#e88' }}>
                             {revealError}
                           </div>
                         )}
@@ -1096,10 +1090,10 @@ export default function ProvidersPage() {
                   {/* nothing — oauthFlow is now a full modal below */}
 
                   {ttyCommand && (
-                    <div style={{ margin: '4px 12px 8px', padding: 8, background: '#1a1a0d', border: '1px solid #5a5a3a', borderRadius: 4 }}>
+                    <div style={{ margin: '4px 12px 8px', padding: 8, background: '#1a1a0d', border: '1px solid #5a5a3a', borderRadius: 0 }}>
                       <div style={{ fontSize: 10, color: '#da3', marginBottom: 4 }}>⚠️ TTY Required</div>
                       <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>This provider requires an interactive terminal for OAuth. Run this command on the server:</div>
-                      <code style={{ fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '6px 8px', borderRadius: 4, display: 'block', wordBreak: 'break-all', marginTop: 4 }}>{ttyCommand}</code>
+                      <code style={{ fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '6px 8px', borderRadius: 0, display: 'block', wordBreak: 'break-all', marginTop: 4 }}>{ttyCommand}</code>
                       <Button variant="ghost" size="sm" onClick={() => setTtyCommand(null)}>DISMISS</Button>
                     </div>
                   )}
@@ -1119,7 +1113,7 @@ export default function ProvidersPage() {
                       </>
                     )}
                     {hasQuotaMetrics(selectedQuotaMetrics) ? selectedQuotaMetrics.map((metric) => (
-                      <div key={`${selectedProvider}-${metric.label}-${metric.period}`} style={{ border: '1px solid rgba(42,122,148,0.25)', background: 'rgba(15,30,38,0.75)', borderRadius: 6, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div key={`${selectedProvider}-${metric.label}-${metric.period}`} style={{ border: '1px solid rgba(42,122,148,0.25)', background: 'rgba(15,30,38,0.75)', borderRadius: 0, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 10 }}>
                           <span style={{ color: '#d6e2e8' }}>{metric.label}</span>
                           <span style={{ color: metric.pct >= 90 ? 'var(--danger)' : '#4a7a94' }}>{metric.pct.toFixed(0)}%</span>
@@ -1128,8 +1122,8 @@ export default function ProvidersPage() {
                           <span>{formatMetricValue(metric.used, metric.unit)} / {formatMetricValue(metric.limit, metric.unit)}</span>
                           <span>{formatMetricValue(metric.remaining, metric.unit)} remaining · {periodLabel(metric.period)}</span>
                         </div>
-                        <div style={{ height: 5, background: '#12232c', borderRadius: 999, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${metric.pct}%`, background: metric.pct >= 90 ? 'var(--danger)' : '#2a7a94', borderRadius: 999 }} />
+                        <div style={{ height: 5, background: '#12232c', borderRadius: 0, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${metric.pct}%`, background: metric.pct >= 90 ? 'var(--danger)' : '#2a7a94', borderRadius: 0 }} />
                         </div>
                         {metric.resetAt && <span style={{ fontSize: 9, color: '#666' }}>resets {formatDateTimeInTimezone(metric.resetAt, {}, timezone)}</span>}
                         {(metric.source && metric.source !== 'api') && <span style={{ fontSize: 9, color: '#D49B35' }}>source: {metric.source}</span>}
@@ -1170,7 +1164,7 @@ export default function ProvidersPage() {
                             onChange={(e) => setAliasDrafts((prev) => ({ ...prev, [alias]: e.target.value }))}
                             placeholder="provider/model"
                             style={{
-                              flex: 1, background: '#0a141a', border: changed ? '1px solid #D49B35' : '1px solid #1a2a33', borderRadius: 4,
+                              flex: 1, background: '#0a141a', border: changed ? '1px solid #D49B35' : '1px solid #1a2a33', borderRadius: 0,
                               padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                             }}
                           />
@@ -1179,7 +1173,7 @@ export default function ProvidersPage() {
                             disabled={aliasSaving === `save:${alias}` || !draft.trim() || !changed}
                             style={{
                               background: aliasSaving === `save:${alias}` || !draft.trim() || !changed ? 'transparent' : '#1a2a33',
-                              border: '1px solid #2a4a5a', borderRadius: 4, color: '#d6e2e8',
+                              border: '1px solid #2a4a5a', borderRadius: 0, color: '#d6e2e8',
                               fontSize: 10, padding: '4px 8px', cursor: 'pointer',
                             }}
                           >{aliasSaving === `save:${alias}` ? '…' : 'SAVE'}</Button>
@@ -1192,7 +1186,7 @@ export default function ProvidersPage() {
                         onChange={(e) => setAliasForm(f => ({ ...f, name: e.target.value }))}
                         placeholder="new alias"
                         style={{
-                          flex: '0 0 90px', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4,
+                          flex: '0 0 90px', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 0,
                           padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                         }}
                       />
@@ -1201,7 +1195,7 @@ export default function ProvidersPage() {
                         onChange={(e) => setAliasForm(f => ({ ...f, model: e.target.value }))}
                         placeholder="target model"
                         style={{
-                          flex: 1, background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4,
+                          flex: 1, background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 0,
                           padding: '4px 6px', fontSize: 10, color: '#d6e2e8', outline: 'none',
                         }}
                       />
@@ -1241,7 +1235,7 @@ export default function ProvidersPage() {
       {/* ── OAuth device code modal ── */}
       {oauthFlow && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 8, padding: 24, minWidth: 340, maxWidth: 460 }}>
+          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 0, padding: 24, minWidth: 340, maxWidth: 460 }}>
             <div style={{ fontSize: 14, color: '#d6e2e8', marginBottom: 16 }}>
               Authorize <strong style={{ color: 'var(--copper)' }}>{oauthFlow.provider.toUpperCase()}</strong>
             </div>
@@ -1250,7 +1244,7 @@ export default function ProvidersPage() {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>1. Open this URL in your browser:</div>
                 <a href={oauthFlow.verificationUri} target="_blank"
-                  style={{ display: 'block', fontSize: 12, color: '#6af', wordBreak: 'break-all', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 4, padding: '8px 10px', textDecoration: 'none' }}>
+                  style={{ display: 'block', fontSize: 12, color: '#6af', wordBreak: 'break-all', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 0, padding: '8px 10px', textDecoration: 'none' }}>
                   {oauthFlow.verificationUri}
                 </a>
               </div>
@@ -1259,12 +1253,12 @@ export default function ProvidersPage() {
             {oauthFlow.userCode && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>2. Enter this code:</div>
-                <div style={{ position: 'relative', fontSize: 24, fontWeight: 'bold', color: '#fff', letterSpacing: 6, textAlign: 'center', padding: '12px 16px', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <div style={{ position: 'relative', fontSize: 24, fontWeight: 'bold', color: '#fff', letterSpacing: 6, textAlign: 'center', padding: '12px 16px', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <span>{oauthFlow.userCode}</span>
                   <Button variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(oauthFlow.userCode!).then(() => { const el = document.getElementById('code-copied-' + oauthFlow.provider); if (el) { el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 1500); } })}
                     style={{ position: 'relative', background: 'transparent', border: 'none', color: '#4a8', fontSize: 14, cursor: 'pointer', padding: '4px', lineHeight: 1, flexShrink: 0 }}>
                     📋
-                    <span id={'code-copied-' + oauthFlow.provider} style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)', background: '#1a3a4a', color: '#8d8', fontSize: 10, padding: '2px 6px', borderRadius: 3, opacity: 0, transition: 'opacity 0.2s', whiteSpace: 'nowrap', pointerEvents: 'none' }}>Copied!</span>
+                    <span id={'code-copied-' + oauthFlow.provider} style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)', background: '#1a3a4a', color: '#8d8', fontSize: 10, padding: '2px 6px', borderRadius: 0, opacity: 0, transition: 'opacity 0.2s', whiteSpace: 'nowrap', pointerEvents: 'none' }}>Copied!</span>
                   </Button>
                 </div>
               </div>
@@ -1277,7 +1271,7 @@ export default function ProvidersPage() {
             </div>
 
             <Button variant="secondary" size="sm" onClick={() => { setOauthFlow(null); if (oauthTimerRef.current) { clearInterval(oauthTimerRef.current); oauthTimerRef.current = null; } }}
-              style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
+              style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 0, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
               CANCEL
             </Button>
           </div>
@@ -1287,7 +1281,7 @@ export default function ProvidersPage() {
       {/* ── Claude CLI setup-token modal ── */}
       {claudeSetupFlow && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 8, padding: 24, minWidth: 380, maxWidth: 520 }}>
+          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 0, padding: 24, minWidth: 380, maxWidth: 520 }}>
             <div style={{ fontSize: 14, color: '#d6e2e8', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ color: 'var(--copper)' }}>◆</span> Claude CLI Setup Token
             </div>
@@ -1321,12 +1315,12 @@ export default function ProvidersPage() {
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 10, color: '#8ab', marginBottom: 4 }}>Run this command on the target:</div>
                     <div style={{ position: 'relative' }}>
-                      <code style={{ display: 'block', fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '10px 12px', borderRadius: 4, wordBreak: 'break-all', border: '1px solid #1a2a33' }}>
+                      <code style={{ display: 'block', fontSize: 11, color: '#d6e2e8', background: '#0a0a0a', padding: '10px 12px', borderRadius: 0, wordBreak: 'break-all', border: '1px solid #1a2a33' }}>
                         {claudeSetupFlow.command}
                       </code>
                       <Button variant="secondary" size="sm"
                         onClick={() => navigator.clipboard.writeText(claudeSetupFlow.command || '')}
-                        style={{ position: 'absolute', top: 4, right: 4, background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 4, color: '#8ab', fontSize: 10, padding: '4px 8px', cursor: 'pointer' }}
+                        style={{ position: 'absolute', top: 4, right: 4, background: '#1a2a33', border: '1px solid #2a4a5a', borderRadius: 0, color: '#8ab', fontSize: 10, padding: '4px 8px', cursor: 'pointer' }}
                       >📋 COPY</Button>
                     </div>
                   </div>
@@ -1348,7 +1342,7 @@ export default function ProvidersPage() {
                     onChange={(e) => setClaudeTokenInput(e.target.value)}
                     placeholder="sk-ant-oat01-..."
                     style={{
-                      width: '100%', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 4,
+                      width: '100%', background: '#0a141a', border: '1px solid #1a3a4a', borderRadius: 0,
                       padding: '8px 10px', color: '#d6e2e8', fontSize: 11, boxSizing: 'border-box',
                     }}
                   />
@@ -1360,7 +1354,7 @@ export default function ProvidersPage() {
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                   <Button variant="secondary" size="sm" onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
-                    style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>
+                    style={{ background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 0, color: '#888', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}>
                     CANCEL
                   </Button>
                   <Button variant="primary" size="sm" disabled={claudeTokenInput.trim().length < 20 || loginLoading === "claude-cli:save"} loading={loginLoading === "claude-cli:save"} onClick={handleClaudeSetupTokenSave}>
@@ -1383,7 +1377,7 @@ export default function ProvidersPage() {
             {/* ── Close button for non-input states ── */}
             {(claudeSetupFlow.status === 'claude_not_found' || claudeSetupFlow.status === 'already_provisioned' || claudeSetupFlow.status === 'unknown' || claudeSetupFlow.status === 'error') && (
               <Button variant="secondary" size="sm" onClick={() => { setClaudeSetupFlow(null); setClaudeTokenInput(''); }}
-                style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 4, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
+                style={{ width: '100%', background: 'transparent', border: '1px solid #2a4a5a', borderRadius: 0, color: '#888', fontSize: 10, padding: '8px 12px', cursor: 'pointer' }}>
                 CLOSE
               </Button>
             )}
@@ -1394,10 +1388,10 @@ export default function ProvidersPage() {
       {/* ── API Key modal (global, outside provider sections) ── */}
       {apiKeyModal && apiKeyModal === selectedProvider && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 8, padding: 20, minWidth: 320 }}>
+          <div style={{ background: '#0f1a22', border: '1px solid #1a3a4a', borderRadius: 0, padding: 20, minWidth: 320 }}>
             <div style={{ fontSize: 12, color: '#d6e2e8', marginBottom: 12 }}>Add API Key for <strong>{selectedProvider}</strong></div>
             <Input value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder="sk-..."
-              style={{ width: '100%', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 4, padding: '8px 10px', color: '#d6e2e8', fontSize: 11, marginBottom: 12, boxSizing: 'border-box' }} />
+              style={{ width: '100%', background: '#0a141a', border: '1px solid #1a2a33', borderRadius: 0, padding: '8px 10px', color: '#d6e2e8', fontSize: 11, marginBottom: 12, boxSizing: 'border-box' }} />
             {apiKeyError && (
               <div style={{ fontSize: 10, color: '#d55', marginBottom: 8 }}>{apiKeyError}</div>
             )}

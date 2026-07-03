@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, type Tone } from '../components/ui';
+import { Button, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 /* ------------------------------------------------------------------ */
@@ -80,7 +80,7 @@ function FallbackSelector({
         style={{
           cursor: 'pointer',
           padding: '8px 10px',
-          borderRadius: 6,
+          borderRadius: 0,
           border: '1px solid var(--border)',
           background: 'var(--surface)',
           fontSize: 12,
@@ -108,7 +108,7 @@ function FallbackSelector({
                 alignItems: 'center',
                 gap: 4,
                 padding: '3px 8px',
-                borderRadius: 999,
+                borderRadius: 0,
                 background: 'rgba(212,155,53,0.14)',
                 border: '1px solid rgba(212,155,53,0.24)',
                 fontSize: 11,
@@ -134,7 +134,7 @@ function FallbackSelector({
             marginTop: 4,
             background: 'var(--surface)',
             border: '1px solid var(--border)',
-            borderRadius: 6,
+            borderRadius: 0,
             maxHeight: 220,
             overflowY: 'auto',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
@@ -235,7 +235,7 @@ function AgentEditForm({
               background: 'var(--bg3)',
               color: 'var(--text)',
               border: '1px solid var(--border)',
-              borderRadius: 4,
+              borderRadius: 0,
               fontSize: 11,
               padding: '6px 28px 6px 8px',
               fontFamily: 'var(--font-mono-stack)',
@@ -267,7 +267,7 @@ function AgentEditForm({
             gap: 4,
             padding: 4,
             minHeight: 36,
-            borderRadius: 6,
+            borderRadius: 0,
             border: '1px solid var(--border)',
             background: 'var(--surface)',
           }}>
@@ -287,7 +287,7 @@ function AgentEditForm({
                     alignItems: 'center',
                     gap: 3,
                     padding: '3px 8px',
-                    borderRadius: 999,
+                    borderRadius: 0,
                     fontSize: 11,
                     cursor: 'pointer',
                     background: isSelected
@@ -564,12 +564,12 @@ export default function GatewayPageClient() {
   if (loading) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Olympus" title="Gateway" description="Caricamento…" />
+        <PageHeader eyebrow="Olympus" title="Gateway" description="Loading…" />
         <div style={{ display: 'grid', gap: 12 }}>
           {[1, 2, 3].map((i) => (
             <Surface key={i}>
-              <div style={{ height: 18, background: 'rgba(255,255,255,0.04)', borderRadius: 4, marginBottom: 8 }} />
-              <div style={{ height: 28, background: 'rgba(255,255,255,0.04)', borderRadius: 4 }} />
+              <div style={{ height: 18, background: 'rgba(255,255,255,0.04)', borderRadius: 0, marginBottom: 8 }} />
+              <div style={{ height: 28, background: 'rgba(255,255,255,0.04)', borderRadius: 0 }} />
             </Surface>
           ))}
         </div>
@@ -603,7 +603,7 @@ export default function GatewayPageClient() {
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
         <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'olympus').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
         <Metric title="Active models" value={allEnabledModels.length} subtitle="for all configured providers" tone={allEnabledModels.length > 0 ? 'success' : 'warning'} />
-        <Metric title="Agenti" value={agentCount} subtitle="con label AGENT_ID" tone={agentCount > 0 ? 'success' : 'warning'} />
+        <Metric title="Agents" value={agentCount} subtitle="con label AGENT_ID" tone={agentCount > 0 ? 'success' : 'warning'} />
       </section>
 
       {/* =========================================================== */}
@@ -638,7 +638,7 @@ export default function GatewayPageClient() {
 
             {messages['olympus'] && (
               <div style={{
-                flex: '1 1 100%', padding: '6px 10px', borderRadius: 4,
+                flex: '1 1 100%', padding: '6px 10px', borderRadius: 0,
                 fontSize: 12, fontWeight: 500,
                 background: messages['olympus']!.type === 'success' ? 'rgba(var(--green-rgb,34,197,94),0.1)' : 'rgba(var(--red-rgb,239,68,68),0.1)',
                 color: messages['olympus']!.type === 'success' ? 'var(--green)' : 'var(--red)',
@@ -652,13 +652,22 @@ export default function GatewayPageClient() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
-        {(['providers', 'agents'] as Tab[]).map((t) => (
-          <Button key={t} variant={tab === t ? 'primary' : 'ghost'} size="sm" onClick={() => setTab(t)}>
-            {t === 'providers' ? `Provider (${configuredCount}/${providers.filter(p => p.provider !== 'olympus').length})` : `Agenti (${agentCount})`}
-          </Button>
-        ))}
-      </div>
+      <Tabs
+        items={[
+          {
+            label: 'Provider',
+            active: tab === 'providers',
+            onClick: () => setTab('providers'),
+            count: `${configuredCount}/${providers.filter(p => p.provider !== 'olympus').length}`,
+          },
+          {
+            label: 'Agents',
+            active: tab === 'agents',
+            onClick: () => setTab('agents'),
+            count: agentCount,
+          },
+        ]}
+      />
 
       {/* =========================================================== */}
       {/* TAB: PROVIDERS                                               */}
@@ -702,7 +711,7 @@ export default function GatewayPageClient() {
 
                   {p.baseUrl && (
                     <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                      Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 4 }}>{p.baseUrl}</code>
+                      Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>{p.baseUrl}</code>
                       {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Ottieni chiave ↗</a>
                     </div>
                   )}
@@ -716,7 +725,7 @@ export default function GatewayPageClient() {
                           const modelMsg = messages[`model-${m.id}`];
                           return (
                             <label key={m.id} style={{
-                              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 6,
+                              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 0,
                               background: m.enabled ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
                               cursor: overlay.active ? 'wait' : 'pointer', fontSize: 13,
                             }}>
@@ -775,7 +784,7 @@ export default function GatewayPageClient() {
           {(!gatewayData?.agents?.list || gatewayData.agents.list.length === 0) ? (
             <Surface variant="panel">
               <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 13, color: 'var(--text-dim)' }}>
-                Nessun agente trovato. Avvia un container con label <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 4 }}>AGENT_ID</code>.
+                Nessun agente trovato. Avvia un container con label <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>AGENT_ID</code>.
               </div>
             </Surface>
           ) : (

@@ -44,7 +44,7 @@ export default function MemoryContextPageClient() {
   const metrics = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Agenti', value: data.summary.totalAgents },
+      { label: 'Agents', value: data.summary.totalAgents },
       { label: 'USER linked', value: data.summary.userLinked },
       { label: 'Warnings', value: data.summary.warnings },
       { label: 'Global files', value: data.summary.globalFiles },

@@ -452,7 +452,7 @@ export default function WorkspaceClient() {
                 background: 'var(--bg3)',
                 color: 'var(--copper)',
                 border: '1px solid var(--border)',
-                borderRadius: 4,
+                borderRadius: 0,
                 fontSize: 11,
                 padding: '3px 8px',
                 fontFamily: 'var(--font-mono-stack)',

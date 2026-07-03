@@ -233,7 +233,7 @@ export function PluginsTab() {
           position: 'fixed', bottom: 24, right: 24,
           background: 'var(--bg2)', border: '1px solid #D49B35',
           color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 12, padding: '10px 18px', borderRadius: 4,
+          fontSize: 12, padding: '10px 18px', borderRadius: 0,
           zIndex: 1000,
         }}>
           {toastMsg}
@@ -253,7 +253,7 @@ function Row({ label, value, mono, small }: RowProps) {
         fontSize: small ? 10 : 12,
         color: 'var(--text)',
         wordBreak: 'break-all',
-        ...(mono ? { background: 'var(--bg3)', padding: '4px 8px', borderRadius: 3, border: '1px solid #222228' } : {}),
+        ...(mono ? { background: 'var(--bg3)', padding: '4px 8px', borderRadius: 0, border: '1px solid #222228' } : {}),
       }}>
         {value}
       </div>
@@ -528,7 +528,7 @@ export function SkillsTab() {
           position: 'fixed', bottom: 24, right: 24,
           background: 'var(--bg2)', border: '1px solid #D49B35',
           color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 12, padding: '10px 18px', borderRadius: 4,
+          fontSize: 12, padding: '10px 18px', borderRadius: 0,
           zIndex: 1000,
         }}>
           {toastMsg}
@@ -546,7 +546,7 @@ function btnStyle(bg: string, color: string, border: string): React.CSSPropertie
     border: `1px solid ${border}`,
     background: bg,
     color,
-    borderRadius: 3,
+    borderRadius: 0,
     cursor: 'pointer',
     letterSpacing: '0.05em',
   };

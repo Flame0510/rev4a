@@ -34,10 +34,10 @@ export default function LoginPage() {
         window.location.replace('/');
       } else {
         const data = (await res.json()) as { error?: string };
-        setError(data.error ?? 'Password errata');
+        setError(data.error ?? 'Invalid password');
       }
     } catch {
-      setError('Errore di rete');
+      setError('Network error');
     } finally {
       setLoading(false);
     }
@@ -60,7 +60,7 @@ export default function LoginPage() {
           width: 'min(92vw, 392px)',
           background: 'linear-gradient(180deg, rgba(18,18,18,0.98), rgba(12,12,12,0.98))',
           border: '1px solid var(--border)',
-          borderRadius: 16,
+          borderRadius: 0,
           boxShadow: '0 24px 64px rgba(0,0,0,0.42)',
           overflow: 'hidden',
         }}

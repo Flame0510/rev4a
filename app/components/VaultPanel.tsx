@@ -180,7 +180,7 @@ export default function VaultPanel() {
     background: '#0A0A0B',
     color: '#E8E8E8',
     border: '1px solid var(--border)',
-    borderRadius: 4,
+    borderRadius: 0,
     padding: '4px 6px',
     fontSize: 10,
     fontFamily: 'inherit',
@@ -211,9 +211,9 @@ export default function VaultPanel() {
             </div>
 
             {showAddProvider && (
-              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
+              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 0 }}>
                 <input placeholder="Provider" value={providerForm.provider} onChange={e => setProviderForm(p => ({ ...p, provider: e.target.value }))} style={inputStyle} />
-                <PasswordInput value={providerForm.apiKey} onChange={v => setProviderForm(p => ({ ...p, apiKey: v }))} placeholder="API Key" inputStyle={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
+                <PasswordInput value={providerForm.apiKey} onChange={v => setProviderForm(p => ({ ...p, apiKey: v }))} placeholder="API Key" inputStyle={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
                 <input placeholder="Base URL" value={providerForm.baseUrl} onChange={e => setProviderForm(p => ({ ...p, baseUrl: e.target.value }))} style={inputStyle} />
                 <Button variant="primary" size="sm" loading={saving === 'provider'} onClick={handleAddProvider}>
                   SAVE
@@ -255,9 +255,9 @@ export default function VaultPanel() {
             </div>
 
             {showAddService && (
-              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
+              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 0 }}>
                 <input placeholder="Service" value={serviceForm.service} onChange={e => setServiceForm(s => ({ ...s, service: e.target.value }))} style={inputStyle} />
-                <PasswordInput value={serviceForm.token} onChange={v => setServiceForm(s => ({ ...s, token: v }))} placeholder="Token" inputStyle={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
+                <PasswordInput value={serviceForm.token} onChange={v => setServiceForm(s => ({ ...s, token: v }))} placeholder="Token" inputStyle={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
                 <input placeholder="User" value={serviceForm.user} onChange={e => setServiceForm(s => ({ ...s, user: e.target.value }))} style={inputStyle} />
                 <Button variant="primary" size="sm" loading={saving === 'service'} onClick={handleAddService}>
                   SAVE
@@ -299,7 +299,7 @@ export default function VaultPanel() {
             </div>
 
             {showAddPermission && (
-              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 4 }}>
+              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 0 }}>
                 <input placeholder="Agent ID" value={permissionForm.agentId} onChange={e => setPermissionForm(p => ({ ...p, agentId: e.target.value }))} style={inputStyle} />
                 <input placeholder="Providers (csv: openai-codex, anthropic, * = all)" value={permissionForm.providers} onChange={e => setPermissionForm(p => ({ ...p, providers: e.target.value }))} style={inputStyle} />
                 <input placeholder="Services (csv)" value={permissionForm.services} onChange={e => setPermissionForm(p => ({ ...p, services: e.target.value }))} style={inputStyle} />

@@ -258,7 +258,7 @@ export default function CronsPage() {
                           display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
                           padding: '3px 8px 3px 5px',
                           border: `1px solid ${isEnabled ? '#255b3f' : 'var(--border)'}`,
-                          borderRadius: 20,
+                          borderRadius: 0,
                           background: isEnabled ? 'rgba(34,197,94,0.08)' : 'var(--bg2)',
                           cursor: toggling === job.id ? 'not-allowed' : 'pointer',
                           opacity: toggling === job.id ? 0.5 : 1,
@@ -266,7 +266,7 @@ export default function CronsPage() {
                         }}
                       >
                         <span style={{
-                          display: 'inline-flex', width: 26, height: 14, borderRadius: 7,
+                          display: 'inline-flex', width: 26, height: 14, borderRadius: 0,
                           background: toggling === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
                           alignItems: 'center', padding: '0 2px',
                           justifyContent: isEnabled ? 'flex-end' : 'flex-start',
