@@ -1,6 +1,6 @@
 # Olympus Frontend Architecture
 
-> **Last updated:** 2026-07-02
+> **Last updated:** 2026-07-03
 
 ## Layering
 
@@ -16,17 +16,41 @@ Feature pages should not create new ad-hoc visual languages. Prefer `ui` primiti
 
 ## UI primitives
 
-Current shared primitives:
+All shared UI primitives live in `app/components/ui/` and are exported from `app/components/ui/index.ts`.
 
-- `Surface` — shared panel/card surface.
-- `Metric` — metric card.
-- `StatusCard` — health/check card.
-- `Pill` — status labels.
-- `Page` / `PageHeader` — full-page layout shell.
-- `Skeleton` — loading placeholders.
-- `Icons` (`EyeIcon`, `EyeOffIcon`) — shared SVG icon components (16/20px).
-- `PasswordInput` — password input with inline show/hide toggle icon. Used in agents,
-  gateway, config, login, and vault panels.
+### Complete catalog
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `Button` | `Button.tsx` | Action button, 5 variants (`primary`, `secondary`, `danger`, `ghost`, `success`), 2 sizes (`sm`, `md`), loading spinner. |
+| `Input` | `Input.tsx` | Text input with label, error state, placeholder. |
+| `Select` | `Select.tsx` | Native select with typed options, label, error state. |
+| `Modal` | `Modal.tsx` | Overlay modal, Escape-to-close, maxWidth prop, `type="button"` on close. |
+| `Toast` | `Toast.tsx` | Lightweight toast notification with auto-dismiss (4s), `success` / `error` variants. |
+| `LoadingSpinner` | `LoadingSpinner.tsx` | Inline or fullscreen spinner. |
+| `Tabs` | `Tabs.tsx` | Tab navigation bar with optional count badges. |
+| `ItemList` / `ListContainer` / `ListItem` / `ListItemSeparator` | `ItemList.tsx` | List primitives for sidebar/panel item lists. |
+| `FilterBar` | `FilterBar.tsx` | Horizontal filter button group. |
+| `PropertyList` | `PropertyList.tsx` | 2-column grid for label/value pairs. Children rendered as `<Fragment>` — do not wrap in extra `<div>`. |
+| `TemplateOption` | `TemplateOption.tsx` | Agent template selection card with avatar, description, optional badge. Centralises create-agent card styling. |
+| `Pill` | `Pill.tsx` | Small status/attribute label. Variants: `default`, `accent`. |
+| `Metric` | `Metric.tsx` | Metric card with title, value, subtitle, tone. |
+| `StatusCard` | `StatusCard.tsx` | Health/status report card. |
+| `Surface` | `Surface.tsx` | Shared panel/card surface, variant prop. |
+| `Page` / `PageHeader` | `Page.tsx` | Full-page layout shell. |
+| `Icons` | `Icons.tsx` | SVG icons (`EyeIcon`, `EyeOffIcon`), 16/20px shared. |
+| `PasswordInput` | `PasswordInput.tsx` | Password input with inline show/hide toggle (`<button type="button">` with `aria-label`). |
+| `tokens` | `tokens.ts` | TypeScript types for `Tone` and related token values. |
+
+### Rules
+
+1. **Prefer existing primitives over new ad-hoc markup.** Every new component starts from the shared catalog.
+2. **No inline styles on interactive elements.** Buttons, inputs, selects use the `app/components/ui/*` component with component props. Only layout/wrapping containers use inline style.
+3. **No Italian in code, labels, or comments.** UI strings, error messages, aria-labels — all English.
+4. **Clickable/custom interactive elements must be `<button type="button">`.** Not `<span onClick>`, not `<div onClick>`. Always include `aria-label` for icon-only buttons.
+5. **Modals inside forms** — close button has `type="button"` to prevent accidental form submission.
+6. **Loading buttons** — set `loading={true}` on `Button`, do not render separate loaders next to the button. The spinner is built-in.
+7. **New UI component** — add it to `app/components/ui/`, export from `index.ts`, document it here. If it's specific to one page, keep it page-local unless another page needs it.
 
 ## GoF pattern mapping
 
@@ -85,7 +109,7 @@ For interactive pages that can change view/file/tab quickly:
 For every new/changed page:
 
 1. No new one-off card styles unless justified.
-2. Use `Surface`, `Metric`, `StatusCard`, `Pill`, `Page` where applicable.
+2. Use `app/components/ui/*` primitives first — `Button`, `Input`, `Select`, `Modal`, `Toast`, `Surface`, `Metric`, `StatusCard`, `Pill`, `Page`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`.
 3. Async data must render skeleton, not fake zero values.
 4. Business logic stays in `lib`/API routes; UI consumes typed payloads.
 5. If a pattern is introduced, name it and keep it in `lib/patterns` or `app/components/ui`.

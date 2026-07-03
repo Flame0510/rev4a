@@ -21,6 +21,8 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `daemon.js` | (no dedicated doc — update `docs/ARCHITECTURE.md` if needed) |
 | `lib/**` | `docs/ARCHITECTURE.md` and/or `docs/FRONTEND-ARCHITECTURE.md` |
 | `app/**/page.tsx` or `app/**/components` | `docs/FRONTEND-ARCHITECTURE.md` — component tree, layout changes |
+| `app/components/ui/**` (new/modified primitive) | `docs/FRONTEND-ARCHITECTURE.md` — UI catalog table |
+| `app/globals.css` (tokens, visual language) | `docs/DESIGN-SYSTEM.md` — color tokens, shape rules |
 | `scripts/**` | `docs/ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |

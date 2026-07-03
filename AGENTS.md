@@ -56,6 +56,18 @@ No Italian, no other languages in code or docs.
 - **PM2** — process management via `ecosystem.config.js`
 - **Python NOT allowed** — no Python scripts, no Jupyter, no notebooks in this repo
 
+### 2.2a Design System (UI)
+
+Olympus has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FRONTEND-ARCHITECTURE.md` before writing any UI code.**
+
+1. **Use shared primitives.** All UI lives in `app/components/ui/`. `Button`, `Input`, `Select`, `Modal`, `Toast`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `Pill`, `Metric`, `StatusCard`, `Surface`, `Page`. Never replicate them.
+2. **No inline styles on interactive elements.** Buttons, inputs, selects use the shared component. Only layout wrappers use inline style.
+3. **Square visual language.** `border-radius: 0`, no shadows, flat design. Copper accent only.
+4. **Interactive elements must be `<button type="button">`.** Not `<span onClick>`, not `<div onClick>`.
+5. **100% English.** UI labels, errors, aria-labels. No Italian.
+6. **New UI component?** Add it to `app/components/ui/`, export from `index.ts`, document in `docs/FRONTEND-ARCHITECTURE.md`.
+7. **No one-off card styles.** If a new page needs a visual pattern, extract a component instead of duplicating markup.
+
 ### 2.3 Documentation-First Workflow
 
 **Before every commit, complete this checklist:**
