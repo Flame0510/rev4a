@@ -310,10 +310,10 @@ function AgentEditForm({
 
       <div style={{ display: 'flex', gap: 8 }}>
         <Button variant="primary" size="sm" loading={saving} disabled={!modelInput.trim()} onClick={() => onSave(modelInput, fallbacks)}>
-          {saving ? 'Salvataggio…' : 'Salva'}
+          {saving ? 'Saving…' : 'Save'}
         </Button>
         <Button variant="secondary" size="sm" onClick={onCancel}>
-          Annulla
+          Cancel
         </Button>
       </div>
     </div>
@@ -633,7 +633,7 @@ export default function GatewayPageClient() {
               loading={overlay.active}
               disabled={apiKeyInputs['olympus']?.trim() === originalKeys['olympus']?.trim()}
               onClick={() => handleSaveOlympusKey()}>
-              Salva
+              Save
             </Button>
 
             {messages['olympus'] && (
@@ -700,7 +700,7 @@ export default function GatewayPageClient() {
                       loading={overlay.active}
                       disabled={apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim()}
                       onClick={() => handleSave(p.provider)}>
-                      Salva
+                      Save
                     </Button>
                     {p.configured && (
                       <Button variant="danger" size="sm" disabled={overlay.active} onClick={() => handleRemove(p.provider)}>
@@ -712,7 +712,7 @@ export default function GatewayPageClient() {
                   {p.baseUrl && (
                     <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                       Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>{p.baseUrl}</code>
-                      {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Ottieni chiave ↗</a>
+                      {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Get key ↗</a>
                     </div>
                   )}
 

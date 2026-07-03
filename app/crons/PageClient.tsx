@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Pill } from '../components/ui';
-import { LoadingSpinner } from '../components/ui';
+import { Button, Pill, LoadingSpinner } from '../components/ui';
 import type { Tone } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';

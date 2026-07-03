@@ -13,6 +13,7 @@ interface TemplateOptionProps {
 export function TemplateOption({ id, selected, description, onClick, badge }: TemplateOptionProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         display: 'flex',
@@ -29,7 +30,6 @@ export function TemplateOption({ id, selected, description, onClick, badge }: Te
         transition: 'background 0.1s, border-color 0.1s',
         background: selected ? 'var(--copper-bg)' : 'transparent',
         border: `1px solid ${selected ? 'var(--copper)' : 'var(--border)'}`,
-        borderRadius: 8,
       }}
     >
       <span

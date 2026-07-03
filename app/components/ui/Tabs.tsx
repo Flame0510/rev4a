@@ -27,6 +27,7 @@ export function Tabs({ items, className }: TabsProps) {
     >
       {items.map((item) => (
         <button
+          type="button"
           key={item.label}
           onClick={item.onClick}
           style={{

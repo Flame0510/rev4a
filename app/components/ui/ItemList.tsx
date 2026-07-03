@@ -37,6 +37,7 @@ export function ListContainer({ children, style }: ListContainerProps) {
 export function ListItem({ children, active, onClick, disabled, style }: ListItemProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       style={{
