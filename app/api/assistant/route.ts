@@ -108,12 +108,6 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Browse all available skills', 'View skill name, description, and what it does', 'Understand which skills agents can use in conversations'],
     hints: 'Skills are like pre-built capabilities. An agent can be told "use the weather skill" and it will know how to respond.',
   },
-  '/chat': {
-    title: 'Chat',
-    description: 'Dedicated chat page that redirects to the Dashboard. The main chat interface is accessed via the floating Pythia button at the bottom-right of every page.',
-    actions: ['Redirected to Dashboard — use Pythia (bottom-right button) for assistant chat'],
-    hints: 'Pythia is available on every page. Just click the chat bubble in the bottom-right corner.',
-  },
 };
 
 const NAV_LINKS = `
