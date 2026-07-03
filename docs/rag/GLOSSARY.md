@@ -1,85 +1,86 @@
 # Olympus Glossary
 
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-07-03
 
-## session_id
-A unique identifier for one agent work session. Format: `agent:<agent_name>:<role>` for persistent agents (e.g. `agent:ops:main`) or `agent:<agent_name>:subagent:<uuid>` for temporary child agents spawned for a specific task.
+Terms you'll encounter while using the Olympus dashboard.
 
-## session
-A single unit of agent work: starts when an agent receives a task, ends when the task completes or fails. Tracks tokens used, cost, model, status, and a short preview of the task description.
+---
 
-## parent_id
-The session ID of the session that spawned the current session. Used to build the lineage tree. A root session (like `agent:ops:main`) has no parent.
+## Agent
+An AI assistant configured with a specific role, AI model, and workspace. Each agent has a name (e.g. "Argus") and can run multiple sessions over time. Agents are deployed as Docker containers.
 
-## lineage
-The parent→child relationship tree between sessions. When Argus spawns a developer agent to implement a feature, that developer agent session is a child of the Argus session. The lineage page in Olympus shows this as a graph.
+## Agent Template
+A pre-built configuration used when creating a new agent. Templates include default files, environment variables, and settings.
 
-## lineage label
-A human-readable name declared when an agent registers a parent→child relationship. For example: "Developer Agent — Olympus Slice 3". Replaces the raw session key in the graph.
+## Container
+A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.).
 
-## daemon
-The background process (`daemon.js`) that polls OpenClaw every 15–30 seconds and writes session data to the database. If the daemon is not running, Olympus shows stale data.
+## Cost
+The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Olympus shows cost by day, week, month, and by model.
 
-## status
-The current state of a session. Values:
-- `idle` — agent is running but not actively processing
-- `working` — agent is actively processing a task (tokens being consumed)
-- `completed` — task finished successfully
-- `error` — task failed
+## Cost Override
+A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice, you can set an override value for that month.
 
-## tokens_in / tokens_out
-The number of input tokens (prompt) and output tokens (response) consumed by a session. Used to estimate cost.
+## Cron / Cron Job
+A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax.
 
-## cost_usd
-The estimated cost in US dollars for a session, calculated from token counts and per-model pricing. This is an estimate; actual billing may differ.
+## Dashboard
+The main page of Olympus. Shows live sessions, cost summary, system health metrics, and a real-time event feed.
 
-## cost_override
-A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice (e.g. GitHub Copilot billed separately), the maintainer sets a cost_override for that month. The dashboard shows the override value instead of the computed sum.
+## Event
+A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard.
 
-## model
-The AI model used by a session. Examples: `openai-codex/gpt-5.4`, `claude-sonnet-4-6`, `openrouter/deepseek/deepseek-v3.2`. Models are identified by their provider path.
+## Gateway
+The routing layer that connects agents to AI providers. The Gateway page lets you manage which models are enabled, see each agent's model assignment, and sync provider configurations.
 
-## agent
-An AI assistant configured in OpenClaw with a specific role, workspace, and default model. Each agent has an `id` (e.g. `ops`) and can run multiple sessions over time.
+## Lineage
+The parent-child relationship tree between sessions. When an agent spawns another agent to do work, that relationship is shown as a graph on the Lineage page.
 
-## spawn
-The event that occurs when one session creates a child session. Recorded in the events table with type `spawn`.
+## Memory
+Files that store an agent's persistent knowledge and personality. MEMORY.md and SOUL.md are examples. Editing them changes how an agent behaves.
 
-## event
-A lifecycle occurrence for a session: `spawn`, `complete`, `error`, or `tool_call`. Events are stored with a timestamp and JSON payload.
+## Model
+The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 4, DeepSeek V3. Models are linked to specific providers.
 
-## tool_call
-An event recording when an agent invoked a tool (e.g. Bash, file read, web search). Useful for auditing what an agent actually did.
+## Plugin
+An extension that adds new tools and capabilities to agents. Plugins are installed in the workspace and appear in the Plugins page.
 
-## system metrics
-Hardware measurements recorded by the daemon: CPU percentage, RAM used/total (MB), disk used/total (GB), 1-minute load average. Shown in the System Health section of the dashboard.
+## Provider
+An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, etc.) that hosts models. Each provider needs an API key to be configured in Olympus.
 
-## OLYMPUS_TOKEN
-The static bearer token that authenticates API calls to Olympus. Default: `change-me`. Set via environment variable.
+## Pythia
+The AI concierge embedded in Olympus. Click the floating chat button (bottom-right) on any page to ask questions.
 
-## PYTHIA
-The AI assistant embedded in the Olympus dashboard. Answers questions about the current page content (sessions, costs, agents) in natural language. Backed by a configurable LLM via an OpenAI-compatible API.
+## Session
+One instance of an agent doing work. Tracks: start/end time, tokens used, cost, model, status, and task description. A session starts when an agent receives a task and ends when it completes or fails.
 
-## events.db
-The SQLite database file that stores all Olympus data: sessions, events, lineage, cost overrides, and system metrics.
+## Session ID
+A unique identifier for a session. Format: `agent:<name>:<role>` (e.g. `agent:ops:main`) or `agent:<name>:subagent:<uuid>` for temporary child agents.
 
-## WAL mode
-Write-Ahead Logging — the SQLite concurrency mode used by Olympus. Allows the daemon to write while the web server reads simultaneously without blocking.
+## Skill
+A reusable prompt/tool bundle that agents can invoke. Skills appear in the Skills page and can be used by agents via commands or direct invocation.
 
-## cron
-A scheduled job that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured in OpenClaw and visible in the Crons page of Olympus.
+## Status (Session)
+Current state of a session:
+- **idle** — agent is running but not actively processing
+- **working** — agent is actively processing a task (consuming tokens)
+- **completed** — task finished successfully
+- **error** — task failed
 
-## SSE / stream
-Server-Sent Events — the real-time push mechanism used by the Olympus dashboard. The browser connects to `/api/stream` and receives updates every ~3 seconds without polling.
+## Token
+The unit of text processed by an AI model. Input tokens (your prompt) and output tokens (the AI's response) are counted separately and used to calculate cost.
 
-## workspace
-The directory where an agent's operational files live (MEMORY.md, SOUL.md, task files, etc.). Each agent has its own workspace, e.g. `/data/.openclaw/workspace-ops/` for Argus.
+## Tool
+A capability available to agents: running shell commands, reading files, searching the web, etc. Tools can be built-in, from plugins, or from MCP servers.
 
-## MEMORY.md
-The durable memory file for an agent. Contains current state, rules, path references, and completed task history. Loaded into every session as context.
+## Tool Call
+A record of an agent using a tool during a session. Useful for auditing what an agent actually did.
 
-## lineage.js
-A command-line script that registers a parent→child session relationship in the database. Called by agents at spawn time.
+## Traefik
+The reverse proxy used to route web traffic to agent containers. If configured, an agent gets a public URL (e.g. `agent-name.olympus.example.com`).
 
-## OpenClaw
-The AI agent runtime platform that Olympus monitors. OpenClaw manages agent sessions, routing, cron jobs, plugins, and skills. Olympus reads data from OpenClaw via `openclaw sessions --json`.
+## Workspace
+The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse and download these files.
+
+## System Health
+Hardware metrics shown on the Dashboard: CPU usage (%), RAM used/total, disk used/total, and system load average.

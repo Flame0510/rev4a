@@ -5,6 +5,18 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 const STORAGE_KEY = 'olympus_pythia_chat';
+const MODEL_STORAGE_KEY = 'olympus-pythia-model';
+
+interface ModelOption {
+  id: string;
+  label: string;
+}
+
+interface ModelGroup {
+  provider: string;
+  emoji: string;
+  models: ModelOption[];
+}
 
 interface Message {
   role: 'user' | 'assistant';
@@ -66,11 +78,59 @@ export default function OlympusChat() {
   const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Persist to localStorage on every messages change
+  // Fetch available models from backend on mount
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchModels() {
+      try {
+        const res = await fetch('/api/models');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: ModelGroup[] = await res.json();
+        if (cancelled) return;
+
+        setModelGroups(data);
+
+        const allIds = data.flatMap((g) => g.models.map((m) => m.id));
+
+        // Restore saved model if valid, otherwise pick first
+        try {
+          const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+          if (saved && allIds.includes(saved)) {
+            setSelectedModel(saved);
+          } else if (allIds.length > 0) {
+            setSelectedModel(allIds[0]);
+          }
+        } catch {
+          if (allIds.length > 0) setSelectedModel(allIds[0]);
+        }
+      } catch {
+        // API unavailable — leave selectedModel empty, select stays disabled
+      } finally {
+        if (!cancelled) setModelsLoading(false);
+      }
+    }
+
+    fetchModels();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Save model preference on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODEL_STORAGE_KEY, selectedModel);
+    } catch {
+      // ignore
+    }
+  }, [selectedModel]);
+
   useEffect(() => {
     saveMessages(messages);
   }, [messages]);
@@ -110,6 +170,7 @@ export default function OlympusChat() {
         body: JSON.stringify({
           message: text,
           page: pathname,
+          model: selectedModel,
           history: messages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
         }),
         signal: abortRef.current.signal,
@@ -201,6 +262,38 @@ export default function OlympusChat() {
               </svg>
               PYTHIA 🔮
             </span>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={modelsLoading || modelGroups.length === 0}
+              style={{
+                border: '1px solid var(--border)',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontFamily: 'var(--font-mono-stack)',
+                fontSize: 11,
+                borderRadius: 0,
+                padding: '1px 4px',
+                cursor: modelsLoading ? 'wait' : 'pointer',
+                outline: 'none',
+                opacity: modelsLoading ? 0.5 : 1,
+              }}
+              aria-label="Select model"
+            >
+              {modelsLoading ? (
+                <option value="">…</option>
+              ) : (
+                modelGroups.map((group) => (
+                  <optgroup key={group.provider} label={`${group.emoji} ${group.provider}`}>
+                    {group.models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {group.emoji} {m.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))
+              )}
+            </select>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               {messages.length > 0 && (
                 <button

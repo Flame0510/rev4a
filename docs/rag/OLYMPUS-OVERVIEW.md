@@ -1,48 +1,82 @@
 # What is Olympus?
 
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-07-03
 
-Olympus is the monitoring dashboard for the AI agent infrastructure managed by the maintainer. It is the central control panel that shows what all the AI agents are doing, how much they cost, and whether the system is healthy.
+Olympus is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
-## What does Olympus monitor?
+## What can you do in Olympus?
 
-Olympus tracks three main things:
+### Dashboard (`/`)
+The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made.
 
-**1. Agent sessions**
-Every time an AI agent starts working — whether it's Argus running an audit, a developer agent writing code, or a QA agent testing a feature — Olympus records that session. It logs the start time, the task the agent was given, how many tokens it used, and the cost.
+### Agents (`/agents`)
+Manage your Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens), and create new agents.
 
-**2. Costs**
-Every AI model call has a cost in USD. Olympus calculates costs from token counts and shows them broken down by day, week, month, and by model. If the automatic calculation is wrong (for example due to a billing quirk), the maintainer can set a manual override for any month.
+### Create Agent (`/agents/create`)
+Wizard to spin up a new agent. Choose a template, name your agent, pick a model, set environment variables, and optionally configure a web URL via Traefik.
 
-**3. System health**
-Olympus also monitors the server itself: CPU usage, RAM, disk space, and system load. It checks whether the daemon is running, whether cron jobs are scheduled, and whether the database is accessible.
+### Providers (`/providers`)
+View all configured AI providers (OpenAI, Anthropic, Groq, OpenRouter, etc.) and their available models. Check which API keys are set and which models are ready to use.
 
-## Who uses Olympus?
+### Gateway (`/gateway`)
+Central hub connecting agents to AI providers. Toggle which models are available, see each agent's default model and fallbacks, check gateway health, and sync provider configurations.
 
-Olympus is used by the maintainer to get a quick operational picture without having to SSH into the server or read raw logs. The idea is: if everything is green, Olympus is silent. If something is wrong, it shows up immediately.
+### Cron Jobs (`/crons`)
+See scheduled tasks that run agents automatically. View schedule expressions, last run time, next run time, and execution status.
 
-PYTHIA (the AI assistant inside Olympus) can answer questions about any of the above — costs, sessions, agents, health status — in natural language.
+### Containers (`/containers`)
+Full list of all Docker containers on the server. See name, image, status, ports, and IP. Click "Terminal" on any container to open an interactive shell.
+
+### Container Terminal (`/containers/terminal/[id]`)
+Live web terminal into a Docker container. Run commands, inspect files, debug issues — just like SSH.
+
+### Config (`/config`)
+Olympus application settings. View and modify configuration values that control how the dashboard behaves.
+
+### Lineage (`/lineage?period=7d`)
+Interactive graph showing session family trees. See which agent spawned which child agent, across time periods. Click any node to inspect.
+
+### Memory / Context (`/memory`)
+Browse agent memory files. These files (like MEMORY.md and SOUL.md) define how agents behave, what they know, and their personality.
+
+### Workspace (`/workspace`)
+File explorer for the OpenClaw workspace. Browse, view, and download files that agents use — configuration, scripts, and operational documents.
+
+### Tools (`/tools`)
+Catalog of every tool available to agents — built-in commands, MCP server tools, plugin tools, and audio transcription tools.
+
+### Plugins & Skills (`/plugins-skills`), Plugins (`/plugins`), Skills (`/skills`)
+Browse plugins (extend agent capabilities with new tools) and skills (reusable prompt/tool bundles agents can invoke).
+
+### Login (`/login`)
+Password-protected access to the dashboard. Enter the Olympus password to authenticate.
+
+## What about Pythia?
+
+Pythia is the AI assistant embedded in Olympus. She appears as a floating chat button in the bottom-right corner of every page. She can:
+
+- Explain what any page does
+- Guide you through features ("how do I create an agent?")
+- Answer questions about agents, providers, costs, sessions, containers, and crons
+- Give practical tips based on the page you're on
+
+Pythia does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
 
 ## What is an "agent"?
 
-An agent is an AI assistant that runs tasks autonomously. In this infrastructure, the main agents are:
-
-- **Argus** — the ops lead; manages infrastructure, runs audits, coordinates other agents
-- **Forge** — the development lead (separate workspace)
-- **Developer agents** — spawned by Argus or Forge to implement features
-- **QA agents** — spawned to verify changes
-- **Scout agents** — run periodic research (INTEL reports)
-
-Each agent has a unique session ID formatted as `agent:<name>:<role>` or `agent:<name>:subagent:<uuid>` for temporary child agents.
+An agent is an AI assistant that runs tasks autonomously. Each agent has:
+- A name and role (e.g. "Argus" the ops lead)
+- A configured AI model (e.g. GPT-5.4, Claude Sonnet)
+- A workspace with its memory files and configuration
+- Sessions — each time an agent does work, it creates a session
 
 ## What is a "session"?
 
-A session is one instance of an agent doing work. It starts when the agent receives a task and ends when the task is complete (or fails). Sessions can be nested: a parent session can spawn child sessions to delegate subtasks. This parent→child relationship is called **lineage**.
+A session is one unit of agent work. It starts when an agent receives a task and ends when the task completes or fails. Sessions track:
+- Tokens used (input and output)
+- Cost in USD
+- Model used
+- Status (idle, working, completed, error)
+- Tool calls made during the session
 
-## What is the "daemon"?
-
-The daemon is a background process (`daemon.js`) that runs continuously alongside the dashboard. Every 30 seconds (or 15 seconds when agents are actively working), it checks what sessions are currently running and updates the database. Without the daemon, Olympus would not receive any new data.
-
-## How does PYTHIA work?
-
-PYTHIA is the AI assistant embedded in Olympus. It uses the context of the current page (dashboard, agents, costs, etc.) plus a conversation history to answer questions. It is backed by a configurable LLM (default: Groq's `llama-3.1-8b-instant`). PYTHIA can explain what it sees in the dashboard but does not have direct database access — it answers based on the page context provided by the UI.
+Sessions can have parent-child relationships (lineage): one agent spawns another to delegate work.
