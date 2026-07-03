@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type { Tone } from './tokens';
 
 interface PropertyListProps {
@@ -11,13 +11,13 @@ export function PropertyList({ rows }: PropertyListProps) {
   return (
     <div className="ui-property-list">
       {rows.map((r, i) => (
-        <div key={i} >
+        <Fragment key={i}>
           <span className="ui-property-label">{r.label}</span>
           <span
             className="ui-property-value"
             data-tone={r.tone || (r.dim ? 'dim' : '')}
           >{r.value}</span>
-        </div>
+        </Fragment>
       ))}
     </div>
   );

@@ -44,7 +44,7 @@ export default function ContainersPage() {
       </p>
 
       {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
-      {error && <p className="error-text">{error}</p>}
+      {error && <p style={{ color: '#ef4444', fontSize: 13 }}>{error}</p>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {containers.map(c => (

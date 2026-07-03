@@ -400,7 +400,7 @@ export default function GatewayPageClient() {
   async function handleSave(provider: string) {
     const key = apiKeyInputs[provider]?.trim();
     if (!key) return;
-    await withOverlay(`Salvataggio API key ${provider}…`, async () => {
+    await withOverlay(`Saving API key for ${provider}…`, async () => {
       setMessages((prev) => ({ ...prev, [provider]: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
@@ -451,7 +451,7 @@ export default function GatewayPageClient() {
   async function handleSaveOlympusKey() {
     const key = apiKeyInputs['olympus']?.trim();
     if (!key) return;
-    await withOverlay('Salvataggio OLYMPUS API KEY…', async () => {
+    await withOverlay('Saving OLYMPUS API KEY…', async () => {
       setMessages((prev) => ({ ...prev, olympus: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
@@ -603,7 +603,7 @@ export default function GatewayPageClient() {
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
         <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'olympus').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
         <Metric title="Active models" value={allEnabledModels.length} subtitle="for all configured providers" tone={allEnabledModels.length > 0 ? 'success' : 'warning'} />
-        <Metric title="Agents" value={agentCount} subtitle="con label AGENT_ID" tone={agentCount > 0 ? 'success' : 'warning'} />
+        <Metric title="Agents" value={agentCount} subtitle="with AGENT_ID label" tone={agentCount > 0 ? 'success' : 'warning'} />
       </section>
 
       {/* =========================================================== */}
@@ -784,7 +784,7 @@ export default function GatewayPageClient() {
           {(!gatewayData?.agents?.list || gatewayData.agents.list.length === 0) ? (
             <Surface variant="panel">
               <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 13, color: 'var(--text-dim)' }}>
-                Nessun agente trovato. Avvia un container con label <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>AGENT_ID</code>.
+                No agents found. Start a container with the <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>AGENT_ID</code> label.
               </div>
             </Surface>
           ) : (

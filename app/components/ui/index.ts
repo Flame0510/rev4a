@@ -14,3 +14,4 @@ export * from './Toast';
 export * from './tokens';
 export * from './Tabs';
 export * from './ItemList';
+export * from './TemplateOption';

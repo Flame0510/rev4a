@@ -31,7 +31,7 @@ export function Modal({ open, onClose, title, children, maxWidth = 800, tone }: 
       >
         <div className="ui-modal__head">
           <span className="ui-modal__title">{title}</span>
-          <button className="ui-modal__close" onClick={onClose}>✕</button>
+          <button type="button" className="ui-modal__close" onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="ui-modal__body">
           {children}

@@ -48,7 +48,11 @@ export function Button({
 
   return (
     <button className={cls} disabled={disabled || loading} {...rest}>
-      {loading && <span className="ui-btn__spinner" />}
+      {loading && <span className="ui-btn__spinner" style={{
+          width: 16, height: 16, border: '2px solid currentColor', borderTopColor: 'transparent',
+          borderRadius: '50%', display: 'inline-block', marginRight: 8, verticalAlign: 'middle',
+          animation: 'ui-spin 0.7s linear infinite',
+        }} />}
       {children}
     </button>
   );

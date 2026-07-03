@@ -86,8 +86,10 @@ export default function LoginPage() {
               placeholder="Enter admin password"
               autoFocus
             />
-            <span
+            <button
+              type="button"
               onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
               style={{
                 position: 'absolute',
                 right: 10,
@@ -99,10 +101,13 @@ export default function LoginPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                background: 'none',
+                border: 'none',
+                outline: 'none',
               }}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
-            </span>
+            </button>
           </div>
           {error && (
             <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>

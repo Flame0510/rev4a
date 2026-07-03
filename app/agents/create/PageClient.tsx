@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Input } from '../../components/ui';
+import { Button, Input, TemplateOption } from '../../components/ui';
 
 interface TemplateInfo {
   id: string;
@@ -173,30 +173,18 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           </div>
           <div style={{ display: 'grid', gap: 8 }}>
             {templates.map((t) => (
-              <Button
+              <TemplateOption
                 key={t.id}
-                variant={selectedTemplate === t.id ? 'primary' : 'ghost'}
-                size="md"
+                id={t.id}
+                selected={selectedTemplate === t.id}
+                description={templateDescription(t.id)}
                 onClick={() => handleSelectTemplate(t.id)}
-                style={{ display: 'flex', padding: '14px 16px', width: '100%', textAlign: 'left', fontSize: 14 }}
-              >
-                <span style={{
-                  width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: selectedTemplate === t.id ? 'var(--copper)' : 'var(--border)',
-                  color: selectedTemplate === t.id ? '#111' : '#666', fontSize: 12, fontWeight: 600, flexShrink: 0,
-                }}>
-                  {t.id[0].toUpperCase()}
-                </span>
-                <div style={{ flex: 1, textAlign: 'left' }}>
-                  <div style={{ fontWeight: 500 }}>{t.id}</div>
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{templateDescription(t.id)}</div>
-                </div>
-                {TEMPLATE_DEFAULT_PORTS[t.id] && (
+                badge={TEMPLATE_DEFAULT_PORTS[t.id] ? (
                   <span style={{ fontSize: 10, color: '#888', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}>
                     port {TEMPLATE_DEFAULT_PORTS[t.id]}
                   </span>
-                )}
-              </Button>
+                ) : undefined}
+              />
             ))}
           </div>
           <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
