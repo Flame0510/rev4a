@@ -107,13 +107,16 @@ export default function LoginPage() {
           {error && (
             <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>
           )}
-          <button
+          <Button
             type="submit"
-            className="login-submit-btn"
+            variant="primary"
+            size="md"
+            loading={loading}
             disabled={!password || loading}
+            className="login-submit-btn"
           >
             {loading ? 'ACCESSING...' : 'LOGIN'}
-          </button>
+          </Button>
           <div style={{ marginTop: 14, fontSize: 10, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: '0.06em' }}>
             Internal Olympus access
           </div>
