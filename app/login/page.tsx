@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
 import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
 
@@ -9,6 +9,14 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Enter key handler for the password input
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && password) {
+      const form = (e.target as HTMLInputElement).closest('form');
+      if (form) form.requestSubmit();
+    }
+  }, [password]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -74,6 +82,7 @@ export default function LoginPage() {
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="Inserisci la password"
               autoFocus
             />
