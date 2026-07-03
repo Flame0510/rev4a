@@ -1,12 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import { extractProviderAndModel, getApiKey, callUpstream } from '@/app/api/provider/upstream';
 
-// Supports Groq (default) or any OpenAI-compatible provider via env vars.
-// ASSISTANT_BASE_URL defaults to Groq; override for OpenRouter, local Ollama, etc.
-const ASSISTANT_API_KEY = process.env.GROQ_API_KEY ?? process.env.OPENROUTER_API_KEY ?? '';
-const ASSISTANT_BASE_URL =
-  process.env.ASSISTANT_BASE_URL ?? 'https://api.groq.com/openai/v1';
-const ASSISTANT_MODEL =
-  process.env.ASSISTANT_MODEL ?? 'llama-3.1-8b-instant';
+const FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
 
 interface PageContext {
   title: string;
@@ -31,7 +27,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/agents/create': {
     title: 'Create Agent',
     description: 'Wizard to create a new agent from a template. Choose a template, give it a name, select a model, set environment variables, and configure optional Traefik routing.',
-    actions: ['Browse available agent templates', 'Name your agent and select its AI model', 'Add environment variables (KEY=VALUE pairs)', 'Optionally enable Traefik routing with a custom subdomain', 'Create the agent and start it immediately'],
+    actions: ['Browse available agent templates', 'Name your agent and select its AI model', 'Add environment variables (KEY=*** pairs)', 'Optionally enable Traefik routing with a custom subdomain', 'Create the agent and start it immediately'],
     hints: 'Templates provide pre-built agent configurations. You can customize the image, model, and env vars after selecting a template.',
   },
   '/providers': {
@@ -178,14 +174,6 @@ RULES:
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-
-  if (!ASSISTANT_API_KEY) {
-    return NextResponse.json(
-      { error: 'No API key configured. Set GROQ_API_KEY in .env.local' },
-      { status: 500 },
-    );
-  }
-
   let body: { message?: string; page?: string; model?: string; history?: { role: string; content: string }[] };
   try {
     body = await request.json();
@@ -198,34 +186,32 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: 'message required' }, { status: 400 });
   }
 
-  const effectiveModel = model || ASSISTANT_MODEL;
-
+  const effectiveModel = model || FALLBACK_MODEL;
   const messages = [
     { role: 'system', content: buildSystemPrompt(page) },
     ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: message },
   ];
 
-  const upstream = await fetch(`${ASSISTANT_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${ASSISTANT_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: effectiveModel,
-      max_tokens: 512,
-      messages,
-      stream: true,
-    }),
-  });
+  const { provider, model: upstreamModel } = extractProviderAndModel({ model: effectiveModel });
+  const providerKeys = readProviderKeys();
+  const apiKey = getApiKey(provider, providerKeys);
 
-  if (!upstream.ok) {
-    const err = await upstream.text();
-    return NextResponse.json({ error: err }, { status: upstream.status });
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: `No provider configured. Add an API key from the Gateway page.` },
+      { status: 401 },
+    );
   }
 
-  return new Response(upstream.body, {
+  const upstreamResp = await callUpstream(provider, upstreamModel, { model: upstreamModel, messages, stream: true, max_tokens: 512 }, apiKey);
+
+  if (!upstreamResp.ok) {
+    const err = await upstreamResp.text().catch(() => `HTTP ${upstreamResp.status}`);
+    return NextResponse.json({ error: err }, { status: upstreamResp.status });
+  }
+
+  return new Response(upstreamResp.body, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

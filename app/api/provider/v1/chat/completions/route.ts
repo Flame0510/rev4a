@@ -8,38 +8,16 @@
  * The Authorization Bearer token must match a configured provider key.
  * The olympus master key (OLYMPUS_API_KEY env var) unlocks all providers.
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import {
+  extractProviderAndModel,
+  getApiKey,
+  callUpstream,
+} from '@/app/api/provider/upstream';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-const PROVIDER_ENVS: Record<string, { baseUrl: string; authHeader: string }> = {
-  deepseek: {
-    baseUrl: 'https://api.deepseek.com',
-    authHeader: 'Authorization',
-  },
-  'openai-codex': {
-    baseUrl: 'https://api.openai.com',
-    authHeader: 'Authorization',
-  },
-  openai: {
-    baseUrl: 'https://api.openai.com',
-    authHeader: 'Authorization',
-  },
-  anthropic: {
-    baseUrl: 'https://api.anthropic.com',
-    authHeader: 'x-api-key',
-  },
-  openrouter: {
-    baseUrl: 'https://openrouter.ai/api',
-    authHeader: 'Authorization',
-  },
-  groq: {
-    baseUrl: 'https://api.groq.com/openai',
-    authHeader: 'Authorization',
-  },
-};
 
 interface ProviderV1Request {
   model?: string;
@@ -49,37 +27,6 @@ interface ProviderV1Request {
   max_tokens?: number;
   temperature?: number;
   [key: string]: unknown;
-}
-
-/** Map olympus/ model aliases to upstream provider/model pairs. */
-const MODEL_ALIASES: Record<string, { provider: string; model: string }> = {
-  'olympus/deepseek-v4-flash': { provider: 'deepseek', model: 'deepseek-v4-flash' },
-  'olympus/deepseek-v4-pro': { provider: 'deepseek', model: 'deepseek-v4-pro' },
-};
-
-function extractProviderAndModel(request: ProviderV1Request): { provider: string; model: string } {
-  const modelStr = request.model || '';
-  if (request.provider) {
-    return { provider: request.provider, model: modelStr };
-  }
-  // Check aliases first (olympus/deepseek-v4-flash -> deepseek/deepseek-v4-flash)
-  if (modelStr && MODEL_ALIASES[modelStr]) {
-    return { ...MODEL_ALIASES[modelStr] };
-  }
-  const parts = modelStr.split('/');
-  if (parts.length >= 2 && PROVIDER_ENVS[parts[0]]) {
-    return { provider: parts[0], model: parts.slice(1).join('/') };
-  }
-  // Default fallback: assume the model is a raw upstream model ID
-  if (parts.length >= 3 && PROVIDER_ENVS[parts[1]]) {
-    return { provider: parts[1], model: parts.slice(2).join('/') };
-  }
-  return { provider: 'deepseek', model: modelStr || 'deepseek-chat' };
-}
-
-function getApiKey(provider: string): string | null {
-  const providerKeys = readProviderKeys();
-  return providerKeys[provider] || null;
 }
 
 /** Serialize to JSON and return a Response with explicit Content-Length to avoid Traefik HTTP/2 issues. */
@@ -123,16 +70,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    
     const body: ProviderV1Request = await request.json();
     const { provider, model } = extractProviderAndModel(body);
 
-    const envConfig = PROVIDER_ENVS[provider];
-    if (!envConfig) {
-      return errorResponse(`Unknown provider: ${provider}`, 'invalid_request_error', 400);
-    }
-
-    const apiKey = getApiKey(provider);
+    const apiKey = getApiKey(provider, providerKeys);
     if (!apiKey) {
       return errorResponse(
         `API key not configured for provider '${provider}'. Add it from the Gateway page.`,
@@ -141,34 +82,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const targetUrl = `${envConfig.baseUrl}/v1/chat/completions`;
-
-    const upstreamBody: Record<string, unknown> = { ...body, model: model || undefined };
-    delete upstreamBody.provider;
-
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-    if (envConfig.authHeader === 'x-api-key') {
-      headers['x-api-key'] = apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-
-    if (provider === 'openrouter') {
-      headers['HTTP-Referer'] = 'https://olympus.example.com';
-      headers['X-Title'] = 'Olympus Gateway';
-    }
-
-    // Force identity encoding to avoid gzip-related HTTP/2 truncation issues via Traefik
-    headers['Accept-Encoding'] = 'identity';
-
-    const upstreamResp = await fetch(targetUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(upstreamBody),
-    });
-
+    const upstreamResp = await callUpstream(provider, model, body, apiKey);
     const latency = Date.now() - start;
 
     // Streaming passthrough
@@ -183,7 +97,7 @@ export async function POST(request: NextRequest) {
       responseHeaders.set('x-olympus-gateway', 'true');
       responseHeaders.set('x-olympus-provider', provider);
       responseHeaders.set('x-olympus-latency-ms', String(latency));
-      return new NextResponse(upstreamResp.body, {
+      return new Response(upstreamResp.body, {
         status: upstreamResp.status,
         statusText: upstreamResp.statusText,
         headers: responseHeaders,
