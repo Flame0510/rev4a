@@ -1,0 +1,61 @@
+import { NextResponse } from 'next/server';
+import { execSync } from 'child_process';
+
+export const dynamic = 'force-dynamic';
+
+const BACKUP_VOLUME = 'olympus-backups';
+
+/**
+ * POST /api/agents/[id]/restore?file=agent-xxx-2026-07-11_2115.tar.gz
+ * Restore an agent's persistent volume from a backup.
+ * Stops the container, restores the volume, then restarts.
+ */
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  try {
+    const { id } = await params;
+    if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
+
+    const url = new URL(req.url);
+    const file = url.searchParams.get('file');
+    if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
+
+    // Safety: only allow restoring agent-specific files
+    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz')) {
+      return NextResponse.json({ error: 'Invalid backup file name' }, { status: 400 });
+    }
+
+    const volume = `agent-${id}-data`;
+
+    // Check backup exists
+    const check = execSync(
+      `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'test -f /backup/${file} && echo ok || true'`,
+      { timeout: 10000, encoding: 'utf-8' },
+    ).trim();
+    if (check !== 'ok') {
+      return NextResponse.json({ error: `Backup file '${file}' not found` }, { status: 404 });
+    }
+
+    // Stop the container if running
+    execSync(`docker stop ${id} 2>/dev/null; exit 0`, { timeout: 15000 });
+
+    // Clear the volume and restore from backup
+    // Steps: run a temporary container with the volume, delete all contents, extract backup
+    execSync(
+      `docker run --rm ` +
+      `-v ${volume}:/target ` +
+      `-v ${BACKUP_VOLUME}:/backup ` +
+      `alpine sh -c 'rm -rf /target/* /target/..?* 2>/dev/null; tar xzf /backup/${file} -C /target'`,
+      { timeout: 30000, stdio: 'pipe' },
+    );
+
+    // Restart the container
+    execSync(`docker start ${id}`, { timeout: 15000, stdio: 'pipe' });
+
+    return NextResponse.json({ success: true, container: id });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}

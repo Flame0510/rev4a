@@ -38,6 +38,10 @@ export async function DELETE(
       timeout: 30000,
     });
 
+    // Note: persistent volume (agent-<name>-data) is intentionally NOT removed.
+    // This allows the user to recreate the container later without losing data.
+    // Volume cleanup is manual via docker volume rm or the backup UI.
+
     // Log event to events.db if it exists
     try {
       const Database = require('better-sqlite3');

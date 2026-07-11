@@ -193,6 +193,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       --network "${network}" \
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
+      -v agent-${name}-data:/root \
       ${labelOpts} \
       ${envOpts} \
       ${portOpt} \
@@ -230,24 +231,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (ready) {
       try {
         // Create workspace dir (OpenClaw does not create it automatically if
-        // agents.defaults.workspace is not configured). Then copy template files.
+        // agents.defaults.workspace is not configured).
         execSync(
           `docker exec ${name} mkdir -p /root/.openclaw/workspace`,
           { timeout: 10000, stdio: 'pipe' },
         );
 
-        // Copy template files into the container (NOT bind-mount, so agent edits
-        // never spill back to the Olympus repo).
-        for (const tf of templateFiles) {
-          const src = path.join(templateDir, tf);
-          if (fs.existsSync(src) && fs.statSync(src).isFile()) {
-            try {
-              execSync(
-                `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
-                { timeout: 10000, stdio: 'pipe' },
-              );
-            } catch (cpErr) {
-              console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
+        // Check if the workspace already has template files (persisted from a
+        // previous container via the agent-<name>-data volume). If so, skip the
+        // copy — the user may have edited them.
+        const hasWorkspaceFiles = execSync(
+          `docker exec ${name} sh -c 'ls /root/.openclaw/workspace/AGENTS.md 2>/dev/null || true'`,
+          { timeout: 5000, encoding: 'utf-8' },
+        ).trim();
+
+        if (!hasWorkspaceFiles) {
+          // Copy template files into the container (NOT bind-mount, so agent edits
+          // never spill back to the Olympus repo).
+          for (const tf of templateFiles) {
+            const src = path.join(templateDir, tf);
+            if (fs.existsSync(src) && fs.statSync(src).isFile()) {
+              try {
+                execSync(
+                  `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
+                  { timeout: 10000, stdio: 'pipe' },
+                );
+              } catch (cpErr) {
+                console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
+              }
             }
           }
         }

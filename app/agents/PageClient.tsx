@@ -452,6 +452,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Integrations — credentials synced to this agent */}
       <IntegrationSection agentName={agent.name} />
 
+      {/* Backup — persistent volume backup & restore */}
+      <BackupSection agentName={agent.name} />
+
       {/* Access — Traefik URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
@@ -468,16 +471,21 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
+      {/* Recreate */}
+      <RecreateSection agentName={agent.name} />
+
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(239,68,68,0.15)', color: '#ef4444', fontSize: 10, letterSpacing: '0.08em' }}>DANGER ZONE</div>
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-            Delete this agent. This will stop and remove the Docker container. This action cannot be undone.
+            Delete this agent and its container. Persistent volume data is kept — you can recreate the agent later.
           </div>
-          <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-            {deleting ? 'Deleting...' : 'Delete Agent'}
-          </Button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
+              {deleting ? 'Deleting...' : 'Delete Agent'}
+            </Button>
+          </div>
           {deleteError && (
             <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{deleteError}</div>
           )}
@@ -556,6 +564,173 @@ function IntegrationSection({ agentName }: { agentName: string }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Backup section — persistent volume backup & restore ─── */
+
+function BackupSection({ agentName }: { agentName: string }) {
+  const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const loadBackups = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/backup`);
+      if (res.ok) {
+        const data: { backups: { name: string; size: string; date: string }[] } = await res.json();
+        setBackups(data.backups ?? []);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [agentName]);
+
+  useEffect(() => { void loadBackups(); }, [loadBackups]);
+
+  const handleBackup = async () => {
+    setCreating(true);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/backup`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Backup created: ' + data.file);
+        void loadBackups();
+      } else {
+        showToast(data.error || 'Backup failed');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message);
+    }
+    setCreating(false);
+  };
+
+  const handleRestore = async (file: string) => {
+    if (!confirm(`Restore from ${file}? The agent container will be stopped, restored, and restarted.`)) return;
+    try {
+      const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Restored from ' + file);
+        void loadBackups();
+      } else {
+        showToast(data.error || 'Restore failed');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message);
+    }
+  };
+
+  const handleDeleteBackup = async (file: string) => {
+    try {
+      await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+      void loadBackups();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>BACKUP</div>
+      <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
+        {!loading && backups.length === 0 && (
+          <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
+        )}
+        {backups.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {backups.map((b) => (
+              <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
+                <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
+                <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{b.size}</span>
+                <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{b.date}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRestore(b.name)}
+                  style={{ background: 'none', border: '1px solid var(--copper)', color: 'var(--copper)', cursor: 'pointer', fontSize: 10, padding: '2px 6px' }}
+                >
+                  Restore
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteBackup(b.name)}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '2px' }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="secondary" size="sm" loading={creating} disabled={creating} onClick={handleBackup}>
+            {creating ? 'Creating...' : 'Backup Now'}
+          </Button>
+        </div>
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Recreate section — rebuild container from same image while keeping volume ─── */
+
+function RecreateSection({ agentName }: { agentName: string }) {
+  const [recreating, setRecreating] = useState(false);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  const handleRecreate = async () => {
+    if (!confirm(`Recreate container for "${agentName}"? The container will be stopped and recreated from the same image. Persistent volume data (workspace, credentials, state) will be preserved.`)) return;
+    setRecreating(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/agents/${agentName}/recreate`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Container recreated successfully');
+        setTimeout(() => window.location.reload(), 2000);
+      } else {
+        setError(data.error || 'Recreate failed');
+      }
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Network error');
+    }
+    setRecreating(false);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>RECREATE</div>
+      <div style={{ padding: '12px 14px' }}>
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+          Rebuild the container from the same image while keeping workspace, config, credentials, and state intact.
+        </div>
+        <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={handleRecreate}>
+          {recreating ? 'Recreating...' : 'Recreate Container'}
+        </Button>
+        {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
