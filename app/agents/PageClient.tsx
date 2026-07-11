@@ -452,6 +452,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Integrations — credentials synced to this agent */}
       <IntegrationSection agentName={agent.name} />
 
+      {/* Restart */}
+      <RestartSection agentName={agent.name} />
+
       {/* Backup — persistent volume backup & restore */}
       <BackupSection agentName={agent.name} />
 
@@ -711,6 +714,53 @@ function BackupSection({ agentName }: { agentName: string }) {
       </div>
       {toast && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.startsWith('Backup') || toast.startsWith('Restored') ? '#22c55e' : '#ef4444' }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Restart section — simple container restart ─── */
+
+function RestartSection({ agentName }: { agentName: string }) {
+  const [restarting, setRestarting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  const handleRestart = async () => {
+    setRestarting(true);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/restart`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Container restarted');
+      } else {
+        showToast(data.error || 'Restart failed');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'Network error');
+    }
+    setRestarting(false);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>RESTART</div>
+      <div style={{ padding: '12px 14px' }}>
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+          Restart the container without losing any data.
+        </div>
+        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting} onClick={handleRestart}>
+          {restarting ? 'Restarting...' : 'Restart Container'}
+        </Button>
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
           {toast}
         </div>
       )}
