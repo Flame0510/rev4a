@@ -597,12 +597,13 @@ function BackupSection({ agentName }: { agentName: string }) {
 
   const handleBackup = async () => {
     setStatus({ type: 'backup', label: 'Creating backup...' });
+    setBackups([]);
     try {
       const res = await fetch(`/api/agents/${agentName}/backup`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         showToast('Backup created: ' + data.file);
-        void loadBackups();
+        await loadBackups();
       } else {
         showToast(data.error || 'Backup failed', true);
       }
@@ -615,12 +616,13 @@ function BackupSection({ agentName }: { agentName: string }) {
   const handleRestore = async (file: string) => {
     if (!confirm(`Restore from ${file}? The agent container will be stopped, restored, and restarted.`)) return;
     setStatus({ type: 'restore', label: `Restoring from ${file}... (container will restart)` });
+    setBackups([]);
     try {
       const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         showToast('Restored from ' + file);
-        void loadBackups();
+        await loadBackups();
       } else {
         showToast(data.error || 'Restore failed', true);
       }
@@ -631,10 +633,13 @@ function BackupSection({ agentName }: { agentName: string }) {
   };
 
   const handleDeleteBackup = async (file: string) => {
+    setStatus({ type: 'backup', label: `Deleting ${file}...` });
     try {
       await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
-      void loadBackups();
+      setBackups([]);
+      await loadBackups();
     } catch { /* ignore */ }
+    setStatus(null);
   };
 
   return (
