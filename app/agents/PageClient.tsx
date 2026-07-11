@@ -573,12 +573,12 @@ function IntegrationSection({ agentName }: { agentName: string }) {
 function BackupSection({ agentName }: { agentName: string }) {
   const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [status, setStatus] = useState<{ type: 'backup' | 'restore'; label: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, isError = false) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 4000);
   };
 
   const loadBackups = useCallback(async () => {
@@ -596,7 +596,7 @@ function BackupSection({ agentName }: { agentName: string }) {
   useEffect(() => { void loadBackups(); }, [loadBackups]);
 
   const handleBackup = async () => {
-    setCreating(true);
+    setStatus({ type: 'backup', label: 'Creating backup...' });
     try {
       const res = await fetch(`/api/agents/${agentName}/backup`, { method: 'POST' });
       const data = await res.json();
@@ -604,16 +604,17 @@ function BackupSection({ agentName }: { agentName: string }) {
         showToast('Backup created: ' + data.file);
         void loadBackups();
       } else {
-        showToast(data.error || 'Backup failed');
+        showToast(data.error || 'Backup failed', true);
       }
     } catch (e: unknown) {
-      showToast((e as Error).message);
+      showToast((e as Error).message, true);
     }
-    setCreating(false);
+    setStatus(null);
   };
 
   const handleRestore = async (file: string) => {
     if (!confirm(`Restore from ${file}? The agent container will be stopped, restored, and restarted.`)) return;
+    setStatus({ type: 'restore', label: `Restoring from ${file}... (container will restart)` });
     try {
       const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
       const data = await res.json();
@@ -621,11 +622,12 @@ function BackupSection({ agentName }: { agentName: string }) {
         showToast('Restored from ' + file);
         void loadBackups();
       } else {
-        showToast(data.error || 'Restore failed');
+        showToast(data.error || 'Restore failed', true);
       }
     } catch (e: unknown) {
-      showToast((e as Error).message);
+      showToast((e as Error).message, true);
     }
+    setStatus(null);
   };
 
   const handleDeleteBackup = async (file: string) => {
@@ -639,43 +641,71 @@ function BackupSection({ agentName }: { agentName: string }) {
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>BACKUP</div>
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
-        {!loading && backups.length === 0 && (
-          <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
-        )}
-        {backups.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {backups.map((b) => (
-              <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
-                <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
-                <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{b.size}</span>
-                <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{b.date}</span>
-                <button
-                  type="button"
-                  onClick={() => handleRestore(b.name)}
-                  style={{ background: 'none', border: '1px solid var(--copper)', color: 'var(--copper)', cursor: 'pointer', fontSize: 10, padding: '2px 6px' }}
-                >
-                  Restore
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteBackup(b.name)}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '2px' }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+        {status && (
+          <div style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--copper)',
+            background: 'rgba(212,155,53,0.08)',
+            border: '1px solid rgba(212,155,53,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: 'var(--copper)',
+              animation: 'pulse 1s infinite',
+            }} />
+            {status.label}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" size="sm" loading={creating} disabled={creating} onClick={handleBackup}>
-            {creating ? 'Creating...' : 'Backup Now'}
-          </Button>
-        </div>
+        {!status && (
+          <>
+            {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
+            {!loading && backups.length === 0 && (
+              <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
+            )}
+            {backups.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {backups.map((b) => (
+                  <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
+                    <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
+                    <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{b.size}</span>
+                    <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{b.date}</span>
+                    <button
+                      type="button"
+                      disabled={!!status}
+                      onClick={() => handleRestore(b.name)}
+                      style={{ background: 'none', border: '1px solid var(--copper)', color: 'var(--copper)', cursor: 'pointer', fontSize: 10, padding: '2px 6px', opacity: status ? 0.5 : 1 }}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!status}
+                      onClick={() => handleDeleteBackup(b.name)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '2px', opacity: status ? 0.5 : 1 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="secondary" size="sm" disabled={!!status} onClick={handleBackup}>
+                Backup Now
+              </Button>
+            </div>
+          </>
+        )}
       </div>
       {toast && (
-        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.startsWith('Backup') || toast.startsWith('Restored') ? '#22c55e' : '#ef4444' }}>
           {toast}
         </div>
       )}
@@ -718,6 +748,29 @@ function RecreateSection({ agentName }: { agentName: string }) {
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>RECREATE</div>
       <div style={{ padding: '12px 14px' }}>
+        {recreating && (
+          <div style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--copper)',
+            background: 'rgba(212,155,53,0.08)',
+            border: '1px solid rgba(212,155,53,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 8,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: 'var(--copper)',
+              animation: 'pulse 1s infinite',
+            }} />
+            Recreating container...
+          </div>
+        )}
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Rebuild the container from the same image while keeping workspace, config, credentials, and state intact.
         </div>
