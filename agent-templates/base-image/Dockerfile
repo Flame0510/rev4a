@@ -1,9 +1,8 @@
-# Nexus Agent Base Image
+# OpenClaw Agent Base Image
 #
-# Minimal base image for agent containers in the Olympus ecosystem.
-# Contains only essentials: Node, OpenClaw, entrypoint.
-# Additional tools (git, gh, supabase, vercel, etc.) are installed
-# on-demand by Olympus or directly by the user from the dashboard.
+# Base image for agent containers in the Olympus ecosystem.
+# Includes: Node, OpenClaw, gh CLI, Vercel CLI, entrypoint.
+# Supabase/Trello: env-file based auth; Supabase CLI preinstalled for db/function operations.
 #
 # Traefik integration:
 #   - Static enablement is baked into the image.
@@ -12,10 +11,10 @@
 #   - See agent-templates/README.md for the full label set.
 #
 # Build:
-#   docker build -t nexus-agent-base:latest -f Dockerfile .
+#   docker build -t openclaw-agent-base:latest -f Dockerfile .
 #
 # Test:
-#   docker run --rm nexus-agent-base:latest openclaw --version
+#   docker run --rm openclaw-agent-base:latest openclaw --version
 #
 # Run with Traefik support:
 #   docker run -d \
@@ -29,11 +28,11 @@
 #     -l "traefik.http.routers.agent-<id>.tls.certresolver=letsencrypt" \
 #     -l "traefik.http.services.agent-<id>.loadbalancer.server.port=3000" \
 #     -e AGENT_ID=<id> \
-#     nexus-agent-base:latest
+#     openclaw-agent-base:latest
 
 FROM node:24-bookworm-slim
 
-LABEL description="Nexus Agent Base — Olympus multicontainer ecosystem"
+LABEL description="OpenClaw Agent Base — Olympus multicontainer ecosystem"
 LABEL maintainer="Olympus Agency"
 
 # Traefik static labels — enable proxy support by default.
@@ -44,18 +43,25 @@ LABEL traefik.enable="true"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
 
-# Minimal system dependencies
+# System dependencies + gh CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     openssl \
+    gpg \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenClaw only — no PM2, no gh, no git
-# Agents use the Provider Gateway for credentials
-# and Olympus for on-demand tool installation via API
-RUN npm install -g openclaw \
-    && openclaw plugins install npm:@openclaw/deepseek-provider
+# OpenClaw + Vercel CLI + Supabase CLI + Trello CLI
+# Patch openclaw.json to allow Control UI from any Host — token auth is the real guard
+RUN npm install -g openclaw vercel supabase trello-cli \
+    && openclaw plugins install npm:@openclaw/deepseek-provider \
+    && echo '{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
+       | openclaw config patch --stdin
 
 # Default config directory
 RUN mkdir -p /data/.openclaw

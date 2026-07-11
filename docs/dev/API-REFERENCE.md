@@ -486,7 +486,7 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "id": "abc123def456",
     "agentId": "prometheus",
     "name": "prometheus",
-    "image": "nexus-agent-base:latest",
+    "image": "openclaw-agent-base:latest",
     "imageTag": "latest",
     "template": "prometheus",
     "status": "running",
@@ -536,7 +536,7 @@ Create a new agent container from a template.
   "success": true,
   "containerId": "00f5de1eb08d...",
   "name": "my-agent",
-  "image": "nexus-agent-base:latest",
+  "image": "openclaw-agent-base:latest",
   "network": "openclaw-core_default",
   "traefikUrl": "https://my-agent.example.com#token=asdfghjkl"
 }
@@ -935,7 +935,7 @@ List all running Docker containers with resource usage.
   "containers": [
     {
       "name": "openclaw-atlas",
-      "image": "nexus-agent-base:latest",
+      "image": "openclaw-agent-base:latest",
       "status": "running",
       "ports": ["0.0.0.0:3731->3000/tcp"],
       "created": "2026-06-20T10:00:00Z",
@@ -1260,6 +1260,95 @@ data: [DONE]
 - PYTHIA routes the request **directly to the upstream provider** (not via the local Provider Gateway), using the API key from `data/provider-keys.json`.
 - The system prompt is built dynamically based on `PAGE_CONTEXT` (hardcoded in the route handler) — no database access.
 - PYTHIA does **not** have access to live data; she only knows page descriptions and navigation links.
+
+---
+
+## Credentials
+
+### `GET /api/credentials`
+List all stored credential profiles and the provider registry.
+
+**Response:** `{ profiles: CredentialProfile[], providers: CredentialProviderDef[] }`
+
+### `POST /api/credentials`
+Create a new credential profile.
+
+**Body:** `{ providerId: string, label: string, secret: Record<string, string> }`
+
+**Response:** `{ id: string }` (201)
+
+### `GET /api/credentials/[id]`
+Get a single credential profile (no secret returned).
+
+### `PATCH /api/credentials/[id]`
+Update label and/or secret of a credential.
+
+**Body:** `{ label: string, secret: Record<string, string> }`
+
+### `DELETE /api/credentials/[id]`
+Delete a credential and its secret permanently.
+
+### `POST /api/credentials/[id]/sync`
+Sync the credential to all agent containers (or a specified subset).
+
+**Body (optional):** `{ containers?: string[] }` — if omitted or empty, syncs to all agent containers with `AGENT_ID` labels.
+
+**Response:** `{ results: { container: string, status: 'ok'|'error', error?: string }[] }`
+
+Before syncing, **all agent containers are cleaned first** (env files, CLI auth, TOOLS.md integration markers removed).
+Only the selected containers receive the new credential and TOOLS.md section.
+This ensures that deselecting an agent or deleting a profile removes the credential from all agents.
+
+### `GET /api/credentials/detect`
+Live-detect which credentials are actually present inside agent containers.
+
+**Query params (optional):** `?agent=prometheus` — filter to a single container.
+
+**Response:**
+```json
+{
+  "agents": [
+    {
+      "container": "prometheus",
+      "agentId": "prometheus",
+      "githubLoggedIn": true,
+      "githubUser": "Flame0510",
+      "githubCliInstalled": true,
+      "vercelLoggedIn": false,
+      "vercelUser": "",
+      "vercelTeam": "",
+      "vercelCliInstalled": true,
+      "supabaseLoggedIn": true,
+      "supabaseLinked": false,
+      "supabaseProjectRef": "",
+      "supabaseCliInstalled": true,
+      "trelloLoggedIn": false,
+      "trelloCliInstalled": true,
+      "toolsMdHasMarkers": true,
+      "matchedProfiles": [
+        { "profileId": "cred_xxx", "providerId": "github-pat", "label": "GitHub" }
+      ]
+    }
+  ]
+}
+```
+
+Detection runs `docker exec` inside each container:
+- `gh auth status` for GitHub (token read from `~/.config/gh/hosts.yml`)
+- `vercel whoami` for Vercel (token read from `~/.local/share/com.vercel.cli/auth.json`)
+- `supabase projects list --output json` for Supabase (token read from `~/.supabase/access-token`)
+- `test -f ~/.trello-cli/default/config.json` for Trello
+- TOOLS.md markers at `/root/.openclaw/workspace/TOOLS.md`
+
+`matchedProfiles` is determined by SHA256-hashing the token installed in the container
+and comparing it against the hashed token of each stored profile in the vault.
+Only exact token matches produce a match — no heuristics, no broad profile-level guesses.
+
+### `POST /api/credentials/[id]/reveal`
+Return the raw secret payload. Every call is logged in the audit trail.
+Use sparingly.
+
+**Response:** `{ secret: Record<string, string> }`
 
 ---
 

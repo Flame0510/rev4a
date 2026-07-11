@@ -113,7 +113,7 @@ The central container, running the Next.js dashboard + orchestration API.
 /docker/shared-memory          → /data/shared-memory (rw)
 ```
 
-### 3.2 Agent Container Template (`nexus-agent-base`)
+### 3.2 Agent Container Template (`openclaw-agent-base`)
 
 Docker image for every agent container.
 
@@ -237,7 +237,7 @@ Olympus Dashboard UI
                ▼
 ┌──────────────────────────────────────┐
 │ 3. Olympus spawns Docker container   │
-│    - docker run nexus-agent-base     │
+│    - docker run openclaw-agent-base     │
 │    - Env vars + volumes              │
 │    - network: olympus-net            │
 │    - CPU/RAM limits                  │
@@ -426,7 +426,7 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 
 ### Phase 1 — Container separation
 - [x] `openclaw-atlas` running as standalone container
-- [ ] Create `nexus-agent-base` Docker image and push to registry
+- [ ] Create `openclaw-agent-base` Docker image and push to registry
 - [ ] Define shared volume structure
 - [ ] Test cross-container communication
 

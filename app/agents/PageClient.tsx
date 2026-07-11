@@ -449,7 +449,10 @@ function DetailPanel({ agent }: { agent: Agent }) {
         </div>
       </div>
 
-      {/* Access — Traefik URL (token inline nel link) */}
+      {/* Integrations — credentials synced to this agent */}
+      <IntegrationSection agentName={agent.name} />
+
+      {/* Access — Traefik URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
           <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ACCESS TOKEN</div>
@@ -492,6 +495,67 @@ function DetailPanel({ agent }: { agent: Agent }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Integration section — credentials synced to this agent ─── */
+
+function IntegrationSection({ agentName }: { agentName: string }) {
+  const [profiles, setProfiles] = useState<{ providerId: string; label: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setProfiles([]);
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/credentials/detect?agent=${agentName}`);
+        const data: {
+          agents?: { matchedProfiles: { providerId: string; label: string }[] }[];
+          error?: string;
+        } = await res.json();
+        const matched = data.agents?.[0]?.matchedProfiles ?? [];
+        setProfiles(matched);
+      } catch { /* ignore */ }
+      setLoading(false);
+    };
+    void load();
+  }, [agentName]);
+
+  const count = profiles.length;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>INTEGRATIONS</div>
+      <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {loading ? (
+          <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: 'var(--text)' }}>
+              {count > 0
+                ? `${count} credential${count !== 1 ? 's' : ''} configured`
+                : 'No credentials synced to this agent.'}
+            </div>
+            {count > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {profiles.map((p) => (
+                  <span key={p.providerId} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--copper)', background: 'rgba(212,155,53,0.08)', border: '1px solid rgba(212,155,53,0.2)', padding: '2px 8px' }}>
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            <a
+              href="/credentials"
+              style={{ fontSize: 11, color: 'var(--copper)', textDecoration: 'none', cursor: 'pointer', marginTop: 4 }}
+            >
+              Manage credentials →
+            </a>
+          </>
+        )}
+      </div>
     </div>
   );
 }

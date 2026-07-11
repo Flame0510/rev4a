@@ -1,6 +1,6 @@
 # Agent Templates
 
-## Base Image: `nexus-agent-base`
+## Base Image: `openclaw-agent-base`
 
 The base image for all agent containers in the Olympus ecosystem.
 
@@ -30,7 +30,7 @@ docker run -d \
   -l "traefik.http.routers.agent-<id>.tls.certresolver=letsencrypt" \
   -l "traefik.http.services.agent-<id>.loadbalancer.server.port=3000" \
   -e AGENT_ID=<id> \
-  nexus-agent-base:latest
+  openclaw-agent-base:latest
 ```
 
 ### `scripts/spawn-agent.sh`

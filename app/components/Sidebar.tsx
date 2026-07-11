@@ -131,6 +131,18 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/credentials',
+    label: 'Credentials',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="6" width="13" height="8.5" rx="1" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M5 6V4.5a3 3 0 0 1 6 0V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        <circle cx="8" cy="10" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M8 11.5v1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: '/tools',
     label: 'Tools',
     icon: (

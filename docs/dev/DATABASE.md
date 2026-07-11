@@ -148,6 +148,59 @@ bash /data/.openclaw/workspace-ops/olympus-next-ts/backup.sh
 
 Backups are stored in `backups/` inside the repo directory.
 
+## Credentials Database (`credentials.db`)
+
+The credential hub uses a **separate SQLite file** (`credentials.db`) alongside
+events.db in the same data directory. It stores credentials that can be synced
+to agent containers via CLI auth or env files.
+
+**Location:** `data/credentials.db` (same directory as `events.db`)
+**Custom path:** Set `OLYMPUS_CREDENTIALS_DB` env var to override.
+**WAL mode:** Enabled.
+
+### `credential_profiles` — credential hub metadata
+
+```sql
+CREATE TABLE credential_profiles (
+  id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  secret_masked TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_synced_at INTEGER
+);
+```
+
+### `credential_secrets` — stored secret payloads
+
+```sql
+CREATE TABLE credential_secrets (
+  profile_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL
+);
+```
+
+Payloads are stored as JSON strings. In a future release they will be AES-256-GCM encrypted.
+
+### `credential_audit_log` — append-only audit trail
+
+```sql
+CREATE TABLE credential_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  profile_id TEXT,
+  result TEXT
+);
+```
+
+Actions: `create`, `update`, `delete`, `sync`, `reveal`.
+
+---
+
 ## Migrations
 
 The daemon applies these migrations safely at startup:

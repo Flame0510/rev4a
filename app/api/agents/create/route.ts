@@ -28,6 +28,7 @@ function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
   return false;
 }
 
+
 export const dynamic = 'force-dynamic';
 
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Build docker run command
-    const image = 'nexus-agent-base:latest';
+    const image = 'openclaw-agent-base:latest';
     const network = getNetwork();
 
     // Read agents token for new containers
@@ -185,15 +186,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
     const portOpt = port ? `-p ${port}:${port}` : '';
 
-    // Attach template files as volume mounts if they exist
-    let volumeOpts = '';
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
-    for (const tf of templateFiles) {
-      const src = path.join(templateDir, tf);
-      if (fs.existsSync(src) && fs.statSync(src).isFile()) {
-        volumeOpts += ` -v ${shellQuote(`${src}:/root/.openclaw/workspace/${tf}`)}`;
-      }
-    }
 
     const cmd = `docker run -d \
       --name "${name}" \
@@ -202,7 +195,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       --add-host host.docker.internal:host-gateway \
       ${labelOpts} \
       ${envOpts} \
-      ${volumeOpts} \
       ${portOpt} \
       "${image}"`;
 
@@ -233,10 +225,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // DB logging is optional, ignore failures
     }
 
-    // Wait for container gateway to be fully up before syncing
+    // Wait for container to be ready (HTTP health check)
     const ready = waitForContainerReady(name);
     if (ready) {
       try {
+        // Create workspace dir (OpenClaw does not create it automatically if
+        // agents.defaults.workspace is not configured). Then copy template files.
+        execSync(
+          `docker exec ${name} mkdir -p /root/.openclaw/workspace`,
+          { timeout: 10000, stdio: 'pipe' },
+        );
+
+        // Copy template files into the container (NOT bind-mount, so agent edits
+        // never spill back to the Olympus repo).
+        for (const tf of templateFiles) {
+          const src = path.join(templateDir, tf);
+          if (fs.existsSync(src) && fs.statSync(src).isFile()) {
+            try {
+              execSync(
+                `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
+                { timeout: 10000, stdio: 'pipe' },
+              );
+            } catch (cpErr) {
+              console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
+            }
+          }
+        }
+
         // Step 1: Read current config (OpenClaw has already written its default)
         const raw = execSync(
           `docker exec ${name} cat /root/.openclaw/openclaw.json`,

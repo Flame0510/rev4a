@@ -1,7 +1,7 @@
 #!/bin/bash
 # Olympus Agent Spawner
 # 
-# Crea un nuovo container agente basato sull'immagine nexus-agent-base.
+# Crea un nuovo container agente basato sull'immagine openclaw-agent-base.
 # Legge le credenziali dal vault di Olympus e le inietta come env vars.
 # Aggiunge automaticamente le label Traefik per accesso esterno via HTTPS.
 #
@@ -11,12 +11,12 @@
 # Requisiti:
 #   - Docker installato sul host
 #   - Olympus vault configurato (vault.json)
-#   - Immagine nexus-agent-base buildata
+#   - Immagine openclaw-agent-base buildata
 #
 # Variabili d'ambiente:
 #   OLYMPUS_NETWORK       — Docker network (default: olympus-net)
 #   OLYMPUS_VAULT_PATH    — percorso vault.json
-#   OLYMPUS_IMAGE         — immagine agente (default: nexus-agent-base:latest)
+#   OLYMPUS_IMAGE         — immagine agente (default: openclaw-agent-base:latest)
 #   OLYMPUS_TRAEFIK_DOMAIN — dominio base per Traefik (default: example.com)
 #   OLYMPUS_SKIP_TRAEFIK  — se true, non aggiunge label Traefik
 #
@@ -44,7 +44,7 @@ if [ -z "$AGENT_ID" ]; then
   echo "Env vars opzionali:"
   echo "  OLYMPUS_NETWORK       — Docker network (default: olympus-net)"
   echo "  OLYMPUS_VAULT_PATH    — percorso vault.json"
-  echo "  OLYMPUS_IMAGE         — immagine agente (default: nexus-agent-base:latest)"
+  echo "  OLYMPUS_IMAGE         — immagine agente (default: openclaw-agent-base:latest)"
   echo "  OLYMPUS_TRAEFIK_DOMAIN — dominio base (default: example.com)"
   echo "  OLYMPUS_SKIP_TRAEFIK  — salta label Traefik se true"
   exit 1
@@ -52,7 +52,7 @@ fi
 
 # Configurazione
 NETWORK="${OLYMPUS_NETWORK:-olympus-net}"
-IMAGE="${OLYMPUS_IMAGE:-nexus-agent-base:latest}"
+IMAGE="${OLYMPUS_IMAGE:-openclaw-agent-base:latest}"
 TRAEFIK_DOMAIN="${OLYMPUS_TRAEFIK_DOMAIN:-example.com}"
 HOST_DATA_DIR="/docker/agent-${AGENT_ID}"
 CONTAINER_NAME="agent-${AGENT_ID}"

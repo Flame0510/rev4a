@@ -70,6 +70,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on thi
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
 | `/crons` | Scheduled jobs |
+| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase) — JSON vault with audit trail, sync to agent containers via CLI auth (gh, vercel, supabase) or env files (trello) |
 | `/providers` | LLM provider configuration |
 | `/plugins` | Plugin manager |
 | `/plugins-skills` | Plugin skills |
@@ -224,7 +225,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 **Step 3 — Deploy:** `POST /api/agents/create` creates the Docker container and returns the Traefik URL with the shared gateway token.
 
 **Post-creation pipeline:**
-1. The container boots with the **nexus-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
+1. The container boots with the **openclaw-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
 3. The route waits for the gateway to be fully ready (health check poll, up to 20 s).
 4. Once ready, the route writes:
@@ -239,7 +240,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 
 ## Agent Templates
 
-### Base Image (`nexus-agent-base:latest`)
+### Base Image (`openclaw-agent-base:latest`)
 
 **Dockerfile:** `agent-templates/base-image/Dockerfile`
 
@@ -293,7 +294,7 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 
 | Property | Value |
 |---|---|
-| Image | `nexus-agent-base:latest` (Node 24-bookworm-slim + OpenClaw) |
+| Image | `openclaw-agent-base:latest` (Node 24-bookworm-slim + OpenClaw) |
 | Port | `0.0.0.0:3731 → 3000` |
 | IP | `172.19.0.3` |
 | AGENT_ID | `atlas` |

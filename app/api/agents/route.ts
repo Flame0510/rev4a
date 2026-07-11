@@ -125,7 +125,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
         // Determine template from image name or AGENT_ID
         const image: string = c.Image || '';
         let template: string | null = null;
-        if (image.startsWith('nexus-agent-base')) {
+        if (image.startsWith('openclaw-agent-base')) {
           // Template matches agentId if there is a dir with that name
           template = agentId;
         }

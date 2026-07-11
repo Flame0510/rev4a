@@ -104,6 +104,18 @@ const navItems = [
     ),
   },
   {
+    label: 'Credentials',
+    path: '/credentials',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="7" width="14" height="9" rx="1"/>
+        <path d="M6 7V5.5a3 3 0 0 1 6 0V7"/>
+        <circle cx="9" cy="11.5" r="1.5"/>
+        <path d="M9 13v1.5"/>
+      </svg>
+    ),
+  },
+  {
     label: 'Tools',
     path: '/tools',
     icon: (
