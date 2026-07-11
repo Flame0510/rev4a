@@ -58,8 +58,8 @@ export async function POST(
       `docker run --rm ` +
       `-v ${volume}:/source:ro ` +
       `-v ${BACKUP_VOLUME}:/backup ` +
-      `alpine sh -c 'tar czf /backup/${filename} -C /source . && chmod 644 /backup/${filename}'`,
-      { timeout: 30000, stdio: 'pipe' },
+      `alpine sh -c 'tar czf /backup/${filename} --exclude=.npm/_cacache -C /source . && chmod 644 /backup/${filename}'`,
+      { timeout: 60000, stdio: 'pipe' },
     );
 
     return NextResponse.json({ success: true, file: filename });
