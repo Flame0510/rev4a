@@ -19,18 +19,10 @@ export async function DELETE(
       );
     }
 
-    // Try to find the container by name first, then by id
-    let containerName = id;
-    try {
-      const found = execSync(
-        `docker ps -a --filter "label=AGENT_ID=${id}" --format '{{.Names}}'`,
-        { encoding: 'utf-8', timeout: 5000 },
-      ).trim();
-      if (found) {
-        containerName = found;
-      }
-    } catch {
-      // fall through
+    // Only allow deletion of containers that have a matching AGENT_ID label
+    const containerName = resolveAgentedContainer(id);
+    if (!containerName) {
+      return NextResponse.json({ error: `No container found with AGENT_ID '${id}'` }, { status: 404 });
     }
 
     execSync(`docker rm -f "${containerName}"`, {
@@ -70,3 +62,19 @@ export async function DELETE(
     );
   }
 }
+
+/**
+ * Resolve the container name from an AGENT_ID label.
+ */
+function resolveAgentedContainer(agentId: string): string | null {
+  try {
+    const found = execSync(
+      `docker ps -a --filter "label=AGENT_ID=${agentId}" --format '{{.Names}}'`,
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim();
+    return found || null;
+  } catch {
+    return null;
+  }
+}
+

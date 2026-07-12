@@ -1891,4 +1891,9 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 }
 
 /* ── List item buttons (sidebar items, agent list, provider select) ─── */
+
+/* ── Pulse animation for in-progress indicators ─────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }

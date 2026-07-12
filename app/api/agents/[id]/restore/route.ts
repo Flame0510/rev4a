@@ -22,12 +22,15 @@ export async function POST(
     const file = url.searchParams.get('file');
     if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
 
-    // Safety: only allow restoring agent-specific files
-    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz')) {
+    // Safety: only allow restoring agent-specific files, reject path traversal
+    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz') || file.includes('/') || file.includes('..')) {
       return NextResponse.json({ error: 'Invalid backup file name' }, { status: 400 });
     }
 
     const volume = `agent-${id}-data`;
+
+    // Resolve the actual container name via AGENT_ID label
+    const containerName = resolveAgentedContainer(id);
 
     // Check backup exists
     const check = execSync(
@@ -39,7 +42,9 @@ export async function POST(
     }
 
     // Stop the container if running
-    execSync(`docker stop ${id} 2>/dev/null; exit 0`, { timeout: 15000 });
+    if (containerName) {
+      execSync(`docker stop ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
+    }
 
     // Clear the volume and restore from backup
     // Steps: run a temporary container with the volume, delete all contents, extract backup
@@ -52,10 +57,28 @@ export async function POST(
     );
 
     // Restart the container
-    execSync(`docker start ${id}`, { timeout: 15000, stdio: 'pipe' });
+    if (containerName) {
+      execSync(`docker start ${containerName}`, { timeout: 15000, stdio: 'pipe' });
+    }
 
-    return NextResponse.json({ success: true, container: id });
+    return NextResponse.json({ success: true, container: containerName || id });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
+/**
+ * Resolve the container name from an AGENT_ID label.
+ * Returns null if no container with that label is found (volume-only agent).
+ */
+function resolveAgentedContainer(agentId: string): string | null {
+  try {
+    const found = execSync(
+      `docker ps -a --filter "label=AGENT_ID=${agentId}" --format '{{.Names}}'`,
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim();
+    return found || null;
+  } catch {
+    return null;
   }
 }

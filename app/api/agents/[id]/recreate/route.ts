@@ -7,7 +7,7 @@ const DEFAULT_NETWORK = 'openclaw-core_default';
 
 /**
  * POST /api/agents/[id]/recreate
- * Stop → rm → run with same image, env, labels, and the persistent volume.
+ * Stop -> rm -> run with same image, env, labels, and the persistent volume.
  * Workspace data, credentials, and state are preserved in the volume.
  */
 export async function POST(
@@ -18,15 +18,21 @@ export async function POST(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
 
+    // Resolve the actual container name via AGENT_ID label
+    const containerName = resolveAgentedContainer(id);
+    if (!containerName) {
+      return NextResponse.json({ error: `No container found with AGENT_ID '${id}'` }, { status: 404 });
+    }
+
     // Inspect the existing container to capture its parameters
     let inspect: string;
     try {
       inspect = execSync(
-        `docker inspect ${id}`,
+        `docker inspect ${containerName}`,
         { timeout: 10000, encoding: 'utf-8' },
       ).trim();
     } catch {
-      return NextResponse.json({ error: `Container '${id}' not found` }, { status: 404 });
+      return NextResponse.json({ error: `Container '${containerName}' not found` }, { status: 404 });
     }
 
     const info = JSON.parse(inspect);
@@ -67,7 +73,7 @@ export async function POST(
       .join(' ');
 
     // Stop & remove the old container
-    execSync(`docker rm -f ${id} 2>/dev/null; exit 0`, { timeout: 15000 });
+    execSync(`docker rm -f ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
 
     // Run the new container with the same image, env, labels, network, and volume
     const volumeName = `agent-${id}-data`;
@@ -95,4 +101,19 @@ export async function POST(
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Resolve the container name from an AGENT_ID label.
+ */
+function resolveAgentedContainer(agentId: string): string | null {
+  try {
+    const found = execSync(
+      `docker ps -a --filter "label=AGENT_ID=${agentId}" --format '{{.Names}}'`,
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim();
+    return found || null;
+  } catch {
+    return null;
+  }
 }

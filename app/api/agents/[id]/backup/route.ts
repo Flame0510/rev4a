@@ -21,18 +21,20 @@ function agentVolumeName(agentName: string): string | null {
   }
 }
 
-/** Format a timestamp as YYYY-MM-DD_HHmmss (second precision avoids same-minute collisions). */
+/** Format a timestamp as YYYY-MM-DD_HHmmssSSS (ms precision avoids same-second collisions). */
 function ts(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}${ms}`;
 }
 
 /** Convert bytes to human-readable size. */
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 /**
@@ -139,8 +141,8 @@ export async function DELETE(
     const file = url.searchParams.get('file');
     if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
 
-    // Safety: only allow deleting agent-specific files
-    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz')) {
+    // Safety: only allow deleting agent-specific files, reject path traversal
+    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz') || file.includes('/') || file.includes('..')) {
       return NextResponse.json({ error: 'Invalid backup file name' }, { status: 400 });
     }
 
