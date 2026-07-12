@@ -269,16 +269,34 @@ export default function WorkspaceClient() {
 
   // Load tree
   useEffect(() => {
-    void (async () => {
-      setTreeLoading(true);
+    let mounted = true;
+    let pollTimer: ReturnType<typeof setTimeout>;
+
+    const load = async (showLoader: boolean) => {
+      if (showLoader) setTreeLoading(true);
       try {
         const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&tree=1`);
-        if (!res.ok) return;
+        if (!res.ok || !mounted) return;
         const data = await res.json() as { entries: TreeEntry[] };
         setTree(buildTree(data.entries));
       } catch { /* ignore */ }
-      finally { setTreeLoading(false); }
-    })();
+      finally { if (showLoader && mounted) setTreeLoading(false); }
+    };
+
+    const scheduleNext = () => {
+      pollTimer = setTimeout(async () => {
+        await load(false);
+        if (mounted) scheduleNext();
+      }, 5000);
+    };
+
+    void load(true);
+    scheduleNext();
+
+    return () => {
+      mounted = false;
+      clearTimeout(pollTimer);
+    };
   }, [selectedWorkspace]);
 
   // Load file
