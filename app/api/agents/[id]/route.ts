@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveAgentedContainer } from '@/lib/container';
+import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+
+const BACKUP_VOLUME = 'olympus-backups';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +21,9 @@ export async function DELETE(
         { status: 400 },
       );
     }
+    if (!isValidAgentId(id)) {
+      return NextResponse.json({ success: false, error: 'Invalid agent id' }, { status: 400 });
+    }
 
     // Only allow deletion of containers that have a matching AGENT_ID label
     const containerName = resolveAgentedContainer(id);
@@ -31,9 +36,22 @@ export async function DELETE(
       timeout: 30000,
     });
 
-    // Note: persistent volume (agent-<name>-data) is intentionally NOT removed.
-    // This allows the user to recreate the container later without losing data.
-    // Volume cleanup is manual via docker volume rm or the backup UI.
+    // Destructive delete: also remove the persistent volume and all backups.
+    // The container is already gone, so the volume is no longer in use.
+    // Best-effort — a missing volume or absent backups must not fail the delete.
+    try {
+      execSync(`docker volume rm agent-${id}-data`, { timeout: 15000, stdio: 'pipe' });
+    } catch {
+      // volume may not exist (legacy agent) or already removed — ignore
+    }
+    try {
+      execSync(
+        `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'rm -f /backup/agent-${id}-*.tar.gz'`,
+        { timeout: 20000, stdio: 'pipe' },
+      );
+    } catch {
+      // no backups or backup volume missing — ignore
+    }
 
     // Log event to events.db if it exists
     try {

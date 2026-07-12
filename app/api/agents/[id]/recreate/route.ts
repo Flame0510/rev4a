@@ -4,6 +4,15 @@ import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
+const BACKUP_VOLUME = 'olympus-backups';
+
+/** Timestamp YYYY-MM-DD_HHmmssSSS (ms precision avoids same-second collisions). */
+function ts(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}${ms}`;
+}
 
 /**
  * POST /api/agents/[id]/recreate
@@ -76,11 +85,31 @@ export async function POST(
       .filter(Boolean)
       .join(' ');
 
-    // Stop & remove the old container
+    const volumeName = `agent-${id}-data`;
+
+    // Auto-backup the volume BEFORE destroying the container. If the backup
+    // fails we abort and leave the running container untouched — never recreate
+    // without a safety net (e.g. in case a version migration goes wrong).
+    const backupFile = `agent-${id}-prerecreate-${ts()}.tar.gz`;
+    try {
+      execSync(
+        `docker run --rm ` +
+        `-v ${volumeName}:/source:ro ` +
+        `-v ${BACKUP_VOLUME}:/backup ` +
+        `alpine sh -c 'tar czf /backup/${backupFile} --exclude=.npm/_cacache -C /source . && chmod 644 /backup/${backupFile}'`,
+        { timeout: 60000, stdio: 'pipe' },
+      );
+    } catch (backupErr) {
+      return NextResponse.json(
+        { error: `Pre-recreate backup failed, aborting: ${(backupErr as Error).message}` },
+        { status: 500 },
+      );
+    }
+
+    // Stop & remove the old container (backup is safe on the olympus-backups volume)
     execSync(`docker rm -f ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
 
     // Run the new container with the same image, env, labels, network, and volume
-    const volumeName = `agent-${id}-data`;
 
     const cmd = [
       `docker run -d`,
@@ -97,7 +126,7 @@ export async function POST(
 
     execSync(cmd, { timeout: 60000, encoding: 'utf-8' });
 
-    return NextResponse.json({ success: true, name: id, image, network });
+    return NextResponse.json({ success: true, name: id, image, network, backup: backupFile });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

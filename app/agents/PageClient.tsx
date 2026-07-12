@@ -379,7 +379,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   const [showConfig, setShowConfig] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete agent "${agent.name}"? This will stop and remove the container.`)) return;
+    if (!confirm(`Delete agent "${agent.name}"?\n\nThis permanently deletes the container, its persistent volume, and ALL its backups. This cannot be undone.`)) return;
     setDeleting(true);
     setDeleteError('');
     try {
@@ -482,7 +482,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
         <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(239,68,68,0.15)', color: '#ef4444', fontSize: 10, letterSpacing: '0.08em' }}>DANGER ZONE</div>
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-            Delete this agent and its container. Persistent volume data is kept — you can recreate the agent later.
+            Permanently delete this agent: container, persistent volume, and all backups. This cannot be undone.
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
@@ -781,14 +781,14 @@ function RecreateSection({ agentName }: { agentName: string }) {
   };
 
   const handleRecreate = async () => {
-    if (!confirm(`Recreate container for "${agentName}"? The container will be stopped and recreated from the same image. Persistent volume data (workspace, credentials, state) will be preserved.`)) return;
+    if (!confirm(`Recreate container for "${agentName}"?\n\nAn automatic backup is taken first, then the container is rebuilt from the latest image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted.`)) return;
     setRecreating(true);
     setError('');
     try {
       const res = await fetch(`/api/agents/${agentName}/recreate`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast('Container recreated successfully');
+        showToast(data.backup ? `Recreated (backup: ${data.backup})` : 'Container recreated successfully');
         setTimeout(() => window.location.reload(), 2000);
       } else {
         setError(data.error || 'Recreate failed');
@@ -827,7 +827,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
           </div>
         )}
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-          Rebuild the container from the same image while keeping workspace, config, credentials, and state intact.
+          Takes an automatic backup, then rebuilds the container from the latest image — keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
         </div>
         <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={handleRecreate}>
           {recreating ? 'Recreating...' : 'Recreate Container'}

@@ -561,8 +561,13 @@ Create a new agent container from a template.
 ---
 
 ### `DELETE /api/agents/[id]`
-Delete a running agent container. The persistent volume (`agent-<id>-data`) is **not** removed —
-the agent can be recreated later without data loss. Volume cleanup is manual.
+**Destructive.** Permanently deletes the agent: the container, its persistent
+volume (`agent-<id>-data`), and **all** its backups (`agent-<id>-*.tar.gz` in the
+`olympus-backups` volume). This cannot be undone. Volume and backup removal are
+best-effort — a missing volume or absent backups do not fail the delete.
+
+The `id` is validated (`isValidAgentId`) before being interpolated into any
+docker command.
 
 **Auth:** browser cookie
 
@@ -571,6 +576,7 @@ the agent can be recreated later without data loss. Volume cleanup is manual.
 { "success": true }
 ```
 
+**Error (400):** `{ "success": false, "error": "Invalid agent id" }`
 **Error (404):** `{ "error": "No container found with AGENT_ID '...'" }`
 
 ---
@@ -657,20 +663,31 @@ the volume is restored anyway (useful for volume-only agents).
 ---
 
 ### `POST /api/agents/[id]/recreate`
-Rebuild the agent container from the same image while preserving the persistent
-volume (workspace files, credentials, state DB, config). Useful for applying
-image updates or clearing corrupt container state without losing agent data.
+Rebuild the agent container from the **latest** `openclaw-agent-base:latest` image
+while preserving the persistent volume (workspace files, credentials, state DB,
+config). This is how an existing agent picks up image/OpenClaw/CLI updates: the
+software lives in the image, the data in the volume.
 
-The old container is removed (`docker rm -f`) and a new one is created with
-the same image, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
-labels, port mappings, and network.
+Flow:
+1. **Auto-backup first.** The volume is backed up to `agent-<id>-prerecreate-<ts>.tar.gz`
+   in `olympus-backups`. **If the backup fails, the recreate is aborted** and the
+   running container is left untouched.
+2. The old container is removed (`docker rm -f`) and a new one is created with the
+   same image tag, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
+   labels, port mappings, and network — reattaching the same volume.
+
+On the next boot, the image entrypoint runs `openclaw doctor --non-interactive`
+**only if the OpenClaw version changed** (safe migrations, no service restart),
+aligning the volume's state/config to the new binary.
 
 **Auth:** browser cookie
 
 **Response:**
 ```json
-{ "success": true, "name": "prometheus", "image": "openclaw-agent-base:latest", "network": "openclaw-core_default" }
+{ "success": true, "name": "prometheus", "image": "openclaw-agent-base:latest", "network": "openclaw-core_default", "backup": "agent-prometheus-prerecreate-2026-07-12_195512345.tar.gz" }
 ```
+
+**Error (500):** `{ "error": "Pre-recreate backup failed, aborting: ..." }`
 
 ---
 
