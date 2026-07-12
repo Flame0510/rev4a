@@ -263,7 +263,7 @@ Olympus Dashboard UI
 
 ```
 POST   /api/agents/spawn           Create new container agent
-DELETE /api/agents/{id}            Stop and remove container
+DELETE /api/agents/{id}            Destructive: remove container + volume + backups
 POST   /api/agents/{id}/restart    Restart container
 GET    /api/agents/{id}/status     Healthcheck + metrics
 GET    /api/agents                 List all agents

@@ -5,6 +5,26 @@ import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
+import {
+  InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
+  LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
+} from '../components/Icons';
+
+/** Section header with an identifying icon. `danger` switches to the red palette. */
+function SectionHeader({ icon, label, danger = false }: { icon: React.ReactNode; label: string; danger?: boolean }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 7,
+      padding: '8px 14px',
+      borderBottom: `1px solid ${danger ? 'rgba(239,68,68,0.15)' : 'var(--border)'}`,
+      color: danger ? '#ef4444' : 'var(--copper)',
+      fontSize: 10, letterSpacing: '0.08em',
+    }}>
+      <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
+      {label}
+    </div>
+  );
+}
 
 interface Agent {
   id: string;
@@ -379,7 +399,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   const [showConfig, setShowConfig] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete agent "${agent.name}"? This will stop and remove the container.`)) return;
+    if (!confirm(`Delete agent "${agent.name}"?\n\nThis permanently deletes the container, its persistent volume, and ALL its backups. This cannot be undone.`)) return;
     setDeleting(true);
     setDeleteError('');
     try {
@@ -417,7 +437,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Properties */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>PROPERTIES</div>
+        <SectionHeader icon={<InfoIcon size={12} />} label="PROPERTIES" />
         {([
           ['Agent ID', agent.agentId],
           ['Container ID', agent.id],
@@ -438,7 +458,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Config — View openclaw.json */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>CONFIG</div>
+        <SectionHeader icon={<BracesIcon size={12} />} label="CONFIG" />
         <div style={{ padding: '12px 14px' }}>
           <Button variant="secondary" size="sm" onClick={() => setShowConfig(true)}>
             View openclaw.json
@@ -452,10 +472,16 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Integrations — credentials synced to this agent */}
       <IntegrationSection agentName={agent.name} />
 
+      {/* Restart */}
+      <RestartSection agentName={agent.name} />
+
+      {/* Backup — persistent volume backup & restore */}
+      <BackupSection agentName={agent.name} />
+
       {/* Access — Traefik URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ACCESS TOKEN</div>
+          <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS TOKEN" />
           <div style={{ padding: '7px 14px', fontSize: 12 }}>
             <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
             <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
@@ -468,16 +494,21 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
+      {/* Recreate */}
+      <RecreateSection agentName={agent.name} />
+
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(239,68,68,0.15)', color: '#ef4444', fontSize: 10, letterSpacing: '0.08em' }}>DANGER ZONE</div>
+        <SectionHeader icon={<TrashIcon size={12} />} label="DANGER ZONE" danger />
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-            Delete this agent. This will stop and remove the Docker container. This action cannot be undone.
+            Permanently delete this agent: container, persistent volume, and all backups. This cannot be undone.
           </div>
-          <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-            {deleting ? 'Deleting...' : 'Delete Agent'}
-          </Button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
+              {deleting ? 'Deleting...' : 'Delete Agent'}
+            </Button>
+          </div>
           {deleteError && (
             <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{deleteError}</div>
           )}
@@ -487,7 +518,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Env */}
       {agent.env.length > 0 && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ENV (AGENT_ / MODEL_)</div>
+          <SectionHeader icon={<TerminalIcon size={12} />} label="ENV (AGENT_ / MODEL_)" />
           {agent.env.map((e) => (
             <div key={e} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: '#aaa', fontFamily: 'var(--font-mono-stack)' }}>
               {e.split('=').map((v, i) => i === 1 && v.length > 0 ? `${v.slice(0, 20)}${v.length > 20 ? '…' : ''}` : v).join('=')}
@@ -527,7 +558,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>INTEGRATIONS</div>
+      <SectionHeader icon={<LinkIcon size={12} />} label="INTEGRATIONS" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {loading ? (
           <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>
@@ -556,6 +587,284 @@ function IntegrationSection({ agentName }: { agentName: string }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Backup section — persistent volume backup & restore ─── */
+
+function BackupSection({ agentName }: { agentName: string }) {
+  const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<{ type: 'backup' | 'restore'; label: string } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const loadBackups = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/backup`);
+      if (res.ok) {
+        const data: { backups: { name: string; size: string; date: string }[] } = await res.json();
+        setBackups(data.backups ?? []);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [agentName]);
+
+  useEffect(() => { void loadBackups(); }, [loadBackups]);
+
+  const handleBackup = async () => {
+    setStatus({ type: 'backup', label: 'Creating backup...' });
+    setBackups([]);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/backup`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Backup created: ' + data.file);
+        await loadBackups();
+      } else {
+        showToast(data.error || 'Backup failed', 'error');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    }
+    setStatus(null);
+  };
+
+  const handleRestore = async (file: string) => {
+    if (!confirm(`Restore from ${file}? The agent container will be stopped, restored, and restarted.`)) return;
+    setStatus({ type: 'restore', label: `Restoring from ${file}... (container will restart)` });
+    setBackups([]);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Restored from ' + file);
+        await loadBackups();
+      } else {
+        showToast(data.error || 'Restore failed', 'error');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    }
+    setStatus(null);
+  };
+
+  const handleDeleteBackup = async (file: string) => {
+    setStatus({ type: 'backup', label: `Deleting ${file}...` });
+    try {
+      const res = await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Delete failed', 'error');
+      }
+      setBackups([]);
+      await loadBackups();
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    }
+    setStatus(null);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <SectionHeader icon={<ArchiveIcon size={12} />} label="BACKUP" />
+      <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {status && (
+          <div style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--copper)',
+            background: 'rgba(212,155,53,0.08)',
+            border: '1px solid rgba(212,155,53,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: 'var(--copper)',
+              animation: 'pulse 1s infinite',
+            }} />
+            {status.label}
+          </div>
+        )}
+        {!status && (
+          <>
+            {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
+            {!loading && backups.length === 0 && (
+              <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
+            )}
+            {backups.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {backups.map((b) => (
+                  <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
+                    <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
+                    <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{b.size}</span>
+                    <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{b.date}</span>
+                    <button
+                      type="button"
+                      disabled={!!status}
+                      onClick={() => handleRestore(b.name)}
+                      style={{ background: 'none', border: '1px solid var(--copper)', color: 'var(--copper)', cursor: 'pointer', fontSize: 10, padding: '2px 6px', opacity: status ? 0.5 : 1 }}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!status}
+                      onClick={() => handleDeleteBackup(b.name)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '2px', opacity: status ? 0.5 : 1 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="secondary" size="sm" disabled={!!status} onClick={handleBackup}>
+                Backup Now
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.type === 'success' ? '#22c55e' : '#ef4444' }}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Restart section — simple container restart ─── */
+
+function RestartSection({ agentName }: { agentName: string }) {
+  const [restarting, setRestarting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  const handleRestart = async () => {
+    setRestarting(true);
+    try {
+      const res = await fetch(`/api/agents/${agentName}/restart`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Container restarted');
+      } else {
+        showToast(data.error || 'Restart failed');
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'Network error');
+    }
+    setRestarting(false);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <SectionHeader icon={<RotateIcon size={12} />} label="RESTART" />
+      <div style={{ padding: '12px 14px' }}>
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+          Restart the container without losing any data.
+        </div>
+        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting} onClick={handleRestart}>
+          {restarting ? 'Restarting...' : 'Restart Container'}
+        </Button>
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Recreate section — rebuild container from same image while keeping volume ─── */
+
+function RecreateSection({ agentName }: { agentName: string }) {
+  const [recreating, setRecreating] = useState(false);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  const handleRecreate = async () => {
+    if (!confirm(`Recreate container for "${agentName}"?\n\nAn automatic backup is taken first, then the container is rebuilt from the latest image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted.`)) return;
+    setRecreating(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/agents/${agentName}/recreate`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.backup ? `Recreated (backup: ${data.backup})` : 'Container recreated successfully');
+        setTimeout(() => window.location.reload(), 2000);
+      } else {
+        setError(data.error || 'Recreate failed');
+      }
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Network error');
+    }
+    setRecreating(false);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+      <SectionHeader icon={<PackageIcon size={12} />} label="RECREATE" />
+      <div style={{ padding: '12px 14px' }}>
+        {recreating && (
+          <div style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--copper)',
+            background: 'rgba(212,155,53,0.08)',
+            border: '1px solid rgba(212,155,53,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 8,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: 'var(--copper)',
+              animation: 'pulse 1s infinite',
+            }} />
+            Recreating container...
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+          Takes an automatic backup, then rebuilds the container from the latest image — keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
+        </div>
+        <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={handleRecreate}>
+          {recreating ? 'Recreating...' : 'Recreate Container'}
+        </Button>
+        {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
+      </div>
+      {toast && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
