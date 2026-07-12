@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { resolveAgentedContainer } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,17 +29,3 @@ export async function POST(
   }
 }
 
-/**
- * Resolve the container name from an AGENT_ID label.
- */
-function resolveAgentedContainer(agentId: string): string | null {
-  try {
-    const found = execSync(
-      `docker ps -a --filter "label=AGENT_ID=${agentId}" --format '{{.Names}}'`,
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-    return found || null;
-  } catch {
-    return null;
-  }
-}

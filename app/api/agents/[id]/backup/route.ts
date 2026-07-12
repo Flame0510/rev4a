@@ -92,7 +92,7 @@ export async function GET(
     const prefix = `agent-${id}-`;
 
     const raw = execSync(
-      `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'ls -la /backup/ 2>/dev/null || true'`,
+      `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'stat -c "%s %Y %n" /backup/${prefix}*.tar.gz 2>/dev/null || true'`,
       { timeout: 10000, encoding: 'utf-8' },
     ).trim();
 
@@ -100,19 +100,22 @@ export async function GET(
     const backups: BackupFile[] = [];
 
     for (const line of lines) {
-      // Alpine ls -la format: -rw-r--r--    1 root     root       12345 Jul 11 19:25 filename.tar.gz
+      // Alpine stat -c "%s %Y %n" format: 12345 1711234567 /backup/agent-prometheus-2026-07-11_2151.tar.gz
       const parts = line.split(/\s+/);
-      const name = parts[parts.length - 1];
+      if (parts.length < 3) continue;
+      const sizeBytes = parseInt(parts[0], 10) || 0;
+      const epoch = parseInt(parts[1], 10) || 0;
+      const fullPath = parts.slice(2).join(' ');
+      const name = fullPath.replace(/^\/backup\//, '');
       if (!name || !name.startsWith(prefix) || !name.endsWith('.tar.gz')) continue;
-      const sizeBytes = parseInt(parts[4], 10) || 0;
-      const month = parts[5] || '';
-      const day = parts[6] || '';
-      const time = parts[7] || '';
+      const d = new Date(epoch * 1000);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const date = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
       backups.push({
         name,
         sizeBytes,
         size: fmtSize(sizeBytes),
-        date: `${month} ${day} ${time}`,
+        date,
       });
     }
 

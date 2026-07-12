@@ -577,10 +577,10 @@ function BackupSection({ agentName }: { agentName: string }) {
   const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'backup' | 'restore'; label: string } | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
-  const showToast = (msg: string, isError = false) => {
-    setToast(msg);
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   };
 
@@ -608,10 +608,10 @@ function BackupSection({ agentName }: { agentName: string }) {
         showToast('Backup created: ' + data.file);
         await loadBackups();
       } else {
-        showToast(data.error || 'Backup failed', true);
+        showToast(data.error || 'Backup failed', 'error');
       }
     } catch (e: unknown) {
-      showToast((e as Error).message, true);
+      showToast((e as Error).message, 'error');
     }
     setStatus(null);
   };
@@ -627,10 +627,10 @@ function BackupSection({ agentName }: { agentName: string }) {
         showToast('Restored from ' + file);
         await loadBackups();
       } else {
-        showToast(data.error || 'Restore failed', true);
+        showToast(data.error || 'Restore failed', 'error');
       }
     } catch (e: unknown) {
-      showToast((e as Error).message, true);
+      showToast((e as Error).message, 'error');
     }
     setStatus(null);
   };
@@ -713,8 +713,8 @@ function BackupSection({ agentName }: { agentName: string }) {
         )}
       </div>
       {toast && (
-        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.startsWith('Backup') || toast.startsWith('Restored') ? '#22c55e' : '#ef4444' }}>
-          {toast}
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.type === 'success' ? '#22c55e' : '#ef4444' }}>
+          {toast.msg}
         </div>
       )}
     </div>

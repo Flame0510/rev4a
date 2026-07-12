@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { resolveAgentedContainer } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_NETWORK = 'openclaw-core_default';
 
 /**
  * POST /api/agents/[id]/recreate
@@ -56,9 +56,12 @@ export async function POST(
       .map(([k, v]) => `-l ${shellQuote(`${k}=${v}`)}`)
       .join(' ');
 
-    // Determine network
+    // Determine network (must exist on the container)
     const networks = container.NetworkSettings?.Networks || {};
-    const network = Object.keys(networks)[0] || DEFAULT_NETWORK;
+    const network = Object.keys(networks)[0];
+    if (!network) {
+      return NextResponse.json({ error: 'Cannot determine network — container may have no networks attached' }, { status: 500 });
+    }
 
     // Determine if there was a custom port mapping
     const portMappings = (container.HostConfig?.PortBindings || {}) as Record<string, { HostPort: string }[]>;
@@ -103,17 +106,3 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/**
- * Resolve the container name from an AGENT_ID label.
- */
-function resolveAgentedContainer(agentId: string): string | null {
-  try {
-    const found = execSync(
-      `docker ps -a --filter "label=AGENT_ID=${agentId}" --format '{{.Names}}'`,
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-    return found || null;
-  } catch {
-    return null;
-  }
-}

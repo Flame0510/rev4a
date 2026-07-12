@@ -560,6 +560,120 @@ Create a new agent container from a template.
 
 ---
 
+### `DELETE /api/agents/[id]`
+Delete a running agent container. The persistent volume (`agent-<id>-data`) is **not** removed —
+the agent can be recreated later without data loss. Volume cleanup is manual.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true }
+```
+
+**Error (404):** `{ "error": "No container found with AGENT_ID '...'" }`
+
+---
+
+### `POST /api/agents/[id]/restart`
+Restart an agent container (shorter than recreate — keeps everything intact).
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true }
+```
+
+**Error (404):** `{ "error": "No container found with AGENT_ID '...'" }`
+
+---
+
+### `POST /api/agents/[id]/backup`
+Create a backup of the agent's persistent volume.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true, "file": "agent-prometheus-2026-07-12_043512345.tar.gz" }
+```
+
+The backup file lives in Docker volume `olympus-backups`. Backups exclude the npm
+package cache (`~/.npm/_cacache/`) to keep them small (~1.5 MB instead of 227 MB).
+
+**Error (404):** `{ "error": "No persistent volume found for agent '...'" }`
+
+---
+
+### `GET /api/agents/[id]/backup`
+List available backups for a specific agent.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{
+  "backups": [
+    { "name": "agent-prometheus-2026-07-12_043512345.tar.gz", "size": "1.6 MB", "date": "12/07/2026 04:35" }
+  ]
+}
+```
+
+Backups are sorted most-recent-first.
+
+---
+
+### `DELETE /api/agents/[id]/backup?file=agent-prometheus-2026-07-12_043512345.tar.gz`
+Remove a specific backup file.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true }
+```
+
+**Error (400):** if filename is invalid or contains path traversal
+
+---
+
+### `POST /api/agents/[id]/restore?file=agent-prometheus-2026-07-12_043512345.tar.gz`
+Restore an agent's persistent volume from a backup.
+
+The container is stopped, the volume content is replaced with the backup, then
+the container is restarted. If no container exists with the given `AGENT_ID`,
+the volume is restored anyway (useful for volume-only agents).
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true, "container": "prometheus" }
+```
+
+**Error (404):** if the backup file is not found
+
+---
+
+### `POST /api/agents/[id]/recreate`
+Rebuild the agent container from the same image while preserving the persistent
+volume (workspace files, credentials, state DB, config). Useful for applying
+image updates or clearing corrupt container state without losing agent data.
+
+The old container is removed (`docker rm -f`) and a new one is created with
+the same image, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
+labels, port mappings, and network.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "success": true, "name": "prometheus", "image": "openclaw-agent-base:latest", "network": "openclaw-core_default" }
+```
+
+---
+
 ### `GET /api/agents/config-json`
 Read the full `openclaw.json` from a running agent container (token masked).
 Useful for inspecting the container config without SSH or terminal.
