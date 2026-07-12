@@ -238,6 +238,37 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 
 ---
 
+## Agent persistence & lifecycle
+
+Each agent is created with a **persistent Docker volume** `agent-<name>-data`
+mounted at `/root`. This cleanly separates two planes:
+
+- **Software → image.** OpenClaw, `gh`, `vercel`, `supabase`, `trello`, Node — all
+  live in `openclaw-agent-base:latest` (outside `/root`). Updated by rebuilding the
+  image and recreating the container.
+- **Data → volume.** Config (`openclaw.json`), state DB (`openclaw.sqlite`),
+  workspace files, and CLI credentials (`.config/gh`, `.local/share/com.vercel.cli`,
+  `.supabase`, …) live in `/root` and survive container removal.
+
+On create, template files are copied into the workspace **only if it is empty** —
+a re-created agent keeps the workspace the user edited.
+
+**Lifecycle actions** (see [API Reference](dev/API-REFERENCE.md) for endpoints):
+
+| Action | What it does |
+|---|---|
+| **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `olympus-backups` volume |
+| **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
+| **Recreate** | auto-backup first (aborts if it fails) → rebuild from `openclaw-agent-base:latest` keeping the volume → picks up image/OpenClaw/CLI updates |
+| **Restart** | `docker restart`, nothing else |
+| **Delete** | **destructive**: removes container **+ volume + all backups**. Cannot be undone |
+
+Version migrations after an image update are handled by the entrypoint (see
+[Entrypoint behavior](#agent-templates)), not by `openclaw update` — updating an
+agent means rebuilding the image + Recreate, never `update` inside the container.
+
+---
+
 ## Agent Templates
 
 ### Base Image (`openclaw-agent-base:latest`)
@@ -250,8 +281,9 @@ Built from `node:24-bookworm-slim`, includes:
 - Custom entrypoint `/agent-entrypoint.sh`
 
 **Entrypoint behavior:**
-- Minimal bootstrap: only resolves the auth token (file > env > local random)
+- Resolves the auth token (file > env > local random)
 - Does NOT generate `openclaw.json` — OpenClaw creates its own default config on first boot
+- **Version-gated migration:** if the OpenClaw version differs from the one recorded in `/root/.openclaw/.last-version` (i.e. the image was rebuilt to a newer OpenClaw), runs `openclaw doctor --non-interactive` **before** starting the gateway. This applies only safe migrations (config normalization + on-disk state moves), skips service restarts, and aligns the persistent volume's state/config to the new binary. Best-effort — never blocks boot. Runs at most once per version change, not on every restart.
 - Starts OpenClaw gateway with `--allow-unconfigured`: `openclaw gateway --bind lan --port 3000 --auth token --token "<token>" --allow-unconfigured`
 - Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 
@@ -259,7 +291,10 @@ Built from `node:24-bookworm-slim`, includes:
 Located in `agent-templates/`. Each subdirectory (e.g. `prometheus/`, `atlas/`) contains:
 - `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `MEMORY.md`, `TOOLS.md`, `HEARTBEAT.md`
 
-These are mounted as volumes at container creation time at `/root/.openclaw/`.
+At container creation these files are **copied** into `/root/.openclaw/workspace/`
+via `docker cp` (not bind-mounted), so agent edits never spill back to the Olympus
+repo. The copy is skipped when the workspace is already populated (see
+[Agent persistence](#agent-persistence--lifecycle)).
 
 ---
 

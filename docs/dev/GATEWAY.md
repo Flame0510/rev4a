@@ -269,11 +269,14 @@ Restart the Olympus server (via systemd).
 4. **No gateway restart after model sync** — The sync module writes `models.providers`
    to the file directly without restarting the gateway.
 
-5. **Entrypoint does not generate openclaw.json** — The entrypoint is minimal:
-   it resolves the auth token and starts the gateway with `--allow-unconfigured`.
-   OpenClaw generates its own default config on first boot.
-   All post-creation config (controlUi, model refs, providers) is written by
-   the create route (`POST /api/agents/create`) after the gateway is fully ready.
+5. **Entrypoint does not generate openclaw.json** — The entrypoint resolves the
+   auth token and starts the gateway with `--allow-unconfigured`; OpenClaw
+   generates its own default config on first boot. All post-creation config
+   (controlUi, model refs, providers) is written by the create route
+   (`POST /api/agents/create`) after the gateway is fully ready.
+   The entrypoint also runs `openclaw doctor --non-interactive` **before** the
+   gateway, but only when the OpenClaw version changed since last boot
+   (tracked in `/root/.openclaw/.last-version`) — safe migrations only, no restart.
 
 6. **Model ref written after gateway readiness** — When the wizard creates an agent,
    the create route waits for gateway health check, then writes
