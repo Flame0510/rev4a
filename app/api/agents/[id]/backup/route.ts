@@ -77,6 +77,7 @@ interface BackupFile {
   size: string;
   sizeBytes: number;
   date: string;
+  epoch: number;
 }
 
 /**
@@ -119,11 +120,13 @@ export async function GET(
         sizeBytes,
         size: fmtSize(sizeBytes),
         date,
+        epoch,
       });
     }
 
-    // Most recent first
-    backups.reverse();
+    // Most recent first — sort by the file's real mtime, not by filename order
+    // (backup names are not purely chronological: e.g. agent-<id>-prerecreate-<ts>).
+    backups.sort((a, b) => b.epoch - a.epoch);
 
     return NextResponse.json({ backups });
   } catch (e: unknown) {
