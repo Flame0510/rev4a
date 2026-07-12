@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { isValidAgentId } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,7 @@ export async function POST(
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
+    if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
     const volume = agentVolumeName(id);
     if (!volume) {
@@ -88,6 +90,7 @@ export async function GET(
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
+    if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
     const prefix = `agent-${id}-`;
 
@@ -139,6 +142,7 @@ export async function DELETE(
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
+    if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
     const url = new URL(req.url);
     const file = url.searchParams.get('file');

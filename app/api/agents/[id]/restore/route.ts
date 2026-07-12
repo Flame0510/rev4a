@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
-import { resolveAgentedContainer } from '@/lib/container';
+import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +18,7 @@ export async function POST(
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
+    if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
     const url = new URL(req.url);
     const file = url.searchParams.get('file');
@@ -47,19 +48,28 @@ export async function POST(
       execSync(`docker stop ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
     }
 
-    // Clear the volume and restore from backup
-    // Steps: run a temporary container with the volume, delete all contents, extract backup
-    execSync(
-      `docker run --rm ` +
-      `-v ${volume}:/target ` +
-      `-v ${BACKUP_VOLUME}:/backup ` +
-      `alpine sh -c 'rm -rf /target/* /target/..?* 2>/dev/null; tar xzf /backup/${file} -C /target'`,
-      { timeout: 30000, stdio: 'pipe' },
-    );
-
-    // Restart the container
-    if (containerName) {
-      execSync(`docker start ${containerName}`, { timeout: 15000, stdio: 'pipe' });
+    // Clear the volume and restore from backup.
+    // Run a temporary container with the volume, delete ALL contents (including
+    // dotfiles/dotdirs like .openclaw, .config, .local — the .[!.]* glob is
+    // required, otherwise the restore only merges on top of stale state), then
+    // extract the backup. Always restart the container afterwards, even on failure.
+    try {
+      execSync(
+        `docker run --rm ` +
+        `-v ${volume}:/target ` +
+        `-v ${BACKUP_VOLUME}:/backup ` +
+        `alpine sh -c 'rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf /backup/${file} -C /target'`,
+        { timeout: 30000, stdio: 'pipe' },
+      );
+    } finally {
+      // Restart the container regardless of extract outcome so it never stays down.
+      if (containerName) {
+        try {
+          execSync(`docker start ${containerName}`, { timeout: 15000, stdio: 'pipe' });
+        } catch {
+          // container start failure is surfaced separately; nothing else to do here
+        }
+      }
     }
 
     return NextResponse.json({ success: true, container: containerName || id });
