@@ -5,6 +5,26 @@ import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
+import {
+  InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
+  LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
+} from '../components/Icons';
+
+/** Section header with an identifying icon. `danger` switches to the red palette. */
+function SectionHeader({ icon, label, danger = false }: { icon: React.ReactNode; label: string; danger?: boolean }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 7,
+      padding: '8px 14px',
+      borderBottom: `1px solid ${danger ? 'rgba(239,68,68,0.15)' : 'var(--border)'}`,
+      color: danger ? '#ef4444' : 'var(--copper)',
+      fontSize: 10, letterSpacing: '0.08em',
+    }}>
+      <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
+      {label}
+    </div>
+  );
+}
 
 interface Agent {
   id: string;
@@ -417,7 +437,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Properties */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>PROPERTIES</div>
+        <SectionHeader icon={<InfoIcon size={12} />} label="PROPERTIES" />
         {([
           ['Agent ID', agent.agentId],
           ['Container ID', agent.id],
@@ -438,7 +458,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Config — View openclaw.json */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>CONFIG</div>
+        <SectionHeader icon={<BracesIcon size={12} />} label="CONFIG" />
         <div style={{ padding: '12px 14px' }}>
           <Button variant="secondary" size="sm" onClick={() => setShowConfig(true)}>
             View openclaw.json
@@ -461,7 +481,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Access — Traefik URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ACCESS TOKEN</div>
+          <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS TOKEN" />
           <div style={{ padding: '7px 14px', fontSize: 12 }}>
             <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
             <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
@@ -479,7 +499,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(239,68,68,0.15)', color: '#ef4444', fontSize: 10, letterSpacing: '0.08em' }}>DANGER ZONE</div>
+        <SectionHeader icon={<TrashIcon size={12} />} label="DANGER ZONE" danger />
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
             Permanently delete this agent: container, persistent volume, and all backups. This cannot be undone.
@@ -498,7 +518,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Env */}
       {agent.env.length > 0 && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>ENV (AGENT_ / MODEL_)</div>
+          <SectionHeader icon={<TerminalIcon size={12} />} label="ENV (AGENT_ / MODEL_)" />
           {agent.env.map((e) => (
             <div key={e} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: '#aaa', fontFamily: 'var(--font-mono-stack)' }}>
               {e.split('=').map((v, i) => i === 1 && v.length > 0 ? `${v.slice(0, 20)}${v.length > 20 ? '…' : ''}` : v).join('=')}
@@ -538,7 +558,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>INTEGRATIONS</div>
+      <SectionHeader icon={<LinkIcon size={12} />} label="INTEGRATIONS" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {loading ? (
           <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>
@@ -653,7 +673,7 @@ function BackupSection({ agentName }: { agentName: string }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>BACKUP</div>
+      <SectionHeader icon={<ArchiveIcon size={12} />} label="BACKUP" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {status && (
           <div style={{
@@ -756,7 +776,7 @@ function RestartSection({ agentName }: { agentName: string }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>RESTART</div>
+      <SectionHeader icon={<RotateIcon size={12} />} label="RESTART" />
       <div style={{ padding: '12px 14px' }}>
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Restart the container without losing any data.
@@ -807,7 +827,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', color: 'var(--copper)', fontSize: 10, letterSpacing: '0.08em' }}>RECREATE</div>
+      <SectionHeader icon={<PackageIcon size={12} />} label="RECREATE" />
       <div style={{ padding: '12px 14px' }}>
         {recreating && (
           <div style={{
