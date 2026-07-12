@@ -110,7 +110,6 @@ export async function POST(
     execSync(`docker rm -f ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
 
     // Run the new container with the same image, env, labels, network, and volume
-
     const cmd = [
       `docker run -d`,
       `--name "${id}"`,

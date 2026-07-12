@@ -638,10 +638,16 @@ function BackupSection({ agentName }: { agentName: string }) {
   const handleDeleteBackup = async (file: string) => {
     setStatus({ type: 'backup', label: `Deleting ${file}...` });
     try {
-      await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+      const res = await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Delete failed', 'error');
+      }
       setBackups([]);
       await loadBackups();
-    } catch { /* ignore */ }
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    }
     setStatus(null);
   };
 
