@@ -1,236 +1,104 @@
-# CONNECT.md — Olympus Integration Guide for AI Agents
+# CONNECT.md — Getting Started with Olympus
 
-You are an AI agent. Your task is to install and integrate Olympus Dashboard into the current system. Read this entire file before executing anything.
+> A monitoring dashboard for AI agent systems — tracks sessions, costs, agent hierarchy, workspace files, and event streams.
 
----
+## Prerequisites
 
-## What is Olympus
+- Node.js 18+
+- npm
+- SQLite3 (runtime dependency, auto-installed via npm)
+- An OpenClaw instance (optional — Olympus works standalone for testing)
 
-Olympus is a real-time monitoring dashboard for AI agent systems. It tracks live sessions, costs, parent→child agent hierarchy, workspace files, and event streams. It runs as a daemon plus a Next.js app backed by SQLite.
-
-## Repository
-
-```
-https://github.com/Flame0510/olympus
-```
-
----
-
-## Step 0 — Environment Detection
-
-Run these checks before proceeding. Adapt subsequent steps based on the results.
+## Quick Start
 
 ```bash
-# Container or bare metal?
-cat /.dockerenv 2>/dev/null && echo "container" || echo "bare"
-
-# OS info
-uname -a && cat /etc/os-release 2>/dev/null | head -5
-
-# Node.js version (required: 18+)
-node --version
-
-# SQLite3
-sqlite3 --version
-
-# Port 3720 availability
-lsof -i :3720 2>/dev/null || echo "port free"
-
-# OpenClaw
-openclaw --version 2>/dev/null || echo "not found"
+git clone https://github.com/Flame0510/olympus
+cd olympus
+npm install
+npm run build
+npm start
 ```
 
-**If Node.js < 18:** install via nvm (`nvm install 18`) or apt (`apt-get install -y nodejs` after adding NodeSource repo).  
-**If SQLite3 missing:** `apt-get install -y sqlite3`  
-**If port 3720 is busy:** find the conflicting process with `lsof -i :3720` and stop it, or reconfigure.
+This runs both the Next.js dashboard (default port 3740) and the daemon (session poller).
 
----
+## Configuration
 
-## Step 1 — Clone Repository
+Olympus reads environment variables for configuration. Key variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3740` | Dashboard HTTP port |
+| `OLYMPUS_DB` | `./data/events.db` | SQLite database path |
+| `OLYMPUS_TOKEN` | — | Auth token for API access (required) |
+| `OLYMPUS_PASSWORD` | — | Password for dashboard login |
+
+Set them inline or via `.env`:
 
 ```bash
-# If /data/olympus does not exist:
-git clone https://github.com/Flame0510/olympus /data/olympus
-
-# If it already exists:
-git -C /data/olympus pull
+PORT=3740 OLYMPUS_PASSWORD=mysecret npm start
 ```
 
----
-
-## Step 2 — Install Dependencies
+## Running for Development
 
 ```bash
-cd /data/olympus && npm install
+npm run dev          # Next.js dev server on port 3740
 ```
 
-If `better-sqlite3` native binding compilation fails, run:
+## Running in Production
 
-```bash
-cd /data/olympus && npm rebuild better-sqlite3
-```
-
----
-
-## Step 3 — Configuration
-
-### If running inside an OpenClaw container
-
-- **Port MUST be 3720** — OpenClaw sets `$PORT` to an internal value in some environments. Always set the Olympus port explicitly.
-- DB path: `/data/olympus/events.db` (auto-created on first run)
-- Sessions are read via: `openclaw sessions --json --all-agents`
-
-Start the full stack:
-
-```bash
-PORT=3720 npm run build
-PORT=3720 npm start
-```
-
-Daemon separately:
-
-```bash
-nohup node /data/olympus/daemon.js >> /data/olympus/daemon.log 2>&1 &
-```
-
-### If running on a bare VPS
-
-```bash
-# Next.js app
-cd /data/olympus && PORT=3720 nohup npm start >> server.log 2>&1 &
-
-# Daemon
-nohup node /data/olympus/daemon.js >> /data/olympus/daemon.log 2>&1 &
-```
-
-For production persistence, use systemd (template in [docs/vps-setup.md](./docs/vps-setup.md)).
-
-### systemd service template (bare VPS)
-
-`/etc/systemd/system/olympus-server.service`:
+Use PM2, systemd, or your preferred process manager. Example systemd unit:
 
 ```ini
 [Unit]
-Description=Olympus Dashboard Server
+Description=Olympus Dashboard
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/data/olympus
-ExecStart=/usr/bin/node /data/olympus/server.js
+User=your-user
+WorkingDirectory=/path/to/olympus
+ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
-Environment=PORT=3700
-Environment=OLYMPUS_TOKEN=change-me
-StandardOutput=append:/data/olympus/server.log
-StandardError=append:/data/olympus/server.log
+Environment=NODE_ENV=production
+Environment=OLYMPUS_TOKEN=your-secure-token
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/olympus-daemon.service`:
-
-```ini
-[Unit]
-Description=Olympus Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/data/olympus
-ExecStart=/usr/bin/node /data/olympus/daemon.js
-Restart=always
-RestartSec=5
-StandardOutput=append:/data/olympus/daemon.log
-StandardError=append:/data/olympus/daemon.log
-
-[Install]
-WantedBy=multi-user.target
-```
+## Verifying
 
 ```bash
-systemctl daemon-reload
-systemctl enable olympus-server olympus-daemon
-systemctl start olympus-server olympus-daemon
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3740
+# Should return 200
 ```
 
----
+Open `http://localhost:3740` in your browser.
 
-## Step 4 — OpenClaw Integration (if applicable)
+## Architecture
 
-How Olympus connects to OpenClaw:
+Olympus has two processes:
 
-- `daemon.js` calls `openclaw sessions --json --all-agents` every 30s and writes session data to SQLite
-- Session hierarchy is declared via `lineage.js`:
+1. **Next.js app** — serves the dashboard UI and API routes
+2. **Daemon** (`daemon.js`) — polls sessions every 30s and writes to SQLite
+
+Both are started together by `npm start`. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
+
+## Using the Lineage Utility
+
+To record agent hierarchy:
 
 ```bash
-node /data/olympus/lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
+node lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
 ```
-
-Example:
-```bash
-node /data/olympus/lineage.js \
-  "agent:website:subagent:abc-123" \
-  "agent:website:subagent:xyz-456" \
-  "Dev 🛠️ — Task Name"
-```
-
-- Auth token default: `change-me` — change via `OLYMPUS_TOKEN` env var or edit `server.js`
-
----
-
-## Step 5 — Verify Installation
-
-```bash
-# Should return 200 with HTML
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3700/
-
-# Should return JSON array of sessions
-curl -s -H "Authorization: Bearer change-me" http://localhost:3700/api/sessions | head -c 200
-```
-
-Open in browser: `http://<your-ip>:3700`
-
----
-
-## Step 6 — Set Up Watchdog (Recommended)
-
-Add a cron job that checks every hour and restarts dead processes:
-
-```bash
-crontab -e
-```
-
-Add this line:
-
-```
-0 * * * * bash /data/olympus/start-daemon.sh >> /data/olympus/watchdog.log 2>&1
-```
-
-The bundled `start-daemon.sh` already handles the "if running, skip / if dead, restart" logic.
-
----
 
 ## Troubleshooting
 
-| Problem | Cause | Solution |
+| Problem | Likely cause | Solution |
 |---|---|---|
-| Port already in use | `$PORT` env var override | Always use `PORT=3700` explicit |
-| Sessions not appearing | Daemon not running | Check `daemon.log`, restart `start-daemon.sh` |
-| Graph empty after start | 3-minute grace period | Wait 3 minutes — daemon needs a full poll cycle |
-| Auth 401 | Wrong token | Default token: `change-me` |
-| SQLite not found | Missing system dependency | `apt-get install sqlite3` |
-| `better-sqlite3` error | Native binding mismatch | `cd /data/olympus && npm rebuild better-sqlite3` |
-
----
-
-## Notes for AI Agents
-
-- **Never** use `&target=production` in Vercel API calls — unrelated to this stack, but a common contamination mistake
-- The dashboard is a single HTML file — no separate static server needed; Express serves it from `/`
-- DB is in WAL mode — safe for concurrent reads during polling; do not delete `.db-shm` or `.db-wal` while the daemon is running
-- The `lineage.js` utility writes directly to SQLite — call it after every `sessions_spawn` to maintain accurate graph hierarchy
-- Default auth token is `change-me` — treat it as a weak secret; change it for any public-facing deployment
+| Port in use | Another process on PORT | Change `PORT` env var |
+| Blank dashboard | Daemon stopped | Restart both processes |
+| Auth 401 | Wrong token | Check `OLYMPUS_TOKEN` |
+| SQLite error | Missing system dep | `apt-get install sqlite3` on Linux |
+| `better-sqlite3` build fail | Native binding mismatch | `npm rebuild better-sqlite3` |

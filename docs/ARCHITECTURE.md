@@ -106,7 +106,7 @@ The central container, running the Next.js dashboard + orchestration API.
 
 **Volume mounts (target):**
 ```
-/home/user/.openclaw/workspace/olympus/data  → /data (persistent)
+/path/to/olympus/data  → /data (persistent)
 /var/run/docker.sock          → /var/run/docker.sock
 /docker/shared-skills          → /data/shared-skills (rw)
 /docker/shared-repos           → /data/shared-repos (rw)

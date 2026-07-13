@@ -37,7 +37,7 @@ Available workspaces are grouped by type:
 | ID | `vps` |
 | Label | `VPS Host (Nexus)` |
 | Type | `host` |
-| Root path | `/home/user/.openclaw/workspace/` |
+| Root path | `/path/to/workspace/` |
 | Access | `fs.readdirSync` / `fs.readFileSync` / `fs.writeFileSync` (direct filesystem) |
 
 ### Container Agents
@@ -97,7 +97,7 @@ List files in a workspace, read a file, or return a recursive tree.
 {
   "workspace": "vps",
   "label": "VPS Host (Nexus)",
-  "path": "/home/user/.openclaw/workspace",
+  "path": "/path/to/workspace",
   "type": "host",
   "files": [
     { "name": "config", "isDirectory": true, "isFile": false, "path": "..." },
@@ -111,11 +111,11 @@ List files in a workspace, read a file, or return a recursive tree.
 {
   "workspace": "vps",
   "label": "VPS Host (Nexus)",
-  "path": "/home/user/.openclaw/workspace",
-  "root": "/home/user/.openclaw/workspace",
+  "path": "/path/to/workspace",
+  "root": "/path/to/workspace",
   "type": "host",
   "entries": [
-    { "name": "olympus", "path": "/home/user/.openclaw/workspace/olympus",
+    { "name": "olympus", "path": "/path/to/workspace/olympus",
       "relPath": "olympus", "type": "directory", "size": 0,
       "mtimeMs": 1750000000000, "isDirectory": true, "isFile": false },
     ...
@@ -137,7 +137,7 @@ Write content to a workspace file.
 ```json
 {
   "workspace": "vps",
-  "path": "/home/user/.openclaw/workspace/test.md",
+  "path": "/path/to/workspace/test.md",
   "content": "hello"
 }
 ```
@@ -165,7 +165,7 @@ filesystems). Both host and container listings use the same comparator.
 ## 6. Host Workspace Implementation
 
 - Uses `fs.readdirSync` / `fs.readFileSync` / `fs.writeFileSync` — real-time, no caching
-- Paths are validated against `VPS_ROOT` (`/home/user/.openclaw/workspace/`) to prevent directory traversal
+- Paths are validated against `VPS_ROOT` (`/path/to/workspace/`) to prevent directory traversal
 - Binary files (images, PDFs) are detected by extension (`BINARY_EXTENSIONS` set) and served inline
 - Hidden files (starting with `.`) and `node_modules` are skipped in directory listings
 

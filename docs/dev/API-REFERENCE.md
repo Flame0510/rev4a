@@ -423,7 +423,7 @@ Workspace filesystem change stream for the editor.
 {
   "type": "workspace_ready",
   "ts": 1751270000000,
-  "root": "/home/user/.openclaw/workspace",
+  "root": "/path/to/workspace",
   "count": 42
 }
 ```
@@ -435,7 +435,7 @@ Workspace filesystem change stream for the editor.
   "ts": 1751270003000,
   "changed": [
     {
-      "path": "/home/user/.openclaw/workspace/olympus/README.md",
+      "path": "/path/to/workspace/olympus/README.md",
       "rel_path": "olympus/README.md",
       "type": "file",
       "size": 2048,
@@ -494,9 +494,9 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "ports": "",
     "ip": "172.19.0.5",
     "created": "2026-07-01T16:58:42.876829416Z",
-    "env": ["AGENT_ID=prometheus", "AGENT_HOSTNAME=prometheus.example.com"],
+    "env": ["AGENT_ID=prometheus", "AGENT_HOSTNAME=<agent-name>.<your-domain>.com"],
     "authToken": "asdfghjkl",
-    "traefikUrl": "https://prometheus.example.com#token=asdfghjkl"
+    "traefikUrl": "https://<agent-name>.<your-domain>.com#token=asdfghjkl"
   }
 ]
 ```
@@ -538,7 +538,7 @@ Create a new agent container from a template.
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
   "network": "openclaw-core_default",
-  "traefikUrl": "https://my-agent.example.com#token=asdfghjkl"
+  "traefikUrl": "https://<agent-name>.<your-domain>.com#token=asdfghjkl"
 }
 ```
 
@@ -553,7 +553,7 @@ Create a new agent container from a template.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are volume-mounted from the template directory
-- The agent is registered in Traefik at `https://<name>.example.com`
+- The agent is registered in Traefik at `https://<name>.<your-domain>.com`
 - An event is logged to `data/events.db` if available
 
 **Error:** `400` for validation errors, `409` if name/port already in use
@@ -944,7 +944,7 @@ List files in a workspace, read a file, or return a recursive tree payload.
 {
   "workspace": "vps",
   "label": "VPS Host (Nexus)",
-  "path": "/home/user/.openclaw/workspace",
+  "path": "/path/to/workspace",
   "type": "host",
   "files": [
     { "name": "config", "isDirectory": true, "isFile": false, "path": "..." },
@@ -960,7 +960,7 @@ Write content to a workspace file.
 
 **Auth:** any auth method
 
-**Body:** `{ "workspace": "vps", "path": "/home/user/.openclaw/workspace/test.md", "content": "hello" }`
+**Body:** `{ "workspace": "vps", "path": "/path/to/workspace/test.md", "content": "hello" }`
 
 **Response:** `{ "ok": true }`
 

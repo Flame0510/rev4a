@@ -1,12 +1,11 @@
 # Olympus — VPS Dashboard
 
-> **Last updated:** 2026-07-02
+> **Last updated:** 2026-07-13
 
-A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on this VPS.
+A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 **URL:** `https://olympus.example.com`
-**Port:** 3740 (Next.js, reverse-proxied by Traefik)
-**Build directory:** `/home/user/.openclaw/workspace/olympus/`
+**Port:** 3740
 **Runtime:** systemd service `olympus`
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
 
@@ -131,9 +130,9 @@ File: `/etc/systemd/system/olympus.service.d/env.conf`
 Environment=OLYMPUS_PASSWORD=***
 Environment=OLYMPUS_TOKEN=***
 Environment=OLYMPUS_JWT_SECRET=***
-Environment=OLYMPUS_DB=/home/user/.openclaw/workspace/olympus/data/events.db
-Environment=OPENCLAW_CONFIG_PATH=/home/user/.openclaw/workspace/openclaw-core.json
-Environment=SHARED_CONTEXT_DIR=/home/user/.openclaw/workspace/shared-context
+Environment=OLYMPUS_DB=/path/to/olympus/data/events.db
+Environment=OPENCLAW_CONFIG_PATH=/path/to/openclaw-core.json
+Environment=SHARED_CONTEXT_DIR=/path/to/shared-context
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 ```
@@ -143,7 +142,7 @@ Environment=NEXT_TELEMETRY_DISABLED=1
 ## Build & Deploy
 
 ```bash
-cd /home/user/.openclaw/workspace/olympus
+cd /path/to/olympus
 
 # Build
 npm run build
@@ -179,7 +178,7 @@ The workspace feature provides a file tree explorer + editor for both the VPS ho
 
 | ID | Label | Type | Path |
 |---|---|---|---|
-| `vps` | VPS Host (Nexus) | host | `/home/user/.openclaw/workspace/` |
+| `vps` | VPS Host (Nexus) | host | `/path/to/workspace/` |
 | `container-<name>` | `<agent_id> (<name>)` | container | `/root/.openclaw/` inside container |
 
 Container workspaces are discovered dynamically — any Docker container with an `AGENT_ID` label is listed.
@@ -232,7 +231,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
    - `gateway.controlUi.allowedOrigins` — Olympus dashboard URL + Traefik hostname (required for browser Control UI access)
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
 5. `syncAgent(name)` writes `models.providers.olympus` into the container.
-6. The agent's control UI is immediately accessible at `https://<name>.example.com#token=<gateway-token>`.
+6. The agent's control UI is immediately accessible at `https://<name>.<your-domain>.com#token=<gateway-token>`.
 
 **Key difference from the old pipeline:** the entrypoint no longer generates `openclaw.json`. The bootstrap config (including `controlUi.allowedOrigins`) is written by the create route after the gateway has already started. This eliminates the race condition where the entrypoint would overwrite synced provider config on boot.
 
@@ -336,7 +335,7 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 | Config mount | `/docker/atlas-data/openclaw-fixed.json → /root/.openclaw/openclaw.json` |
 | Auth mode | `token` |
 
-**Control UI:** `http://203.0.113.10:3731` — enter the gateway token to log in.
+**Control UI:** `http://<vps-ip>:3731` — enter the gateway token to log in.
 Olympus-generated direct links should use `#token=<gateway-token>` for automatic Control UI sign-in.
 
 ### openclaw-core
@@ -418,12 +417,12 @@ curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=vps'
 curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=container-openclaw-atlas'
 
 # Read a file
-curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=vps&path=/home/user/.openclaw/workspace/SOUL.md'
+curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=vps&path=/path/to/workspace/SOUL.md'
 
 # Write a file
 curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
   -H 'Content-Type: application/json' \
-  -d '{"workspace":"vps","path":"/home/user/.openclaw/workspace/test.md","content":"hello"}'
+  -d '{"workspace":"vps","path":"/path/to/workspace/test.md","content":"hello"}'
 ```
 
 ---
@@ -431,7 +430,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ## Repository Structure
 
 ```
-/home/user/.openclaw/workspace/olympus/
+/path/to/olympus/
 ├── app/                     # Next.js app router pages & API routes
 │   ├── agents/
 │   ├── api/                 # API routes (workspace, agents, vault, auth, …)

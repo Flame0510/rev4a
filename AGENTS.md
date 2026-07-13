@@ -110,7 +110,7 @@ documentation is incomplete.
 ## 3. Architecture Overview (Quick Reference)
 
 ```
-domian:      olympus.example.com (port 3740, proxied by Traefik)
+domain:      <your-olympus-domain> (port 3740, proxied by Traefik)
 stack:       Next.js 16 + React 19 + TypeScript + SQLite + PM2
 processes:   olympus-next (Next.js, port 3740)
              olympus-terminal-ws (WebSocket PTY, port 3741)

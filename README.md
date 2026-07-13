@@ -3,7 +3,7 @@
 > **One command to deploy a management dashboard for your OpenClaw agent fleet.**
 > Zero external databases. Only Node.js + Docker.
 
-**Live demo:** `https://olympus.example.com`
+**Live demo:** —
 
 ---
 
@@ -34,7 +34,7 @@ npm run build
 npm start
 ```
 
-Open `http://localhost:3740`. Login with default token `change-me`.
+Open `http://localhost:3740`. Login with your configured password or token.
 
 > **Coming soon:** `npx create-olympus` — one-command install with project setup.
 
@@ -57,7 +57,7 @@ Open `http://localhost:3740`. Login with default token `change-me`.
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `PORT` | `3740` | No | Dashboard HTTP port |
-| `OLYMPUS_TOKEN` | `change-me` | No | Bearer token for API routes and login |
+| `OLYMPUS_TOKEN` | — | Yes | Bearer token for API routes and login |
 | `OLYMPUS_JWT_SECRET` | auto-generated | No | Secret for auth cookies |
 | `OLYMPUS_DB` | `./events.db` | No | SQLite database path |
 | `OPENCLAW_BIN` | `/usr/bin/openclaw` | No | OpenClaw CLI path |
