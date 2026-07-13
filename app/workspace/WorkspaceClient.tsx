@@ -244,14 +244,14 @@ export default function WorkspaceClient() {
   const flatItemsRef = useRef<FlatItem[]>([]);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('vps');
+  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('');
 
   // Load workspaces list on mount
   useEffect(() => {
     void (async () => {
       try {
         const res = await apiFetch('/api/workspace?action=list');
-        if (!res.ok) { setWorkspaces([{ id: 'vps', label: 'VPS Host (Nexus)', type: 'host' }]); return; }
+        if (!res.ok) { setWorkspaces([]); return; }
         const data = await res.json() as { workspaces: WorkspaceInfo[] };
         if (data.workspaces && data.workspaces.length > 0) {
           setWorkspaces(data.workspaces);
@@ -259,10 +259,10 @@ export default function WorkspaceClient() {
             setSelectedWorkspace(data.workspaces[0].id);
           }
         } else {
-          setWorkspaces([{ id: 'vps', label: 'VPS Host (Nexus)', type: 'host' }]);
+          setWorkspaces([]);
         }
       } catch {
-        setWorkspaces([{ id: 'vps', label: 'VPS Host (Nexus)', type: 'host' }]);
+        setWorkspaces([]);
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -557,7 +557,7 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
                   background: 'var(--accent)',
                   color: '#fff',
                   border: 'none',
-                  borderRadius: 4,
+                  borderRadius: 0,
                   cursor: 'pointer',
                 }}
               >

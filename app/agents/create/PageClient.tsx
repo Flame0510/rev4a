@@ -41,7 +41,7 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
   return (
     <div style={{
       position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-      padding: '12px 20px', borderRadius: 8, fontSize: 13,
+      padding: '12px 20px', borderRadius: 0, fontSize: 13,
       background: type === 'success' ? '#1a3a1a' : '#3a1a1a',
       border: `1px solid ${type === 'success' ? '#22c55e' : '#ef4444'}`,
       color: type === 'success' ? '#bbf7d0' : '#fecaca',
@@ -180,7 +180,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                 description={templateDescription(t.id)}
                 onClick={() => handleSelectTemplate(t.id)}
                 badge={TEMPLATE_DEFAULT_PORTS[t.id] ? (
-                  <span style={{ fontSize: 10, color: '#888', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}>
+                  <span style={{ fontSize: 10, color: '#888', border: '1px solid var(--border)', borderRadius: 0, padding: '2px 6px' }}>
                     port {TEMPLATE_DEFAULT_PORTS[t.id]}
                   </span>
                 ) : undefined}
@@ -217,7 +217,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           </div>
 
           {/* Template info */}
-          <div style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px', background: 'var(--bg)' }}>
+          <div style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 0, padding: '10px 14px', background: 'var(--bg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>TEMPLATE</div>
@@ -259,7 +259,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               style={{
-                width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border)',
+                width: '100%', padding: '10px 12px', borderRadius: 0, border: '1px solid var(--border)',
                 background: 'var(--bg)', color: 'var(--text)', fontSize: 14, outline: 'none',
               }}
             >
@@ -297,7 +297,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       {step === 'done' && result && (
         <div>
           <div style={{
-            border: '1px solid #22c55e', borderRadius: 6, padding: 20, background: 'rgba(34,197,94,0.06)', marginBottom: 20,
+            border: '1px solid #22c55e', borderRadius: 0, padding: 20, background: 'rgba(34,197,94,0.06)', marginBottom: 20,
           }}>
             <div style={{ color: '#22c55e', fontSize: 16, fontWeight: 500, marginBottom: 8 }}>✓ Agent deployed</div>
             <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
@@ -337,7 +337,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       {step === 'error' && (
         <div>
           <div style={{
-            border: '1px solid #ef4444', borderRadius: 6, padding: 20, background: 'rgba(239,68,68,0.06)', marginBottom: 20,
+            border: '1px solid #ef4444', borderRadius: 0, padding: 20, background: 'rgba(239,68,68,0.06)', marginBottom: 20,
           }}>
             <div style={{ color: '#ef4444', fontSize: 16, fontWeight: 500, marginBottom: 8 }}>Failed to create agent</div>
             <div style={{ fontSize: 13, color: '#f87171', fontFamily: 'var(--font-mono-stack)', wordBreak: 'break-word' }}>

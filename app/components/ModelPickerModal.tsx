@@ -75,19 +75,19 @@ export default function ModelPickerModal({ open, value = '', title = 'Select mod
         .model-picker__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
         .model-picker__title { color: var(--text); font-size: 14px; font-weight: 600; }
         .model-picker__current { color: var(--text-dim); font-size: 10px; margin-top: 3px; }
-        .model-picker__close { background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 18px; line-height: 1; }
+        .model-picker__close { background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 0; width: 30px; height: 30px; cursor: pointer; font-size: 18px; line-height: 1; }
         .model-picker__body { overflow: auto; padding: 8px; }
-        .model-picker__provider-header { width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: var(--text-dim); cursor: pointer; font: inherit; font-size: 12px; }
+        .model-picker__provider-header { width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 0; background: none; color: var(--text-dim); cursor: pointer; font: inherit; font-size: 12px; }
         .model-picker__provider-header:hover, .model-picker__provider-header--expanded { background: var(--bg3); color: var(--text); }
         .model-picker__chevron { width: 14px; }
         .model-picker__emoji { width: 18px; text-align: center; }
         .model-picker__provider-name { flex: 1; text-align: left; font-weight: 600; }
-        .model-picker__count { font-size: 10px; color: var(--text-dim); background: var(--bg); border-radius: 8px; padding: 1px 6px; }
+        .model-picker__count { font-size: 10px; color: var(--text-dim); background: var(--bg); border-radius: 0; padding: 1px 6px; }
         .model-picker__models { display: grid; gap: 2px; padding: 2px 0 6px 40px; }
-        .model-picker__model { text-align: left; border: 0; border-radius: 7px; background: none; color: var(--text); cursor: pointer; padding: 7px 9px; font: inherit; font-size: 11px; }
+        .model-picker__model { text-align: left; border: 0; border-radius: 0; background: none; color: var(--text); cursor: pointer; padding: 7px 9px; font: inherit; font-size: 11px; }
         .model-picker__model:hover { background: var(--bg3); }
         .model-picker__model--active { background: rgba(212,155,53,.14); color: var(--copper); }
-        @media (max-width: 600px) { .model-picker { align-items: flex-end; padding: 0; } .model-picker__panel { border-radius: 14px 14px 0 0; max-height: 82dvh; } }
+        @media (max-width: 600px) { .model-picker { align-items: flex-end; padding: 0; } .model-picker__panel { border-radius: 0; max-height: 82dvh; } }
       `}</style>
     </div>
   );

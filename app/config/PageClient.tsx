@@ -30,6 +30,12 @@ const ENV_METADATA: Record<
     placeholder: 'Internal token',
     sensitive: true,
   },
+  OLYMPUS_WORKSPACE_ROOT: {
+    label: 'Workspace root',
+    description: 'Filesystem path for the local file explorer (e.g. /home/user/projects/olympus). Leave empty to disable the Local workspace.',
+    placeholder: '/path/to/workspace',
+    sensitive: false,
+  },
 };
 
 type SaveStatus = 'idle' | 'saving' | 'ok' | 'error';
@@ -110,7 +116,7 @@ export default function ConfigPageClient() {
                 style={{
                   height: 18,
                   background: 'rgba(255,255,255,0.04)',
-                  borderRadius: 4,
+                  borderRadius: 0,
                   marginBottom: 8,
                   width: '40%',
                 }}
@@ -119,7 +125,7 @@ export default function ConfigPageClient() {
                 style={{
                   height: 40,
                   background: 'rgba(255,255,255,0.04)',
-                  borderRadius: 4,
+                  borderRadius: 0,
                 }}
               />
             </Surface>
@@ -157,7 +163,7 @@ export default function ConfigPageClient() {
                           color: 'var(--text-dim)',
                           background: 'rgba(255,255,255,0.04)',
                           padding: '2px 6px',
-                          borderRadius: 4,
+                          borderRadius: 0,
                         }}
                       >
                         {key}
@@ -177,11 +183,13 @@ export default function ConfigPageClient() {
                           style={{ flex: 1 }}
                         />
                       ) : (
-                        <Input
-                          value={value}
-                          onChange={(e) => handleChange(key, e.target.value)}
-                          placeholder={meta.placeholder}
-                        />
+                        <div style={{ flex: 1 }}>
+                          <Input
+                            value={value}
+                            onChange={(e) => handleChange(key, e.target.value)}
+                            placeholder={meta.placeholder}
+                          />
+                        </div>
                       )}
                     </div>
                   </div>

@@ -114,7 +114,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
         overflowY: 'auto',
         background: 'var(--bg)',
         borderTop: '1px solid var(--border)',
-        borderRadius: '14px 14px 0 0',
+        borderRadius: 0,
         color: 'var(--text)',
         padding: '20px 14px 28px',
         transition: 'transform 0.25s ease',
@@ -158,7 +158,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
           lineHeight: 1,
           cursor: 'pointer',
           padding: 4,
-          borderRadius: 4,
+          borderRadius: 0,
           transition: 'color 0.15s',
         }}
         onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}

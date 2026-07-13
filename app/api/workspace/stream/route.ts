@@ -4,7 +4,8 @@ import { type NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const ROOT_PATH = '/home/user/.openclaw/workspace';
+const ROOT_PATH = process.env.OLYMPUS_WORKSPACE_ROOT || '';
+const STREAM_ENABLED = ROOT_PATH.length > 0;
 const POLL_MS = 3000;
 const IGNORED_DIRS = new Set(['node_modules', '.trash']);
 const ALLOWED_EXT = new Set(['.md', '.json', '.txt', '.html', '.py', '.css', '.js', '.ts', '.tsx', '.yaml', '.yml', '.env', '.sh', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico']);
@@ -86,6 +87,10 @@ function diffSnapshots(previous: Map<string, SnapshotEntry>, next: Map<string, S
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  if (!STREAM_ENABLED) {
+    return new Response('Workspace stream disabled (OLYMPUS_WORKSPACE_ROOT not set)', { status: 404 });
+  }
+
   const encoder = new TextEncoder();
   let previous = collectSnapshot();
 

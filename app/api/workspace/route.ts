@@ -3,7 +3,8 @@ import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { NextResponse, type NextRequest } from 'next/server';
 
-const VPS_ROOT = '/home/user/.openclaw/workspace/';
+const LOCAL_ROOT = (process.env.OLYMPUS_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
+const HAS_LOCAL_WORKSPACE = LOCAL_ROOT.length > 0;
 const IGNORED_DIRS = new Set(['node_modules', '.trash', '.git', '.next', 'cache']);
 const TEXT_EXTENSIONS = new Set(['.md', '.json', '.txt', '.html', '.py', '.css', '.js', '.ts', '.tsx', '.yaml', '.yml', '.env', '.sh', '.mjs', '.cjs', '.jsx']);
 const BINARY_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.pdf', '.ico']);
@@ -37,8 +38,8 @@ function shellEscape(value: string): string {
 }
 
 function getWorkspace(id: string): Workspace | null {
-  if (id === 'vps') {
-    return { id: 'vps', label: 'VPS Host (Nexus)', type: 'host', path: VPS_ROOT };
+  if (id === 'local' && HAS_LOCAL_WORKSPACE) {
+    return { id: 'local', label: 'Local', type: 'host', path: LOCAL_ROOT };
   }
   if (id.startsWith('container-')) {
     const name = id.slice(10);
@@ -48,9 +49,10 @@ function getWorkspace(id: string): Workspace | null {
 }
 
 function listWorkspaces(): Workspace[] {
-  const workspaces: Workspace[] = [
-    { id: 'vps', label: 'VPS Host (Nexus)', type: 'host', path: VPS_ROOT },
-  ];
+  const workspaces: Workspace[] = [];
+  if (HAS_LOCAL_WORKSPACE) {
+    workspaces.push({ id: 'local', label: 'Local', type: 'host', path: LOCAL_ROOT });
+  }
 
   // Discover container workspaces from Docker
   try {
@@ -265,9 +267,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ workspaces: listWorkspaces() });
   }
 
-  // No workspace specified → default to 'vps' for backward compat
+  // No workspace specified → default to first available
   if (!ws) {
-    ws = 'vps';
+    const all = listWorkspaces();
+    ws = all.length > 0 ? all[0].id : '';
   }
 
   const workspace = getWorkspace(ws);
@@ -278,8 +281,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (workspace.type === 'host') {
     const targetPath = filePath ? path.resolve(filePath) : workspace.path;
 
-    // Security: allow only VPS_ROOT and subpaths
-    if (!targetPath.startsWith(path.resolve(VPS_ROOT)) && !targetPath.startsWith('/home/user/.openclaw/workspace/')) {
+    // Security: allow only LOCAL_ROOT and subpaths
+    if (!targetPath.startsWith(path.resolve(LOCAL_ROOT))) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
@@ -339,7 +342,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function PUT(request: NextRequest): Promise<NextResponse> {
   try {
     const body = (await request.json()) as { workspace?: string; path?: string; content?: string };
-    const ws = body?.workspace || 'vps';
+    const ws = body?.workspace || 'local';
     const { path: filePath, content } = body ?? {};
     if (!ws || !filePath || typeof content !== 'string') {
       return NextResponse.json({ error: 'Missing workspace, path, or content' }, { status: 400 });
@@ -352,7 +355,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
     if (workspace.type === 'host') {
       const normalizedPath = path.resolve(filePath);
-      if (!normalizedPath.startsWith(path.resolve(VPS_ROOT))) {
+      if (!normalizedPath.startsWith(path.resolve(LOCAL_ROOT))) {
         return NextResponse.json({ error: 'Access denied' }, { status: 403 });
       }
       fs.mkdirSync(path.dirname(normalizedPath), { recursive: true });

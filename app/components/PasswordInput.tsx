@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Input } from './ui';
 import { EyeIcon, EyeOffIcon } from './Icons';
 
 interface PasswordInputProps {
@@ -9,7 +10,6 @@ interface PasswordInputProps {
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
-  inputStyle?: React.CSSProperties;
 }
 
 export default function PasswordInput({
@@ -18,31 +18,18 @@ export default function PasswordInput({
   placeholder = '',
   disabled = false,
   style,
-  inputStyle,
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <div style={{ position: 'relative', ...style }}>
-      <input
+      <Input
         type={visible ? 'text' : 'password'}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        style={{
-          width: '100%',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          background: 'var(--surface)',
-          color: 'var(--text)',
-          fontSize: 13,
-          padding: '10px 36px 10px 12px',
-          fontFamily: 'var(--font-mono-stack)',
-          outline: 'none',
-          boxSizing: 'border-box',
-          ...inputStyle,
-        }}
+        style={{ paddingRight: 36 }}
       />
       <button
         onClick={() => setVisible((v) => !v)}

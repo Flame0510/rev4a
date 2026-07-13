@@ -213,7 +213,7 @@ export default function VaultPanel() {
             {showAddProvider && (
               <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 0 }}>
                 <input placeholder="Provider" value={providerForm.provider} onChange={e => setProviderForm(p => ({ ...p, provider: e.target.value }))} style={inputStyle} />
-                <PasswordInput value={providerForm.apiKey} onChange={v => setProviderForm(p => ({ ...p, apiKey: v }))} placeholder="API Key" inputStyle={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
+                <PasswordInput value={providerForm.apiKey} onChange={v => setProviderForm(p => ({ ...p, apiKey: v }))} placeholder="API Key" />
                 <input placeholder="Base URL" value={providerForm.baseUrl} onChange={e => setProviderForm(p => ({ ...p, baseUrl: e.target.value }))} style={inputStyle} />
                 <Button variant="primary" size="sm" loading={saving === 'provider'} onClick={handleAddProvider}>
                   SAVE
@@ -257,7 +257,7 @@ export default function VaultPanel() {
             {showAddService && (
               <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 0 }}>
                 <input placeholder="Service" value={serviceForm.service} onChange={e => setServiceForm(s => ({ ...s, service: e.target.value }))} style={inputStyle} />
-                <PasswordInput value={serviceForm.token} onChange={v => setServiceForm(s => ({ ...s, token: v }))} placeholder="Token" inputStyle={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--surface)', color: 'var(--text)', padding: '8px 36px 8px 10px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', outline: 'none' }} />
+                <PasswordInput value={serviceForm.token} onChange={v => setServiceForm(s => ({ ...s, token: v }))} placeholder="Token" />
                 <input placeholder="User" value={serviceForm.user} onChange={e => setServiceForm(s => ({ ...s, user: e.target.value }))} style={inputStyle} />
                 <Button variant="primary" size="sm" loading={saving === 'service'} onClick={handleAddService}>
                   SAVE
