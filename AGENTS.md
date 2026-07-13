@@ -114,7 +114,7 @@ domian:      olympus.example.com (port 3740, proxied by Traefik)
 stack:       Next.js 16 + React 19 + TypeScript + SQLite + PM2
 processes:   olympus-next (Next.js, port 3740)
              olympus-terminal-ws (WebSocket PTY, port 3741)
-repo:        github.com/Flame0510/olympus-vps.git (branch main)
+repo:        github.com/Flame0510/olympus.git (branch main)
 language:    100% English
 ```
 

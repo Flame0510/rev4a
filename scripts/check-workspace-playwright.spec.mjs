@@ -91,7 +91,7 @@ test('workspace tree renders real entries with workspace selector', async ({ pag
   await expect(selector.locator('option[value="container-openclaw-atlas"]')).toHaveCount(1);
 
   await expect(page.getByText('Empty workspace')).toHaveCount(0);
-  await expect(page.getByText(/\.openclaw|memory|olympus-vps|AGENTS\.md|SOUL\.md/).first()).toBeVisible();
+  await expect(page.getByText(/\.openclaw|memory|olympus|AGENTS\.md|SOUL\.md/).first()).toBeVisible();
 
   await selector.selectOption('container-openclaw-atlas');
   await expect(page.getByText('Empty workspace')).toHaveCount(0);

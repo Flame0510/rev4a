@@ -1,5 +1,5 @@
 /**
- * POST /api/config/restart - restart the olympus-vps service via systemd
+ * POST /api/config/restart - restart the olympus service via systemd
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
@@ -9,7 +9,7 @@ export const runtime = 'nodejs';
 
 export async function POST() {
   try {
-    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus-vps', {
+    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus', {
       timeout: 15000,
       stdio: 'pipe',
     });

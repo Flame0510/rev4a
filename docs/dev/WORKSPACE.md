@@ -115,8 +115,8 @@ List files in a workspace, read a file, or return a recursive tree.
   "root": "/home/user/.openclaw/workspace",
   "type": "host",
   "entries": [
-    { "name": "olympus-vps", "path": "/home/user/.openclaw/workspace/olympus-vps",
-      "relPath": "olympus-vps", "type": "directory", "size": 0,
+    { "name": "olympus", "path": "/home/user/.openclaw/workspace/olympus",
+      "relPath": "olympus", "type": "directory", "size": 0,
       "mtimeMs": 1750000000000, "isDirectory": true, "isFile": false },
     ...
   ],

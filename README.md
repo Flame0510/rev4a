@@ -27,8 +27,8 @@
 
 ```bash
 # Requirements: Node.js 20+ and Docker
-git clone https://github.com/Flame0510/olympus-vps.git
-cd olympus-vps
+git clone https://github.com/Flame0510/olympus.git
+cd olympus
 npm install
 npm run build
 npm start

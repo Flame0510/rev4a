@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Flame0510/olympus-vps.git"
+    "url": "git+https://github.com/Flame0510/olympus.git"
   },
   "bugs": {
-    "url": "https://github.com/Flame0510/olympus-vps/issues"
+    "url": "https://github.com/Flame0510/olympus/issues"
   },
-  "homepage": "https://github.com/Flame0510/olympus-vps#readme",
+  "homepage": "https://github.com/Flame0510/olympus#readme",
   "bin": {
     "olympus": "./bin/olympus.js"
   },

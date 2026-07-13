@@ -6,9 +6,9 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on thi
 
 **URL:** `https://olympus.example.com`
 **Port:** 3740 (Next.js, reverse-proxied by Traefik)
-**Build directory:** `/home/user/.openclaw/workspace/olympus-vps/`
-**Runtime:** systemd service `olympus-vps`
-**Repository:** `github.com/Flame0510/olympus-vps.git` (branch: `main`)
+**Build directory:** `/home/user/.openclaw/workspace/olympus/`
+**Runtime:** systemd service `olympus`
+**Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
 
 ---
 
@@ -34,7 +34,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem on thi
                     └────┬────┘
                          │
               ┌──────────┴──────────┐
-              │  olympus-vps        │
+              │  olympus             │
               │  systemd service    │
               │  :3740              │
               │  Next.js 16         │
@@ -107,31 +107,31 @@ OLYMPUS_JWT_SECRET=***  # Secret for signing JWTs
 
 ```bash
 # Start
-sudo systemctl start olympus-vps
+sudo systemctl start olympus
 
 # Stop
-sudo systemctl stop olympus-vps
+sudo systemctl stop olympus
 
 # Restart
-sudo systemctl restart olympus-vps
+sudo systemctl restart olympus
 
 # Status
-sudo systemctl status olympus-vps
+sudo systemctl status olympus
 
 # Logs (follow)
-sudo journalctl -u olympus-vps -f
+sudo journalctl -u olympus -f
 ```
 
 ### Systemd environment override
 
-File: `/etc/systemd/system/olympus-vps.service.d/env.conf`
+File: `/etc/systemd/system/olympus.service.d/env.conf`
 
 ```ini
 [Service]
 Environment=OLYMPUS_PASSWORD=***
 Environment=OLYMPUS_TOKEN=***
 Environment=OLYMPUS_JWT_SECRET=***
-Environment=OLYMPUS_DB=/home/user/.openclaw/workspace/olympus-vps/data/events.db
+Environment=OLYMPUS_DB=/home/user/.openclaw/workspace/olympus/data/events.db
 Environment=OPENCLAW_CONFIG_PATH=/home/user/.openclaw/workspace/openclaw-core.json
 Environment=SHARED_CONTEXT_DIR=/home/user/.openclaw/workspace/shared-context
 Environment=NODE_ENV=production
@@ -143,7 +143,7 @@ Environment=NEXT_TELEMETRY_DISABLED=1
 ## Build & Deploy
 
 ```bash
-cd /home/user/.openclaw/workspace/olympus-vps
+cd /home/user/.openclaw/workspace/olympus
 
 # Build
 npm run build
@@ -154,7 +154,7 @@ npm run build
 
 # Deploy (kill old process, start new)
 fuser -k 3740/tcp && sleep 2
-sudo systemctl start olympus-vps
+sudo systemctl start olympus
 ```
 
 > **Important:** API routes (`route.ts`) are compiled at build time by Next.js. After editing any API route, a full `npm run build` is required. Restarting the server alone is not enough.
@@ -395,7 +395,7 @@ Olympus-generated direct links should use `#token=<gateway-token>` for automatic
 ### Old version persists after rebuild
 1. Kill process: `fuser -k 3740/tcp`
 2. Wait 2 seconds
-3. Restart: `sudo systemctl start olympus-vps`
+3. Restart: `sudo systemctl start olympus`
 4. Check `public/sw.js` exists (delete if so)
 
 ---
@@ -431,7 +431,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ## Repository Structure
 
 ```
-/home/user/.openclaw/workspace/olympus-vps/
+/home/user/.openclaw/workspace/olympus/
 ├── app/                     # Next.js app router pages & API routes
 │   ├── agents/
 │   ├── api/                 # API routes (workspace, agents, vault, auth, …)

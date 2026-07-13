@@ -47,7 +47,7 @@ test('create agent via API, verify container openclaw.json is correct', async ({
 
   // ── Get models from models.config.json directly ──
   const modelsConfig = JSON.parse(execSync(
-    `cat /home/user/.openclaw/workspace/olympus-vps/models.config.json`,
+    `cat /home/user/.openclaw/workspace/olympus/models.config.json`,
     { encoding: 'utf-8', timeout: 5000 }
   ).toString().trim());
   const enabledModels = modelsConfig.models.filter(m => m.enabled !== false);

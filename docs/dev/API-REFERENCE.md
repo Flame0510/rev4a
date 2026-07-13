@@ -435,8 +435,8 @@ Workspace filesystem change stream for the editor.
   "ts": 1751270003000,
   "changed": [
     {
-      "path": "/home/user/.openclaw/workspace/olympus-vps/README.md",
-      "rel_path": "olympus-vps/README.md",
+      "path": "/home/user/.openclaw/workspace/olympus/README.md",
+      "rel_path": "olympus/README.md",
       "type": "file",
       "size": 2048,
       "mtimeMs": 1751270002999,
