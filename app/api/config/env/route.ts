@@ -141,7 +141,9 @@ export async function PUT(request: NextRequest) {
         keep.push(...envLines);
       }
 
-      fs.writeFileSync(servicePath, keep.join('\n'), 'utf-8');
+      const serviceContent = keep.join('\n');
+      fs.writeFileSync('/tmp/olympus.service.tmp', serviceContent, 'utf-8');
+      execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
       execSync('sudo systemctl daemon-reload', { timeout: 5000 });
     } catch (syncErr) {
       // Non-fatal — log but don't fail the request
