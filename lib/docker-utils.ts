@@ -22,13 +22,17 @@ export function detectPublicHost(): string {
 /**
  * Build the provider gateway base URL used to sync model config into agent
  * containers. When OLYMPUS_DOMAIN is set (Traefik mode), the subdomain
- * https://olympus.<domain> is used. Otherwise, fall back to the host's public
- * IP on port 3740 (direct mode, no HTTPS).
+ * https://olympus.<domain> is used. When no domain is configured, agents
+ * reach the gateway through the Docker host gateway (host.docker.internal)
+ * injected at container creation via --add-host.
  */
 export function detectProviderGatewayUrl(): string {
   const domain = process.env.OLYMPUS_DOMAIN || '';
   if (domain) {
     return `https://olympus.${domain}/api/provider/v1`;
   }
-  return `http://${detectPublicHost()}:3740/api/provider/v1`;
+  // No domain: agents reach Olympus through the Docker host gateway.
+  // The host.docker.internal hostname is injected via --add-host at container
+  // creation and resolves to the Docker bridge gateway IP.
+  return 'http://host.docker.internal:3740/api/provider/v1';
 }

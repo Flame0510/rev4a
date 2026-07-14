@@ -202,7 +202,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Determine Traefik availability: check for a running traefik container
-    // and whether OLYMPUS_DOMAIN is configured. Both required for HTTPS routing.
+    // and whether OLYMPUS_DOMAIN is configured.
+    // - Traefik + domain  → HTTPS subdomain routing (Host rule, no -p)
+    // - Otherwise         → direct host port (-p <port>:3000)
     const traefikRunning = checkTraefikRunning();
     const domain = process.env.OLYMPUS_DOMAIN || '';
     const useTraefik = traefikRunning && domain.length > 0;
@@ -231,7 +233,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         `traefik.http.services.agent-${name}.loadbalancer.server.port=3000`,
       );
     } else {
-      // No Traefik → expose port directly on the host.
+      // No domain (or no Traefik at all) → expose port directly on the host.
+      // Each agent gets its own host port (-p <port>:3000) and is reached
+      // via http://<ip>:<port>. Traefik only proxies the Olympus dashboard.
       if (!port) {
         port = findAvailablePort();
       }
@@ -248,7 +252,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    // Without Traefik, map the internal port 3000 to the chosen host port
+    // With domain → no host port (Traefik routes by container name)
+    // Without domain → expose host port for direct access
     const portOpt = !useTraefik && port ? `-p ${port}:3000` : '';
 
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
@@ -335,18 +340,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ).trim();
         const config = JSON.parse(raw);
 
-        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access
-        // Must be done after OpenClaw's first boot since OpenClaw discards it
+        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access.
+        // Must be done after OpenClaw's first boot since OpenClaw discards it.
+        // Allow all origins — agents are protected by the gateway token anyway.
         const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
         gatewaySection.controlUi = {
-          allowedOrigins: useTraefik
-            ? [
-                `https://olympus.${domain}`,
-                `https://${agentHostname}`,
-              ]
-            : [
-                `http://${agentHostname}`,
-              ],
+          allowedOrigins: ['*'],
           dangerouslyDisableDeviceAuth: true,
         };
         config.gateway = gatewaySection;
