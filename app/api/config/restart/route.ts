@@ -10,17 +10,18 @@ export const runtime = 'nodejs';
 
 export async function POST() {
   try {
-    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus', {
-      timeout: 15000,
-      stdio: 'pipe',
-    });
-
-    // Propagate the new env (especially OLYMPUS_DOMAIN) to all agent containers
+    // Sync agent config BEFORE restart so they pick up any domain/env changes.
+    // Must happen before restart because restart kills this process.
     try {
       syncAllAgents();
     } catch {
       // best-effort, non-fatal
     }
+
+    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus', {
+      timeout: 15000,
+      stdio: 'pipe',
+    });
 
     return NextResponse.json({ status: 'ok', message: 'Service restarted' });
   } catch (e: unknown) {
