@@ -1,0 +1,37 @@
+# Traefik static configuration
+# See: https://doc.traefik.io/traefik/reference/static-configuration/file/
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: WARN
+
+api:
+  dashboard: true
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: olympus-traefik
+
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@example.com"  # CHANGE THIS to your real email before enabling HTTPS
+      storage: /etc/traefik/certs/acme.json
+      httpChallenge:
+        entryPoint: web
