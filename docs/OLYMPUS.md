@@ -50,7 +50,48 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
     └──────────────┘           └─────────────────┘
 ```
 
-### Components
+### Environment
+
+Olympus reads the following environment variables. Set them in `/config` (UI) or directly in `.env`.
+
+| Variable | Required | Description |
+|---|---|---|
+| `OLYMPUS_PASSWORD` | Yes | Login password for the dashboard |
+| `OLYMPUS_TOKEN` | Yes | Token used for programmatic API access |
+| `OLYMPUS_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
+| `OLYMPUS_DOMAIN` | No | Base domain for Traefik routing (e.g. `mydomain.com`). If unset, agents are created without Traefik using direct IP+port URLs |
+| `OLYMPUS_DB` | No | Path to the events database (default: `data/events.db`) |
+| `OLYMPUS_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
+
+## Agent creation modes
+
+Olympus supports two agent creation modes depending on whether `OLYMPUS_DOMAIN` is configured:
+
+### Traefik mode (`OLYMPUS_DOMAIN` set)
+
+- Agents get Traefik labels for HTTPS subdomain routing
+- URL format: `https://<agent-name>.<domain>#token=...`
+- The agent container does **not** expose a host port
+- Requires a running Traefik container with Let's Encrypt
+
+### Direct mode (`OLYMPUS_DOMAIN` unset)
+
+- Agents expose a port directly on the host (`-p <port>:3000`)
+- URL format: `http://<host-public-ip>:<port>#token=...`
+- The port is auto-assigned starting from 3000 (or user-specified)
+- **No HTTPS** — use for local/private networks
+- A warning banner is shown on the Agents page when no domain is configured
+
+## Config persistence
+
+When environment variables are saved via the Config page (Save & Restart):
+
+1. Values are written to `.env` in the project root
+2. The systemd service file is synced (all `Environment=` lines replaced with current vars)
+3. `systemctl daemon-reload` is run
+4. The server restarts with the new environment
+
+## Components
 
 - **Olympus:** Next.js app serving the dashboard UI and REST API. Reads Docker state, container configs, and agent workspaces via `docker exec` and `fs` calls.
 - **Traefik:** Reverse proxy handling HTTPS + Let's Encrypt for `*.<your-domain>` (when `OLYMPUS_DOMAIN` is set).
