@@ -32,22 +32,7 @@ function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
 
 
 /**
- * Check whether Traefik is running on this host.
- */
-function checkTraefikRunning(): boolean {
-  try {
-    const out = execSync(
-      `docker ps --filter "name=traefik" --format '{{.Names}}'`,
-      { encoding: 'utf-8', timeout: 3000 },
-    ).trim();
-    return out.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Find an available host port starting from 3000 for direct (non-Traefik) agents.
+ * Find an available host port starting from 3000.
  */
 function findAvailablePort(): number {
   try {
@@ -201,49 +186,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Determine Traefik availability: check for a running traefik container
-    // and whether OLYMPUS_DOMAIN is configured.
-    // - Traefik + domain  → HTTPS subdomain routing (Host rule, no -p)
-    // - Otherwise         → direct host port (-p <port>:3000)
-    const traefikRunning = checkTraefikRunning();
-    const domain = process.env.OLYMPUS_DOMAIN || '';
-    const useTraefik = traefikRunning && domain.length > 0;
+    // Every agent gets a host port for direct access (http://<ip>:<port>).
+    // Traefik domain routing is optional and configured externally by the operator.
+    if (!port) {
+      port = findAvailablePort();
+    }
+    const agentHostname = `${detectPublicHost()}:${port}`;
+    const traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
 
     const labels: string[] = [`AGENT_ID=${name}`];
-    let agentHostname = '';
-    let traefikUrl = '';
-
     const envVars: string[] = [
       `AGENT_ID=${name}`,
       `AGENT_NAME=${name}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
+      `AGENT_HOSTNAME=${agentHostname}`,
       `TZ=Europe/Rome`,
     ];
-
-    if (useTraefik) {
-      // Traefik + domain → HTTPS subdomain routing, no host port needed
-      agentHostname = `${name}.${domain}`;
-      traefikUrl = `https://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
-      labels.push(
-        'traefik.enable=true',
-        `traefik.http.routers.agent-${name}.entrypoints=websecure`,
-        `traefik.http.routers.agent-${name}.rule=Host(\`${agentHostname}\`)`,
-        `traefik.http.routers.agent-${name}.tls.certresolver=letsencrypt`,
-        `traefik.http.routers.agent-${name}.service=agent-${name}`,
-        `traefik.http.services.agent-${name}.loadbalancer.server.port=3000`,
-      );
-    } else {
-      // No domain (or no Traefik at all) → expose port directly on the host.
-      // Each agent gets its own host port (-p <port>:3000) and is reached
-      // via http://<ip>:<port>. Traefik only proxies the Olympus dashboard.
-      if (!port) {
-        port = findAvailablePort();
-      }
-      agentHostname = `${detectPublicHost()}:${port}`;
-      traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
-    }
-
-    envVars.push(`AGENT_HOSTNAME=${agentHostname}`);
 
     // Pass the selected model to the entrypoint so it writes it at first boot
     if (model) {
@@ -252,9 +210,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    // With domain → no host port (Traefik routes by container name)
-    // Without domain → expose host port for direct access
-    const portOpt = !useTraefik && port ? `-p ${port}:3000` : '';
+    const portOpt = `-p ${port}:3000`;
 
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
 

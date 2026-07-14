@@ -504,34 +504,15 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "created": "2026-07-01T16:58:42.876829416Z",
     "env": ["AGENT_ID=prometheus", "AGENT_HOSTNAME=<agent-name>.<your-domain>.com"],
     "authToken": "***",
-    "traefikUrl": "https://prometheus.mydomain.com#token=asdfghjkl"
-  },
-  {
-    "id": "fedcba098765",
-    "agentId": "my-agent",
-    "name": "my-agent",
-    "image": "openclaw-agent-base:latest",
-    "imageTag": "latest",
-    "template": "prometheus",
-    "status": "running",
-    "state": "running",
-    "ports": "0.0.0.0:3033->3000/tcp",
-    "ip": "172.19.0.5",
-    "created": "2026-07-01T16:58:42.876829416Z",
-    "env": ["AGENT_ID=my-agent", "AGENT_HOSTNAME=203.0.113.10:3033"],
-    "authToken": "***",
     "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
   }
 ]
 
 **Notes:**
-- The URL (`traefikUrl`) reflects the creation mode:
-  - With `OLYMPUS_DOMAIN` set + Traefik running → HTTPS subdomain URL (`https://<name>.<domain>#...`)
-  - Otherwise → HTTP IP+port URL (`http://<host-ip>:<port>#...`)
+- The URL is always `http://<host-ip>:<port>#token=...` (every agent gets a host port mapping)
 - The `authToken` uses the shared gateway token from `data/agents-token.json`
 - Containers are discovered via Docker API with label filter `AGENT_ID`
 - Template is inferred from the container image name + agent ID directory match in `agent-templates/`
-- Existing containers (created before domain update) will still show the old URL pattern
 
 ---
 
@@ -561,24 +542,11 @@ Create a new agent container from a template.
 | `port` | no | Optional host port (auto-assigned if empty and no Traefik) |
 | `model` | no | Primary model ID from `models.config.json` |
 
-**Creation mode is determined automatically:**
-- **Traefik mode** — if a running Traefik container is detected **and** `OLYMPUS_DOMAIN` is set. Agents get Traefik labels for HTTPS subdomain routing without host port exposure.
-- **Direct mode** — otherwise. Agents expose a host port (`-p <port>:3000`) and are reachable via `http://<host-ip>:<port>`. Port is auto-assigned from 3000+.
+**Every agent is created with a host port mapping:**
+- `-p <port>:3000` — the container's port 3000 is mapped to an auto-assigned (or user-specified) host port
+- URL format: `http://<host-ip>:<port>#token=...`
 
-**Response (Traefik mode):**
-```json
-{
-  "success": true,
-  "containerId": "00f5de1eb08d...",
-  "name": "my-agent",
-  "image": "openclaw-agent-base:latest",
-  "network": "openclaw-core_default",
-  "traefikUrl": "https://my-agent.mydomain.com#token=asdfghjkl"
-}
-```
-No host port exposed — Traefik routes HTTPS via the subdomain.
-
-**Response (Direct mode — no Traefik):**
+**Response:**
 ```json
 {
   "success": true,
@@ -589,21 +557,18 @@ No host port exposed — Traefik routes HTTPS via the subdomain.
   "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
 }
 ```
-The container's port 3000 is mapped to the auto-assigned (or user-specified) host port.
-The URL uses the host's public IP address since no domain is configured.
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
 2. The route waits for the gateway to be fully up (health check poll, up to 20 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
 4. Calls `syncAgent(name)` to write `models.providers.olympus` into the container
-5. In Traefik mode: Traefik labels are set for HTTPS via Let's Encrypt
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are volume-mounted from the template directory
-- The agent URL is included in the response (subdomain or IP+port)
+- The agent URL is included in the response
 - An event is logged to `data/events.db` if available
 
 **Error:** `400` for validation errors, `409` if name/port already in use

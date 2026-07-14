@@ -71,7 +71,7 @@ Inside `models.providers.olympus.models`, model IDs are stored **without** the
   "models": {
     "providers": {
       "olympus": {
-        "baseUrl": "https://<your-olympus-domain>/api/provider/v1",
+        "baseUrl": "http://host.docker.internal:3740/api/provider/v1",
         "api": "openai-completions",
         "apiKey": "***",
         "models": [

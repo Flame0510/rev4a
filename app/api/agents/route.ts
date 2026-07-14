@@ -94,45 +94,17 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
             }
           }
 
-          // Build the agent URL:
-          // - Traefik + domain     → HTTPS subdomain from Host(`...`) rule
-          // - Traefik + PathPrefix  → http://<public-ip>/agent/<name> from PathPrefix rule
-          // - No Traefik            → http://<public-ip>:<port> from Docker port mappings
-          const labels = c.Labels || {};
-          const routerRule = Object.keys(labels).find(k => k.startsWith('traefik.http.routers.') && k.endsWith('.rule'));
-          if (routerRule) {
-            const rule = labels[routerRule];
-            // Extract host from rule like Host(`...`)
-            const hostMatch = rule.match(/Host\([`'"]([^`'"]+)[`'"]\)/);
-            if (hostMatch) {
-              let baseUrl = `https://${hostMatch[1]}`;
-              if (authToken) {
-                baseUrl += `#token=${encodeURIComponent(authToken)}`;
-              }
-              traefikUrl = baseUrl;
-            } else {
-              // PathPrefix rule — build URL from public IP + path
-              const pathMatch = rule.match(/PathPrefix\([`'"]([^`'"]+)[`'"]\)/);
-              if (pathMatch) {
-                const host = detectPublicHost();
-                let baseUrl = `http://${host}${pathMatch[1]}`;
-                if (authToken) {
-                  baseUrl += `#token=${encodeURIComponent(authToken)}`;
-                }
-                traefikUrl = baseUrl;
-              }
+          // Build the agent URL from the host's public IP + mapped port.
+          // Every agent has -p <port>:3000, so we look for the public port
+          // that maps to the internal port 3000.
+          const publicPort = (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000);
+          if (publicPort) {
+            const host = detectPublicHost();
+            let baseUrl = `http://${host}:${publicPort.PublicPort}`;
+            if (authToken) {
+              baseUrl += `#token=${encodeURIComponent(authToken)}`;
             }
-          } else {
-            // No Traefik routing label → the agent was created for direct port access.
-            const publicPort = (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000);
-            if (publicPort) {
-              const host = detectPublicHost();
-              let baseUrl = `http://${host}:${publicPort.PublicPort}`;
-              if (authToken) {
-                baseUrl += `#token=${encodeURIComponent(authToken)}`;
-              }
-              traefikUrl = baseUrl;
-            }
+            traefikUrl = baseUrl;
           }
         } catch {
           // inspect non-critical, continue with partial data

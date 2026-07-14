@@ -175,7 +175,7 @@ Inside each agent container, the `openclaw.json` file has this structure for the
   "models": {
     "providers": {
       "olympus": {
-        "baseUrl": "https://<your-olympus-domain>/api/provider/v1",
+        "baseUrl": "http://host.docker.internal:3740/api/provider/v1",
         "api": "openai-completions",
         "apiKey": "<gateway-token>",
         "models": [

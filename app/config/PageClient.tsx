@@ -30,12 +30,6 @@ const ENV_METADATA: Record<
     placeholder: 'Internal token',
     sensitive: true,
   },
-  OLYMPUS_DOMAIN: {
-    label: 'Domain',
-    description: 'Base domain for Traefik routing and agent hostnames (e.g. mydomain.com). Used to generate agent URLs and the provider gateway endpoint.',
-    placeholder: 'mydomain.com',
-    sensitive: false,
-  },
   OLYMPUS_WORKSPACE_ROOT: {
     label: 'Workspace root',
     description: 'Filesystem path for the local file explorer (e.g. /home/user/projects/olympus). Leave empty to disable the Local workspace.',

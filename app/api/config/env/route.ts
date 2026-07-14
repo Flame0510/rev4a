@@ -150,42 +150,6 @@ export async function PUT(request: NextRequest) {
       console.warn('Failed to sync env to systemd:', syncErr);
     }
 
-    // When OLYMPUS_DOMAIN changes, update Traefik dynamic config
-    if ('OLYMPUS_DOMAIN' in body.env) {
-      try {
-        const domain = (body.env.OLYMPUS_DOMAIN || '').trim();
-        const noDomainFile = '/docker/traefik/dynamic/olympus-no-domain.yml';
-        if (!domain) {
-          // No domain → write PathPrefix catch-all router so Olympus is reachable
-          // at http://<ip>/ without a domain. Agents use PathPrefix labels.
-          const noDomainYml = [
-            'http:',
-            '  routers:',
-            '    olympus-no-domain:',
-            '      entryPoints:',
-            '        - web',
-            '      rule: "PathPrefix(`/`)"',
-            '      service: olympus-local',
-            '      priority: 1',
-            '',
-            '  services:',
-            '    olympus-local:',
-            '      loadBalancer:',
-            '        servers:',
-            '          - url: "http://127.0.0.1:3740"',
-          ].join('\n') + '\n';
-          fs.writeFileSync(noDomainFile, noDomainYml, 'utf-8');
-        } else {
-          // Domain set → remove the no-domain fallback router
-          if (fs.existsSync(noDomainFile)) {
-            fs.unlinkSync(noDomainFile);
-          }
-        }
-      } catch (traefikErr) {
-        console.warn('Failed to update Traefik config:', traefikErr);
-      }
-    }
-
     return NextResponse.json({ status: 'ok', updated: Object.keys(body.env) });
   } catch (e: unknown) {
     return NextResponse.json(

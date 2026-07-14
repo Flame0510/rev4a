@@ -4,7 +4,7 @@
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
-**URL:** `https://olympus.<your-domain>` (set via `OLYMPUS_DOMAIN` env var)
+**URL:** `http://<vps-ip>:3740` (or behind a reverse proxy of your choice)
 **Port:** 3740
 **Runtime:** systemd service `olympus`
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
@@ -59,28 +59,23 @@ Olympus reads the following environment variables. Set them in `/config` (UI) or
 | `OLYMPUS_PASSWORD` | Yes | Login password for the dashboard |
 | `OLYMPUS_TOKEN` | Yes | Token used for programmatic API access |
 | `OLYMPUS_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
-| `OLYMPUS_DOMAIN` | No | Base domain for Traefik routing (e.g. `mydomain.com`). If unset, agents are created without Traefik using direct IP+port URLs |
 | `OLYMPUS_DB` | No | Path to the events database (default: `data/events.db`) |
 | `OLYMPUS_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
 
-## Agent creation modes
+## Agent creation
 
-Olympus supports two agent creation modes depending on whether `OLYMPUS_DOMAIN` is configured:
+Every agent is created with:
 
-### Traefik mode (`OLYMPUS_DOMAIN` set)
-
-- Agents get Traefik labels for HTTPS subdomain routing
-- URL format: `https://<agent-name>.<domain>#token=...`
-- The agent container does **not** expose a host port
-- Requires a running Traefik container with Let's Encrypt
-
-### Direct mode (`OLYMPUS_DOMAIN` unset)
-
-- Agents expose a port directly on the host (`-p <port>:3000`)
+- A host port mapping (`-p <port>:3000`) for direct access
 - URL format: `http://<host-public-ip>:<port>#token=...`
-- The port is auto-assigned starting from 3000 (or user-specified)
-- **No HTTPS** — use for local/private networks
-- A warning banner is shown on the Agents page when no domain is configured
+- The provider gateway at `http://host.docker.internal:3740/api/provider/v1`
+- `allowedOrigins: ['*']` for browser Control UI access
+
+The port is auto-assigned starting from 3000 (or user-specified).
+
+Domain and HTTPS routing (Traefik) is an external concern — operators can
+configure it on top of the base setup if needed, but Olympus does not couple
+to any specific reverse proxy.
 
 ## Config persistence
 
@@ -94,7 +89,7 @@ When environment variables are saved via the Config page (Save & Restart):
 ## Components
 
 - **Olympus:** Next.js app serving the dashboard UI and REST API. Reads Docker state, container configs, and agent workspaces via `docker exec` and `fs` calls.
-- **Traefik:** Reverse proxy handling HTTPS + Let's Encrypt for `*.<your-domain>` (when `OLYMPUS_DOMAIN` is set).
+- **Traefik:** External reverse proxy (optional). Olympus does not depend on it — operators can use any reverse proxy or none at all.
 - **OpenClaw agents:** Docker containers with `AGENT_ID` label. Olympus discovers them dynamically via `docker ps`.
 
 ---

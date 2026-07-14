@@ -62,7 +62,7 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
-export default function AgentsPageClient({ hasDomain }: { hasDomain?: boolean }) {
+export default function AgentsPageClient() {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -272,34 +272,6 @@ export default function AgentsPageClient({ hasDomain }: { hasDomain?: boolean })
   // ─── Desktop: split view ───
   return (
     <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Domain config banner — shown server-side when OLYMPUS_DOMAIN is not set */}
-      {!hasDomain && (
-        <div id="olympus-domain-banner"
-          style={{
-            display:'flex',alignItems:'center',gap:10,
-            padding:'10px 16px',
-            background:'rgba(251,191,36,0.08)',
-            borderBottom:'1px solid rgba(251,191,36,0.25)',
-            fontSize:12,color:'#fbbf24',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <span style={{flex:1}}>
-            No domain configured. Agents will be created without Traefik (HTTP + IP-based URLs).
-            {' '}<a href="/config" style={{color:'#60a5fa',textDecoration:'underline',whiteSpace:'nowrap'}}>Go to Config →</a>
-          </span>
-          <button type="button"
-            onClick={() => {
-              const el = document.getElementById('olympus-domain-banner');
-              if (el) el.style.display = 'none';
-            }}
-            style={{background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:14,padding:'0 8px',lineHeight:1}}
-            title="Dismiss"
-          >✕</button>
-        </div>
-      )}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
@@ -515,12 +487,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
             <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
               style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: 12, wordBreak: 'break-all' }}
             >{agent.traefikUrl}</a>
-            {agent.traefikUrl.startsWith('http://') && (
-              <div style={{ marginTop: 8, padding: '6px 10px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 0, fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
-                This agent runs without Traefik. The URL uses the host&apos;s IP address.
-                If you are accessing Olympus remotely, make sure port {agent.traefikUrl.split(':')[2]?.split('#')[0] || '<port>'} is reachable from your network.
-              </div>
-            )}
+
           </div>
         </div>
       )}

@@ -105,11 +105,7 @@ export async function callUpstream(
   }
 
   if (provider === 'openrouter') {
-    const refererDomain = process.env.OLYMPUS_DOMAIN || '';
-    const referer = refererDomain
-      ? `https://olympus.${refererDomain}`
-      : `http://${detectPublicHost()}:3740`;
-    headers['HTTP-Referer'] = referer;
+    headers['HTTP-Referer'] = `http://${detectPublicHost()}:3740`;
     headers['X-Title'] = 'Olympus Gateway';
   }
 
