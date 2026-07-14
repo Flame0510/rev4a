@@ -62,7 +62,7 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
-export default function AgentsPageClient() {
+export default function AgentsPageClient({ hasDomain }: { hasDomain?: boolean }) {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -272,15 +272,17 @@ export default function AgentsPageClient() {
   // ─── Desktop: split view ───
   return (
     <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Domain config banner (hidden by default, shown via JS if OLYMPUS_DOMAIN is missing) */}
-      <div id="olympus-domain-banner" style={{display:'none'}}>
-        <div style={{
-          display:'flex',alignItems:'center',gap:10,
-          padding:'10px 16px',
-          background:'rgba(251,191,36,0.08)',
-          borderBottom:'1px solid rgba(251,191,36,0.25)',
-          fontSize:12,color:'#fbbf24',
-        }}>
+      {/* Domain config banner — shown server-side when OLYMPUS_DOMAIN is not set */}
+      {!hasDomain && (
+        <div
+          style={{
+            display:'flex',alignItems:'center',gap:10,
+            padding:'10px 16px',
+            background:'rgba(251,191,36,0.08)',
+            borderBottom:'1px solid rgba(251,191,36,0.25)',
+            fontSize:12,color:'#fbbf24',
+          }}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
@@ -289,28 +291,11 @@ export default function AgentsPageClient() {
             {' '}<a href="/config" style={{color:'#60a5fa',textDecoration:'underline',whiteSpace:'nowrap'}}>Go to Config →</a>
           </span>
           <button onClick={() => {
-            const el = document.getElementById('olympus-domain-banner');
+            const el = document.currentScript?.parentElement?.parentElement;
             if (el) el.style.display = 'none';
           }} style={{background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:14,padding:'0 8px',lineHeight:1}} title="Dismiss">✕</button>
         </div>
-      </div>
-      <script dangerouslySetInnerHTML={{__html:`
-        (function(){
-          var x = new XMLHttpRequest();
-          x.open('GET','/api/config/env',true);
-          x.withCredentials=true;
-          x.onload=function(){
-            try {
-              var d=JSON.parse(x.responseText);
-              if(!d.OLYMPUS_DOMAIN){
-                var el=document.getElementById('olympus-domain-banner');
-                if(el) el.style.display='block';
-              }
-            }catch(e){}
-          };
-          x.send();
-        })();
-      `}} />
+      )}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
