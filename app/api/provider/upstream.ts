@@ -5,6 +5,8 @@
  * Used by both /api/provider/v1/chat/completions and /api/assistant
  * to avoid HTTP loopback (calling localhost from inside Next.js).
  */
+import { detectPublicHost } from '@/lib/docker-utils';
+
 export const dynamic = 'force-dynamic';
 
 export const PROVIDER_ENVS: Record<string, { baseUrl: string; authHeader: string }> = {
@@ -103,7 +105,11 @@ export async function callUpstream(
   }
 
   if (provider === 'openrouter') {
-    headers['HTTP-Referer'] = `https://olympus.${process.env.OLYMPUS_DOMAIN || 'example.com'}`;
+    const refererDomain = process.env.OLYMPUS_DOMAIN || '';
+    const referer = refererDomain
+      ? `https://olympus.${refererDomain}`
+      : `http://${detectPublicHost()}:3740`;
+    headers['HTTP-Referer'] = referer;
     headers['X-Title'] = 'Olympus Gateway';
   }
 

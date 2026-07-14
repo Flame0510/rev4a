@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys, writeProviderKeys } from './keys';
 import { syncAllAgents } from '../sync';
+import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -81,7 +82,7 @@ const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
   olympus: {
     envKey: 'OLYMPUS_API_KEY',
     label: 'OLYMPUS API KEY',
-    baseUrl: `https://olympus.${process.env.OLYMPUS_DOMAIN || 'example.com'}/api/provider/v1`,
+    baseUrl: detectProviderGatewayUrl(),
     authHeader: 'Authorization',
     docsUrl: '',
   },

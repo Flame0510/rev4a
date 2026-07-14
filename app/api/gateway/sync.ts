@@ -23,9 +23,10 @@ interface ModelConfigEntry {
   enabled: boolean;
 }
 
+import { detectProviderGatewayUrl } from '@/lib/docker-utils';
+
 const MODELS_CONFIG_PATH = path.resolve(process.cwd(), 'models.config.json');
-const OLYMPUS_DOMAIN = process.env.OLYMPUS_DOMAIN || 'localhost';
-const PROVIDER_GATEWAY_BASE_URL = OLYMPUS_DOMAIN === 'localhost' ? 'http://localhost:3740/api/provider/v1' : `https://olympus.${OLYMPUS_DOMAIN}/api/provider/v1`;
+const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
