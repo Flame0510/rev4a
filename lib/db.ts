@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { initializeOlympusDb } from './db-bootstrap.mjs';
 
 export const DB_PATH = process.env.OLYMPUS_DB ?? '/data/olympus/events.db';
-export const TOKEN = process.env.OLYMPUS_TOKEN ?? 'change-me';
+export const TOKEN = process.env.OLYMPUS_TOKEN ?? '';
 
 export function requireAuth(request: NextRequest): NextResponse | null {
   const token = new URL(request.url).searchParams.get('token');

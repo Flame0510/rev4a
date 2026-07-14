@@ -13,7 +13,7 @@ unless otherwise noted.
 ```
 Authorization: Bearer <OLYMPUS_TOKEN>
 ```
-Default token: `change-me`. Set `OLYMPUS_TOKEN` env var to override.
+Set `OLYMPUS_TOKEN` env var. No default — auth is disabled when unset.
 
 ### Browser cookie (UI)
 After a successful `POST /api/auth/login`, the server sets an `olympus_token`

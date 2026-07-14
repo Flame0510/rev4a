@@ -103,7 +103,7 @@ export async function callUpstream(
   }
 
   if (provider === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://olympus.example.com';
+    headers['HTTP-Referer'] = `https://olympus.${process.env.OLYMPUS_DOMAIN || 'example.com'}`;
     headers['X-Title'] = 'Olympus Gateway';
   }
 

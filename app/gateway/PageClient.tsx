@@ -527,7 +527,7 @@ export default function GatewayPageClient() {
         setEditingAgent(null);
         setAgentModelInput('');
         setAgentFallbackInput('');
-        // Polling in background: GET /api/gateway ogni secondo finché non risponde
+        // Poll in background: GET /api/gateway every second until it responds
         for (let attempt = 0; attempt < 8; attempt++) {
           await new Promise((r) => setTimeout(r, 1000));
           try {

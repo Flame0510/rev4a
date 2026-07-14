@@ -26,7 +26,7 @@ docker run -d \
   -l "AGENT_ID=<id>" \
   -l "traefik.enable=true" \
   -l "traefik.http.routers.agent-<id>.entrypoints=websecure" \
-  -l "traefik.http.routers.agent-<id>.rule=Host(\`<id>.example.com\`)" \
+  -l "traefik.http.routers.agent-<id>.rule=Host(\`<id>.<your-domain>\`)" \
   -l "traefik.http.routers.agent-<id>.tls.certresolver=letsencrypt" \
   -l "traefik.http.services.agent-<id>.loadbalancer.server.port=3000" \
   -e AGENT_ID=<id> \
@@ -47,5 +47,5 @@ bash scripts/spawn-agent.sh argus
 ```
 
 After creation:
-- The agent is reachable at `https://<agent_id>.example.com`
+- The agent is reachable at `https://<agent_id>.<your-domain>`
 - The Olympus Agents page shows it with the Traefik link and a copyable token

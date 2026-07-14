@@ -4,7 +4,7 @@
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
-**URL:** `https://olympus.example.com`
+**URL:** `https://olympus.<your-domain>` (set via `OLYMPUS_DOMAIN` env var)
 **Port:** 3740
 **Runtime:** systemd service `olympus`
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
@@ -53,7 +53,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 ### Components
 
 - **Olympus:** Next.js app serving the dashboard UI and REST API. Reads Docker state, container configs, and agent workspaces via `docker exec` and `fs` calls.
-- **Traefik:** Reverse proxy handling HTTPS + Let's Encrypt for `*.example.com`.
+- **Traefik:** Reverse proxy handling HTTPS + Let's Encrypt for `*.<your-domain>` (when `OLYMPUS_DOMAIN` is set).
 - **OpenClaw agents:** Docker containers with `AGENT_ID` label. Olympus discovers them dynamically via `docker ps`.
 
 ---

@@ -24,7 +24,8 @@ interface ModelConfigEntry {
 }
 
 const MODELS_CONFIG_PATH = path.resolve(process.cwd(), 'models.config.json');
-const PROVIDER_GATEWAY_BASE_URL = 'https://olympus.example.com/api/provider/v1';
+const OLYMPUS_DOMAIN = process.env.OLYMPUS_DOMAIN || 'localhost';
+const PROVIDER_GATEWAY_BASE_URL = OLYMPUS_DOMAIN === 'localhost' ? 'http://localhost:3740/api/provider/v1' : `https://olympus.${OLYMPUS_DOMAIN}/api/provider/v1`;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */

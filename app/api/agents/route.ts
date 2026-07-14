@@ -2,8 +2,29 @@ import { NextResponse, type NextRequest } from 'next/server';
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import { networkInterfaces } from 'os';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
+
+/**
+ * Detect the host's best public-facing IPv4 address for no-Traefik agent URLs.
+ * Falls back to 'localhost' on machines with no public interface (e.g. dev laptop).
+ */
+function detectPublicHost(): string {
+  try {
+    const ifaces = networkInterfaces();
+    for (const [, addrs] of Object.entries(ifaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs) {
+        if (addr.family === 'IPv4' && !addr.internal) {
+          return addr.address;
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  return 'localhost';
+}
+
 
 function dockerFetch(method: string, path: string): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -93,29 +114,34 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
             }
           }
 
-          // Build Traefik URL from the traefik router rule label, fallback to container name
+          // Build the agent URL:
+          // - With Traefik → read the router rule to get the HTTPS subdomain
+          // - Without Traefik → use the host's public IP + port from Docker mappings
           const labels = c.Labels || {};
           const routerRule = Object.keys(labels).find(k => k.startsWith('traefik.http.routers.') && k.endsWith('.rule'));
-          if (labels['traefik.enable'] === 'true') {
-            if (routerRule) {
-              const rule = labels[routerRule];
-              // Extract host from rule like Host(`...`)
-              const hostMatch = rule.match(/Host\([`'"]([^`'"]+)[`'"]\)/);
-              if (hostMatch) {
-                let baseUrl = `https://${hostMatch[1]}`;
-                // Control UI expects shared-secret bootstrap in the hash fragment.
-                if (authToken) {
-                  baseUrl += `#token=${encodeURIComponent(authToken)}`;
-                }
-                traefikUrl = baseUrl;
-              }
-            }
-            if (!traefikUrl) {
-              // Fallback: use AGENT_ID as subdomain
-              traefikUrl = `https://${agentId}.example.com`;
+          // The base image always has traefik.enable=true (inherited from Dockerfile).
+          // Detect actual Traefik routing by checking for a router rule label (set by Olympus).
+          if (routerRule) {
+            const rule = labels[routerRule];
+            // Extract host from rule like Host(`...`)
+            const hostMatch = rule.match(/Host\([`'"]([^`'"]+)[`'"]\)/);
+            if (hostMatch) {
+              let baseUrl = `https://${hostMatch[1]}`;
               if (authToken) {
-                traefikUrl += `#token=${encodeURIComponent(authToken)}`;
+                baseUrl += `#token=${encodeURIComponent(authToken)}`;
               }
+              traefikUrl = baseUrl;
+            }
+          } else {
+            // No Traefik routing label → the agent was created for direct port access.
+            const publicPort = (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000);
+            if (publicPort) {
+              const host = detectPublicHost();
+              let baseUrl = `http://${host}:${publicPort.PublicPort}`;
+              if (authToken) {
+                baseUrl += `#token=${encodeURIComponent(authToken)}`;
+              }
+              traefikUrl = baseUrl;
             }
           }
         } catch {

@@ -29,6 +29,66 @@ function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
 }
 
 
+
+/**
+ * Check whether Traefik is running on this host.
+ */
+function checkTraefikRunning(): boolean {
+  try {
+    const out = execSync(
+      `docker ps --filter "name=traefik" --format '{{.Names}}'`,
+      { encoding: 'utf-8', timeout: 3000 },
+    ).trim();
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find an available host port starting from 3000 for direct (non-Traefik) agents.
+ */
+function findAvailablePort(): number {
+  try {
+    const usedPorts = execSync(
+      `docker ps --format '{{.Ports}}' | grep -oP '\d+(?=->)' | sort -n`,
+      { encoding: 'utf-8', timeout: 3000 },
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(Number);
+
+    let candidate = 3000;
+    while (usedPorts.includes(candidate)) {
+      candidate++;
+    }
+    return candidate;
+  } catch {
+    return 3000;
+  }
+}
+
+/**
+ * Detect the host's best public-facing IPv4 address for no-Traefik agent URLs.
+ */
+function detectPublicHost(): string {
+  try {
+    const { networkInterfaces } = require('os');
+    const ifaces = networkInterfaces();
+    for (const [, addrs] of Object.entries(ifaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs as any[]) {
+        if (addr.family === 'IPv4' && !addr.internal) {
+          return addr.address;
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  return 'localhost';
+}
+
+
 export const dynamic = 'force-dynamic';
 
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
@@ -83,7 +143,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { name, template, port, model, fallbacks } = body;
+    const { name, template, port: portInput, model, fallbacks } = body;
+    let port = portInput;
 
     // Validate name
     const nameError = validateName(name);
@@ -159,23 +220,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const labels = [
-      `AGENT_ID=${name}`,
-      `traefik.enable=true`,
-      `traefik.http.routers.agent-${name}.entrypoints=websecure`,
-      `traefik.http.routers.agent-${name}.rule=Host(\`${name}.example.com\`)`,
-      `traefik.http.routers.agent-${name}.tls.certresolver=letsencrypt`,
-      `traefik.http.routers.agent-${name}.service=agent-${name}`,
-      `traefik.http.services.agent-${name}.loadbalancer.server.port=3000`,
-    ];
+    // Determine Traefik availability: check for a running traefik container
+    // and whether OLYMPUS_DOMAIN is configured. Both required for HTTPS routing.
+    const traefikRunning = checkTraefikRunning();
+    const domain = process.env.OLYMPUS_DOMAIN || '';
+    const useTraefik = traefikRunning && domain.length > 0;
 
-    const envVars = [
+    const labels: string[] = [`AGENT_ID=${name}`];
+    let agentHostname = '';
+    let traefikUrl = '';
+
+    const envVars: string[] = [
       `AGENT_ID=${name}`,
       `AGENT_NAME=${name}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
-      `AGENT_HOSTNAME=${name}.example.com`,
       `TZ=Europe/Rome`,
     ];
+
+    if (useTraefik) {
+      // Traefik + domain → HTTPS subdomain routing, no host port needed
+      agentHostname = `${name}.${domain}`;
+      traefikUrl = `https://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
+      labels.push(
+        'traefik.enable=true',
+        `traefik.http.routers.agent-${name}.entrypoints=websecure`,
+        `traefik.http.routers.agent-${name}.rule=Host(\`${agentHostname}\`)`,
+        `traefik.http.routers.agent-${name}.tls.certresolver=letsencrypt`,
+        `traefik.http.routers.agent-${name}.service=agent-${name}`,
+        `traefik.http.services.agent-${name}.loadbalancer.server.port=3000`,
+      );
+    } else {
+      // No Traefik → expose port directly on the host.
+      if (!port) {
+        port = findAvailablePort();
+      }
+      agentHostname = `${detectPublicHost()}:${port}`;
+      traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
+    }
+
+    envVars.push(`AGENT_HOSTNAME=${agentHostname}`);
 
     // Pass the selected model to the entrypoint so it writes it at first boot
     if (model) {
@@ -184,7 +267,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    const portOpt = port ? `-p ${port}:${port}` : '';
+    // Without Traefik, map the internal port 3000 to the chosen host port
+    const portOpt = !useTraefik && port ? `-p ${port}:3000` : '';
 
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
 
@@ -274,10 +358,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Must be done after OpenClaw's first boot since OpenClaw discards it
         const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
         gatewaySection.controlUi = {
-          allowedOrigins: [
-            'https://olympus.example.com',
-            `https://${name}.example.com`,
-          ],
+          allowedOrigins: useTraefik
+            ? [
+                `https://olympus.${domain}`,
+                `https://${agentHostname}`,
+              ]
+            : [
+                `http://${agentHostname}`,
+              ],
           dangerouslyDisableDeviceAuth: true,
         };
         config.gateway = gatewaySection;
@@ -324,7 +412,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       name,
       image,
       network,
-      traefikUrl: `https://${name}.example.com#token=${encodeURIComponent(agentsToken)}`,
+      traefikUrl,
     });
   } catch (e: unknown) {
     const err = e as Error;

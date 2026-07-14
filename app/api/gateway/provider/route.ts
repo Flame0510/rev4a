@@ -81,7 +81,7 @@ const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
   olympus: {
     envKey: 'OLYMPUS_API_KEY',
     label: 'OLYMPUS API KEY',
-    baseUrl: 'https://olympus.example.com/api/provider/v1',
+    baseUrl: `https://olympus.${process.env.OLYMPUS_DOMAIN || 'example.com'}/api/provider/v1`,
     authHeader: 'Authorization',
     docsUrl: '',
   },

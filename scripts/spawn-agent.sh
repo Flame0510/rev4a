@@ -17,7 +17,7 @@
 #   OLYMPUS_NETWORK       — Docker network (default: olympus-net)
 #   OLYMPUS_VAULT_PATH    — percorso vault.json
 #   OLYMPUS_IMAGE         — immagine agente (default: openclaw-agent-base:latest)
-#   OLYMPUS_TRAEFIK_DOMAIN — dominio base per Traefik (default: example.com)
+#   OLYMPUS_TRAEFIK_DOMAIN — base domain for Traefik (default: example.com)
 #   OLYMPUS_SKIP_TRAEFIK  — se true, non aggiunge label Traefik
 #
 # Label Traefik generate automaticamente:
@@ -45,7 +45,7 @@ if [ -z "$AGENT_ID" ]; then
   echo "  OLYMPUS_NETWORK       — Docker network (default: olympus-net)"
   echo "  OLYMPUS_VAULT_PATH    — percorso vault.json"
   echo "  OLYMPUS_IMAGE         — immagine agente (default: openclaw-agent-base:latest)"
-  echo "  OLYMPUS_TRAEFIK_DOMAIN — dominio base (default: example.com)"
+  echo "  OLYMPUS_TRAEFIK_DOMAIN — base domain (default: example.com)"
   echo "  OLYMPUS_SKIP_TRAEFIK  — salta label Traefik se true"
   exit 1
 fi

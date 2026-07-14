@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 
         // Remove from SQLite
         try {
-          const scriptPath = '/home/user/.openclaw/workspace/olympus/scripts/remove-auth-profile.js';
+          const scriptPath = path.resolve(process.cwd(), 'scripts/remove-auth-profile.js');
           execSync(`node ${scriptPath} '${agentDir}/openclaw-agent.sqlite' '${provider}'`, { timeout: 10000 });
         } catch {}
 
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
 
         // Remove from SQLite
         try {
-          const scriptPath = '/home/user/.openclaw/workspace/olympus/scripts/remove-auth-profile.js';
+          const scriptPath = path.resolve(process.cwd(), 'scripts/remove-auth-profile.js');
           const b64Script = execSync(`base64 -w0 ${scriptPath}`, { encoding: 'utf-8' }).trim();
           const sqlitePath = `${dataDir}/openclaw-agent.sqlite`;
           execSync(
