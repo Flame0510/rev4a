@@ -565,7 +565,7 @@ Create a new agent container from a template.
 - **Traefik mode** — if a running Traefik container is detected **and** `OLYMPUS_DOMAIN` is set. Agents get Traefik labels for HTTPS subdomain routing without host port exposure.
 - **Direct mode** — otherwise. Agents expose a host port (`-p <port>:3000`) and are reachable via `http://<host-ip>:<port>`. Port is auto-assigned from 3000+.
 
-**Response (success):**
+**Response (Traefik mode):**
 ```json
 {
   "success": true,
@@ -573,23 +573,24 @@ Create a new agent container from a template.
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
   "network": "openclaw-core_default",
-  "traefikUrl": "https://<agent-name>.<your-domain>.com#token=asdfghjkl"
+  "traefikUrl": "https://my-agent.mydomain.com#token=asdfghjkl"
 }
 ```
+No host port exposed — Traefik routes HTTPS via the subdomain.
 
-**Traefik mode response:**
+**Response (Direct mode — no Traefik):**
 ```json
 {
-  "traefikUrl": "https://<name>.<domain>#token=..."
+  "success": true,
+  "containerId": "00f5de1eb08d...",
+  "name": "my-agent",
+  "image": "openclaw-agent-base:latest",
+  "network": "openclaw-core_default",
+  "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
 }
 ```
-
-**Direct mode response:**
-```json
-{
-  "traefikUrl": "http://<vps-public-ip>:<port>#token=..."
-}
-```
+The container's port 3000 is mapped to the auto-assigned (or user-specified) host port.
+The URL uses the host's public IP address since no domain is configured.
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config

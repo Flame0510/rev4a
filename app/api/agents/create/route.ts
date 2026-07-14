@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { syncAgent } from '../../gateway/sync';
+import { detectPublicHost } from '@/lib/docker-utils';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -68,26 +69,6 @@ function findAvailablePort(): number {
     return 3000;
   }
 }
-
-/**
- * Detect the host's best public-facing IPv4 address for no-Traefik agent URLs.
- */
-function detectPublicHost(): string {
-  try {
-    const { networkInterfaces } = require('os');
-    const ifaces = networkInterfaces();
-    for (const [, addrs] of Object.entries(ifaces)) {
-      if (!addrs) continue;
-      for (const addr of addrs as any[]) {
-        if (addr.family === 'IPv4' && !addr.internal) {
-          return addr.address;
-        }
-      }
-    }
-  } catch { /* fall through */ }
-  return 'localhost';
-}
-
 
 export const dynamic = 'force-dynamic';
 

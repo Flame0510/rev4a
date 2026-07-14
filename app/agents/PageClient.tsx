@@ -274,7 +274,7 @@ export default function AgentsPageClient({ hasDomain }: { hasDomain?: boolean })
     <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Domain config banner — shown server-side when OLYMPUS_DOMAIN is not set */}
       {!hasDomain && (
-        <div
+        <div id="olympus-domain-banner"
           style={{
             display:'flex',alignItems:'center',gap:10,
             padding:'10px 16px',
@@ -290,10 +290,14 @@ export default function AgentsPageClient({ hasDomain }: { hasDomain?: boolean })
             No domain configured. Agents will be created without Traefik (HTTP + IP-based URLs).
             {' '}<a href="/config" style={{color:'#60a5fa',textDecoration:'underline',whiteSpace:'nowrap'}}>Go to Config →</a>
           </span>
-          <button onClick={() => {
-            const el = document.currentScript?.parentElement?.parentElement;
-            if (el) el.style.display = 'none';
-          }} style={{background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:14,padding:'0 8px',lineHeight:1}} title="Dismiss">✕</button>
+          <button type="button"
+            onClick={() => {
+              const el = document.getElementById('olympus-domain-banner');
+              if (el) el.style.display = 'none';
+            }}
+            style={{background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:14,padding:'0 8px',lineHeight:1}}
+            title="Dismiss"
+          >✕</button>
         </div>
       )}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>

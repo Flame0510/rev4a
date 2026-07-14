@@ -2,29 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { networkInterfaces } from 'os';
+import { detectPublicHost } from '@/lib/docker-utils';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
-
-/**
- * Detect the host's best public-facing IPv4 address for no-Traefik agent URLs.
- * Falls back to 'localhost' on machines with no public interface (e.g. dev laptop).
- */
-function detectPublicHost(): string {
-  try {
-    const ifaces = networkInterfaces();
-    for (const [, addrs] of Object.entries(ifaces)) {
-      if (!addrs) continue;
-      for (const addr of addrs) {
-        if (addr.family === 'IPv4' && !addr.internal) {
-          return addr.address;
-        }
-      }
-    }
-  } catch { /* fall through */ }
-  return 'localhost';
-}
-
 
 function dockerFetch(method: string, path: string): Promise<any> {
   return new Promise((resolve, reject) => {
