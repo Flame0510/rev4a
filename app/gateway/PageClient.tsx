@@ -599,6 +599,35 @@ export default function GatewayPageClient() {
         description="Provider, models and agents. Le API key sono salvate in .env."
       />
 
+      {/* Sync all agents — propagate provider baseUrl + models to every container */}
+      <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={async () => {
+            setOverlay({ active: true, message: 'Syncing all agents…' });
+            try {
+              const res = await fetch('/api/gateway/provider', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _syncOnly: true }) });
+              const data = await res.json();
+              setOverlay({ active: false, message: '' });
+              if (data.status === 'ok') {
+                setMessages((prev) => ({ ...prev, refresh: { type: 'success', text: `Synced ${data.sync?.length ?? 0} agent(s)` } }));
+              }
+            } catch (e: unknown) {
+              setOverlay({ active: false, message: '' });
+              setMessages((prev) => ({ ...prev, refresh: { type: 'error', text: e instanceof Error ? e.message : 'Sync failed' } }));
+            }
+          }}
+        >
+          ↻ Sync All Agents
+        </Button>
+        {messages.refresh && (
+          <span style={{ fontSize: 11, color: messages.refresh.type === 'success' ? '#34d399' : '#ef4444' }}>
+            {messages.refresh.text}
+          </span>
+        )}
+      </div>
+
       {/* Metrics */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
         <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'olympus').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />

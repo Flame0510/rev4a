@@ -184,7 +184,14 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: { provider?: string; apiKey?: string } = await request.json();
+    const body: { provider?: string; apiKey?: string; _syncOnly?: boolean } = await request.json();
+
+    // Allow sync-only requests (no provider change needed)
+    if (body._syncOnly) {
+      const syncResults = syncAllAgents();
+      return NextResponse.json({ status: 'ok', sync: syncResults });
+    }
+
     const providerName = body.provider;
     if (!providerName || !PROVIDER_CONFIGS[providerName]) {
       return NextResponse.json({ status: 'error', error: `Unknown provider: ${providerName}. Known: ${Object.keys(PROVIDER_CONFIGS).join(', ')}` }, { status: 400 });
