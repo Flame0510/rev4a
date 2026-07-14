@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { jwtVerify } from 'jose';
 
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.OLYMPUS_JWT_SECRET ?? 'olympus-jwt-secret-change-in-prod',
+  process.env.OLYMPUS_JWT_SECRET ?? '',
 );
 
 export async function requireAuth(): Promise<void> {

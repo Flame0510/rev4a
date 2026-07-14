@@ -13,7 +13,7 @@ unless otherwise noted.
 ```
 Authorization: Bearer <OLYMPUS_TOKEN>
 ```
-Default token: `change-me`. Set `OLYMPUS_TOKEN` env var to override.
+Set `OLYMPUS_TOKEN` env var. No default — auth is disabled when unset.
 
 ### Browser cookie (UI)
 After a successful `POST /api/auth/login`, the server sets an `olympus_token`
@@ -227,7 +227,15 @@ Update environment variables on the VPS host.
 
 **Body:** `{ "OLYMPUS_PASSWORD": "newpass", ... }`
 
-**Response:** `{ "ok": true }`
+**Side effects:**
+- Writes to `.env` in the project root
+- Automatically syncs to `/etc/systemd/system/olympus.service` (removes all `Environment=OLYMPUS_*` and `Environment=PROVIDER_*` lines, appends current vars)
+- Runs `systemctl daemon-reload` so the next restart picks up the new environment
+- Only keys prefixed with `OLYMPUS_` or `PROVIDER_` are accepted
+
+**Response:** `{ "status": "ok", "updated": ["OLYMPUS_PASSWORD", ...] }`
+
+**Error (400):** `{ "error": "Keys not allowed: ..." }`
 
 ### `POST /api/config/restart`
 Restart the Olympus server (via systemd).
@@ -495,14 +503,14 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "ip": "172.19.0.5",
     "created": "2026-07-01T16:58:42.876829416Z",
     "env": ["AGENT_ID=prometheus", "AGENT_HOSTNAME=<agent-name>.<your-domain>.com"],
-    "authToken": "asdfghjkl",
-    "traefikUrl": "https://<agent-name>.<your-domain>.com#token=asdfghjkl"
+    "authToken": "***",
+    "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
   }
 ]
-```
 
 **Notes:**
-- The `authToken` and `traefikUrl` use the shared gateway token from `data/agents-token.json` (source of truth), not the local gateway token inside the container
+- The URL is always `http://<host-ip>:<port>#token=...` (every agent gets a host port mapping)
+- The `authToken` uses the shared gateway token from `data/agents-token.json`
 - Containers are discovered via Docker API with label filter `AGENT_ID`
 - Template is inferred from the container image name + agent ID directory match in `agent-templates/`
 
@@ -520,6 +528,10 @@ Create a new agent container from a template.
   "template": "prometheus",
   "port": 3033,
   "model": "deepseek/deepseek-v4-flash"
+},
+  "template": "prometheus",
+  "port": 3033,
+  "model": "deepseek/deepseek-v4-flash"
 }
 ```
 
@@ -527,10 +539,14 @@ Create a new agent container from a template.
 |---|---|---|
 | `name` | yes | Container name, also becomes `AGENT_ID` and subdomain |
 | `template` | yes | Template name (directory in `agent-templates/`) |
-| `port` | no | Optional port mapping |
+| `port` | no | Optional host port (auto-assigned if empty and no Traefik) |
 | `model` | no | Primary model ID from `models.config.json` |
 
-**Response (success):**
+**Every agent is created with a host port mapping:**
+- `-p <port>:3000` — the container's port 3000 is mapped to an auto-assigned (or user-specified) host port
+- URL format: `http://<host-ip>:<port>#token=...`
+
+**Response:**
 ```json
 {
   "success": true,
@@ -538,7 +554,7 @@ Create a new agent container from a template.
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
   "network": "openclaw-core_default",
-  "traefikUrl": "https://<agent-name>.<your-domain>.com#token=asdfghjkl"
+  "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
 }
 ```
 
@@ -547,13 +563,12 @@ Create a new agent container from a template.
 2. The route waits for the gateway to be fully up (health check poll, up to 20 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
 4. Calls `syncAgent(name)` to write `models.providers.olympus` into the container
-5. Traefik labels are set for HTTPS via Let's Encrypt
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are volume-mounted from the template directory
-- The agent is registered in Traefik at `https://<name>.<your-domain>.com`
+- The agent URL is included in the response
 - An event is logged to `data/events.db` if available
 
 **Error:** `400` for validation errors, `409` if name/port already in use

@@ -314,7 +314,7 @@ export default function ProvidersPage() {
   const [apiKeyModal, setApiKeyModal] = useState<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [revealedKey, setRevealedKey] = useState('');   // la key rivelata in chiaro
-  const [revealedFor, setRevealedFor] = useState('');    // per quale provider è rivelata
+  const [revealedFor, setRevealedFor] = useState('');    // which provider key is currently revealed
   const [revealLoading, setRevealLoading] = useState('');
   const [revealError, setRevealError] = useState('');
   const [apiKeyError, setApiKeyError] = useState('');

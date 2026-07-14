@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Button, Input, Page, PageHeader, Surface, Pill } from '../components/ui';
+import { Button, Input, Page, PageHeader, Surface, Pill, Modal } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 interface EnvVars {
@@ -46,6 +46,7 @@ export default function ConfigPageClient() {
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [statusMsg, setStatusMsg] = useState('');
   const [restarting, setRestarting] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'save' | 'restart' | null>(null);
 
   const loadEnv = useCallback(async () => {
     setLoading(true);
@@ -210,37 +211,74 @@ export default function ConfigPageClient() {
               variant="primary"
               size="md"
               loading={restarting}
-              onClick={async () => {
-                if (!confirm('You are about to restart the Olympus server. Continue?')) return;
-                setRestarting(true);
-                setStatus('saving');
-                try {
-                  const saveRes = await fetch('/api/config/env', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ env }),
-                  });
-                  const saveData = await saveRes.json();
-                  if (saveData.status !== 'ok') {
-                    setStatus('error');
-                    setStatusMsg(saveData.error || 'Save error');
-                    setRestarting(false);
-                    return;
-                  }
-                  setStatus('ok');
-                  setStatusMsg('Environment variables saved.');
-                  await fetch('/api/config/restart', { method: 'POST' });
-                  setTimeout(() => { setRestarting(false); setStatus('idle'); setStatusMsg(''); }, 4000);
-                } catch {
-                  setStatus('error');
-                  setStatusMsg('Network error');
-                  setRestarting(false);
-                }
-              }}
+              onClick={() => setConfirmAction('restart')}
             >
-              {restarting ? 'Restarting...' : 'Save everything and restart Olympus'}
+              {restarting ? 'Restarting...' : 'Save & Restart'}
             </Button>
           </div>
+
+          {/* Confirm modal */}
+          <Modal
+            open={confirmAction !== null}
+            onClose={() => setConfirmAction(null)}
+            title={confirmAction === 'restart' ? 'Restart Olympus' : 'Save configuration'}
+          >
+            <div style={{ display: 'grid', gap: 14 }}>
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.5, margin: 0 }}>
+                {confirmAction === 'restart'
+                  ? 'This will save the current environment variables and restart the Olympus server immediately. The dashboard will be unavailable for a few seconds.'
+                  : 'Save the current environment variables. Changes will take effect after a restart.'}
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmAction(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={status === 'saving'}
+                  onClick={async () => {
+                    setStatus('saving');
+                    setStatusMsg('');
+                    try {
+                      const saveRes = await fetch('/api/config/env', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ env }),
+                      });
+                      const saveData = await saveRes.json();
+                      if (saveData.status !== 'ok') {
+                        setStatus('error');
+                        setStatusMsg(saveData.error || 'Save error');
+                        setStatus('idle');
+                        setConfirmAction(null);
+                        return;
+                      }
+                      setStatus('ok');
+                      setStatusMsg('Environment variables saved.');
+                      if (confirmAction === 'restart') {
+                        setRestarting(true);
+                        await fetch('/api/config/restart', { method: 'POST' });
+                        setTimeout(() => {
+                          setRestarting(false);
+                          setStatus('idle');
+                          setStatusMsg('');
+                        }, 4000);
+                      }
+                      setConfirmAction(null);
+                    } catch {
+                      setStatus('error');
+                      setStatusMsg('Network error');
+                      setStatus('idle');
+                      setConfirmAction(null);
+                    }
+                  }}
+                >
+                  {confirmAction === 'restart' ? 'Save & Restart' : 'Save'}
+                </Button>
+              </div>
+            </div>
+          </Modal>
         </>
       )}
     </Page>

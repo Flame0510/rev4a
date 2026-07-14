@@ -7,7 +7,7 @@ import http from 'http';
  */
 
 const BASE = 'http://127.0.0.1:3740';
-const PASSWORD = 'change-me';
+const PASSWORD = process.env.OLYMPUS_PASSWORD || '';
 
 function postLogin() {
   return new Promise((resolve, reject) => {

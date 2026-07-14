@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { syncAgent } from '../../gateway/sync';
+import { detectPublicHost } from '@/lib/docker-utils';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -28,6 +29,31 @@ function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
   return false;
 }
 
+
+
+/**
+ * Find an available host port starting from 3000.
+ */
+function findAvailablePort(): number {
+  try {
+    const usedPorts = execSync(
+      `docker ps --format '{{.Ports}}' | grep -oP '\d+(?=->)' | sort -n`,
+      { encoding: 'utf-8', timeout: 3000 },
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(Number);
+
+    let candidate = 3000;
+    while (usedPorts.includes(candidate)) {
+      candidate++;
+    }
+    return candidate;
+  } catch {
+    return 3000;
+  }
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -83,7 +109,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { name, template, port, model, fallbacks } = body;
+    const { name, template, port: portInput, model, fallbacks } = body;
+    let port = portInput;
 
     // Validate name
     const nameError = validateName(name);
@@ -159,21 +186,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const labels = [
-      `AGENT_ID=${name}`,
-      `traefik.enable=true`,
-      `traefik.http.routers.agent-${name}.entrypoints=websecure`,
-      `traefik.http.routers.agent-${name}.rule=Host(\`${name}.example.com\`)`,
-      `traefik.http.routers.agent-${name}.tls.certresolver=letsencrypt`,
-      `traefik.http.routers.agent-${name}.service=agent-${name}`,
-      `traefik.http.services.agent-${name}.loadbalancer.server.port=3000`,
-    ];
+    // Every agent gets a host port for direct access (http://<ip>:<port>).
+    // Traefik domain routing is optional and configured externally by the operator.
+    if (!port) {
+      port = findAvailablePort();
+    }
+    const agentHostname = `${detectPublicHost()}:${port}`;
+    const traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
 
-    const envVars = [
+    const labels: string[] = [`AGENT_ID=${name}`];
+    const envVars: string[] = [
       `AGENT_ID=${name}`,
       `AGENT_NAME=${name}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
-      `AGENT_HOSTNAME=${name}.example.com`,
+      `AGENT_HOSTNAME=${agentHostname}`,
       `TZ=Europe/Rome`,
     ];
 
@@ -184,7 +210,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    const portOpt = port ? `-p ${port}:${port}` : '';
+    const portOpt = `-p ${port}:3000`;
 
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
 
@@ -270,14 +296,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ).trim();
         const config = JSON.parse(raw);
 
-        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access
-        // Must be done after OpenClaw's first boot since OpenClaw discards it
+        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access.
+        // Must be done after OpenClaw's first boot since OpenClaw discards it.
+        // Allow all origins — agents are protected by the gateway token anyway.
         const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
         gatewaySection.controlUi = {
-          allowedOrigins: [
-            'https://olympus.example.com',
-            `https://${name}.example.com`,
-          ],
+          allowedOrigins: ['*'],
           dangerouslyDisableDeviceAuth: true,
         };
         config.gateway = gatewaySection;
@@ -324,7 +348,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       name,
       image,
       network,
-      traefikUrl: `https://${name}.example.com#token=${encodeURIComponent(agentsToken)}`,
+      traefikUrl,
     });
   } catch (e: unknown) {
     const err = e as Error;

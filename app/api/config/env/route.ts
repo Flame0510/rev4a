@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -110,6 +111,44 @@ export async function PUT(request: NextRequest) {
     }
 
     fs.writeFileSync(ENV_PATH, serializeEnvFile(current), 'utf-8');
+
+
+    // Sync to systemd service file so restart picks up the same vars
+    try {
+      const allowedKeys = Object.keys(current).filter((k) => isAllowedKey(k));
+
+      // Build new environment block for systemd: remove all existing OLYMPUS_/PROVIDER_
+      // lines, then append current ones
+      const servicePath = '/etc/systemd/system/olympus.service';
+      const rawService = fs.readFileSync(servicePath, 'utf-8');
+      const svcLines = rawService.split('\n');
+      const keep: string[] = [];
+      for (const svcLine of svcLines) {
+        const trimmed = svcLine.trim();
+        if (trimmed.startsWith('Environment=OLYMPUS_') || trimmed.startsWith('Environment=PROVIDER_')) {
+          continue;
+        }
+        keep.push(svcLine);
+      }
+
+      // Append current vars before the [Install] section
+      const insertIdx = keep.findIndex(l => l.trim().startsWith('[Install]'));
+      const envLines = allowedKeys.map(k => `Environment=${k}=${current[k]}`);
+      if (insertIdx >= 0) {
+        keep.splice(insertIdx, 0, ...envLines, '# --- Environment (synced from .env) ---');
+      } else {
+        keep.push(...envLines);
+      }
+
+      const serviceContent = keep.join('\n');
+      fs.writeFileSync('/tmp/olympus.service.tmp', serviceContent, 'utf-8');
+      execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
+      fs.unlinkSync('/tmp/olympus.service.tmp');
+      execSync('sudo systemctl daemon-reload', { timeout: 5000 });
+    } catch (syncErr) {
+      // Non-fatal — log but don't fail the request
+      console.warn('Failed to sync env to systemd:', syncErr);
+    }
 
     return NextResponse.json({ status: 'ok', updated: Object.keys(body.env) });
   } catch (e: unknown) {

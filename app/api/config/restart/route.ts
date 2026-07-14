@@ -1,5 +1,8 @@
 /**
  * POST /api/config/restart - restart the olympus service via systemd
+ *
+ * Agent sync is handled by instrumentation.ts on startup — no need to sync
+ * here (the restart kills this process, and the new process syncs on boot).
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';

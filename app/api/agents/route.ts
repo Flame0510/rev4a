@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import { detectPublicHost } from '@/lib/docker-utils';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
@@ -93,30 +94,17 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
             }
           }
 
-          // Build Traefik URL from the traefik router rule label, fallback to container name
-          const labels = c.Labels || {};
-          const routerRule = Object.keys(labels).find(k => k.startsWith('traefik.http.routers.') && k.endsWith('.rule'));
-          if (labels['traefik.enable'] === 'true') {
-            if (routerRule) {
-              const rule = labels[routerRule];
-              // Extract host from rule like Host(`...`)
-              const hostMatch = rule.match(/Host\([`'"]([^`'"]+)[`'"]\)/);
-              if (hostMatch) {
-                let baseUrl = `https://${hostMatch[1]}`;
-                // Control UI expects shared-secret bootstrap in the hash fragment.
-                if (authToken) {
-                  baseUrl += `#token=${encodeURIComponent(authToken)}`;
-                }
-                traefikUrl = baseUrl;
-              }
+          // Build the agent URL from the host's public IP + mapped port.
+          // Every agent has -p <port>:3000, so we look for the public port
+          // that maps to the internal port 3000.
+          const publicPort = (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000);
+          if (publicPort) {
+            const host = detectPublicHost();
+            let baseUrl = `http://${host}:${publicPort.PublicPort}`;
+            if (authToken) {
+              baseUrl += `#token=${encodeURIComponent(authToken)}`;
             }
-            if (!traefikUrl) {
-              // Fallback: use AGENT_ID as subdomain
-              traefikUrl = `https://${agentId}.example.com`;
-              if (authToken) {
-                traefikUrl += `#token=${encodeURIComponent(authToken)}`;
-              }
-            }
+            traefikUrl = baseUrl;
           }
         } catch {
           // inspect non-critical, continue with partial data

@@ -478,15 +478,16 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Backup — persistent volume backup & restore */}
       <BackupSection agentName={agent.name} />
 
-      {/* Access — Traefik URL (token inline in link) */}
+      {/* Access — agent URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS TOKEN" />
+          <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS" />
           <div style={{ padding: '7px 14px', fontSize: 12 }}>
             <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
             <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
               style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: 12, wordBreak: 'break-all' }}
             >{agent.traefikUrl}</a>
+
           </div>
         </div>
       )}
