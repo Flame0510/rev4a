@@ -13,11 +13,8 @@ export async function proxy(request: NextRequest) {
   // Public paths — no auth required
   if (
     pathname === '/login' ||
-    pathname === '/setup' ||
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/check' ||
-    pathname === '/api/auth/status' ||
-    pathname.startsWith('/api/setup/') ||
     pathname === '/api/version' ||
     pathname.startsWith('/api/models') ||
     pathname === '/api/agents-config' ||

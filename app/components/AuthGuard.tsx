@@ -9,49 +9,23 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // /setup is always accessible (no auth, no redirect)
-    if (pathname === '/setup') {
+    if (pathname === '/login') {
       setChecking(false);
       return;
     }
 
-    // /login is public
-    if (pathname === '/login') {
-      // But if no password is configured, redirect to /setup
-      fetch('/api/auth/status')
-        .then((r) => r.json())
-        .then((d: { configured: boolean }) => {
-          if (!d.configured) {
-            router.replace('/setup');
-          }
-          setChecking(false);
-        })
-        .catch(() => setChecking(false));
-      return;
-    }
-
-    // Protected routes — check auth
     fetch('/api/auth/check')
       .then((r) => {
-        if (!r.ok) {
-          // Not authenticated — check if setup is needed
-          return fetch('/api/auth/status').then((r2) => r2.json()).then((d: { configured: boolean }) => {
-            if (!d.configured) {
-              router.replace('/setup');
-            } else {
-              router.replace('/login');
-            }
-          });
-        }
+        if (!r.ok) router.push('/login');
         setChecking(false);
       })
       .catch(() => {
-        router.replace('/login');
+        router.push('/login');
         setChecking(false);
       });
   }, [pathname, router]);
 
-  if (checking && pathname !== '/setup') return null;
+  if (checking && pathname !== '/login') return null;
 
   return <>{children}</>;
 }
