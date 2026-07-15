@@ -51,6 +51,9 @@ Browse plugins (extend agent capabilities with new tools) and skills (reusable p
 ### Login (`/login`)
 Password-protected access to the dashboard. Enter the Olympus password to authenticate.
 
+### Onboarding (`/onboarding`)
+First-run setup wizard. Guides new users through 4 steps: Welcome (what Olympus is), Providers (configure LLM API keys), First Agent (explanation + link to create one), Ready (site map of key sections). Accessible anytime from the sidebar — a badge shows step progress (e.g. "1/3") until complete.
+
 ## What about Pythia?
 
 Pythia is the AI assistant embedded in Olympus. She appears as a floating chat button in the bottom-right corner of every page. She can:

@@ -103,6 +103,7 @@ The central container, running the Next.js dashboard + orchestration API.
 - Centralized credential management
 - Docker socket access for container management
 - SQLite DB for cross-container event monitoring
+- **Onboarding wizard** — first-run setup flow at `/onboarding`, tracks progress in `data/onboarding-progress.json`
 
 **Volume mounts (target):**
 ```

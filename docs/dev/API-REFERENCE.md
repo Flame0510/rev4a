@@ -68,6 +68,47 @@ Delete the `olympus_token` cookie.
 
 ---
 
+## Onboarding
+
+### `GET /api/onboarding/status`
+Returns per-step onboarding progress.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{
+  "complete": false,
+  "steps": { "welcome": true, "providers": false, "agents": false },
+  "completedAt": null
+}
+```
+
+If no progress file exists, returns all steps as `false`.
+
+### `POST /api/onboarding/complete`
+Mark a step as completed, complete all steps, or reset the wizard.
+
+**Auth:** browser cookie
+
+**Body:**
+| Shape | Effect |
+|---|---|
+| `{ "step": "providers" }` | Mark a single step as done |
+| `{}` | Mark all steps as done (complete onboarding) |
+| `{ "reset": true }` | Reset all steps to `false` (restart wizard) |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "steps": { "welcome": true, "providers": true, "agents": false },
+  "complete": false
+}
+```
+
+---
+
 ## Gateway
 
 The Gateway API reads the model catalogue from [`models.config.json`](../models.config.json)

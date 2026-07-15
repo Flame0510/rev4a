@@ -40,6 +40,9 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `Page` / `PageHeader` | `Page.tsx` | Full-page layout shell. |
 | `Icons` | `Icons.tsx` | SVG icons (`EyeIcon`, `EyeOffIcon`), 16/20px shared. |
 | `PasswordInput` | `PasswordInput.tsx` | Password input with inline show/hide toggle (`<button type="button">` with `aria-label`). |
+| `OnboardingPageClient` + step components | `app/onboarding/PageClient.tsx` | 4-step wizard (`WelcomeStep`, `ProvidersStep`, `AgentsStep`, `DoneStep`) + `WizardFrame` shell with mobile-first CSS. |
+| `useOnboarding` | `app/onboarding/useOnboarding.ts` | Shared hook: onboarding state, step transitions, provider save, restart. Receives server-side initial state to avoid loading flash. |
+| `OnboardingIcons` | `app/onboarding/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `DockerIcon`, `GatewayIcon`, etc. |
 | `tokens` | `tokens.ts` | TypeScript types for `Tone` and related token values. |
 
 ### Rules

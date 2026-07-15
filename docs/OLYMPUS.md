@@ -101,6 +101,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/dashboard` | System overview — containers, resources, quick links |
 | `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard |
 | `/containers` | All Docker containers on the host |
+| `/onboarding` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |

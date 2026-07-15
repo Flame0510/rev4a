@@ -68,6 +68,11 @@ Current state of a session:
 - **error** — task failed
 
 ## Token
+
+## Onboarding
+First-time setup wizard on the `/onboarding` page. Takes new users through provider configuration, agent creation overview, and a site map. Tracked per-step in `data/onboarding-progress.json` — progress badge shown in the sidebar until complete.
+
+## Token
 The unit of text processed by an AI model. Input tokens (your prompt) and output tokens (the AI's response) are counted separately and used to calculate cost.
 
 ## Tool
