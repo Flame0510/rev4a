@@ -230,6 +230,28 @@ SERVICEEOF
 }
 
 # ------------------------------------------------------------------------------
+# Build the agent base image (used to create agent containers)
+build_agent_image() {
+  local dockerfile_dir="${OLYMPUS_APP}/agent-templates/base-image"
+
+  if [[ ! -f "${dockerfile_dir}/Dockerfile" ]]; then
+    log_warn "Agent base image Dockerfile not found at ${dockerfile_dir} — skipping"
+    return 0
+  fi
+
+  if docker image inspect openclaw-agent-base:latest &>/dev/null; then
+    log_ok "Agent base image (openclaw-agent-base:latest) already exists"
+    return 0
+  fi
+
+  log_info "Building agent base image (this will take a few minutes)..."
+  log_info "  → pulling node:24-bookworm-slim + installing OpenClaw + tooling"
+  cd "${dockerfile_dir}"
+  docker build -t openclaw-agent-base:latest .
+  log_ok "Agent base image built successfully"
+}
+
+# ------------------------------------------------------------------------------
 # Start the Olympus service
 start_olympus() {
   if systemctl is-active --quiet olympus; then
@@ -259,31 +281,33 @@ start_olympus() {
 print_summary() {
   local host_ip
   host_ip=$(hostname -I | awk '{print $1}')
-  local password
-  password=$(grep OLYMPUS_PASSWORD "${OLYMPUS_APP}/.env" | cut -d= -f2- | tr -d '"' || echo "unknown")
+
+  # Try public IP (works on cloud VPS)
+  local public_ip
+  public_ip=$(curl -sf --max-time 5 ifconfig.me 2>/dev/null || echo "")
+  if [[ -n "$public_ip" ]]; then
+    host_ip="$public_ip"
+  fi
 
   echo ""
   echo "=============================================="
   echo "  Olympus is ready!"
   echo "=============================================="
   echo ""
-  echo "  Dashboard URL:  http://${host_ip}:${OLYMPUS_PORT}"
-  echo "  Password:       ${password}"
+  echo "  URL:      http://${host_ip}:${OLYMPUS_PORT}"
   echo ""
-  echo "  Service:        sudo systemctl [status|restart|stop] olympus"
-  echo "  Logs:           sudo journalctl -u olympus -f"
-  echo "  Config:         ${OLYMPUS_APP}/.env"
+  echo "  Service:  sudo systemctl [status|restart|stop] olympus"
+  echo "  Logs:     sudo journalctl -u olympus -f"
+  echo "  Config:   ${OLYMPUS_APP}/.env"
   echo ""
-  echo "  Next steps:"
-  echo "    1. Open http://${host_ip}:${OLYMPUS_PORT} in your browser"
-  echo "    2. Log in with the password above"
-  echo "    3. Configure providers in /providers"
-  echo "    4. Create your first agent in /agents"
+  echo "  ── First-time setup ──"
+  echo "  1. Open the URL above in your browser"
+  echo "  2. Follow the setup wizard to:"
+  echo "     • Set your admin password"
+  echo "     • Add a provider API key"
+  echo "     • Create your first agent"
   echo ""
-  echo "  For HTTPS with a custom domain:"
-  echo "    - Edit ${TRAEFIK_DIR}/dynamic/olympus.yml"
-  echo "    - Add your domain and restart Traefik"
-  echo ""
+  echo "  Run this script again anytime — it's safe."
   echo "=============================================="
 }
 
@@ -297,6 +321,7 @@ setup_olympus() {
   create_data_dirs
   create_env
   build_olympus
+  build_agent_image
   create_systemd_service
   start_olympus
   print_summary
