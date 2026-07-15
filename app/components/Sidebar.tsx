@@ -187,10 +187,20 @@ export default function Sidebar() {
       .then((d) => setOcVersion(d.version))
       .catch(() => {});
 
+    const loadOnboarding = (d: OnboardingState) => setOnboarding(d);
+
     fetch('/api/onboarding/status')
       .then((r) => r.json())
-      .then((d) => setOnboarding(d))
+      .then(loadOnboarding)
       .catch(() => {});
+
+    // Listen for step changes from the wizard (same page or another tab)
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { steps: Record<string, boolean>; complete: boolean };
+      setOnboarding({ complete: detail.complete, steps: { welcome: false, providers: false, agents: false, ...detail.steps } });
+    };
+    window.addEventListener('onboarding-step-changed', handler);
+    return () => window.removeEventListener('onboarding-step-changed', handler);
   }, []);
 
   const isActive = (href: string) => {

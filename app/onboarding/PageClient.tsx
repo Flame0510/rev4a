@@ -24,7 +24,7 @@ const STEPS = [
 export default function OnboardingPageClient() {
   const router = useRouter();
   const {
-    step, stepIndex, saving, progress, providerKeys,
+    step, stepIndex, saving, loading, progress, providerKeys,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart,
   } = useOnboarding();
 
@@ -33,6 +33,15 @@ export default function OnboardingPageClient() {
     router.push('/');
     router.refresh();
   };
+
+  // Show nothing until we know the current step (avoids flash of Welcome)
+  if (loading) {
+    return (
+      <div className="onboarding-outer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ color: 'var(--copper)', fontFamily: 'var(--font-serif-stack)', fontSize: 18, letterSpacing: 2 }}>OLYMPUS</div>
+      </div>
+    );
+  }
 
   return (
     <WizardFrame stepIndex={stepIndex} steps={STEPS} onStepClick={goToStep}>

@@ -144,10 +144,23 @@ export default function MobileBottomNav() {
   const [onboardingBadge, setOnboardingBadge] = useState(false);
 
   useEffect(() => {
+    const loadOnboarding = (d: { complete: boolean }) => {
+      if (!d.complete) setOnboardingBadge(true);
+      else setOnboardingBadge(false);
+    };
+
     fetch('/api/onboarding/status')
       .then((r) => r.json())
-      .then((d: { complete: boolean }) => { if (!d.complete) setOnboardingBadge(true); })
+      .then(loadOnboarding)
       .catch(() => {});
+
+    // Listen for step changes from the wizard
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent) as unknown as { detail: { complete: boolean } };
+      setOnboardingBadge(!detail.detail.complete);
+    };
+    window.addEventListener('onboarding-step-changed', handler);
+    return () => window.removeEventListener('onboarding-step-changed', handler);
   }, []);
 
   const handleLogout = async () => {

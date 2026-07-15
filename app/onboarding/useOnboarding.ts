@@ -21,6 +21,7 @@ const STEP_ORDER: Step[] = ['welcome', 'providers', 'agents', 'done'];
 
 /** Hook: encapsulates all onboarding state + API calls. Single source of truth for the wizard. */
 export function useOnboarding() {
+  const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<Step>('welcome');
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState<OnboardingProgress | null>(null);
@@ -40,7 +41,8 @@ export function useOnboarding() {
         else if (!steps.agents) setStep('agents');
         else setStep('done');
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   const stepIndex = STEP_ORDER.indexOf(step);
@@ -52,11 +54,15 @@ export function useOnboarding() {
       body: JSON.stringify({ step: stepKey }),
     });
     if (!res.ok) return;
+    const updatedSteps = { ...(progress?.steps || { welcome: false, providers: false, agents: false }), [stepKey]: true };
+    const allComplete = Object.values(updatedSteps).every(Boolean);
     setProgress((prev) => prev ? {
       ...prev,
-      steps: { ...prev.steps, [stepKey]: true },
-      complete: Object.values({ ...prev.steps, [stepKey]: true }).every(Boolean),
+      steps: updatedSteps,
+      complete: allComplete,
     } : null);
+    // Notify sidebar / mobile nav to refresh badge
+    window.dispatchEvent(new CustomEvent('onboarding-step-changed', { detail: { steps: updatedSteps, complete: allComplete } }));
   }, []);
 
   const saveProviders = useCallback(async () => {
@@ -124,10 +130,11 @@ export function useOnboarding() {
     });
     setStep('welcome');
     setProviderKeys({ deepseek: '', openai: '', openrouter: '', groq: '' });
+    window.dispatchEvent(new CustomEvent('onboarding-step-changed', { detail: { steps: { welcome: false, providers: false, agents: false }, complete: false } }));
   }, []);
 
   return {
-    step, stepIndex, saving, progress, providerKeys,
+    step, stepIndex, saving, loading, progress, providerKeys,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart,
   };
 }
