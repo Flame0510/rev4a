@@ -1,58 +1,78 @@
 # What is Olympus?
 
-> **Last updated:** 2026-07-03
+> **Last updated:** 2026-07-15
 
 Olympus is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
 ## What can you do in Olympus?
 
 ### Dashboard (`/`)
-The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made.
-
-### Agents (`/agents`)
-Manage your Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens), and create new agents.
-
-### Create Agent (`/agents/create`)
-Wizard to spin up a new agent. Choose a template, name your agent, pick a model, set environment variables, and optionally configure a web URL via Traefik.
-
-### Providers (`/providers`)
-View all configured AI providers (OpenAI, Anthropic, Groq, OpenRouter, etc.) and their available models. Check which API keys are set and which models are ready to use.
-
-### Gateway (`/gateway`)
-Central hub connecting agents to AI providers. Toggle which models are available, see each agent's default model and fallbacks, check gateway health, and sync provider configurations.
-
-### Cron Jobs (`/crons`)
-See scheduled tasks that run agents automatically. View schedule expressions, last run time, next run time, and execution status.
-
-### Containers (`/containers`)
-Full list of all Docker containers on the server. See name, image, status, ports, and IP. Click "Terminal" on any container to open an interactive shell.
-
-### Container Terminal (`/containers/terminal/[id]`)
-Live web terminal into a Docker container. Run commands, inspect files, debug issues — just like SSH.
-
-### Config (`/config`)
-Olympus application settings. View and modify configuration values that control how the dashboard behaves.
-
-### Lineage (`/lineage?period=7d`)
-Interactive graph showing session family trees. See which agent spawned which child agent, across time periods. Click any node to inspect.
-
-### Memory / Context (`/memory`)
-Browse agent memory files. These files (like MEMORY.md and SOUL.md) define how agents behave, what they know, and their personality.
-
-### Workspace (`/workspace`)
-File explorer for the OpenClaw workspace. Browse, view, and download files that agents use — configuration, scripts, and operational documents.
-
-### Tools (`/tools`)
-Catalog of every tool available to agents — built-in commands, MCP server tools, plugin tools, and audio transcription tools.
-
-### Plugins & Skills (`/plugins-skills`), Plugins (`/plugins`), Skills (`/skills`)
-Browse plugins (extend agent capabilities with new tools) and skills (reusable prompt/tool bundles agents can invoke).
-
-### Login (`/login`)
-Password-protected access to the dashboard. Enter the Olympus password to authenticate.
+The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk, load average), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made. If the onboarding wizard is incomplete, a banner appears at the top with a link to continue.
 
 ### Onboarding (`/onboarding`)
-First-run setup wizard. Guides new users through 4 steps: Welcome (what Olympus is), Providers (configure LLM API keys), First Agent (explanation + link to create one), Ready (site map of key sections). Accessible anytime from the sidebar — a badge shows step progress (e.g. "1/3") until complete.
+First-run setup wizard that guides new users through configuration. Four steps:
+1. **Welcome** — what Olympus is and what it can do
+2. **Providers** — add API keys for DeepSeek, OpenAI, OpenRouter, or Groq (saved via the Provider Gateway)
+3. **First Agent** — understand how agents work and what you need to create one
+4. **Ready** — site map of key sections with quick links
+
+The wizard is always accessible from the sidebar. A progress badge (e.g. "1/3") shows how many steps are complete. Once finished, the badge disappears and the dashboard banner goes away.
+
+### Agents (`/agents`)
+Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups), and create new agents. Each agent card shows its template, status, and a direct link to its Control UI.
+
+### Create Agent (`/agents/create`)
+Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional host port. The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.
+
+### Lineage (`/lineage?period=7d`)
+Interactive graph showing session family trees — which agent spawned which child agent, across configurable time periods (1d, 7d, 30d). Click any node to inspect. Includes a live feed side panel.
+
+### Gateway (`/gateway`)
+Central hub connecting agents to AI providers. Two panels:
+- **Provider Sync** — reads the model catalogue from `models.config.json`, discovers which providers have API keys, and syncs the full model list to every agent container
+- **Agent Model Config** — set each agent's primary model and fallback models via `PUT /api/gateway/agent`
+
+### Containers (`/containers`)
+Full list of all Docker containers on the server. See name, image, status, ports, IP, CPU%, and memory usage. Click "Terminal" on any container to open an interactive shell. Use Start/Stop/Restart buttons to manage lifecycle.
+
+### Container Terminal (`/containers/terminal/[id]`)
+Live web terminal into a Docker container. Run commands, inspect files, debug issues — like SSH but in the browser.
+
+### Workspace (`/workspace`)
+File explorer for the OpenClaw workspace. Browse, view, and edit files across workspaces: the VPS host workspace and every agent container workspace. Switch between workspaces via a dropdown. Supports binary file preview (images) and text editing with syntax awareness.
+
+### Credentials (`/credentials`)
+Manage third-party service credentials: GitHub, Trello, Vercel, Supabase. Each credential can be scoped to specific agent containers. Sync pushes credentials into containers via CLI auth (gh, vercel, supabase) or env files (trello). Live detection shows which credentials are actually installed in each container. Audit trail for every reveal action.
+
+### Providers (`/providers`)
+View configured AI providers (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) and their available models. Check which API keys are set, which models are ready, and manage OAuth device-code logins.
+
+### Crons (`/crons`)
+Scheduled tasks that run agents automatically. View schedule expressions (cron syntax), last run, next run, and execution status. Enabled/disabled toggle per job.
+
+### Memory / Context (`/memory`)
+Browse agent memory files — MEMORY.md, SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md, HEARTBEAT.md. These files define how agents behave, what they know, and their personality. Also shows total memory budget vs usage.
+
+### Config (`/config`)
+Olympus application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered.
+
+### Tools (`/tools`)
+Catalog of every tool available to agents — built-in commands, MCP server tools, plugin tools, and audio/TTS configuration. Includes timezone settings.
+
+### Plugins (`/plugins`)
+Browse installed OpenClaw plugins. Enable/disable toggle per plugin. Plugins extend agent capabilities with new tools and integrations.
+
+### Skills (`/skills`)
+Reusable prompt/tool bundles agents can invoke. Skills appear in the registry with name, path, and description.
+
+### Plugins & Skills (`/plugins-skills`)
+Combined view showing both plugins and skills side by side.
+
+### Login (`/login`)
+Password-protected access to the dashboard. Enter the Olympus password to authenticate. Session persists via a JWT cookie (7-day expiry).
+
+### Vault (`/vault`)
+Credential storage with per-agent permissions. Store API keys and service tokens, scope them to specific agents, and manage permissions via the UI.
 
 ## What about Pythia?
 
@@ -60,7 +80,7 @@ Pythia is the AI assistant embedded in Olympus. She appears as a floating chat b
 
 - Explain what any page does
 - Guide you through features ("how do I create an agent?")
-- Answer questions about agents, providers, costs, sessions, containers, and crons
+- Answer questions about agents, providers, costs, sessions, containers, crons, credentials, and onboarding
 - Give practical tips based on the page you're on
 
 Pythia does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
@@ -72,6 +92,8 @@ An agent is an AI assistant that runs tasks autonomously. Each agent has:
 - A configured AI model (e.g. GPT-5.4, Claude Sonnet)
 - A workspace with its memory files and configuration
 - Sessions — each time an agent does work, it creates a session
+- A Docker container with a persistent data volume
+- Backups that can be created, restored, and managed from the Agents page
 
 ## What is a "session"?
 
