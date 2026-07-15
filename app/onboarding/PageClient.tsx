@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '../components/ui';
-import { useOnboarding, type ProviderKeys } from './useOnboarding';
+import { useOnboarding, type ProviderKeys, type OnboardingInitial } from './useOnboarding';
 import {
   ArrowRightIcon, CheckCircleIcon, CheckIcon,
   DockerIcon, GatewayIcon, AgentIcon,
@@ -21,27 +21,18 @@ const STEPS = [
 
 // ─── Main page ──────────────────────────────────────────────────────────
 
-export default function OnboardingPageClient() {
+export default function OnboardingPageClient({ initial }: { initial: OnboardingInitial }) {
   const router = useRouter();
   const {
-    step, stepIndex, saving, loading, progress, providerKeys,
+    step, stepIndex, saving, progress, providerKeys,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart,
-  } = useOnboarding();
+  } = useOnboarding(initial);
 
   const handleComplete = async () => {
     await completeAll();
     router.push('/');
     router.refresh();
   };
-
-  // Show nothing until we know the current step (avoids flash of Welcome)
-  if (loading) {
-    return (
-      <div className="onboarding-outer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <div style={{ color: 'var(--copper)', fontFamily: 'var(--font-serif-stack)', fontSize: 18, letterSpacing: 2 }}>OLYMPUS</div>
-      </div>
-    );
-  }
 
   return (
     <WizardFrame stepIndex={stepIndex} steps={STEPS} onStepClick={goToStep}>

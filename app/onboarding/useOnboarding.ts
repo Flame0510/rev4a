@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 export type Step = 'welcome' | 'providers' | 'agents' | 'done';
 
@@ -17,33 +17,27 @@ export interface OnboardingProgress {
   completedAt: string | null;
 }
 
+export interface OnboardingInitial {
+  complete: boolean;
+  steps: { welcome: boolean; providers: boolean; agents: boolean };
+  completedAt: string | null;
+  initialStep: string;
+}
+
 const STEP_ORDER: Step[] = ['welcome', 'providers', 'agents', 'done'];
 
-/** Hook: encapsulates all onboarding state + API calls. Single source of truth for the wizard. */
-export function useOnboarding() {
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState<Step>('welcome');
+/** Hook: encapsulates all onboarding state + API calls. Receives initial state from server to avoid loading flash. */
+export function useOnboarding(initial: OnboardingInitial) {
+  const [step, setStep] = useState<Step>(initial.initialStep as Step);
   const [saving, setSaving] = useState(false);
-  const [progress, setProgress] = useState<OnboardingProgress | null>(null);
+  const [progress, setProgress] = useState<OnboardingProgress>({
+    complete: initial.complete,
+    steps: initial.steps,
+    completedAt: initial.completedAt,
+  });
   const [providerKeys, setProviderKeys] = useState<ProviderKeys>({
     deepseek: '', openai: '', openrouter: '', groq: '',
   });
-
-  // Load current progress on mount, jump to first incomplete step
-  useEffect(() => {
-    fetch('/api/onboarding/status')
-      .then((r) => r.json())
-      .then((d: OnboardingProgress) => {
-        setProgress(d);
-        const steps = d.steps;
-        if (!steps.welcome) setStep('welcome');
-        else if (!steps.providers) setStep('providers');
-        else if (!steps.agents) setStep('agents');
-        else setStep('done');
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
 
   const stepIndex = STEP_ORDER.indexOf(step);
 
@@ -54,16 +48,15 @@ export function useOnboarding() {
       body: JSON.stringify({ step: stepKey }),
     });
     if (!res.ok) return;
-    const updatedSteps = { ...(progress?.steps || { welcome: false, providers: false, agents: false }), [stepKey]: true };
+
+    const updatedSteps = { ...progress.steps, [stepKey]: true };
     const allComplete = Object.values(updatedSteps).every(Boolean);
-    setProgress((prev) => prev ? {
-      ...prev,
-      steps: updatedSteps,
-      complete: allComplete,
-    } : null);
-    // Notify sidebar / mobile nav to refresh badge
-    window.dispatchEvent(new CustomEvent('onboarding-step-changed', { detail: { steps: updatedSteps, complete: allComplete } }));
-  }, []);
+    setProgress((prev) => ({ ...prev, steps: updatedSteps, complete: allComplete }));
+
+    window.dispatchEvent(new CustomEvent('onboarding-step-changed', {
+      detail: { steps: updatedSteps, complete: allComplete },
+    }));
+  }, [progress]);
 
   const saveProviders = useCallback(async () => {
     const entries = Object.entries(providerKeys).filter(([, v]) => v.trim());
@@ -85,11 +78,8 @@ export function useOnboarding() {
       if (allSaved) {
         await markStep('providers');
       }
-    } catch {
-      // API call failed — do not mark step as complete
-    } finally {
-      setSaving(false);
-    }
+    } catch { /* API call failed — do not mark step as complete */ }
+    setSaving(false);
   }, [providerKeys, markStep]);
 
   const goNext = useCallback(async () => {
@@ -116,25 +106,21 @@ export function useOnboarding() {
   }, []);
 
   const restart = useCallback(async () => {
-    // Reset all steps via API (POST without step = complete all, but we want the opposite)
-    // Delete the progress file via a reset endpoint or set all to false
     await fetch('/api/onboarding/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reset: true }),
     });
-    setProgress({
-      complete: false,
-      steps: { welcome: false, providers: false, agents: false },
-      completedAt: null,
-    });
+    setProgress({ complete: false, steps: { welcome: false, providers: false, agents: false }, completedAt: null });
     setStep('welcome');
     setProviderKeys({ deepseek: '', openai: '', openrouter: '', groq: '' });
-    window.dispatchEvent(new CustomEvent('onboarding-step-changed', { detail: { steps: { welcome: false, providers: false, agents: false }, complete: false } }));
+    window.dispatchEvent(new CustomEvent('onboarding-step-changed', {
+      detail: { steps: { welcome: false, providers: false, agents: false }, complete: false },
+    }));
   }, []);
 
   return {
-    step, stepIndex, saving, loading, progress, providerKeys,
+    step, stepIndex, saving, progress, providerKeys,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart,
   };
 }
