@@ -1,9 +1,8 @@
 /**
  * POST /api/setup/restart
  *
- * No auth required. Restarts the Olympus service via systemd.
- * Called at the end of the setup wizard to apply all changes
- * (password, provider keys, etc.) at once.
+ * No auth required. Syncs password from .env to systemd service
+ * and restarts the Olympus service.
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
@@ -15,37 +14,50 @@ export const runtime = 'nodejs';
 
 export async function POST(): Promise<NextResponse> {
   try {
-    // Sync password from .env to systemd service if needed
     const envFile = path.join(process.cwd(), '.env');
+    let password = '';
+
+    // Read current password from .env
     if (fs.existsSync(envFile)) {
       const envContent = fs.readFileSync(envFile, 'utf-8');
-      const passwordMatch = envContent.match(/^OLYMPUS_PASSWORD=(.+)$/m);
-      if (passwordMatch) {
-        const password = passwordMatch[1].trim();
-        const servicePath = '/etc/systemd/system/olympus.service';
-
-        try {
-          let svcContent = fs.readFileSync(servicePath, 'utf-8');
-          // Remove existing OLYMPUS_PASSWORD lines
-          svcContent = svcContent.replace(/^Environment=OLYMPUS_PASSWORD=…\n?/gm, '');
-          // Add before [Install]
-          svcContent = svcContent.replace(
-            /^\[Install\]$/m,
-            'Environment=OLYMPUS_PASSWORD=' + password + '\n[Install]',
-          );
-          fs.writeFileSync('/tmp/olympus.service.tmp', svcContent, 'utf-8');
-          execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
-          fs.unlinkSync('/tmp/olympus.service.tmp');
-        } catch {
-          // .env is enough — skip systemd sync
+      for (const line of envContent.split('\n')) {
+        const match = line.match(/^OLYMPUS_PASSWORD=(.*)$/);
+        if (match) {
+          password = match[1].trim();
+          break;
         }
+      }
+    }
+
+    // Sync to systemd service file
+    if (password) {
+      try {
+        const servicePath = '/etc/systemd/system/olympus.service';
+        let svcContent = fs.readFileSync(servicePath, 'utf-8');
+
+        // Remove any existing OLYMPUS_PASSWORD lines
+        svcContent = svcContent.split('\n')
+          .filter((l) => !l.trim().startsWith('Environment=OLYMPUS_PASSWORD='))
+          .join('\n');
+
+        // Add password line before [Install]
+        svcContent = svcContent.replace(
+          '[Install]',
+          'Environment=OLYMPUS_PASSWORD=' + password + '\n\n[Install]',
+        );
+
+        fs.writeFileSync('/tmp/olympus.service.tmp', svcContent, 'utf-8');
+        execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
+        try { fs.unlinkSync('/tmp/olympus.service.tmp'); } catch {}
+      } catch (syncErr) {
+        console.error('[setup/restart] systemd sync failed:', syncErr);
       }
     }
 
     execSync('sudo systemctl daemon-reload', { timeout: 5000 });
 
-    // Send response before restart
-    const response = NextResponse.json({ status: 'ok', message: 'Restarting...' });
+    // Send response first, then restart
+    const response = NextResponse.json({ status: 'ok', restarting: true });
 
     setTimeout(() => {
       try {
@@ -53,7 +65,7 @@ export async function POST(): Promise<NextResponse> {
       } catch (err) {
         console.error('[setup/restart] restart failed:', err);
       }
-    }, 300);
+    }, 500);
 
     return response;
   } catch (e: unknown) {

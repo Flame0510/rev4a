@@ -31,6 +31,15 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
+        // Check if onboarding is needed
+        try {
+          const statusRes = await fetch('/api/onboarding/status');
+          const statusData = await statusRes.json();
+          if (!statusData.completed) {
+            window.location.replace('/onboarding');
+            return;
+          }
+        } catch { /* fallback to dashboard */ }
         window.location.replace('/');
       } else {
         const data = (await res.json()) as { error?: string };
