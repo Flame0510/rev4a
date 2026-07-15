@@ -26,10 +26,37 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
 
   const isMobile = useResponsive('md');
   const { loading: screenshotLoading, takeScreenshot } = useScreenshot();
+  const [onboardingBanner, setOnboardingBanner] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/onboarding/status')
+      .then((r) => r.json())
+      .then((d: { complete: boolean; steps: Record<string, boolean> }) => {
+        if (!d.complete) setOnboardingBanner(true);
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <main className="shell">
       <DashboardHeader costs={costs} loading={!hasCostLoaded} hideLogo title="DASHBOARD" />
+      {onboardingBanner && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 14px',
+          background: 'rgba(212,155,53,0.08)',
+          borderBottom: '1px solid rgba(212,155,53,0.2)',
+          fontSize: 12, color: '#fbbf24',
+        }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span style={{ flex: 1 }}>
+            Setup incomplete — <a href="/onboarding" style={{ color: '#60a5fa', textDecoration: 'underline' }}>complete onboarding</a> to configure providers and create your first agent.
+          </span>
+          <button onClick={() => setOnboardingBanner(false)} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14, padding: '0 6px' }}>✕</button>
+        </div>
+      )}
       {isMobile && (
         <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', justifyContent: 'flex-end' }}>
           <button

@@ -5,6 +5,11 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import MobileBottomNav from './MobileBottomNav';
 
+interface OnboardingState {
+  complete: boolean;
+  steps: { welcome: boolean; providers: boolean; agents: boolean };
+}
+
 interface NavItem {
   href: string;
   label: string;
@@ -174,11 +179,17 @@ export default function Sidebar() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ocVersion, setOcVersion] = useState<string | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
 
   useEffect(() => {
     fetch('/api/version')
       .then((r) => r.json())
       .then((d) => setOcVersion(d.version))
+      .catch(() => {});
+
+    fetch('/api/onboarding/status')
+      .then((r) => r.json())
+      .then((d) => setOnboarding(d))
       .catch(() => {});
   }, []);
 
@@ -198,6 +209,12 @@ export default function Sidebar() {
     }
   };
 
+  const completedSteps = onboarding
+    ? Object.values(onboarding.steps).filter(Boolean).length
+    : 0;
+  const totalSteps = 3;
+  const needsOnboarding = onboarding && !onboarding.complete;
+
   const navItems = (
     <nav className="sidebar__nav">
       {NAV.map(({ href, label, icon }) => (
@@ -211,6 +228,31 @@ export default function Sidebar() {
           <span className="sidebar__label">{label}</span>
         </Link>
       ))}
+      {/* Onboarding — always visible, with progress badge when incomplete */}
+      <Link
+        href="/onboarding"
+        className={`sidebar__item${isActive('/onboarding') ? ' sidebar__item--active' : ''}`}
+        onClick={() => setMobileOpen(false)}
+      >
+        <span className="sidebar__icon">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M5.5 8.5L7 10l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span className="sidebar__label">
+          Onboarding
+          {needsOnboarding && (
+            <span style={{
+              marginLeft: 6, fontSize: 9, fontWeight: 700,
+              color: '#fbbf24', background: 'rgba(251,191,36,0.12)',
+              padding: '1px 6px', borderRadius: 0,
+            }}>
+              {completedSteps}/{totalSteps}
+            </span>
+          )}
+        </span>
+      </Link>
       <button
         onClick={handleLogout}
         className="sidebar__item"
