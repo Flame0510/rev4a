@@ -6,18 +6,17 @@
  *
  * Body: { password: string }
  *
- * After setting, restarts the server via systemd so the new
- * password takes effect immediately.
+ * Does NOT restart the server — the password takes effect
+ * after the full setup wizard completes and the server restarts.
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function POST(request: Request): Promise<NextResponse> {
-  // Only allow if no password is configured yet
   const currentPassword = process.env.OLYMPUS_PASSWORD;
   if (typeof currentPassword === 'string' && currentPassword.length > 0) {
     return NextResponse.json(
@@ -45,11 +44,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const envFile = path.join(process.cwd(), '.env');
 
     if (fs.existsSync(envFile)) {
-      // Update existing .env
       let content = fs.readFileSync(envFile, 'utf-8');
       if (content.includes('OLYMPUS_PASSWORD=')) {
         content = content.replace(
-          /^OLYMPUS_PASSWORD=.*$/m,
+          /^OLYMPUS_PASSWORD=…/m,
           `OLYMPUS_PASSWORD=${body.password}`,
         );
       } else {
@@ -57,18 +55,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       fs.writeFileSync(envFile, content, 'utf-8');
     } else {
-      // Create new .env
-      fs.writeFileSync(envFile, `OLYMPUS_PASSWORD=${body.password}\n`, 'utf-8');
+      fs.writeFileSync(envFile, `OLYMPUS_PASSWORD=***\n`, 'utf-8');
     }
 
-    // Schedule a restart (fire-and-forget — the response goes out first)
-    setTimeout(() => {
-      exec('systemctl restart olympus', (err) => {
-        if (err) console.error('[setup/password] restart failed:', err.message);
-      });
-    }, 1000);
-
-    return NextResponse.json({ status: 'ok', message: 'Password set. Server restarting...' });
+    return NextResponse.json({ status: 'ok' });
   } catch (e: unknown) {
     console.error('[setup/password]', e);
     return NextResponse.json({ error: 'Failed to write password' }, { status: 500 });

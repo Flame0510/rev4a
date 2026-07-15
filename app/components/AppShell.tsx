@@ -8,8 +8,9 @@ import OlympusChat from './OlympusChat';
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === '/login';
+  const isSetup = pathname === '/setup';
 
-  if (isLogin) {
+  if (isLogin || isSetup) {
     return <>{children}</>;
   }
 

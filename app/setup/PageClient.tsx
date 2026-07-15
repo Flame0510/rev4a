@@ -3,15 +3,14 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '../components/ui';
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon } from '../onboarding/icons';
+import { ArrowRightIcon, CheckCircleIcon } from '../onboarding/icons';
 
-type Step = 'password' | 'providers' | 'agent' | 'done';
+type Step = 'password' | 'image' | 'done';
 
 const STEPS = [
-  { key: 'password' as const,  label: 'Password' },
-  { key: 'providers' as const, label: 'Providers' },
-  { key: 'agent' as const,     label: 'Agent' },
-  { key: 'done' as const,      label: 'Done' },
+  { key: 'password' as const, label: 'Password' },
+  { key: 'image' as const,    label: 'Image' },
+  { key: 'done' as const,     label: 'Done' },
 ];
 
 interface ImageStatus {
@@ -27,37 +26,25 @@ export default function SetupPageClient() {
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
-  // Provider state
-  const [providerKey, setProviderKey] = useState('');
-  const [providerName, setProviderName] = useState('deepseek');
-
-  // Agent state
-  const [agentName, setAgentName] = useState('');
-  const [agentTemplate, setAgentTemplate] = useState('argus');
-  const [agentModel, setAgentModel] = useState('deepseek/deepseek-v4-flash');
-
-  // Image build state
   const [imageStatus, setImageStatus] = useState<ImageStatus>({
     exists: false, building: false, error: null, logs: [],
   });
 
   const stepIndex = STEPS.findIndex((s) => s.key === step);
 
-  // Check if already configured on mount
+  // Redirect if already configured
   useEffect(() => {
     fetch('/api/auth/status')
       .then((r) => r.json())
       .then((d: { configured: boolean }) => {
-        if (d.configured) {
-          // Already configured — redirect to login
-          router.replace('/login');
-        }
+        if (d.configured) router.replace('/login');
       })
       .catch(() => {});
   }, [router]);
 
-  // Check agent image status on mount
+  // Check agent image status
   useEffect(() => {
     fetch('/api/setup/agent-image')
       .then((r) => r.json())
@@ -65,7 +52,7 @@ export default function SetupPageClient() {
       .catch(() => {});
   }, []);
 
-  // ─── Password step ─────────────────────────────────────────────────
+  // ─── Password ─────────────────────────────────────────────────────
 
   const handleSetPassword = useCallback(async () => {
     if (password.length < 8) {
@@ -83,49 +70,20 @@ export default function SetupPageClient() {
       });
 
       if (res.ok) {
-        const data = await res.json();
-        if (data.status === 'ok') {
-          // Server is restarting — wait and redirect to login
-          setSaving(false);
-          // Poll until server is back
-          for (let i = 0; i < 30; i++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            try {
-              const ping = await fetch('/api/auth/status');
-              if (ping.ok) break;
-            } catch { /* still restarting */ }
-          }
-          router.push('/login');
-          return;
-        }
+        setSaving(false);
+        setStep('image');
+        return;
       }
 
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
       setPasswordError(err.error || 'Failed to set password');
     } catch {
-      setPasswordError('Network error — is the server restarting?');
+      setPasswordError('Network error — please try again');
     }
     setSaving(false);
-  }, [password, router]);
+  }, [password]);
 
-  // ─── Provider step ─────────────────────────────────────────────────
-
-  const handleSaveProvider = useCallback(async () => {
-    if (!providerKey.trim()) return;
-    setSaving(true);
-
-    try {
-      await fetch('/api/gateway/provider', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerName, apiKey: providerKey.trim() }),
-      });
-      setStep('agent');
-    } catch { /* non-fatal */ }
-    setSaving(false);
-  }, [providerKey, providerName]);
-
-  // ─── Agent image build ──────────────────────────────────────────────
+  // ─── Image build ──────────────────────────────────────────────────
 
   const buildImage = useCallback(async () => {
     setImageStatus((prev) => ({ ...prev, building: true, error: null, logs: [] }));
@@ -163,7 +121,7 @@ export default function SetupPageClient() {
               }
               return prev;
             });
-          } catch { /* skip unparseable */ }
+          } catch { /* skip */ }
         }
       }
     } catch (e: unknown) {
@@ -175,40 +133,28 @@ export default function SetupPageClient() {
     }
   }, []);
 
-  // ─── Create agent ───────────────────────────────────────────────────
+  // ─── Done / Restart ────────────────────────────────────────────────
 
-  const handleCreateAgent = useCallback(async () => {
-    if (!agentName.trim()) return;
-    setSaving(true);
+  const handleDone = useCallback(async () => {
+    setRestarting(true);
 
     try {
-      const res = await fetch('/api/agents/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: agentName.trim(),
-          template: agentTemplate,
-          model: agentModel,
-        }),
-      });
+      await fetch('/api/setup/restart', { method: 'POST' });
+    } catch { /* restart kills the connection — expected */ }
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setStep('done');
-          setSaving(false);
-          return;
-        }
-      }
-    } catch { /* non-fatal */ }
-    setSaving(false);
-  }, [agentName, agentTemplate, agentModel]);
+    // Poll until back, then login
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const ping = await fetch('/api/auth/status');
+        if (ping.ok) break;
+      } catch { /* still restarting */ }
+    }
 
-  const handleDone = useCallback(() => {
-    router.push('/');
+    router.push('/login');
   }, [router]);
 
-  // ─── Render ─────────────────────────────────────────────────────────
+  // ─── Render ────────────────────────────────────────────────────────
 
   return (
     <div className="setup-outer">
@@ -217,7 +163,10 @@ export default function SetupPageClient() {
           <div className="setup-logo">OLYMPUS</div>
           <div className="setup-stepper">
             {STEPS.map((s, i) => (
-              <div key={s.key} className={`setup-step${i < stepIndex ? ' done' : ''}${i === stepIndex ? ' active' : ''}`} />
+              <div
+                key={s.key}
+                className={`setup-step${i < stepIndex ? ' done' : ''}${i === stepIndex ? ' active' : ''}`}
+              />
             ))}
           </div>
         </div>
@@ -225,12 +174,15 @@ export default function SetupPageClient() {
         <div className="setup-body">
           {step === 'password' && (
             <div style={{ display: 'grid', gap: 14 }}>
-              <h2 style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5, color: 'var(--copper)', margin: 0 }}>
+              <h2 style={{
+                fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
+                color: 'var(--copper)', margin: 0,
+              }}>
                 Set Admin Password
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
                 Choose a password to protect your Olympus dashboard.
-                You will use this to log in after setup is complete.
+                You'll use this to log in as admin.
               </p>
               <input
                 type="password"
@@ -242,7 +194,10 @@ export default function SetupPageClient() {
                 autoFocus
               />
               {passwordError && (
-                <div style={{ fontSize: 11, color: '#ef4444', padding: '4px 8px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                <div style={{
+                  fontSize: 11, color: '#ef4444', padding: '4px 8px',
+                  background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                }}>
                   {passwordError}
                 </div>
               )}
@@ -254,157 +209,72 @@ export default function SetupPageClient() {
             </div>
           )}
 
-          {step === 'providers' && (
+          {step === 'image' && (
             <div style={{ display: 'grid', gap: 14 }}>
-              <h2 style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5, color: 'var(--copper)', margin: 0 }}>
-                Add a Provider
+              <h2 style={{
+                fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
+                color: 'var(--copper)', margin: 0,
+              }}>
+                Agent Base Image
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                Your agents need an LLM provider to work. Add at least one API key.
-                DeepSeek is recommended — free credits available.
+                Olympus runs agents as Docker containers. The base image provides Node.js,
+                OpenClaw, and all tooling agents need. It only needs to be built once.
               </p>
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>Provider</label>
-                  <select
-                    value={providerName}
-                    onChange={(e) => setProviderName(e.target.value)}
-                    className="setup-input"
-                    style={{ appearance: 'auto' }}
-                  >
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="openrouter">OpenRouter</option>
-                    <option value="groq">Groq</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>API Key</label>
-                  <input
-                    type="password"
-                    placeholder={providerName === 'deepseek' ? 'sk-...' : providerName === 'groq' ? 'gsk_...' : 'sk-...'}
-                    value={providerKey}
-                    onChange={(e) => setProviderKey(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSaveProvider()}
-                    className="setup-input"
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                <Button variant="ghost" size="sm" onClick={() => setStep('agent')}>Skip for now</Button>
-                <Button variant="primary" size="md" onClick={handleSaveProvider} loading={saving}>
-                  Save &amp; Continue <ArrowRightIcon />
-                </Button>
-              </div>
-            </div>
-          )}
 
-          {step === 'agent' && (
-            <div style={{ display: 'grid', gap: 14 }}>
-              <h2 style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5, color: 'var(--copper)', margin: 0 }}>
-                Create Your First Agent
-              </h2>
-
-              {/* Image build status */}
-              {!imageStatus.exists && (
+              {imageStatus.exists ? (
+                <div style={{
+                  padding: '10px 12px',
+                  background: 'rgba(52,211,153,0.06)',
+                  border: '1px solid rgba(52,211,153,0.15)',
+                  fontSize: 12, color: 'var(--text)',
+                }}>
+                  ✅ Agent base image is ready.
+                </div>
+              ) : imageStatus.building ? (
                 <div style={{
                   padding: '10px 12px',
                   background: 'rgba(96,165,250,0.06)',
                   border: '1px solid rgba(96,165,250,0.15)',
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
-                    Agent base image {imageStatus.building ? 'building...' : 'needed'}
+                    Building image...
                   </div>
-                  {!imageStatus.building && (
-                    <Button variant="secondary" size="sm" onClick={buildImage}>
-                      Build Image
-                    </Button>
-                  )}
-                  {imageStatus.building && (
-                    <div>
-                      <div style={{
-                        height: 4, background: 'var(--border)', borderRadius: 0, overflow: 'hidden', marginBottom: 6,
-                      }}>
-                        <div style={{
-                          height: 4,
-                          background: 'linear-gradient(90deg, var(--copper), #60a5fa)',
-                          animation: 'setup-progress 2s ease-in-out infinite',
-                          width: '30%',
-                        }} />
-                      </div>
-                      <div style={{ fontSize: 9, color: 'var(--text-dim)', maxHeight: 80, overflowY: 'auto' }}>
-                        {imageStatus.logs.map((l, i) => (
-                          <div key={i} style={{ lineHeight: 1.5 }}>{l}</div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div style={{
+                    height: 4, background: 'var(--border)', overflow: 'hidden', marginBottom: 6,
+                  }}>
+                    <div style={{
+                      height: 4,
+                      background: 'linear-gradient(90deg, var(--copper), #60a5fa)',
+                      animation: 'setup-progress 2s ease-in-out infinite',
+                      width: '30%',
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-dim)', maxHeight: 80, overflowY: 'auto' }}>
+                    {imageStatus.logs.map((l, i) => (
+                      <div key={i} style={{ lineHeight: 1.5 }}>{l}</div>
+                    ))}
+                  </div>
                   {imageStatus.error && (
                     <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>{imageStatus.error}</div>
                   )}
                 </div>
+              ) : (
+                <div style={{
+                  padding: '10px 12px',
+                  background: 'rgba(96,165,250,0.06)',
+                  border: '1px solid rgba(96,165,250,0.15)',
+                }}>
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: '0 0 8px' }}>
+                    The image needs to be built. This pulls Node.js and installs OpenClaw packages.
+                    Takes about 3-5 minutes the first time.
+                  </p>
+                  <Button variant="secondary" size="sm" onClick={buildImage}>
+                    Build Image
+                  </Button>
+                </div>
               )}
 
-              {imageStatus.exists && (
-                <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                  Agent base image is ready. Choose a name and template for your first agent.
-                </p>
-              )}
-
-              {!imageStatus.exists && !imageStatus.building && (
-                <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                  First, build the agent base image. This pulls Node.js + installs OpenClaw — it takes a few minutes the first time.
-                </p>
-              )}
-
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', opacity: imageStatus.exists ? 1 : 0.4 }}>
-                    Agent Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="my-agent"
-                    value={agentName}
-                    onChange={(e) => setAgentName(e.target.value)}
-                    disabled={!imageStatus.exists}
-                    className="setup-input"
-                    style={{ opacity: imageStatus.exists ? 1 : 0.5 }}
-                  />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', opacity: imageStatus.exists ? 1 : 0.4 }}>
-                    Template
-                  </label>
-                  <select
-                    value={agentTemplate}
-                    onChange={(e) => setAgentTemplate(e.target.value)}
-                    disabled={!imageStatus.exists}
-                    className="setup-input"
-                    style={{ appearance: 'auto', opacity: imageStatus.exists ? 1 : 0.5 }}
-                  >
-                    <option value="argus">Argus (Ops Lead)</option>
-                    <option value="atlas">Atlas (Research)</option>
-                    <option value="prometheus">Prometheus</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', opacity: imageStatus.exists ? 1 : 0.4 }}>
-                    Model
-                  </label>
-                  <select
-                    value={agentModel}
-                    onChange={(e) => setAgentModel(e.target.value)}
-                    disabled={!imageStatus.exists}
-                    className="setup-input"
-                    style={{ appearance: 'auto', opacity: imageStatus.exists ? 1 : 0.5 }}
-                  >
-                    <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
-                    <option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro</option>
-                    <option value="deepseek/deepseek-r1-0528">DeepSeek R1 0528</option>
-                  </select>
-                </div>
-              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                 <Button variant="ghost" size="sm" onClick={() => setStep('done')}>
                   Skip for now
@@ -412,11 +282,10 @@ export default function SetupPageClient() {
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={handleCreateAgent}
-                  loading={saving}
-                  disabled={!imageStatus.exists || !agentName.trim()}
+                  onClick={() => setStep('done')}
+                  disabled={!imageStatus.exists && !imageStatus.error}
                 >
-                  Create Agent <ArrowRightIcon />
+                  Continue <ArrowRightIcon />
                 </Button>
               </div>
             </div>
@@ -427,29 +296,29 @@ export default function SetupPageClient() {
               <div style={{ margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
                 <CheckCircleIcon size={48} color="var(--copper)" />
               </div>
-              <h2 style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5, color: 'var(--copper)', margin: 0 }}>
-                Setup Complete
+              <h2 style={{
+                fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
+                color: 'var(--copper)', margin: 0,
+              }}>
+                Ready to Go
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                Olympus is configured and ready. You can always manage providers,
-                create more agents, and adjust settings from the dashboard.
+                The essentials are done. After logging in, the onboarding wizard
+                will help you add your first provider and create your first agent.
               </p>
               <div style={{ display: 'grid', gap: 6, textAlign: 'left', padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)' }}>
                 {[
-                  { label: 'Dashboard', desc: 'Monitor agents, costs, and system health' },
-                  { label: 'Gateway', desc: 'Configure providers and sync models' },
-                  { label: 'Agents', desc: 'Create, manage, backup, and restore agents' },
-                  { label: 'Credentials', desc: 'Add GitHub, Trello, Vercel tokens' },
-                ].map((r) => (
-                  <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                    <CheckIcon size={14} />
-                    <span style={{ fontWeight: 700, color: 'var(--text)' }}>{r.label}</span>
-                    <span style={{ color: 'var(--text-dim)' }}>– {r.desc}</span>
+                  'Set admin password',
+                  imageStatus.exists ? 'Agent base image ready' : 'Agent image — build later',
+                  'Next: add providers & agents in onboarding',
+                ].map((t) => (
+                  <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text)' }}>
+                    <span style={{ color: 'var(--copper)' }}>•</span> {t}
                   </div>
                 ))}
               </div>
-              <Button variant="primary" size="md" onClick={handleDone}>
-                Start Using Olympus <ArrowRightIcon />
+              <Button variant="primary" size="md" onClick={handleDone} loading={restarting} disabled={restarting}>
+                {restarting ? 'Restarting...' : <>Start Using Olympus <ArrowRightIcon /></>}
               </Button>
             </div>
           )}

@@ -10,6 +10,9 @@ const TOKEN = process.env.OLYMPUS_TOKEN ?? 'change-me';
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Check if password is configured — if not, force /setup wizard
+  const hasPassword = typeof process.env.OLYMPUS_PASSWORD === 'string' && process.env.OLYMPUS_PASSWORD.length > 0;
+
   // Public paths — no auth required
   if (
     pathname === '/login' ||
@@ -28,7 +31,20 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/icon-') ||
     pathname === '/manifest.json'
   ) {
+    // If no password configured and user is on /login, redirect to /setup
+    if (!hasPassword && pathname === '/login') {
+      const setupUrl = request.nextUrl.clone();
+      setupUrl.pathname = '/setup';
+      return NextResponse.redirect(setupUrl);
+    }
     return NextResponse.next();
+  }
+
+  // If no password configured, redirect everything else to /setup
+  if (!hasPassword) {
+    const setupUrl = request.nextUrl.clone();
+    setupUrl.pathname = '/setup';
+    return NextResponse.redirect(setupUrl);
   }
 
   // 1. Check query param token
