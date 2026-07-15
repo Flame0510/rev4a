@@ -46,12 +46,12 @@ export function useOnboarding() {
   const stepIndex = STEP_ORDER.indexOf(step);
 
   const markStep = useCallback(async (stepKey: string) => {
-    await fetch('/api/onboarding/complete', {
+    const res = await fetch('/api/onboarding/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ step: stepKey }),
     });
-    // Optimistic local update
+    if (!res.ok) return;
     setProgress((prev) => prev ? {
       ...prev,
       steps: { ...prev.steps, [stepKey]: true },
@@ -61,19 +61,29 @@ export function useOnboarding() {
 
   const saveProviders = useCallback(async () => {
     const entries = Object.entries(providerKeys).filter(([, v]) => v.trim());
-    if (entries.length === 0) return;
+    if (entries.length === 0) {
+      await markStep('providers');
+      return;
+    }
     setSaving(true);
     try {
+      let allSaved = true;
       for (const [provider, apiKey] of entries) {
-        await fetch('/api/gateway/provider', {
+        const res = await fetch('/api/gateway/provider', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ provider, apiKey: apiKey.trim() }),
         });
+        if (!res.ok) allSaved = false;
       }
-      await markStep('providers');
-    } catch { /* non-fatal */ }
-    setSaving(false);
+      if (allSaved) {
+        await markStep('providers');
+      }
+    } catch {
+      // API call failed — do not mark step as complete
+    } finally {
+      setSaving(false);
+    }
   }, [providerKeys, markStep]);
 
   const goNext = useCallback(async () => {

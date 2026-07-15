@@ -54,7 +54,7 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
           <span style={{ flex: 1 }}>
             Setup incomplete — <a href="/onboarding" style={{ color: '#60a5fa', textDecoration: 'underline' }}>complete onboarding</a> to configure providers and create your first agent.
           </span>
-          <button onClick={() => setOnboardingBanner(false)} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14, padding: '0 6px' }}>✕</button>
+          <button onClick={() => setOnboardingBanner(false)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14, padding: '0 6px' }}>✕</button>
         </div>
       )}
       {isMobile && (

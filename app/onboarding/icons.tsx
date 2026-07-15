@@ -87,14 +87,3 @@ export function InformationIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
-export function StepDotIcon({ active }: { active: boolean }) {
-  return (
-    <div style={{
-      width: 10, minWidth: 10, height: 10, borderRadius: '50%',
-      background: 'var(--copper)',
-      opacity: active ? 1 : 0.3,
-      boxShadow: active ? '0 0 6px rgba(212,155,53,0.5)' : 'none',
-    }} />
-  );
-}

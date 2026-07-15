@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '../components/ui';
 import { useOnboarding, type ProviderKeys } from './useOnboarding';
 import {
@@ -34,7 +35,7 @@ export default function OnboardingPageClient() {
   };
 
   return (
-    <WizardFrame stepIndex={stepIndex} steps={STEPS} onStepClick={goToStep} onRestart={restart}>
+    <WizardFrame stepIndex={stepIndex} steps={STEPS} onStepClick={goToStep}>
       {step === 'welcome'   && <WelcomeStep onNext={goNext} />}
       {step === 'providers' && <ProvidersStep keys={providerKeys} onChange={setProviderKeys} onNext={goNext} onSkip={skip} saving={saving} />}
       {step === 'agents'    && <AgentsStep onNext={goNext} onSkip={skip} />}
@@ -165,7 +166,7 @@ function DoneStep({ onComplete, saving, onRestart }: { onComplete: () => void; s
         {routes.map((r) => (
           <div key={r.route} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
             <CheckIcon size={14} />
-            <a href={r.route} className="onboarding-link">{r.route}</a>
+            <Link href={r.route} className="onboarding-link">{r.route}</Link>
             <span style={{ color: 'var(--text-dim)' }}>– {r.desc}</span>
           </div>
         ))}
@@ -201,13 +202,12 @@ function Feature({ icon, title, desc }: { icon: React.ReactNode; title: string; 
 // ─── Wizard shell ───────────────────────────────────────────────────────
 
 function WizardFrame({
-  stepIndex, steps, children, onStepClick, onRestart,
+  stepIndex, steps, children, onStepClick,
 }: {
   stepIndex: number;
   steps: { key: string; label: string; labelMobile: string }[];
   children: React.ReactNode;
   onStepClick: (index: number) => void;
-  onRestart: () => void;
 }) {
   return (
     <div className="onboarding-outer">

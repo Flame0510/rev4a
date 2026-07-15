@@ -64,8 +64,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ status: 'ok', steps, complete: allComplete });
   } catch (e: unknown) {
+    console.error('[onboarding/complete]', e);
     return NextResponse.json(
-      { error: (e as Error).message },
+      { error: 'Internal server error' },
       { status: 500 },
     );
   }
