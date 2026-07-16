@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '../components/ui';
-import { ArrowRightIcon, CheckCircleIcon } from '../onboarding/icons';
+import { ArrowRightIcon, CheckCircleIcon } from '../wizard/icons';
 
 type Step = 'password' | 'image' | 'done';
 
@@ -303,14 +303,14 @@ export default function SetupPageClient() {
                 Ready to Go
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                The essentials are done. After logging in, the onboarding wizard
+                The essentials are done. After logging in, the setup wizard
                 will help you add your first provider and create your first agent.
               </p>
               <div style={{ display: 'grid', gap: 6, textAlign: 'left', padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)' }}>
                 {[
                   'Set admin password',
                   imageStatus.exists ? 'Agent base image ready' : 'Agent image — build later',
-                  'Next: add providers & agents in onboarding',
+                  'Next: add providers & agents in the wizard',
                 ].map((t) => (
                   <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text)' }}>
                     <span style={{ color: 'var(--copper)' }}>•</span> {t}

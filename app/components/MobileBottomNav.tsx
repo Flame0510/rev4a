@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -141,27 +141,6 @@ const navItems = [
 export default function MobileBottomNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const [onboardingBadge, setOnboardingBadge] = useState(false);
-
-  useEffect(() => {
-    const loadOnboarding = (d: { complete: boolean }) => {
-      if (!d.complete) setOnboardingBadge(true);
-      else setOnboardingBadge(false);
-    };
-
-    fetch('/api/onboarding/status')
-      .then((r) => r.json())
-      .then(loadOnboarding)
-      .catch(() => {});
-
-    // Listen for step changes from the wizard
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent) as unknown as { detail: { complete: boolean } };
-      setOnboardingBadge(!detail.detail.complete);
-    };
-    window.addEventListener('onboarding-step-changed', handler);
-    return () => window.removeEventListener('onboarding-step-changed', handler);
-  }, []);
 
   const handleLogout = async () => {
     try {
@@ -190,29 +169,6 @@ export default function MobileBottomNav() {
             </Link>
           );
         })}
-        {/* Onboarding — always visible */}
-        <Link
-          href="/onboarding"
-          className={`mobile-bottom-nav__item ${pathname.startsWith('/onboarding') ? 'mobile-bottom-nav__item--active' : ''}`}
-        >
-          <span className="mobile-bottom-nav__icon">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="9" cy="9" r="7"/>
-              <polyline points="6.5,9 8.5,11 12,7"/>
-            </svg>
-          </span>
-          <span className="mobile-bottom-nav__label" style={{ position: 'relative' }}>
-            Wizard
-            {onboardingBadge && (
-              <span style={{
-                position: 'absolute', top: -5, right: -9,
-                width: 7, height: 7, borderRadius: '50%', background: '#fbbf24',
-                boxShadow: '0 0 5px rgba(251,191,36,0.6)',
-                display: 'inline-block',
-              }} />
-            )}
-          </span>
-        </Link>
         <button
           type="button"
           onClick={handleLogout}

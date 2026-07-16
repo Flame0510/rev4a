@@ -802,6 +802,36 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   border-left-color: var(--color-accent-500);
 }
 
+.sidebar__bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar__item--logout {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 12px 16px;
+  color: var(--text-dim);
+}
+.sidebar__item--logout:hover {
+  color: var(--color-text-100);
+  background: var(--color-bg-800);
+}
+
+.sidebar__footer {
+  padding: 12px 16px;
+  font-size: 10px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  opacity: 0.6;
+  line-height: 1.4;
+}
+
 .sidebar__icon {
   display: flex;
   align-items: center;
@@ -1227,16 +1257,116 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   .cockpit__metrics, .cockpit__main, .cockpit__checks { grid-template-columns: 1fr; }
 }
 
-/* ── OlympusChat widget ──────────────────────────────────────────── */
-.ochat__trigger {
+/* ── Floating actions container (Wizard + Pythia) ──────────────── */
+.floating-actions {
   position: fixed;
   bottom: 24px;
+  left: 24px;
   right: 24px;
   z-index: 9000;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+/* Desktop: pythia always on the right */
+@media (min-width: 768px) {
+  .floating-actions {
+    left: 224px;
+    justify-content: flex-end;
+    gap: 0;
+  }
+}
+
+.floating-actions__left {
+  pointer-events: auto;
+  display: flex;
+}
+
+.floating-actions__right {
+  pointer-events: auto;
+  display: flex;
+}
+
+/* Wizard visible only on mobile (sidebar handles it on desktop) */
+@media (min-width: 768px) {
+  .floating-actions__left { display: none; }
+}
+
+/* Hide sidebar wizard link on mobile */
+.sidebar__nav a[href="/wizard"] {
+  display: none;
+}
+@media (min-width: 768px) {
+  .sidebar__nav a[href="/wizard"] {
+    display: flex;
+    color: var(--copper);
+  }
+}
+
+/* On desktop, offset Pythia to not overlap sidebar */
+@media (min-width: 768px) {
+  .floating-actions {
+    left: 224px; /* sidebar ~200px + 24px spacing */
+  }
+}
+
+.floating-actions > * {
+  pointer-events: auto;
+}
+
+.floating-actions .ochat__trigger {
+  position: static;
+  border: 1px solid var(--border);
+}
+
+/* Wizard button: wider to fit icon + label */
+.floating-actions .ochat__trigger:first-child {
+  width: auto;
+  gap: 6px;
+  padding: 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-family: var(--font-mono-stack);
+}
+
+.floating-actions__label {
+  white-space: nowrap;
+}
+
+.floating-actions__badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251,191,36,0.6);
+  border: 2px solid var(--bg2);
+}
+
+@media (max-width: 640px) {
+  .floating-actions {
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+  }
+}
+
+@media (max-width: 900px) {
+  .floating-actions {
+    bottom: 70px !important;
+  }
+}
+
+/* ── OlympusChat widget ──────────────────────────────────────────── */
+.ochat__trigger {
+  position: static;
   width: 44px;
   height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--copper);
   background: var(--bg2);
   color: var(--copper);
   cursor: pointer;
@@ -1245,6 +1375,9 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   justify-content: center;
   box-shadow: 0 4px 16px rgba(0,0,0,.5);
   transition: background .15s;
+}
+.floating-actions .ochat__trigger {
+  border: 1px solid var(--border);
 }
 .ochat__trigger:hover { background: var(--bg3); }
 
@@ -1258,7 +1391,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: var(--bg2);
   box-shadow: 0 8px 32px rgba(0,0,0,.7);
   overflow: hidden;
@@ -1329,7 +1462,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ochat__msg {
   max-width: 90%;
   padding: 7px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   word-break: break-word;
   white-space: pre-wrap;
 }
@@ -1370,7 +1503,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   resize: none;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   color: var(--text);
   font-family: var(--font-mono-stack);
   font-size: 11px;
@@ -1386,7 +1519,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   flex-shrink: 0;
   width: 30px;
   height: 30px;
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   border: 1px solid var(--copper);
   background: transparent;
   color: var(--copper);

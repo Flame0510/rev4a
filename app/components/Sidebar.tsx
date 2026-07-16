@@ -5,11 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import MobileBottomNav from './MobileBottomNav';
 
-interface OnboardingState {
-  complete: boolean;
-  steps: { welcome: boolean; providers: boolean; agents: boolean };
-}
-
 interface NavItem {
   href: string;
   label: string;
@@ -172,6 +167,15 @@ const NAV: NavItem[] = [
       </svg>
     ),
   },
+  {
+    href: '/wizard',
+    label: 'Wizard',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
@@ -179,28 +183,11 @@ export default function Sidebar() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ocVersion, setOcVersion] = useState<string | null>(null);
-  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
-
   useEffect(() => {
     fetch('/api/version')
       .then((r) => r.json())
       .then((d) => setOcVersion(d.version))
       .catch(() => {});
-
-    const loadOnboarding = (d: OnboardingState) => setOnboarding(d);
-
-    fetch('/api/onboarding/status')
-      .then((r) => r.json())
-      .then(loadOnboarding)
-      .catch(() => {});
-
-    // Listen for step changes from the wizard (same page or another tab)
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { steps: Record<string, boolean>; complete: boolean };
-      setOnboarding({ complete: detail.complete, steps: { welcome: false, providers: false, agents: false, ...detail.steps } });
-    };
-    window.addEventListener('onboarding-step-changed', handler);
-    return () => window.removeEventListener('onboarding-step-changed', handler);
   }, []);
 
   const isActive = (href: string) => {
@@ -219,13 +206,8 @@ export default function Sidebar() {
     }
   };
 
-  const completedSteps = onboarding
-    ? Object.values(onboarding.steps).filter(Boolean).length
-    : 0;
-  const totalSteps = 3;
-  const needsOnboarding = onboarding && !onboarding.complete;
-
   const navItems = (
+    <>
     <nav className="sidebar__nav">
       {NAV.map(({ href, label, icon }) => (
         <Link
@@ -238,53 +220,8 @@ export default function Sidebar() {
           <span className="sidebar__label">{label}</span>
         </Link>
       ))}
-      {/* Onboarding — always visible, with progress badge when incomplete */}
-      <Link
-        href="/onboarding"
-        className={`sidebar__item${isActive('/onboarding') ? ' sidebar__item--active' : ''}`}
-        onClick={() => setMobileOpen(false)}
-      >
-        <span className="sidebar__icon">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M5.5 8.5L7 10l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <span className="sidebar__label">
-          Onboarding
-          {needsOnboarding && (
-            <span style={{
-              marginLeft: 6, fontSize: 9, fontWeight: 700,
-              color: '#fbbf24', background: 'rgba(251,191,36,0.12)',
-              padding: '1px 6px', borderRadius: 0,
-            }}>
-              {completedSteps}/{totalSteps}
-            </span>
-          )}
-        </span>
-      </Link>
-      <button
-        onClick={handleLogout}
-        className="sidebar__item"
-        style={{
-          width: '100%',
-          textAlign: 'left',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          padding: '12px 16px',
-          color: 'var(--text-dim)',
-          marginTop: 'auto',
-        }}
-      >
-        <span className="sidebar__icon">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2M6 12l-4-4 4-4M2 8h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </span>
-        <span className="sidebar__label">Logout</span>
-      </button>
     </nav>
+    </>
   );
 
   const EyeLogo = () => (
@@ -299,20 +236,22 @@ export default function Sidebar() {
           <span className="sidebar__title">OLYMPUS</span>
         </div>
         {navItems}
-        {ocVersion && (
-          <div style={{
-            marginTop: 'auto',
-            padding: '12px 16px',
-            fontSize: '10px',
-            color: 'var(--text-dim)',
-            borderTop: '1px solid var(--border)',
-            fontFamily: 'var(--font-mono)',
-            opacity: 0.6,
-            lineHeight: 1.4,
-          }}>
-            {ocVersion}
+        <div className="sidebar__bottom">
+          <button
+            onClick={handleLogout}
+            className="sidebar__item sidebar__item--logout"
+          >
+            <span className="sidebar__icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M10 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2M6 12l-4-4 4-4M2 8h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+            <span className="sidebar__label">Logout</span>
+          </button>
+          <div className="sidebar__footer">
+            OLYMPUS v1
           </div>
-        )}
+        </div>
       </aside>
 
       <button

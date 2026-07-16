@@ -1,5 +1,6 @@
 'use client';
 
+import { isWizardComplete } from '../wizard/storage';
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
 import type { Costs } from '@/lib/types';
@@ -26,21 +27,27 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
 
   const isMobile = useResponsive('md');
   const { loading: screenshotLoading, takeScreenshot } = useScreenshot();
-  const [onboardingBanner, setOnboardingBanner] = useState(false);
+  const [wizardBanner, setOnboardingBanner] = useState(false);
 
   useEffect(() => {
-    fetch('/api/onboarding/status')
-      .then((r) => r.json())
-      .then((d: { complete: boolean; steps: Record<string, boolean> }) => {
-        if (!d.complete) setOnboardingBanner(true);
-      })
-      .catch(() => {});
+    const check = () => {
+      setOnboardingBanner(!isWizardComplete());
+    };
+    check();
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.complete) setOnboardingBanner(false);
+      else setOnboardingBanner(true);
+    };
+    window.addEventListener('wizard-step-changed', handler);
+    return () => window.removeEventListener('wizard-step-changed', handler);
   }, []);
 
   return (
     <main className="shell">
       <DashboardHeader costs={costs} loading={!hasCostLoaded} hideLogo title="DASHBOARD" />
-      {onboardingBanner && (
+      {wizardBanner && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,
           padding: '8px 14px',
@@ -52,7 +59,7 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <span style={{ flex: 1 }}>
-            Setup incomplete — <a href="/onboarding" style={{ color: '#60a5fa', textDecoration: 'underline' }}>complete onboarding</a> to configure providers and create your first agent.
+            Setup incomplete — <a href="/wizard" style={{ color: '#60a5fa', textDecoration: 'underline' }}>complete the wizard</a> to configure providers and create your first agent.
           </span>
           <button onClick={() => setOnboardingBanner(false)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14, padding: '0 6px' }}>✕</button>
         </div>

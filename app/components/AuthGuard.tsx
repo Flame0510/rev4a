@@ -43,6 +43,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
             }
           });
         }
+        // Authenticated — if wizard not done and we are not on /wizard, redirect
+        if (pathname !== '/wizard') {
+          const done = document.cookie.includes('wizard_done=1');
+          if (!done) {
+            router.replace('/wizard');
+            return;
+          }
+        }
         setChecking(false);
       })
       .catch(() => {

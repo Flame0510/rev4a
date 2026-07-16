@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
+import { isWizardComplete } from '../wizard/storage';
 import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
 
@@ -31,12 +32,10 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
-        // Check if onboarding is needed
+        // Check localStorage for wizard completion
         try {
-          const statusRes = await fetch('/api/onboarding/status');
-          const statusData = await statusRes.json();
-          if (!statusData.completed) {
-            window.location.replace('/onboarding');
+          if (!isWizardComplete()) {
+            window.location.replace('/wizard');
             return;
           }
         } catch { /* fallback to dashboard */ }
