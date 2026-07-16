@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
+import ImageRebuildBanner from './ImageRebuildBanner';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
@@ -221,6 +222,7 @@ export default function AgentsPageClient() {
             </Button>
             <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
           </div>
+          <ImageRebuildBanner />
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             <DetailPanel agent={selected} />
@@ -247,6 +249,7 @@ export default function AgentsPageClient() {
             </Button>
           ))}
         </div>
+        <ImageRebuildBanner />
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
@@ -289,6 +292,7 @@ export default function AgentsPageClient() {
           </Button>
         ))}
       </div>
+      <ImageRebuildBanner />
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: '38%', minWidth: 300, borderRight: '1px solid var(--border)', overflow: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}

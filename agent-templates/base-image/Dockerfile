@@ -1,8 +1,7 @@
 # OpenClaw Agent Base Image
 #
 # Base image for agent containers in the Olympus ecosystem.
-# Includes: Node, OpenClaw, gh CLI, Vercel CLI, entrypoint.
-# Supabase/Trello: env-file based auth; Supabase CLI preinstalled for db/function operations.
+# Includes: Node, OpenClaw, gh CLI, Vercel CLI, Trello CLI, entrypoint.
 #
 # Traefik integration:
 #   - Static enablement is baked into the image.
@@ -56,10 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenClaw + Vercel CLI + Supabase CLI + Trello CLI
-# Patch openclaw.json to allow Control UI from any Host — token auth is the real guard
-RUN npm install -g openclaw vercel supabase trello-cli \
-    && openclaw plugins install npm:@openclaw/deepseek-provider \
+# OpenClaw + Vercel CLI + Trello CLI
+# No model provider plugins — agents use Olympus as their provider proxy.
+RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
     && echo '{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
        | openclaw config patch --stdin
 
