@@ -207,7 +207,6 @@ export default function Sidebar() {
   };
 
   const navItems = (
-    <>
     <nav className="sidebar__nav">
       {NAV.map(({ href, label, icon }) => (
         <Link
@@ -221,7 +220,6 @@ export default function Sidebar() {
         </Link>
       ))}
     </nav>
-    </>
   );
 
   const EyeLogo = () => (
@@ -249,7 +247,7 @@ export default function Sidebar() {
             <span className="sidebar__label">Logout</span>
           </button>
           <div className="sidebar__footer">
-            OLYMPUS v1
+            {ocVersion || 'OLYMPUS v1'}
           </div>
         </div>
       </aside>
