@@ -1,7 +1,5 @@
 'use client';
 
-import { isWizardComplete } from '../wizard/storage';
-import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
 import type { Costs } from '@/lib/types';
 import { useDashboard } from '@/lib/hooks/useDashboard';
@@ -27,43 +25,10 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
 
   const isMobile = useResponsive('md');
   const { loading: screenshotLoading, takeScreenshot } = useScreenshot();
-  const [wizardBanner, setOnboardingBanner] = useState(false);
-
-  useEffect(() => {
-    const check = () => {
-      setOnboardingBanner(!isWizardComplete());
-    };
-    check();
-
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.complete) setOnboardingBanner(false);
-      else setOnboardingBanner(true);
-    };
-    window.addEventListener('wizard-step-changed', handler);
-    return () => window.removeEventListener('wizard-step-changed', handler);
-  }, []);
 
   return (
     <main className="shell">
       <DashboardHeader costs={costs} loading={!hasCostLoaded} hideLogo title="DASHBOARD" />
-      {wizardBanner && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '8px 14px',
-          background: 'rgba(212,155,53,0.08)',
-          borderBottom: '1px solid rgba(212,155,53,0.2)',
-          fontSize: 12, color: '#fbbf24',
-        }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-          <span style={{ flex: 1 }}>
-            Setup incomplete — <a href="/wizard" style={{ color: '#60a5fa', textDecoration: 'underline' }}>complete the wizard</a> to configure providers and create your first agent.
-          </span>
-          <button onClick={() => setOnboardingBanner(false)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14, padding: '0 6px' }}>✕</button>
-        </div>
-      )}
       {isMobile && (
         <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', justifyContent: 'flex-end' }}>
           <button

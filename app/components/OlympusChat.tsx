@@ -307,7 +307,7 @@ export default function OlympusChat() {
                   </svg>
                 </button>
               )}
-              <button className="ochat__close" onClick={() => setOpen(false)} aria-label="Chiudi">
+              <button className="ochat__close" onClick={() => setOpen(false)} aria-label="Close">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
@@ -347,7 +347,7 @@ export default function OlympusChat() {
               className="ochat__send"
               onClick={send}
               disabled={!input.trim() || streaming}
-              aria-label="Invia"
+              aria-label="Send"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" />

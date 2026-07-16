@@ -14,6 +14,8 @@ export async function proxy(request: NextRequest) {
   const hasPassword = typeof process.env.OLYMPUS_PASSWORD === 'string' && process.env.OLYMPUS_PASSWORD.length > 0;
 
   // Public paths — no auth required
+  // FIXME: /api/setup/* endpoints are fully public (no auth, no rate limit).
+  // Add rate limiting before production exposure to prevent brute-force/DoS.
   if (
     pathname === '/login' ||
     pathname === '/setup' ||

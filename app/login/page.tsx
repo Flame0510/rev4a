@@ -32,9 +32,10 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
-        // Check localStorage for wizard completion
+        // Check wizard completion via API
         try {
-          if (!isWizardComplete()) {
+          const done = await isWizardComplete();
+          if (!done) {
             window.location.replace('/wizard');
             return;
           }

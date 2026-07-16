@@ -46,9 +46,11 @@ export async function POST(): Promise<NextResponse> {
           'Environment=OLYMPUS_PASSWORD=' + password + '\n\n[Install]',
         );
 
-        fs.writeFileSync('/tmp/olympus.service.tmp', svcContent, 'utf-8');
-        execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
-        try { fs.unlinkSync('/tmp/olympus.service.tmp'); } catch {}
+        // Write to a unique temp file to avoid /tmp race conditions
+        const tmpPath = `/tmp/olympus.service.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+        fs.writeFileSync(tmpPath, svcContent, { encoding: 'utf-8', mode: 0o600 });
+        execSync(`sudo cp "${tmpPath}" /etc/systemd/system/olympus.service`, { timeout: 5000 });
+        try { fs.unlinkSync(tmpPath); } catch {}
       } catch (syncErr) {
         console.error('[setup/restart] systemd sync failed:', syncErr);
       }
@@ -56,7 +58,8 @@ export async function POST(): Promise<NextResponse> {
 
     execSync('sudo systemctl daemon-reload', { timeout: 5000 });
 
-    // Send response first, then restart
+    // Clone the response so we can send headers before the restart kills the process.
+    // The 2000ms delay gives Next.js time to flush the response to the client.
     const response = NextResponse.json({ status: 'ok', restarting: true });
 
     setTimeout(() => {
@@ -65,7 +68,7 @@ export async function POST(): Promise<NextResponse> {
       } catch (err) {
         console.error('[setup/restart] restart failed:', err);
       }
-    }, 500);
+    }, 2000);
 
     return response;
   } catch (e: unknown) {

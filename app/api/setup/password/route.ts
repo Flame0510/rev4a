@@ -46,17 +46,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (fs.existsSync(envFile)) {
       let content = fs.readFileSync(envFile, 'utf-8');
       if (content.includes('OLYMPUS_PASSWORD=')) {
-        content = content.replace(
-          /^OLYMPUS_PASSWORD=…/m,
-          `OLYMPUS_PASSWORD=${body.password}`,
-        );
+        // Replace the OLYMPUS_PASSWORD line: match from key to end of line
+        content = content.split('\n').map((line) =>
+          line.startsWith('OLYMPUS_PASSWORD=')
+            ? `OLYMPUS_PASSWORD=${body.password}`
+            : line
+        ).join('\n');
       } else {
         content += `\nOLYMPUS_PASSWORD=${body.password}\n`;
       }
       fs.writeFileSync(envFile, content, 'utf-8');
     } else {
-      fs.writeFileSync(envFile, `OLYMPUS_PASSWORD=***\n`, 'utf-8');
+      fs.writeFileSync(envFile, `OLYMPUS_PASSWORD=${body.password}\n`, 'utf-8');
     }
+
+    // Update in-memory so proxy redirects work before restart
+    process.env.OLYMPUS_PASSWORD = body.password;
 
     return NextResponse.json({ status: 'ok' });
   } catch (e: unknown) {

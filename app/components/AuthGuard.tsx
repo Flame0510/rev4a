@@ -45,11 +45,16 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         }
         // Authenticated — if wizard not done and we are not on /wizard, redirect
         if (pathname !== '/wizard') {
-          const done = document.cookie.includes('wizard_done=1');
-          if (!done) {
-            router.replace('/wizard');
-            return;
-          }
+          fetch('/api/wizard/status')
+            .then((r3) => r3.json())
+            .then((d3: { done: boolean }) => {
+              if (!d3.done) {
+                router.replace('/wizard');
+              }
+              setChecking(false);
+            })
+            .catch(() => setChecking(false));
+          return;
         }
         setChecking(false);
       })
