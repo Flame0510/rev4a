@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-07-02
+> **Last updated:** 2026-07-18
 
 The Gateway page (`/gateway`) is the central control panel for managing provider
 configurations and agent model assignments across all Docker containers.

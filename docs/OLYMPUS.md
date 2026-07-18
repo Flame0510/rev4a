@@ -1,6 +1,6 @@
 # Olympus — VPS Dashboard
 
-> **Last updated:** 2026-07-13
+> **Last updated:** 2026-07-18
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 

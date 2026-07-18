@@ -20,9 +20,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/agents': {
     title: 'Agents',
-    description: 'List of all Docker containers that run OpenClaw agents. Shows status (running/exited/paused), image, ports, IP, and creation time.',
-    actions: ['Filter by status: all, running, or exited', 'Click an agent to see its details (environment variables, auth token, Traefik URL)', 'Edit your OpenClaw auth token used to communicate with agents', 'Create a new agent using the "Create Agent" button'],
-    hints: 'The status bullet tells you at a glance if an agent is running (green), exited (red), or paused (yellow).',
+    description: 'List of all Docker containers that run OpenClaw agents. Shows status (running/exited/paused), image, ports, IP, and creation time. Includes a top banner for the agent base image status: yellow warning when outdated or missing, copper pulsing dot when a build is running in the background.',
+    actions: ['Filter by status: all, running, or exited', 'Click an agent to see its details (environment variables, auth token, Traefik URL)', 'Edit your OpenClaw auth token used to communicate with agents', 'Create a new agent using the "Create Agent" button', 'Rebuild the agent base image when the banner shows it out of date', 'View build progress, run build in background, or abort'],
+    hints: 'The status bullet tells you at a glance if an agent is running (green), exited (red), or paused (yellow). The base image banner shows when the Dockerfile has changed — rebuild to pick up CLI updates.',
   },
   '/agents/create': {
     title: 'Create Agent',

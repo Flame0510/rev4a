@@ -1,6 +1,6 @@
 # Data Freshness in Olympus
 
-> **Last updated:** 2026-07-15
+> **Last updated:** 2026-07-18
 
 Understanding how current the data in Olympus is — and what is truly real-time vs. periodically updated.
 
@@ -67,6 +67,15 @@ Cron status (last run, next run) is fetched directly from the OpenClaw gateway e
 **Update frequency:** on demand (read from `openclaw.json` on each request)
 
 The agents list, Telegram accounts, and bindings are read directly from `openclaw.json` each time the Agents Config page is accessed. Changes saved via the UI take effect immediately.
+
+## Agent base image
+
+**Update frequency:** polled every 2 seconds during a build; on page load otherwise
+
+The `GET /api/agents/image-status` endpoint compares the SHA256 hash of the
+current Dockerfile against the label on the built image. Build logs are polled
+via `GET /api/agents/build-logs?after=N` and survive page refreshes and modal
+closes (written to `/tmp/olympus-build-<timestamp>.log`).
 
 ---
 

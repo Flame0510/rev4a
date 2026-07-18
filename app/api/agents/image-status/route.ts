@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
-import { getDockerfileHash } from '@/lib/buildAgentImage';
+import { getDockerfileHash, getIsBuilding, getBuildLogPath } from '@/lib/buildAgentImage';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +43,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       exists: false,
       needsRebuild: true,
+      building: false,
       dockerfileHash,
     });
   }
@@ -55,6 +56,8 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     exists: true,
     needsRebuild,
+    building: getIsBuilding(),
+    buildLog: getBuildLogPath() ? true : false,
     dockerfileHash,
     imageHash: imageHash || null,
   });

@@ -1,6 +1,6 @@
 # What is Olympus?
 
-> **Last updated:** 2026-07-15
+> **Last updated:** 2026-07-18
 
 Olympus is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -20,6 +20,21 @@ The wizard is always accessible from the sidebar. A progress badge (e.g. "1/3") 
 
 ### Agents (`/agents`)
 Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups), and create new agents. Each agent card shows its template, status, and a direct link to its Control UI.
+
+The Agents page includes a banner for the **agent base image** (`openclaw-agent-base:latest`):
+- Green: image is up-to-date (no banner shown)
+- Yellow: image is outdated or missing — click "Rebuild Image" to start a build
+- Copper: a build is running in the background — click "View Progress" to open
+  the build modal
+
+The build modal shows live Docker build logs (polled every 2s). You can:
+- **Run in Background** — close the modal, build continues on the server
+- **Abort** — kill the build process; the existing image stays intact
+- **Refresh / re-enter** — opening the modal again resumes log streaming
+  from the last seen line
+
+The build writes logs to `/tmp/olympus-build-<timestamp>.log` so they survive
+page refreshes and modal closes.
 
 ### Create Agent (`/agents/create`)
 Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional host port. The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.

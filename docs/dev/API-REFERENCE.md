@@ -1,6 +1,6 @@
 # Olympus API Reference
 
-> **Last updated:** 2026-07-03
+> **Last updated:** 2026-07-18
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -805,6 +805,90 @@ Update the shared agents gateway token and push it to all running agent containe
 - Restarts each container so the entrypoint picks up the new token via `OPENCLAW_GATEWAY_TOKEN` env
 
 ---
+
+## Agent Image Management
+
+### `GET /api/agents/image-status`
+Check the status of the `openclaw-agent-base` Docker image.
+
+**Auth:** public (no auth required)
+
+**Response:**
+```json
+{
+  "exists": true,
+  "needsRebuild": true,
+  "building": false,
+  "buildLog": false,
+  "dockerfileHash": "209e0ef8245b...",
+  "imageHash": "a1b2c3d4e5f6..."
+}
+```
+
+| Field | Description |
+|---|---|
+| `exists` | Whether the image exists locally |
+| `needsRebuild` | `true` if Dockerfile hash != image hash (or image missing) |
+| `building` | Whether a build is currently running |
+| `buildLog` | Whether a log file exists from a previous build |
+| `dockerfileHash` | SHA256 of the current Dockerfile |
+| `imageHash` | SHA256 stored in the image label (`olympus.dockerfile_hash`) |
+
+### `GET /api/agents/build-logs?after=N`
+Read build logs from the current or most recent build. Logs are written to
+`/tmp/olympus-build-<timestamp>.log` and survive page refreshes and modal closes.
+
+**Auth:** public (no auth required)
+
+**Query params:** `after` — skip the first N lines (for incremental polling)
+
+**Response:**
+```json
+{
+  "lines": ["line 1", "line 2", "..."],
+  "count": 42
+}
+```
+
+Use `after=<currentCount>` to fetch only new lines on each poll.
+
+### `POST /api/agents/rebuild-image`
+Start a Docker build of `openclaw-agent-base:latest`. Returns 202 Accepted
+immediately — the build runs in the background and writes logs to a file.
+The frontend polls `GET /api/agents/build-logs` and `GET /api/agents/image-status`
+to track progress.
+
+**Auth:** public (no auth required)
+
+**Response (202):**
+```json
+{ "status": "building" }
+```
+
+**Error (409):**
+```json
+{ "error": "A build is already in progress" }
+```
+
+### `POST /api/agents/abort-build`
+Kill an in-progress build. The existing `openclaw-agent-base:latest` image is
+left intact — only the partial build is terminated.
+
+**Auth:** public (no auth required)
+
+**Response:**
+```json
+{ "aborted": true }
+```
+
+Build state is managed in `lib/buildAgentImage.ts`:
+- `buildAgentImage(opts)` — runs `docker build` with progress=plain, writes
+  all stdout/stderr to a log file, supports optional SSE `onEvent` callback
+  and `AbortSignal`
+- `abortBuild()` — sends SIGTERM to the child process + orphan cleanup, appends
+  "Build aborted by user" to the log, releases the build lock
+- `getBuildLogPath()` — returns the path to the current/last build log file
+- `getIsBuilding()` — checks the in-memory lock + orphaned docker processes
 
 ### `GET /api/agents-active`
 

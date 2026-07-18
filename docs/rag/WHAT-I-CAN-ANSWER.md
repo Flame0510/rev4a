@@ -1,6 +1,6 @@
 # What PYTHIA Can Answer
 
-> **Last updated:** 2026-07-15
+> **Last updated:** 2026-07-18
 
 PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what she can and cannot answer.
 
@@ -83,6 +83,11 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "Why am I seeing an onboarding banner?"
 - "How do I check if the daemon is running?"
 - "Why are credentials not showing in my agent?"
+- "Why is the agent base image banner showing?"
+- "How do I fix 'image is outdated'?"
+- "What happens if I abort a build?"
+- "Can I close the build modal while it's running?"
+- "How do agent image rebuilds work?"
 
 ## What PYTHIA CANNOT do
 

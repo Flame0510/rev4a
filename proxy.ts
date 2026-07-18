@@ -27,6 +27,10 @@ export async function proxy(request: NextRequest) {
     pathname === '/api/version' ||
     pathname.startsWith('/api/models') ||
     pathname === '/api/agents-config' ||
+    pathname === '/api/agents/image-status' ||
+    pathname === '/api/agents/build-logs' ||
+    pathname === '/api/agents/rebuild-image' ||
+    pathname === '/api/agents/abort-build' ||
     pathname.startsWith('/api/provider') ||
     pathname.startsWith('/api/gateway') ||
     pathname.startsWith('/_next/') ||
