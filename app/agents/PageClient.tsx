@@ -3,9 +3,10 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, ListItem, type Tone } from '../components/ui';
+import { Button, ListItem, Badge, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageRebuildBanner from './ImageRebuildBanner';
+import ChannelManager from './ChannelManager';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
@@ -76,6 +77,7 @@ export default function AgentsPageClient() {
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenSaving, setTokenSaving] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean; whatsapp: boolean }>>({});
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -91,6 +93,11 @@ export default function AgentsPageClient() {
       if (!Array.isArray(data)) throw new Error('Invalid response');
       setAgents(data);
       setError('');
+      // Also load channel summary
+      try {
+        const chRes = await fetch('/api/agents/channels-summary');
+        if (chRes.ok) setChSummary(await chRes.json());
+      } catch { /* */ }
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {
@@ -265,6 +272,12 @@ export default function AgentsPageClient() {
                 {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
                 {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
               </div>
+              {chSummary[agent.agentId] && (chSummary[agent.agentId].telegram || chSummary[agent.agentId].whatsapp) && (
+                <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                  <Badge tone={chSummary[agent.agentId].telegram ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
+                  <Badge tone={chSummary[agent.agentId].whatsapp ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>WA</span></Badge>
+                </div>
+              )}
             </ListItem>
           ))}
         </div>
@@ -312,6 +325,12 @@ export default function AgentsPageClient() {
                   {agent.ip && <span>{agent.ip}</span>}
                   {agent.ports && <span style={{ color: '#888' }}>{agent.ports}</span>}
                 </div>
+                {chSummary[agent.agentId] && (chSummary[agent.agentId].telegram || chSummary[agent.agentId].whatsapp) && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    <Badge tone={chSummary[agent.agentId].telegram ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
+                    <Badge tone={chSummary[agent.agentId].whatsapp ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>WA</span></Badge>
+                  </div>
+                )}
               </ListItem>
             );
           })}
@@ -459,6 +478,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
           </div>
         ))}
       </div>
+
+      {/* Channels — Telegram & WhatsApp */}
+      <ChannelSection agentId={agent.agentId} agentName={agent.name} />
 
       {/* Config — View openclaw.json */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
@@ -871,5 +893,78 @@ function RecreateSection({ agentName }: { agentName: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/* ─── Channel section — Telegram & WhatsApp ─── */
+
+function ChannelSection({ agentId, agentName }: { agentId: string; agentName: string }) {
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<{ telegram: boolean; whatsapp: boolean } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreview(null);
+    fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!cancelled && data) {
+          setPreview({
+            telegram: data.telegram?.connected === true,
+            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [agentId]);
+
+  const fetchPreview = useCallback(() => {
+    let cancelled = false;
+    fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!cancelled && data) {
+          setPreview({
+            telegram: data.telegram?.connected === true,
+            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [agentId]);
+
+  return (
+    <>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<LinkIcon size={12} />} label="CHANNELS" />
+        <div style={{ padding: '12px 14px' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {preview === null ? (
+              <span style={{ color: 'var(--text-dim)' }}>Loading…</span>
+            ) : (
+              <>
+                <Badge tone={preview.telegram ? 'success' : 'neutral'}>
+                  <span style={{ fontSize: 9 }}>{preview.telegram ? 'TG: Connected' : 'TG: Not Set'}</span>
+                </Badge>
+                <Badge tone={preview.whatsapp ? 'success' : 'neutral'}>
+                  <span style={{ fontSize: 9 }}>{preview.whatsapp ? 'WA: Active' : 'WA: Not Set'}</span>
+                </Badge>
+              </>
+            )}
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+            Manage Channels
+          </Button>
+        </div>
+      </div>
+      <ChannelManager
+        agentId={agentId}
+        agentName={agentName}
+        open={open}
+        onClose={() => { setOpen(false); fetchPreview(); }}
+      />
+    </>
   );
 }
