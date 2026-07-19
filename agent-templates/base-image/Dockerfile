@@ -63,7 +63,7 @@ RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
     && tar xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase \
     && chmod +x /usr/local/bin/supabase \
     && rm /tmp/supabase.tar.gz \
-    && echo '{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
+    && echo '{"gateway":{"mode":"local","controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
        | openclaw config patch --stdin
 
 # Default config directory

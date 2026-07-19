@@ -67,6 +67,8 @@ Olympus has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/
 5. **100% English.** UI labels, errors, aria-labels. No Italian.
 6. **New UI component?** Add it to `app/components/ui/`, export from `index.ts`, document in `docs/FRONTEND-ARCHITECTURE.md`.
 7. **No one-off card styles.** If a new page needs a visual pattern, extract a component instead of duplicating markup.
+8. **Every async action button MUST show loading state.** Use the `Button` component's `loading` prop. Disable the button and all sibling action buttons during the operation. Every approve, revoke, delete, connect, restart, or similar action must have its own dedicated loading state (never share a generic `loading` boolean across unrelated buttons). The button text should change to reflect the action: "Approving…", "Revoking…", "Restarting…", etc.
+9. **Prevent race conditions on repeated fetch calls.** When a fetch can be triggered while a previous call is still in flight (polling intervals, tab switches, user double-click, modal open/close), use `AbortController` via a `useRef` to cancel the stale request before starting a new one. Pattern: `abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller; fetch(url, { signal: controller.signal })`. Check `e?.name !== 'AbortError'` in catch to silence abort noise. This applies especially to: polling logic, data re-fetches after mutations, and any fetch triggered by user interaction that could fire multiple times before resolution.
 
 ### 2.3 Documentation-First Workflow
 
