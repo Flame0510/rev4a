@@ -108,6 +108,8 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      channelsAbortRef.current?.abort();
+      pairingsAbortRef.current?.abort();
     };
   }, [open, fetchChannels]);
 
@@ -269,7 +271,6 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         <SkeletonLines count={4} />
       ) : (
         <TelegramTab
-          agentId={agentId}
           tg={tg ?? null}
           tgToken={tgToken}
           setTgToken={setTgToken}
@@ -295,11 +296,10 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
 // ── Telegram Tab ─────────────────────────────
 
 function TelegramTab({
-  agentId: _agentId, tg, tgToken, setTgToken, loading, disconnecting, pairingsLoading, restarting,
+  tg, tgToken, setTgToken, loading, disconnecting, pairingsLoading, restarting,
   pending, approved, approvingCode, revokingId,
   onConnect, onDisconnect, onRestart, onApprove, onRevoke,
 }: {
-  agentId: string;
   tg: TelegramChannel | null;
   tgToken: string;
   setTgToken: (v: string) => void;

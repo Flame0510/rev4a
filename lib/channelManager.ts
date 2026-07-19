@@ -66,12 +66,14 @@ function readConfigJson(containerName: string): Record<string, unknown> | null {
 
 function writeConfigJson(containerName: string, config: Record<string, unknown>): void {
   const json = JSON.stringify(config, null, 2);
-  // Escape for single-quoted shell string: backslash, single quote, dollar sign
-  const escaped = json
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "'\\''")
-    .replace(/\$/g, '\\$');
-  containerExec(containerName, `echo '${escaped}' > /root/.openclaw/openclaw.json.tmp && mv /root/.openclaw/openclaw.json.tmp /root/.openclaw/openclaw.json`);
+  if (!json || json === 'null') {
+    throw new Error('Refusing to write empty or invalid config');
+  }
+  // Pipe JSON via stdin to avoid shell escaping issues
+  execSync(
+    `docker exec -i ${escapeShellArg(containerName)} sh -c 'cat > /root/.openclaw/openclaw.json.tmp && mv /root/.openclaw/openclaw.json.tmp /root/.openclaw/openclaw.json'`,
+    { input: json, encoding: 'utf-8', timeout: 15000 },
+  );
 }
 
 function maskToken(token: string): string {
@@ -80,6 +82,8 @@ function maskToken(token: string): string {
 }
 
 function findContainerById(agentId: string): string | null {
+  // Sanitize: only allow alphanumeric, hyphens, and underscores
+  if (!/^[a-zA-Z0-9_-]+$/.test(agentId)) return null;
   try {
     const out = execSync(
       `docker ps --filter "label=AGENT_ID=${agentId}" --format "{{.Names}}" 2>/dev/null`,
@@ -191,6 +195,7 @@ export function removeTelegram(agentId: string): { success: boolean; error?: str
       if (tg) {
         tg.enabled = false;
         // Wipe allowFrom and botToken so reconnecting with a different bot starts fresh
+        delete tg.botToken;
         delete tg.allowFrom;
       }
     }
@@ -323,7 +328,10 @@ export function approvePairing(agentId: string, code: string, channel: string = 
 
   try {
     const out = containerExecNoFail(container, `openclaw pairing approve ${channel} ${escapeShellArg(code)} 2>&1`);
-    if (out && out.includes('error')) {
+    if (!out) {
+      return { success: false, error: 'Command produced no output — pairing command may not be available' };
+    }
+    if (out.includes('error')) {
       return { success: false, error: out };
     }
 
@@ -351,10 +359,13 @@ export function revokePairing(agentId: string, senderId: string, channel: string
 
     // Fallback: remove from credentials file directly
     const filePath = pairingAllowFile(channel);
-    containerExecNoFail(
+    const fallbackOut = containerExecNoFail(
       container,
-      `node -e "const p='${filePath}';try{const d=JSON.parse(require('fs').readFileSync(p,'utf8'));d.allowFrom=(d.allowFrom||[]).filter(e=>e!=='${senderId.replace(/'/g, "'\\''")}');require('fs').writeFileSync(p,JSON.stringify(d,null,2),'utf8')}catch(e){}"`,
+      `node -e "const p='${filePath}';try{const d=JSON.parse(require('fs').readFileSync(p,'utf8'));d.allowFrom=(d.allowFrom||[]).filter(e=>e!=='${senderId.replace(/'/g, "'\\''")}');require('fs').writeFileSync(p,JSON.stringify(d,null,2),'utf8')}catch(e){console.error('revoke fallback error:',e.message)}"`,
     );
+    if (fallbackOut && fallbackOut.includes('revoke fallback error:')) {
+      return { success: false, error: fallbackOut };
+    }
 
     return { success: true };
   } catch (e) {
