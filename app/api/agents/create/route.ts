@@ -212,7 +212,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
     const portOpt = `-p ${port}:3000`;
 
-    const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md'];
+    // Template files that will be copied into the container workspace.
+    // Files that don't exist in the template dir are silently skipped —
+    // this is intentional (e.g. BOOTSTRAP.md only exists in custom/).
+    const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md', 'BOOTSTRAP.md'];
 
     const cmd = `docker run -d \
       --name "${name}" \
@@ -266,25 +269,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Check if the workspace already has template files (persisted from a
         // previous container via the agent-<name>-data volume). If so, skip the
         // copy — the user may have edited them.
-        const hasWorkspaceFiles = execSync(
-          `docker exec ${name} sh -c 'ls /root/.openclaw/workspace/AGENTS.md 2>/dev/null || true'`,
-          { timeout: 5000, encoding: 'utf-8' },
-        ).trim();
-
-        if (!hasWorkspaceFiles) {
-          // Copy template files into the container (NOT bind-mount, so agent edits
-          // never spill back to the Olympus repo).
-          for (const tf of templateFiles) {
-            const src = path.join(templateDir, tf);
-            if (fs.existsSync(src) && fs.statSync(src).isFile()) {
-              try {
-                execSync(
-                  `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
-                  { timeout: 10000, stdio: 'pipe' },
-                );
-              } catch (cpErr) {
-                console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
-              }
+        // Copy template files into the container (NOT bind-mount, so agent edits
+        // never spill back to the Olympus repo). Always copy — templates are
+        // the canonical source of truth for a new agent.
+        for (const tf of templateFiles) {
+          const src = path.join(templateDir, tf);
+          if (fs.existsSync(src) && fs.statSync(src).isFile()) {
+            try {
+              execSync(
+                `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
+                { timeout: 10000, stdio: 'pipe' },
+              );
+            } catch (cpErr) {
+              console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
             }
           }
         }
@@ -322,6 +319,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           agents.defaults = defaults;
           config.agents = agents;
         }
+
+        // Step 3b: Disable update check
+        // Agents are managed through Olympus (rebuild image + recreate container),
+        // not through `openclaw update`. Suppress the "Update Available" banner
+        // in the Control UI and the startup update hint.
+        config.update = {
+          checkOnStart: false,
+          auto: { enabled: false },
+        };
 
         // Write the merged config back
         execSync(

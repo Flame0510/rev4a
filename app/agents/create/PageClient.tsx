@@ -62,7 +62,6 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [agentName, setAgentName] = useState('');
   const [port, setPort] = useState<string>('');
-  const [portEnabled, setPortEnabled] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>(
     models.length > 0 ? models[0].id : ''
   );
@@ -75,13 +74,15 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const handleSelectTemplate = (id: string) => {
     setSelectedTemplate(id);
     setAgentName('');
+    // Auto-assign port: template default or first available
     const defaultPort = TEMPLATE_DEFAULT_PORTS[id];
-    if (defaultPort) {
+    if (defaultPort && !initialUsedPorts.includes(defaultPort)) {
       setPort(String(defaultPort));
-      setPortEnabled(true);
     } else {
-      setPort('');
-      setPortEnabled(false);
+      // Find first free port starting from 3000 (template default) or 3000 (custom)
+      let candidate = defaultPort || 3000;
+      while (initialUsedPorts.includes(candidate)) candidate++;
+      setPort(String(candidate));
     }
   };
 
@@ -94,16 +95,16 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   }, [agentName, usedNames]);
 
   const portError = useMemo(() => {
-    if (!portEnabled || !port) return '';
+    if (!port) return '';
     const p = parseInt(port, 10);
     if (isNaN(p) || p < 1 || p > 65535) return 'Port must be between 1 and 65535';
     if (initialUsedPorts.includes(p)) return 'Port is already in use';
     return '';
-  }, [port, portEnabled, initialUsedPorts]);
+  }, [port, initialUsedPorts]);
 
   const canProceed = (): boolean => {
     if (step === 'template') return selectedTemplate !== '';
-    if (step === 'config') return agentName.length > 0 && !nameError && (!portEnabled || !portError);
+    if (step === 'config') return agentName.length > 0 && !nameError && !portError;
     return false;
   };
 
@@ -117,7 +118,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
         name: agentName,
         template: selectedTemplate,
       };
-      if (portEnabled && port) body.port = parseInt(port, 10);
+      if (port) body.port = parseInt(port, 10);
       if (selectedModel) body.model = selectedModel;
       if (fallbacks.length > 0) body.fallbacks = fallbacks;
 
@@ -152,6 +153,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       atlas: 'General-purpose agent. Trello discipline, code review, git workflow.',
       argus: 'Security & audit agent. Strict protocol, delegation, lineage tracking.',
       prometheus: 'Client-facing agent. Project delivery, repo discipline, documentation.',
+      custom: 'Blank slate. No preset identity — the agent will introduce itself and you define everything together.',
     };
     return descs[id] || 'Custom agent template';
   };
@@ -171,8 +173,67 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           <div style={{ fontSize: 12, color: '#888', marginBottom: 16, letterSpacing: '0.05em' }}>
             STEP 1 OF 2 &middot; SELECT TEMPLATE
           </div>
+
+          {/* ── Custom: blank slate ── */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{
+              fontSize: 10, color: 'var(--copper)', textTransform: 'uppercase',
+              letterSpacing: '0.08em', marginBottom: 8,
+            }}>
+              Start from scratch
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSelectTemplate('custom')}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12,
+                width: '100%',
+                padding: '16px',
+                textAlign: 'left',
+                fontSize: 14,
+                fontFamily: 'var(--font-mono-stack)',
+                color: 'var(--text)',
+                cursor: 'pointer',
+                outline: 'none',
+                transition: 'background 0.1s, border-color 0.1s',
+                background: selectedTemplate === 'custom' ? 'var(--copper-bg)' : 'transparent',
+                border: `1px solid ${selectedTemplate === 'custom' ? 'var(--copper)' : 'var(--border)'}`,
+              }}
+            >
+              <span style={{
+                width: 32,
+                height: 32,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: selectedTemplate === 'custom' ? 'var(--copper)' : 'var(--border)',
+                color: selectedTemplate === 'custom' ? '#111' : '#666',
+                fontSize: 14,
+                fontWeight: 600,
+                flexShrink: 0,
+              }}>
+                +
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500, fontSize: 14 }}>Custom Agent</div>
+                <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                  Blank slate. No preset identity &mdash; the agent will introduce itself and you define everything together.
+                </div>
+              </div>
+            </button>
+          </div>
+
+          {/* ── Pre-built templates ── */}
+          <div style={{
+            fontSize: 10, color: '#888', textTransform: 'uppercase',
+            letterSpacing: '0.08em', marginBottom: 8,
+          }}>
+            Pre-built templates
+          </div>
           <div style={{ display: 'grid', gap: 8 }}>
-            {templates.map((t) => (
+            {templates.filter(t => t.id !== 'custom').map((t) => (
               <TemplateOption
                 key={t.id}
                 id={t.id}
@@ -187,6 +248,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               />
             ))}
           </div>
+
           <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
             <Button variant="ghost" size="md" onClick={() => router.push('/agents')}>
               Cancel
@@ -232,24 +294,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
           {/* Port */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#888', marginBottom: 6, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={portEnabled}
-                onChange={(e) => { setPortEnabled(e.target.checked); if (!e.target.checked) setPort(''); }}
-                style={{ accentColor: 'var(--copper)' }}
-              />
-              Expose Port
-            </label>
-            {portEnabled && (
-              <Input
-                value={port}
-                onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                placeholder={`${TEMPLATE_DEFAULT_PORTS[selectedTemplate] || DEFAULT_PORT}`}
-                error={portError}
-              />
-            )} 
-            {portError && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{portError}</div>}
+            <Input
+              label="Port"
+              value={port}
+              onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
+              placeholder={`${TEMPLATE_DEFAULT_PORTS[selectedTemplate] || DEFAULT_PORT}`}
+              error={portError}
+            />
           </div>
 
           {/* Model */}
@@ -323,7 +374,6 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               setSelectedTemplate('');
               setAgentName('');
               setPort('');
-              setPortEnabled(false);
               setSelectedModel('');
               setResult(null);
             }} style={{ flex: 1 }}>

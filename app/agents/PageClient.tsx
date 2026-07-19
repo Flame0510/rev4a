@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, ListItem, Badge, type Tone } from '../components/ui';
+import { Button, ListItem, Badge, ConfirmModal, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageRebuildBanner from './ImageRebuildBanner';
 import ChannelManager from './ChannelManager';
@@ -43,6 +43,7 @@ interface Agent {
   env: string[];
   traefikUrl: string | null;
   authToken: string | null;
+  imageOutdated?: boolean;
 }
 
 type FilterState = 'all' | 'running' | 'exited';
@@ -277,6 +278,11 @@ export default function AgentsPageClient() {
                   <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
                 </div>
               )}
+              {agent.imageOutdated && (
+                <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                  <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
+                </div>
+              )}
             </ListItem>
           ))}
         </div>
@@ -327,6 +333,11 @@ export default function AgentsPageClient() {
                 {chSummary[agent.agentId]?.telegram && (
                   <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                     <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
+                  </div>
+                )}
+                {agent.imageOutdated && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
                   </div>
                 )}
               </ListItem>
@@ -418,9 +429,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [showConfig, setShowConfig] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete agent "${agent.name}"?\n\nThis permanently deletes the container, its persistent volume, and ALL its backups. This cannot be undone.`)) return;
     setDeleting(true);
     setDeleteError('');
     try {
@@ -519,7 +530,27 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
+      {/* Delete confirmation */}
+      <ConfirmModal
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={() => { setShowDeleteConfirm(false); handleDelete(); }}
+        title={`Delete ${agent.name}?`}
+        message="This permanently deletes the container, its persistent volume, and ALL its backups. This cannot be undone."
+        confirmLabel="Delete Agent"
+        cancelLabel="Cancel"
+        tone="danger"
+      />
+
       {/* Recreate */}
+      {agent.imageOutdated && (
+        <div style={{ marginBottom: 12, border: '1px solid rgba(234,179,8,0.3)', borderRadius: 0, padding: '10px 14px', background: 'rgba(234,179,8,0.06)' }}>
+          <div style={{ fontSize: 11, color: 'var(--yellow)', marginBottom: 4, fontWeight: 500 }}>⚠ Container Outdated</div>
+          <div style={{ fontSize: 11, color: '#888' }}>
+            This container is running an older image. Recreate it to pick up the latest version.
+          </div>
+        </div>
+      )}
       <RecreateSection agentName={agent.name} />
 
       {/* Delete */}
@@ -530,7 +561,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
             Permanently delete this agent: container, persistent volume, and all backups. This cannot be undone.
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
+            <Button variant="danger" size="sm" loading={deleting} onClick={() => setShowDeleteConfirm(true)}>
               {deleting ? 'Deleting...' : 'Delete Agent'}
             </Button>
           </div>
@@ -623,6 +654,7 @@ function BackupSection({ agentName }: { agentName: string }) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'backup' | 'restore'; label: string } | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
@@ -662,7 +694,13 @@ function BackupSection({ agentName }: { agentName: string }) {
   };
 
   const handleRestore = async (file: string) => {
-    if (!confirm(`Restore from ${file}? The agent container will be stopped, restored, and restarted.`)) return;
+    setRestoreConfirm(file);
+  };
+
+  const executeRestore = async () => {
+    const file = restoreConfirm;
+    if (!file) return;
+    setRestoreConfirm(null);
     setStatus({ type: 'restore', label: `Restoring from ${file}... (container will restart)` });
     setBackups([]);
     try {
@@ -768,6 +806,16 @@ function BackupSection({ agentName }: { agentName: string }) {
           {toast.msg}
         </div>
       )}
+      <ConfirmModal
+        open={restoreConfirm !== null}
+        onClose={() => setRestoreConfirm(null)}
+        onConfirm={executeRestore}
+        title="Restore Backup"
+        message={`Restore from ${restoreConfirm || ''}?\n\nThe agent container will be stopped, restored, and restarted.`}
+        confirmLabel="Restore"
+        cancelLabel="Cancel"
+        tone="warning"
+      />
     </div>
   );
 }
@@ -825,6 +873,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
   const [recreating, setRecreating] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -832,7 +881,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
   };
 
   const handleRecreate = async () => {
-    if (!confirm(`Recreate container for "${agentName}"?\n\nAn automatic backup is taken first, then the container is rebuilt from the latest image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted.`)) return;
+    setShowConfirm(false);
     setRecreating(true);
     setError('');
     try {
@@ -880,7 +929,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Takes an automatic backup, then rebuilds the container from the latest image — keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
         </div>
-        <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={handleRecreate}>
+        <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={() => setShowConfirm(true)}>
           {recreating ? 'Recreating...' : 'Recreate Container'}
         </Button>
         {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
@@ -890,6 +939,16 @@ function RecreateSection({ agentName }: { agentName: string }) {
           {toast}
         </div>
       )}
+      <ConfirmModal
+        open={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        onConfirm={handleRecreate}
+        title="Recreate Container"
+        message={`Recreate container "${agentName}"?\n\nAn automatic backup is taken first, then the container is rebuilt from the latest image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted.`}
+        confirmLabel="Recreate"
+        cancelLabel="Cancel"
+        tone="warning"
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+export * from './ConfirmModal';
 export * from './Badge';
 export * from './Button';
 export * from './FilterBar';

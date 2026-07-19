@@ -10,7 +10,7 @@ Terms you'll encounter while using the Olympus dashboard.
 An AI assistant configured with a specific role, AI model, and workspace. Each agent has a name (e.g. "Argus") and can run multiple sessions over time. Agents are deployed as Docker containers with persistent data volumes.
 
 ## Agent Template
-A pre-built configuration used when creating a new agent. Templates include default files (AGENTS.md, SOUL.md, MEMORY.md, IDENTITY.md, TOOLS.md, HEARTBEAT.md), environment variables, and settings. Located in `agent-templates/`. Examples: Prometheus, Argus, Atlas.
+A pre-built configuration used when creating a new agent. Templates include default files (AGENTS.md, SOUL.md, MEMORY.md, IDENTITY.md, TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md) and settings. Located in `agent-templates/`. Available templates: **Atlas** (general dev), **Argus** (security/audit), **Prometheus** (client-facing), and **Custom** (blank slate — bootstraps identity interactively on first run).
 
 ## Badge
 A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
@@ -100,8 +100,8 @@ Current state of a session:
 - **completed** — task finished successfully
 - **error** — task failed
 
-## Badge
-A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
+## BOOTSTRAP.md
+A first-run ritual file for agents. When an agent starts for the first time in a new workspace, it reads BOOTSTRAP.md, introduces itself, learns who the user is, and together they define the agent's name, personality, tone, and boundaries. The agent then creates/updates SOUL.md, IDENTITY.md, and USER.md, then deletes BOOTSTRAP.md so the ritual never repeats. Used by the Custom agent template.
 
 ## Token
 The unit of text processed by an AI model. Input tokens (your prompt) and output tokens (the AI's response) are counted separately and used to calculate cost.

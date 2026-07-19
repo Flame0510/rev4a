@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
+import { Button, ConfirmModal, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 /* ------------------------------------------------------------------ */
@@ -423,8 +423,16 @@ export default function GatewayPageClient() {
     });
   }
 
+  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null);
+
   async function handleRemove(provider: string) {
-    if (!confirm(`Rimuovere API key per ${provider}?`)) return;
+    setRemoveConfirm(provider);
+  }
+
+  async function executeRemove() {
+    const provider = removeConfirm;
+    if (!provider) return;
+    setRemoveConfirm(null);
     await withOverlay(`Rimozione API key ${provider}…`, async () => {
       setMessages((prev) => ({ ...prev, [provider]: null }));
       try {
@@ -864,6 +872,16 @@ export default function GatewayPageClient() {
           )}
         </section>
       )}
+      <ConfirmModal
+        open={removeConfirm !== null}
+        onClose={() => setRemoveConfirm(null)}
+        onConfirm={executeRemove}
+        title="Remove API Key"
+        message={`Remove API key for ${removeConfirm || ''}?`}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        tone="danger"
+      />
     </Page>
   );
 }

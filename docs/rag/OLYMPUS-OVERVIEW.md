@@ -21,6 +21,12 @@ The wizard is always accessible from the sidebar. A progress badge (e.g. "1/3") 
 ### Agents (`/agents`)
 Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups, Telegram channels), and create new agents. Each agent card shows its template, status, TG channel chip, and a direct link to its Control UI.
 
+**Agent Creation Wizard** (`/agents/create`) — two-step flow:
+1. Pick a template: **Atlas** (general dev), **Argus** (security/audit), **Prometheus** (client-facing), or **Custom** (blank slate)
+2. Configure: name, optional port, optional model → Deploy
+
+**Custom template:** starts with no preset identity. On first run, the agent runs a bootstrap ritual (BOOTSTRAP.md): introduces itself, asks who the user is, and together they define name, personality, tone, and boundaries. No AI generation needed — it's a native OpenClaw feature.
+
 **Channel Manager:** Each agent detail panel has a "CHANNELS" section with TG status badge and a "Manage Channels" button. The modal lets you:
 - **Telegram:** connect a bot (paste bot token → save → restart agent), disconnect, and manage pairings (approve pending codes, revoke approved senders). Pairings are polled every 5 seconds.
 

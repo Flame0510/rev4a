@@ -40,6 +40,15 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
       '/containers/json?filters={"label":["AGENT_ID"]}',
     );
 
+    // Current image ID — used to detect outdated containers
+    let currentImageId = '';
+    try {
+      const imageInspect = await dockerFetch('GET', '/images/openclaw-agent-base:latest/json');
+      currentImageId = imageInspect.Id || '';
+    } catch {
+      // Image doesn't exist yet — all containers are fine
+    }
+
     const agents = await Promise.all(
       containers.map(async (c: any) => {
         const agentId = c.Labels?.AGENT_ID || 'unknown';
@@ -141,6 +150,10 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           env,
           traefikUrl,
           authToken,
+          // Only flag as outdated if the container actually uses the agent base image
+          imageOutdated: currentImageId && (image.startsWith('openclaw-agent-base') || image.startsWith('nexus-agent-base'))
+            ? c.ImageID !== currentImageId
+            : false,
         };
       }),
     );

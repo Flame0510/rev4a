@@ -256,7 +256,13 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 
 ### Agent Creation Wizard (`/agents/create`)
 
-**Step 1 — Template:** Select an agent template from `agent-templates/`. Each template is a directory with AGENTS.md, SOUL.md, MEMORY.md files.
+**Step 1 — Template:** Select an agent template from `agent-templates/`. Each template is a directory with AGENTS.md, SOUL.md, MEMORY.md, and optionally BOOTSTRAP.md files.
+
+Available templates:
+- **Atlas** — general-purpose development agent
+- **Argus** — security and audit agent
+- **Prometheus** — client-facing project delivery agent
+- **Custom** — blank slate. On first run, the agent runs a bootstrap ritual: introduces itself, learns who the user is, and together they define name, personality, tone, and boundaries. The agent writes SOUL.md, IDENTITY.md, and USER.md, then deletes BOOTSTRAP.md. No preset identity, fully user-defined.
 
 **Step 2 — Config:** Enter agent name, optional port, select a primary model from the available providers (pre-filtered by configured provider keys). The first model is pre-selected.
 
@@ -326,8 +332,9 @@ Built from `node:24-bookworm-slim`, includes:
 - Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 
 ### Template directories
-Located in `agent-templates/`. Each subdirectory (e.g. `prometheus/`, `atlas/`) contains:
+Located in `agent-templates/`. Each subdirectory (e.g. `atlas/`, `custom/`) contains:
 - `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `MEMORY.md`, `TOOLS.md`, `HEARTBEAT.md`
+- `BOOTSTRAP.md` (optional) — first-run ritual, deleted by the agent when complete
 
 At container creation these files are **copied** into `/root/.openclaw/workspace/`
 via `docker cp` (not bind-mounted), so agent edits never spill back to the Olympus

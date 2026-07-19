@@ -27,7 +27,7 @@ If you are an AI agent arriving on this repo for the first time:
 
 > **Additional resources:**
 > - `docs/rag/` — LLM-facing knowledge base for RAG-powered responses
-> - `agent-templates/` — reusable agent protocols for Atlas, Argus, Prometheus
+> - `agent-templates/` — reusable agent protocols for Atlas, Argus, Prometheus, Custom
 >
 > **Rule:** After reading, if a file is stale (wrong dates, missing info), update it.
 > Do not assume docs are authoritative — verify against code.
