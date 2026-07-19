@@ -23,7 +23,7 @@ Manage Docker containers running OpenClaw agents. See which agents are running, 
 
 **Channel Manager:** Each agent detail panel has a "CHANNELS" section with TG/WA status badges and a "Manage Channels" button. The modal lets you:
 - **Telegram:** connect a bot (paste bot token → save → restart agent), disconnect, and manage pairings (approve pending codes, revoke approved senders). Pairings are polled every 5 seconds.
-- **WhatsApp:** enable/disable the WhatsApp channel, check link status, and see terminal instructions for QR-based linking (`docker exec -it <agent> openclaw channels login --channel whatsapp`). Once linked, manage pairings the same way as Telegram (approve pending codes, revoke approved senders).
+- **WhatsApp:** enable/disable the WhatsApp channel, show QR code for linking (no terminal needed — scan directly from the dashboard), check link status, and manage pairings the same way as Telegram (approve pending codes, revoke approved senders).
 
 The agent list also shows compact TG/WA chips next to each agent name (green = connected, no chip = not configured).
 

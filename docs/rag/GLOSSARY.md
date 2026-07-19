@@ -82,13 +82,13 @@ Replace an agent's persistent volume with a previously created backup. The conta
 One instance of an agent doing work. Tracks: start/end time, tokens used, cost, model, status, and task description. A session starts when an agent receives a task and ends when it completes or fails.
 
 ## Pairing
-A security mechanism for Telegram channels. When a user sends `/start` to the bot, a 4-digit pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time.
+A security mechanism for Telegram and WhatsApp channels. When a user sends `/start` to the bot (Telegram) or messages for the first time (WhatsApp), a pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time. Supported channels: telegram, whatsapp.
 
 ## Telegram
 A messaging channel type. Agents can be connected to Telegram via a bot token from @BotFather. Once connected, users send `/start` to get a pairing code, which an admin approves in the Channel Manager.
 
 ## WhatsApp
-A messaging channel type. Agents can be linked to WhatsApp via QR code (`openclaw channels login --channel whatsapp`). Requires the WhatsApp plugin installed in the agent base image. Status can be checked from the Channel Manager.
+A messaging channel type. Agents can be linked to WhatsApp via QR code directly from the Olympus dashboard — no terminal needed. Click "Show QR Code" in the Channel Manager, scan with WhatsApp (Linked Devices → Link a Device), and the pairing manager appears automatically. Requires the WhatsApp plugin installed in the agent base image.
 
 ## Session ID
 A unique identifier for a session. Format: `agent:<name>:<role>` (e.g. `agent:ops:main`) or `agent:<name>:subagent:<uuid>` for temporary child agents.
@@ -110,16 +110,7 @@ A small inline label component used for status indicators and channel chips. Sup
 A communication channel (Telegram or WhatsApp) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect channels and manage Telegram pairings (approve/reject senders). Channel status is shown as compact TG/WA chips on the agent list.
 
 ## Channel Manager
-Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, check link status, QR-based linking via terminal, and manage pairings just like Telegram. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
-
-## Pairing
-A security mechanism for Telegram and WhatsApp channels. When a user sends `/start` to the bot (Telegram) or messages for the first time (WhatsApp), a pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time. Supported channels: telegram, whatsapp.
-
-## Telegram
-A messaging channel type. Agents can be connected to Telegram via a bot token from @BotFather. Once connected, users send `/start` to get a pairing code, which an admin approves in the Channel Manager.
-
-## WhatsApp
-A messaging channel type. Agents can be linked to WhatsApp via QR code (`openclaw channels login --channel whatsapp`). Requires the WhatsApp plugin installed in the agent base image. Status can be checked from the Channel Manager.
+Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, show QR code for phone scanning (no terminal needed), check link status, and manage pairings just like Telegram. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
 
 ## Token
 The unit of text processed by an AI model. Input tokens (your prompt) and output tokens (the AI's response) are counted separately and used to calculate cost.

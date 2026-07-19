@@ -599,6 +599,76 @@ function WhatsAppTab({
   onApprove: (code: string) => void;
   onRevoke: (senderId: string) => void;
 }) {
+  const [loginQr, setLoginQr] = useState<string | null>(null);
+  const [loginStatus, setLoginStatus] = useState<'idle' | 'starting' | 'running' | 'linked' | 'error'>('idle');
+  const [loginError, setLoginError] = useState('');
+  const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const loginAbortRef = useRef<AbortController | null>(null);
+
+  // Cleanup poll on unmount
+  useEffect(() => {
+    return () => { if (loginPollRef.current) clearInterval(loginPollRef.current); };
+  }, []);
+
+  const startLogin = async () => {
+    setLoginStatus('starting');
+    setLoginError('');
+    loginAbortRef.current?.abort();
+    const controller = new AbortController();
+    loginAbortRef.current = controller;
+
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`, {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.qr) {
+          setLoginQr(data.qr);
+          setLoginStatus('running');
+          // Start polling for completion
+          loginPollRef.current = setInterval(async () => {
+            try {
+              const pollRes = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`);
+              if (pollRes.ok) {
+                const pollData = await pollRes.json();
+                if (pollData.status === 'linked') {
+                  setLoginStatus('linked');
+                  if (loginPollRef.current) clearInterval(loginPollRef.current);
+                  onCheckStatus();
+                } else if (pollData.status === 'error' || pollData.status === 'expired') {
+                  setLoginStatus('error');
+                  setLoginError(pollData.error || 'Login expired or failed');
+                  if (loginPollRef.current) clearInterval(loginPollRef.current);
+                }
+              }
+            } catch { /* */ }
+          }, 5000);
+        }
+      } else {
+        setLoginStatus('error');
+        setLoginError('Failed to start WhatsApp login');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        setLoginStatus('error');
+        setLoginError('Network error');
+      }
+    }
+  };
+
+  const cancelLogin = async () => {
+    if (loginPollRef.current) clearInterval(loginPollRef.current);
+    loginAbortRef.current?.abort();
+    try {
+      await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`, { method: 'DELETE' });
+    } catch { /* */ }
+    setLoginStatus('idle');
+    setLoginQr(null);
+    setLoginError('');
+  };
+
   if (wa?.linked) {
     return (
       <div>
@@ -630,33 +700,89 @@ function WhatsAppTab({
     );
   }
 
+  // QR Login in progress
+  if (loginStatus === 'starting' || loginStatus === 'running') {
+    return (
+      <div>
+        <Badge tone="warning">Link in progress</Badge>
+
+        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
+          Scan this QR code with WhatsApp (Linked Devices &rarr; Link a Device):
+        </p>
+
+        {/* QR Code display */}
+        {loginQr && (
+          <pre style={{
+            background: '#000',
+            color: '#fff',
+            padding: '12px',
+            fontSize: '6px',
+            lineHeight: 1,
+            letterSpacing: 0,
+            fontFamily: 'monospace',
+            overflow: 'auto',
+            maxHeight: 320,
+            borderRadius: 0,
+            border: '1px solid var(--border)',
+            whiteSpace: 'pre',
+          }}>
+            {loginQr}
+          </pre>
+        )}
+
+        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '10px 0' }}>
+          {loginStatus === 'starting' ? 'Generating QR code…' : 'Waiting for scan…'}
+        </p>
+
+        <Button variant="secondary" size="sm" onClick={cancelLogin}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  // Error state
+  if (loginStatus === 'error') {
+    return (
+      <div>
+        <Badge tone="danger">Link failed</Badge>
+        {loginError && <p style={{ fontSize: 11, color: 'var(--red)', margin: '10px 0' }}>{loginError}</p>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="primary" size="sm" onClick={startLogin}>Retry</Button>
+          <Button variant="secondary" size="sm" onClick={cancelLogin}>Go Back</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Linked successfully (transient state before refresh)
+  if (loginStatus === 'linked') {
+    return (
+      <div>
+        <Badge tone="success">Linked!</Badge>
+        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
+          WhatsApp linked successfully. Refreshing status…
+        </p>
+        <SkeletonLines count={2} />
+      </div>
+    );
+  }
+
+  // Default: not linked, not started
   return (
     <div>
       <Badge tone="warning">Not Linked</Badge>
 
       <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
-        WhatsApp uses QR-based linking. Enable WhatsApp in the agent config,
-        then run the link command from a terminal:
-      </p>
-
-      <div style={{
-        padding: '8px 12px',
-        background: 'var(--bg2)',
-        border: '1px solid var(--border)',
-        fontSize: 11, fontFamily: 'var(--font-mono)',
-        color: 'var(--blue)', wordBreak: 'break-all',
-        marginBottom: 10,
-      }}>
-        docker exec -it {agentId} openclaw channels login --channel whatsapp
-      </div>
-
-      <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '0 0 10px' }}>
-        Scan the QR code with WhatsApp (Linked Devices &rarr; Link a Device).
-        Once linked, return here and click Check Status to see the pairing manager.
+        Link WhatsApp by scanning a QR code from your phone.
+        Make sure WhatsApp is enabled in the agent config first.
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Button variant="primary" size="sm" onClick={onEnable} loading={waLoading} disabled={waLoading}>{waLoading ? 'Enabling…' : 'Enable WhatsApp'}</Button>
+        <Button variant="secondary" size="sm" onClick={startLogin} disabled={!wa}>
+          Show QR Code
+        </Button>
         <Button variant="secondary" size="sm" onClick={onCheckStatus} loading={waChecking}>
           Check Status
         </Button>
