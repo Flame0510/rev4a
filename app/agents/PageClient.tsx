@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, Badge, type Tone } from '../components/ui';
@@ -901,39 +901,32 @@ function RecreateSection({ agentName }: { agentName: string }) {
 function ChannelSection({ agentId, agentName }: { agentId: string; agentName: string }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<{ telegram: boolean; whatsapp: boolean } | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
+
+  const doFetchPreview = useCallback(() => {
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`, { signal: controller.signal })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data) {
+          setPreview({
+            telegram: data.telegram?.connected === true,
+            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
+          });
+        }
+      })
+      .catch((e: any) => {
+        if (e?.name !== 'AbortError') { /* ignore aborted */ }
+      });
+  }, [agentId]);
 
   useEffect(() => {
-    let cancelled = false;
     setPreview(null);
-    fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!cancelled && data) {
-          setPreview({
-            telegram: data.telegram?.connected === true,
-            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
-          });
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [agentId]);
-
-  const fetchPreview = useCallback(() => {
-    let cancelled = false;
-    fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!cancelled && data) {
-          setPreview({
-            telegram: data.telegram?.connected === true,
-            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
-          });
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [agentId]);
+    doFetchPreview();
+    return () => { previewAbortRef.current?.abort(); };
+  }, [doFetchPreview]);
 
   return (
     <>
@@ -963,7 +956,7 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
         agentId={agentId}
         agentName={agentName}
         open={open}
-        onClose={() => { setOpen(false); fetchPreview(); }}
+        onClose={() => { setOpen(false); doFetchPreview(); }}
       />
     </>
   );

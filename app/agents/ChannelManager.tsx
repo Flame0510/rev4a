@@ -63,43 +63,49 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   const [pending, setPending] = useState<PendingPairing[]>([]);
   const [approved, setApproved] = useState<ApprovedPairing[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pairingsAbortRef = useRef<AbortController | null>(null);
+  const channelsAbortRef = useRef<AbortController | null>(null);
 
   const [waChecking, setWaChecking] = useState(false);
 
   const fetchChannels = useCallback(async () => {
+    // Abort any in-flight channels request
+    channelsAbortRef.current?.abort();
+    const controller = new AbortController();
+    channelsAbortRef.current = controller;
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`);
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels`, { signal: controller.signal });
       if (res.ok) {
         const data = await res.json();
         setChannels(data);
       }
-    } catch { /* */ }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') { /* ignore aborted */ }
+    }
     finally { setChannelsLoading(false); }
   }, [agentId]);
 
-  const fetchPairings = useCallback(async () => {
-    setPairingsLoading(true);
+  // Shared fetch helper for pairings — cancels previous in-flight request
+  const doFetchPairings = useCallback(async (showLoading: boolean) => {
+    pairingsAbortRef.current?.abort();
+    const controller = new AbortController();
+    pairingsAbortRef.current = controller;
+    if (showLoading) setPairingsLoading(true);
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing`);
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing`, { signal: controller.signal });
       if (res.ok) {
         const data = await res.json();
         setPending(data.pending ?? []);
         setApproved(data.approved ?? []);
       }
-    } catch { /* */ }
-    finally { setPairingsLoading(false); }
-  }, []);
-
-  const pollPairings = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing`);
-      if (res.ok) {
-        const data = await res.json();
-        setPending(data.pending ?? []);
-        setApproved(data.approved ?? []);
-      }
-    } catch { /* */ }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') { /* ignore aborted */ }
+    }
+    finally { if (showLoading) setPairingsLoading(false); }
   }, [agentId]);
+
+  const fetchPairings = useCallback(() => doFetchPairings(true), [doFetchPairings]);
+  const pollPairings = useCallback(() => doFetchPairings(false), [doFetchPairings]);
 
   useEffect(() => {
     if (open) {
