@@ -1,6 +1,6 @@
 # Olympus API Reference
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-07-19
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -744,6 +744,167 @@ aligning the volume's state/config to the new binary.
 ```
 
 **Error (500):** `{ "error": "Pre-recreate backup failed, aborting: ..." }`
+
+---
+
+## Channels
+
+Channel APIs read/write agent channel configuration (Telegram) directly inside agent containers via `docker exec`. All endpoints require the agent container to be running.
+
+### `GET /api/agents/[id]/channels`
+Get channel configuration for an agent.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{
+  "agentId": "atlas",
+  "telegram": {
+    "connected": true,
+    "botToken": "1234...5678",
+    "dmPolicy": "pairing",
+    "allowFrom": ["123456789"]
+  }
+}
+```
+
+- `telegram` is `null` if not configured
+- `botToken` is masked (first 4 + last 4 chars)
+- `allowFrom` lists approved sender IDs
+
+---
+
+### `PUT /api/agents/[id]/channels/telegram`
+Connect Telegram to an agent by saving a bot token.
+
+**Auth:** browser cookie
+
+**Body:**
+```json
+{
+  "botToken": "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `botToken` | yes | Bot token from @BotFather |
+
+**Response (200):** `{ "success": true }`
+
+**Response (400):** `{ "error": "botToken is required" }`
+
+**Response (404):** `{ "error": "Agent container not found: ..." }`
+
+**Side effects:**
+- Writes `channels.telegram.botToken` and `channels.telegram.dmPolicy: "pairing"` to `/root/.openclaw/openclaw.json`
+- Creates a binding for this agent → telegram channel
+- If the token changed, wipes previous pairing data
+- The agent must be restarted for the gateway to pick up the new config
+
+---
+
+### `DELETE /api/agents/[id]/channels/telegram`
+Disconnect Telegram from an agent.
+
+**Auth:** browser cookie
+
+**Response (200):** `{ "success": true }`
+
+**Response (404):** `{ "error": "Agent container not found: ..." }`
+
+**Side effects:**
+- Sets `channels.telegram.enabled: false`, removes `botToken` and `allowFrom`
+- Removes the telegram binding
+- Deletes pairing files (`telegram-pairing.json`, `telegram-default-allowFrom.json`)
+- No restart required
+
+---
+
+### `GET /api/agents/[id]/channels/pairing?channel=telegram`
+Get pending and approved pairings for a channel.
+
+**Auth:** browser cookie
+
+**Query params:**
+| Param | Required | Description |
+|---|---|---|
+| `channel` | no | Channel name (default: `telegram`) |
+
+**Response:**
+```json
+{
+  "pending": [
+    { "code": "A1B2", "senderId": null }
+  ],
+  "approved": [
+    { "senderId": "123456789" }
+  ]
+}
+```
+
+- Pending codes are from `openclaw pairing list --json`
+- Approved senders are from the credentials allowFrom file
+
+---
+
+### `POST /api/agents/[id]/channels/pairing?channel=telegram`
+Approve a pending pairing code.
+
+**Auth:** browser cookie
+
+**Query params:**
+| Param | Required | Description |
+|---|---|---|
+| `channel` | no | Channel name (default: `telegram`) |
+
+**Body:**
+```json
+{ "code": "A1B2" }
+```
+
+**Response (200):** `{ "success": true }`
+
+**Response (400):** `{ "error": "Pairing code is required" }`
+
+**Response (404):** `{ "error": "..." }`
+
+---
+
+### `DELETE /api/agents/[id]/channels/pairing?channel=telegram&senderId=123456789`
+Revoke an approved sender.
+
+**Auth:** browser cookie
+
+**Query params:**
+| Param | Required | Description |
+|---|---|---|
+| `channel` | no | Channel name (default: `telegram`) |
+| `senderId` | yes | Sender ID to revoke |
+
+**Response (200):** `{ "success": true }`
+
+**Response (400):** `{ "error": "senderId query param is required" }`
+
+---
+
+### `GET /api/agents/channels-summary`
+Lightweight channel status for all running agents (used for TG chips on the agent list).
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{
+  "atlas": { "telegram": true },
+  "prometheus": { "telegram": false }
+}
+```
+
+- Only includes agents with `AGENT_ID` Docker label
+- `telegram: true` means the channel is connected and configured
+- Cached for 15 seconds (maxDuration)
 
 ---
 

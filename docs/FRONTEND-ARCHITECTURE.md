@@ -1,6 +1,6 @@
 # Olympus Frontend Architecture
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-07-19
 
 ## Layering
 
@@ -44,6 +44,7 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `useOnboarding` | `app/onboarding/useOnboarding.ts` | Shared hook: onboarding state, step transitions, provider save, restart. Receives server-side initial state to avoid loading flash. |
 | `OnboardingIcons` | `app/onboarding/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `DockerIcon`, `GatewayIcon`, etc. |
 | `tokens` | `tokens.ts` | TypeScript types for `Tone` and related token values. |
+| `Badge` | `Badge.tsx` | Inline status tag with tone variants (success, danger, warning, neutral). Used for channel chips, pairing labels, error/success messages. |
 
 ### Rules
 
