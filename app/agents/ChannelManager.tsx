@@ -285,7 +285,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         const data = await res.json().catch(() => ({ error: 'Failed' }));
         setError(data.error || 'Failed to enable WhatsApp');
       } else {
-        setSuccess('WhatsApp enabled. Now link it from the agent terminal.');
+        setSuccess('WhatsApp enabled. Restart the agent to activate.');
         fetchChannels();
       }
     } catch { setError('Network error'); }
@@ -393,8 +393,10 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
           waPairingsLoading={waPairingsLoading}
           waApprovingCode={waApprovingCode}
           waRevokingId={waRevokingId}
+          restarting={restarting}
           onEnable={handleWhatsAppEnable}
           onDisable={handleWhatsAppDisable}
+          onRestart={handleRestartAgent}
           onCheckStatus={handleCheckWhatsAppStatus}
           onApprove={(code) => handleApprovePairing(code, 'whatsapp')}
           onRevoke={(senderId) => handleRevokePairing(senderId, 'whatsapp')}
@@ -581,7 +583,8 @@ function PairingSection({
 function WhatsAppTab({
   agentId, wa, waLoading, waChecking, waDisconnecting,
   waPending, waApproved, waPairingsLoading, waApprovingCode, waRevokingId,
-  onEnable, onDisable, onCheckStatus, onApprove, onRevoke,
+  restarting,
+  onEnable, onDisable, onRestart, onCheckStatus, onApprove, onRevoke,
 }: {
   agentId: string;
   wa: WhatsAppChannel | null;
@@ -593,8 +596,10 @@ function WhatsAppTab({
   waPairingsLoading: boolean;
   waApprovingCode: string | null;
   waRevokingId: string | null;
+  restarting: boolean;
   onEnable: () => void;
   onDisable: () => void;
+  onRestart: () => void;
   onCheckStatus: () => void;
   onApprove: (code: string) => void;
   onRevoke: (senderId: string) => void;
@@ -609,6 +614,13 @@ function WhatsAppTab({
   useEffect(() => {
     return () => { if (loginPollRef.current) clearInterval(loginPollRef.current); };
   }, []);
+
+  // Auto-start QR when wa is enabled but not linked
+  useEffect(() => {
+    if (wa && !wa.linked && loginStatus === 'idle') {
+      startLogin();
+    }
+  }, [wa]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startLogin = async () => {
     setLoginStatus('starting');
@@ -669,6 +681,7 @@ function WhatsAppTab({
     setLoginError('');
   };
 
+  // ── Linked ──
   if (wa?.linked) {
     return (
       <div>
@@ -700,7 +713,7 @@ function WhatsAppTab({
     );
   }
 
-  // QR Login in progress
+  // ── QR Login in progress ──
   if (loginStatus === 'starting' || loginStatus === 'running') {
     return (
       <div>
@@ -734,14 +747,15 @@ function WhatsAppTab({
           {loginStatus === 'starting' ? 'Generating QR code…' : 'Waiting for scan…'}
         </p>
 
-        <Button variant="secondary" size="sm" onClick={cancelLogin}>
-          Cancel
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="secondary" size="sm" onClick={startLogin}>Regenerate QR</Button>
+          <Button variant="secondary" size="sm" onClick={cancelLogin}>Cancel</Button>
+        </div>
       </div>
     );
   }
 
-  // Error state
+  // ── Error ──
   if (loginStatus === 'error') {
     return (
       <div>
@@ -755,7 +769,7 @@ function WhatsAppTab({
     );
   }
 
-  // Linked successfully (transient state before refresh)
+  // ── Linked (transient, refreshing) ──
   if (loginStatus === 'linked') {
     return (
       <div>
@@ -768,25 +782,41 @@ function WhatsAppTab({
     );
   }
 
-  // Default: not linked, not started
+  // ── Enabled but not linked (gateway needs restart) ──
+  if (wa) {
+    return (
+      <div>
+        <Badge tone="warning">Not Linked</Badge>
+
+        <div style={{ marginTop: 12 }}>
+          <Button variant="secondary" size="sm" loading={restarting} disabled={restarting} onClick={onRestart}>
+            {restarting ? 'Restarting…' : 'Restart Agent'}
+          </Button>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', marginLeft: 10 }}>
+            Required to activate WhatsApp
+          </span>
+        </div>
+
+        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '12px 0 0' }}>
+          After restart, a QR code will appear here for linking.
+        </p>
+      </div>
+    );
+  }
+
+  // ── Not enabled ──
   return (
     <div>
-      <Badge tone="warning">Not Linked</Badge>
+      <Badge tone="neutral">Not Configured</Badge>
 
       <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
-        Link WhatsApp by scanning a QR code from your phone.
-        Make sure WhatsApp is enabled in the agent config first.
+        Enable WhatsApp to get started. After restarting the agent,
+        a QR code will appear for linking your phone.
       </p>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button variant="primary" size="sm" onClick={onEnable} loading={waLoading} disabled={waLoading}>{waLoading ? 'Enabling…' : 'Enable WhatsApp'}</Button>
-        <Button variant="secondary" size="sm" onClick={startLogin} disabled={!wa}>
-          Show QR Code
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onCheckStatus} loading={waChecking}>
-          Check Status
-        </Button>
-      </div>
+      <Button variant="primary" size="sm" onClick={onEnable} loading={waLoading} disabled={waLoading}>
+        {waLoading ? 'Enabling…' : 'Enable WhatsApp'}
+      </Button>
     </div>
   );
 }
