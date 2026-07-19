@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Modal, Tabs, Input, Badge } from '../components/ui';
+import { Button, Modal, Input, Badge } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
 
 interface TelegramChannel {
@@ -9,14 +9,6 @@ interface TelegramChannel {
   botToken: string;
   dmPolicy: string;
   allowFrom: string[];
-}
-
-interface WhatsAppChannel {
-  linked: boolean;
-  dmPolicy: string;
-  allowFrom: string[];
-  selfChatMode: boolean;
-  status: string;
 }
 
 interface PendingPairing {
@@ -31,7 +23,6 @@ interface ApprovedPairing {
 interface ChannelsData {
   agentId: string;
   telegram: TelegramChannel | null;
-  whatsapp: WhatsAppChannel | null;
 }
 
 interface Props {
@@ -47,16 +38,10 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   const [channels, setChannels] = useState<ChannelsData | null>(null);
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [pairingsLoading, setPairingsLoading] = useState(true);
-  const [waPairingsLoading, setWaPairingsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [waDisconnecting, setWaDisconnecting] = useState(false);
-  const [waLoading, setWaLoading] = useState(false);
   const [approvingCode, setApprovingCode] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const [waApprovingCode, setWaApprovingCode] = useState<string | null>(null);
-  const [waRevokingId, setWaRevokingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -66,15 +51,9 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
 
   const [pending, setPending] = useState<PendingPairing[]>([]);
   const [approved, setApproved] = useState<ApprovedPairing[]>([]);
-  const [waPending, setWaPending] = useState<PendingPairing[]>([]);
-  const [waApproved, setWaApproved] = useState<ApprovedPairing[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const waPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pairingsAbortRef = useRef<AbortController | null>(null);
-  const waPairingsAbortRef = useRef<AbortController | null>(null);
   const channelsAbortRef = useRef<AbortController | null>(null);
-
-  const [waChecking, setWaChecking] = useState(false);
 
   const fetchChannels = useCallback(async () => {
     // Abort any in-flight channels request
@@ -94,44 +73,34 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   }, [agentId]);
 
   // Shared fetch helper for pairings — cancels previous in-flight request
-  const doFetchPairings = useCallback(async (channel: string, showLoading: boolean) => {
-    const abortRef = channel === 'whatsapp' ? waPairingsAbortRef : pairingsAbortRef;
-    const setData = channel === 'whatsapp'
-      ? { setPending: setWaPending, setApproved: setWaApproved, setLoading: setWaPairingsLoading }
-      : { setPending: setPending, setApproved: setApproved, setLoading: setPairingsLoading };
-
-    abortRef.current?.abort();
+  const doFetchPairings = useCallback(async (showLoading: boolean) => {
+    pairingsAbortRef.current?.abort();
     const controller = new AbortController();
-    abortRef.current = controller;
-    if (showLoading) setData.setLoading(true);
+    pairingsAbortRef.current = controller;
+    if (showLoading) setPairingsLoading(true);
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}`, { signal: controller.signal });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=telegram`, { signal: controller.signal });
       if (res.ok) {
         const data = await res.json();
-        setData.setPending(data.pending ?? []);
-        setData.setApproved(data.approved ?? []);
+        setPending(data.pending ?? []);
+        setApproved(data.approved ?? []);
       }
     } catch (e: any) {
       if (e?.name !== 'AbortError') { /* ignore aborted */ }
     }
-    finally { if (showLoading) setData.setLoading(false); }
+    finally { if (showLoading) setPairingsLoading(false); }
   }, [agentId]);
 
-  const fetchPairings = useCallback(() => doFetchPairings('telegram', true), [doFetchPairings]);
-  const pollPairings = useCallback(() => doFetchPairings('telegram', false), [doFetchPairings]);
-  const fetchWaPairings = useCallback(() => doFetchPairings('whatsapp', true), [doFetchPairings]);
-  const pollWaPairings = useCallback(() => doFetchPairings('whatsapp', false), [doFetchPairings]);
+  const fetchPairings = useCallback(() => doFetchPairings(true), [doFetchPairings]);
+  const pollPairings = useCallback(() => doFetchPairings(false), [doFetchPairings]);
 
   useEffect(() => {
     if (open) {
       setChannelsLoading(true);
       setPairingsLoading(true);
-      setWaPairingsLoading(true);
       setChannels(null);
       setPending([]);
       setApproved([]);
-      setWaPending([]);
-      setWaApproved([]);
       fetchChannels();
       setError('');
       setSuccess('');
@@ -139,40 +108,25 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
-      if (waPollRef.current) clearInterval(waPollRef.current);
     };
   }, [open, fetchChannels]);
 
   // Initial pairings fetch when channels load
   useEffect(() => {
-    if (!channelsLoading) {
-      if (channels?.telegram?.connected) {
-        fetchPairings();
-      }
-      if (channels?.whatsapp?.linked) {
-        fetchWaPairings();
-      }
+    if (!channelsLoading && channels?.telegram?.connected) {
+      fetchPairings();
     }
-  }, [channelsLoading, channels?.telegram?.connected, channels?.whatsapp?.linked, fetchPairings, fetchWaPairings]);
+  }, [channelsLoading, channels?.telegram?.connected, fetchPairings]);
 
   // Poll pairings when on the active tab and connected/linked
   useEffect(() => {
-    if (open && activeTab === 0 && channels?.telegram?.connected) {
+    if (open && channels?.telegram?.connected) {
       pollRef.current = setInterval(pollPairings, PAIRING_POLL_MS);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [open, activeTab, channels?.telegram?.connected, pollPairings]);
-
-  useEffect(() => {
-    if (open && activeTab === 1 && channels?.whatsapp?.linked) {
-      waPollRef.current = setInterval(pollWaPairings, PAIRING_POLL_MS);
-    } else {
-      if (waPollRef.current) clearInterval(waPollRef.current);
-    }
-    return () => { if (waPollRef.current) clearInterval(waPollRef.current); };
-  }, [open, activeTab, channels?.whatsapp?.linked, pollWaPairings]);
+  }, [open, channels?.telegram?.connected, pollPairings]);
 
   const handleTelegramConnect = async () => {
     setLoading(true); setError(''); setSuccess('');
@@ -199,23 +153,21 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     setConfirmAction({ type: 'disconnect', channel: 'telegram' });
   };
 
-  const executeDisconnect = async (channel: string) => {
+  const executeDisconnect = async (_channel: string) => {
     setConfirmAction(null);
-    const isTg = channel === 'telegram';
-    const setDisc = isTg ? setDisconnecting : setWaDisconnecting;
-    setDisc(true); setError(''); setSuccess('');
+    setDisconnecting(true); setError(''); setSuccess('');
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/${channel}`, { method: 'DELETE' });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/telegram`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed' }));
-        setError(data.error || `Failed to disconnect ${channel}`);
+        setError(data.error || 'Failed to disconnect Telegram');
       } else {
-        setSuccess(`${channel === 'telegram' ? 'Telegram' : 'WhatsApp'} disconnected.`);
-        if (isTg) setPending([]); else setWaPending([]);
+        setSuccess('Telegram disconnected.');
+        setPending([]);
         fetchChannels();
       }
     } catch { setError('Network error'); }
-    finally { setDisc(false); }
+    finally { setDisconnecting(false); }
   };
 
   const handleRestartAgent = async () => {
@@ -233,11 +185,10 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     finally { setRestarting(false); }
   };
 
-  const handleApprovePairing = async (code: string, channel: string = 'telegram') => {
-    const setAppr = channel === 'whatsapp' ? setWaApprovingCode : setApprovingCode;
-    setAppr(code); setError(''); setSuccess('');
+  const handleApprovePairing = async (code: string) => {
+    setApprovingCode(code); setError(''); setSuccess('');
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}`, {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=telegram`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),
@@ -247,23 +198,22 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         setError(data.error || 'Failed to approve');
       } else {
         setSuccess(`Pairing ${code} approved.`);
-        await doFetchPairings(channel, false);
+        await doFetchPairings(false);
       }
     } catch { setError('Network error'); }
-    finally { setAppr(null); }
+    finally { setApprovingCode(null); }
   };
 
-  const handleRevokePairing = async (senderId: string, channel: string = 'telegram') => {
-    setConfirmAction({ type: 'revoke', channel, senderId });
+  const handleRevokePairing = async (senderId: string) => {
+    setConfirmAction({ type: 'revoke', channel: 'telegram', senderId });
   };
 
-  const executeRevoke = async (senderId: string, channel: string) => {
+  const executeRevoke = async (senderId: string, _channel: string) => {
     setConfirmAction(null);
-    const setRev = channel === 'whatsapp' ? setWaRevokingId : setRevokingId;
-    setRev(senderId); setError(''); setSuccess('');
+    setRevokingId(senderId); setError(''); setSuccess('');
     try {
       const res = await fetch(
-        `/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}&senderId=${encodeURIComponent(senderId)}`,
+        `/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=telegram&senderId=${encodeURIComponent(senderId)}`,
         { method: 'DELETE' },
       );
       const data = await res.json();
@@ -271,58 +221,16 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         setError(data.error || 'Failed to revoke');
       } else {
         setSuccess(`Revoked ${senderId}.`);
-        await doFetchPairings(channel, false);
+        await doFetchPairings(false);
       }
     } catch { setError('Network error'); }
-    finally { setRev(null); }
-  };
-
-  const handleWhatsAppEnable = async () => {
-    setWaLoading(true); setError(''); setSuccess('');
-    try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp`, { method: 'POST' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed' }));
-        setError(data.error || 'Failed to enable WhatsApp');
-      } else {
-        setSuccess('WhatsApp enabled. Restart the agent to activate.');
-        fetchChannels();
-      }
-    } catch { setError('Network error'); }
-    finally { setWaLoading(false); }
-  };
-
-  const handleWhatsAppDisable = async () => {
-    setConfirmAction({ type: 'disconnect', channel: 'whatsapp' });
-  };
-
-  const handleCheckWhatsAppStatus = async () => {
-    setWaChecking(true); setError('');
-    try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.linked) {
-          setSuccess('WhatsApp is linked!');
-        } else {
-          setError(data.status || 'WhatsApp is not linked yet');
-        }
-      }
-    } catch { setError('Failed to check status'); }
-    finally { setWaChecking(false); fetchChannels(); }
+    finally { setRevokingId(null); }
   };
 
   const tg = channels?.telegram;
-  const wa = channels?.whatsapp;
-
-  const tabItems = [
-    { label: 'Telegram', active: activeTab === 0, onClick: () => { setActiveTab(0); setError(''); setSuccess(''); } },
-    { label: 'WhatsApp', active: activeTab === 1, onClick: () => { setActiveTab(1); setError(''); setSuccess(''); } },
-  ];
 
   return (
     <Modal open={open} onClose={onClose} title={`Channel Manager: ${agentName}`} maxWidth={520}>
-      <Tabs items={tabItems} />
 
       {error && <div style={{ margin: '8px 0' }}><Badge tone="danger">{error}</Badge></div>}
       {success && <div style={{ margin: '8px 0' }}><Badge tone="success">{success}</Badge></div>}
@@ -338,9 +246,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         <p style={{ fontSize: 12, color: 'var(--text)', margin: '0 0 16px 0' }}>
           {confirmAction?.type === 'revoke'
             ? `Revoke access for sender ${confirmAction.senderId}?`
-            : confirmAction?.channel === 'telegram'
-              ? 'Disconnect Telegram? All paired users will be removed.'
-              : 'Disconnect WhatsApp? The linked session will be logged out and all paired users removed.'}
+            : 'Disconnect Telegram? All paired users will be removed.'}
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
@@ -361,7 +267,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
 
       {channelsLoading ? (
         <SkeletonLines count={4} />
-      ) : activeTab === 0 ? (
+      ) : (
         <TelegramTab
           agentId={agentId}
           tg={tg ?? null}
@@ -378,28 +284,8 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
           onConnect={handleTelegramConnect}
           onDisconnect={handleTelegramDisconnect}
           onRestart={handleRestartAgent}
-          onApprove={(code) => handleApprovePairing(code, 'telegram')}
-          onRevoke={(senderId) => handleRevokePairing(senderId, 'telegram')}
-        />
-      ) : (
-        <WhatsAppTab
-          agentId={agentId}
-          wa={wa ?? null}
-          waLoading={waLoading}
-          waChecking={waChecking}
-          waDisconnecting={waDisconnecting}
-          waPending={waPending}
-          waApproved={waApproved}
-          waPairingsLoading={waPairingsLoading}
-          waApprovingCode={waApprovingCode}
-          waRevokingId={waRevokingId}
-          restarting={restarting}
-          onEnable={handleWhatsAppEnable}
-          onDisable={handleWhatsAppDisable}
-          onRestart={handleRestartAgent}
-          onCheckStatus={handleCheckWhatsAppStatus}
-          onApprove={(code) => handleApprovePairing(code, 'whatsapp')}
-          onRevoke={(senderId) => handleRevokePairing(senderId, 'whatsapp')}
+          onApprove={handleApprovePairing}
+          onRevoke={handleRevokePairing}
         />
       )}
     </Modal>
@@ -574,249 +460,6 @@ function PairingSection({
           )}
         </>
       )}
-    </div>
-  );
-}
-
-// ── WhatsApp Tab ─────────────────────────────
-
-function WhatsAppTab({
-  agentId, wa, waLoading, waChecking, waDisconnecting,
-  waPending, waApproved, waPairingsLoading, waApprovingCode, waRevokingId,
-  restarting,
-  onEnable, onDisable, onRestart, onCheckStatus, onApprove, onRevoke,
-}: {
-  agentId: string;
-  wa: WhatsAppChannel | null;
-  waLoading: boolean;
-  waChecking: boolean;
-  waDisconnecting: boolean;
-  waPending: PendingPairing[];
-  waApproved: ApprovedPairing[];
-  waPairingsLoading: boolean;
-  waApprovingCode: string | null;
-  waRevokingId: string | null;
-  restarting: boolean;
-  onEnable: () => void;
-  onDisable: () => void;
-  onRestart: () => void;
-  onCheckStatus: () => void;
-  onApprove: (code: string) => void;
-  onRevoke: (senderId: string) => void;
-}) {
-  const [loginQr, setLoginQr] = useState<string | null>(null);
-  const [loginStatus, setLoginStatus] = useState<'idle' | 'starting' | 'running' | 'linked' | 'error'>('idle');
-  const [loginError, setLoginError] = useState('');
-  const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const loginAbortRef = useRef<AbortController | null>(null);
-
-  // Cleanup poll on unmount
-  useEffect(() => {
-    return () => { if (loginPollRef.current) clearInterval(loginPollRef.current); };
-  }, []);
-
-  // Auto-start QR when wa is enabled but not linked
-  useEffect(() => {
-    if (wa && !wa.linked && loginStatus === 'idle') {
-      startLogin();
-    }
-  }, [wa]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const startLogin = async () => {
-    setLoginStatus('starting');
-    setLoginError('');
-    loginAbortRef.current?.abort();
-    const controller = new AbortController();
-    loginAbortRef.current = controller;
-
-    try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`, {
-        method: 'POST',
-        signal: controller.signal,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.qr) {
-          setLoginQr(data.qr);
-          setLoginStatus('running');
-          // Start polling for completion
-          loginPollRef.current = setInterval(async () => {
-            try {
-              const pollRes = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`);
-              if (pollRes.ok) {
-                const pollData = await pollRes.json();
-                if (pollData.status === 'linked') {
-                  setLoginStatus('linked');
-                  if (loginPollRef.current) clearInterval(loginPollRef.current);
-                  onCheckStatus();
-                } else if (pollData.status === 'error' || pollData.status === 'expired') {
-                  setLoginStatus('error');
-                  setLoginError(pollData.error || 'Login expired or failed');
-                  if (loginPollRef.current) clearInterval(loginPollRef.current);
-                }
-              }
-            } catch { /* */ }
-          }, 5000);
-        }
-      } else {
-        setLoginStatus('error');
-        setLoginError('Failed to start WhatsApp login');
-      }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        setLoginStatus('error');
-        setLoginError('Network error');
-      }
-    }
-  };
-
-  const cancelLogin = async () => {
-    if (loginPollRef.current) clearInterval(loginPollRef.current);
-    loginAbortRef.current?.abort();
-    try {
-      await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp/login`, { method: 'DELETE' });
-    } catch { /* */ }
-    setLoginStatus('idle');
-    setLoginQr(null);
-    setLoginError('');
-  };
-
-  // ── Linked ──
-  if (wa?.linked) {
-    return (
-      <div>
-        <Badge tone="success">Linked &mdash; DM: {wa.dmPolicy} &middot; Self Chat: {wa.selfChatMode ? 'On' : 'Off'}</Badge>
-
-        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button variant="secondary" size="sm" onClick={onCheckStatus} loading={waChecking}>
-            Refresh Status
-          </Button>
-        </div>
-
-        {/* Pairing */}
-        <PairingSection
-          pending={waPending}
-          approved={waApproved}
-          pairingsLoading={waPairingsLoading}
-          approvingCode={waApprovingCode}
-          revokingId={waRevokingId}
-          onApprove={onApprove}
-          onRevoke={onRevoke}
-        />
-
-        <div style={{ marginTop: 16 }}>
-          <Button variant="danger" size="sm" onClick={onDisable} loading={waDisconnecting} disabled={waDisconnecting}>
-            {waDisconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── QR Login in progress ──
-  if (loginStatus === 'starting' || loginStatus === 'running') {
-    return (
-      <div>
-        <Badge tone="warning">Link in progress</Badge>
-
-        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
-          Scan this QR code with WhatsApp (Linked Devices &rarr; Link a Device):
-        </p>
-
-        {/* QR Code display */}
-        {loginQr && (
-          <pre style={{
-            background: '#000',
-            color: '#fff',
-            padding: '12px',
-            fontSize: '6px',
-            lineHeight: 1,
-            letterSpacing: 0,
-            fontFamily: 'monospace',
-            overflow: 'auto',
-            maxHeight: 320,
-            borderRadius: 0,
-            border: '1px solid var(--border)',
-            whiteSpace: 'pre',
-          }}>
-            {loginQr}
-          </pre>
-        )}
-
-        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '10px 0' }}>
-          {loginStatus === 'starting' ? 'Generating QR code…' : 'Waiting for scan…'}
-        </p>
-
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" size="sm" onClick={startLogin}>Regenerate QR</Button>
-          <Button variant="secondary" size="sm" onClick={cancelLogin}>Cancel</Button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Error ──
-  if (loginStatus === 'error') {
-    return (
-      <div>
-        <Badge tone="danger">Link failed</Badge>
-        {loginError && <p style={{ fontSize: 11, color: 'var(--red)', margin: '10px 0' }}>{loginError}</p>}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="primary" size="sm" onClick={startLogin}>Retry</Button>
-          <Button variant="secondary" size="sm" onClick={cancelLogin}>Go Back</Button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Linked (transient, refreshing) ──
-  if (loginStatus === 'linked') {
-    return (
-      <div>
-        <Badge tone="success">Linked!</Badge>
-        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
-          WhatsApp linked successfully. Refreshing status…
-        </p>
-        <SkeletonLines count={2} />
-      </div>
-    );
-  }
-
-  // ── Enabled but not linked (gateway needs restart) ──
-  if (wa) {
-    return (
-      <div>
-        <Badge tone="warning">Not Linked</Badge>
-
-        <div style={{ marginTop: 12 }}>
-          <Button variant="secondary" size="sm" loading={restarting} disabled={restarting} onClick={onRestart}>
-            {restarting ? 'Restarting…' : 'Restart Agent'}
-          </Button>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)', marginLeft: 10 }}>
-            Required to activate WhatsApp
-          </span>
-        </div>
-
-        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '12px 0 0' }}>
-          After restart, a QR code will appear here for linking.
-        </p>
-      </div>
-    );
-  }
-
-  // ── Not enabled ──
-  return (
-    <div>
-      <Badge tone="neutral">Not Configured</Badge>
-
-      <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '10px 0' }}>
-        Enable WhatsApp to get started. After restarting the agent,
-        a QR code will appear for linking your phone.
-      </p>
-
-      <Button variant="primary" size="sm" onClick={onEnable} loading={waLoading} disabled={waLoading}>
-        {waLoading ? 'Enabling…' : 'Enable WhatsApp'}
-      </Button>
     </div>
   );
 }

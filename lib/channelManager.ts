@@ -1,7 +1,7 @@
 /**
  * channelManager.ts
  *
- * Reads and writes channel configuration (Telegram, WhatsApp) directly
+ * Reads and writes channel configuration (Telegram) directly
  * inside agent containers via `docker exec`.
  *
  * ── How it works ──
@@ -11,23 +11,13 @@
  *     channels.telegram.botToken in /root/.openclaw/openclaw.json.
  *   - No interactive login needed. Gateway picks it up on next restart.
  *
- * WhatsApp:
- *   - Config is set via config file (channels.whatsapp.dmPolicy etc.).
- *   - Linking is done interactively via `openclaw channels login --channel whatsapp`
- *     (QR code on terminal, scan with phone). We cannot automate this
- *     from a web UI — we show instructions instead.
- *   - Status is checked via `openclaw channels status --channel whatsapp --json`
- *     (requires gateway running in the container).
- *
  * File layout inside agent container:
  *   /root/.openclaw/openclaw.json          — config
- *   ~/.openclaw/credentials/whatsapp/default/creds.json — WhatsApp auth (managed by OpenClaw)
  *
  * ── Reference ──
  *
  *   OpenClaw docs:
  *     - channels/telegram.md
- *     - channels/whatsapp.md
  *     - gateway/config-channels.md
  *     - concepts/multi-agent.md (bindings)
  */
@@ -42,19 +32,9 @@ export interface TelegramChannel {
   allowFrom: string[];
 }
 
-export interface WhatsAppChannel {
-  linked: boolean;
-  dmPolicy: string;
-  allowFrom: string[];
-  selfChatMode: boolean;
-  /** Human-readable status from `openclaw channels status` */
-  status: string;
-}
-
 export interface AgentChannels {
   agentId: string;
   telegram: TelegramChannel | null;
-  whatsapp: WhatsAppChannel | null;
 }
 
 // ── Helpers ──────────────────────────────────
@@ -115,7 +95,7 @@ function findContainerById(agentId: string): string | null {
 
 export function getChannels(agentId: string): AgentChannels {
   const container = findContainerById(agentId);
-  const result: AgentChannels = { agentId, telegram: null, whatsapp: null };
+  const result: AgentChannels = { agentId, telegram: null };
 
   if (!container) return result;
 
@@ -136,40 +116,6 @@ export function getChannels(agentId: string): AgentChannels {
         allowFrom: (Array.isArray(telegram.allowFrom) ? telegram.allowFrom : []) as string[],
       };
     }
-  }
-
-  // ── WhatsApp ──
-  const whatsapp = (config.channels as Record<string, unknown>)?.whatsapp as Record<string, unknown> | undefined;
-  if (whatsapp && whatsapp.enabled !== false) {
-    // Status check requires gateway running; fall back to config-only if unreachable
-    let linked = false;
-    let statusText = 'not linked';
-
-    const statusRaw = containerExecNoFail(container, 'openclaw channels status --channel whatsapp --json 2>/dev/null');
-    if (statusRaw) {
-      try {
-        const parsed = JSON.parse(statusRaw);
-        linked = parsed?.linked === true || parsed?.connected === true;
-
-        if (parsed?.configOnly) {
-          statusText = parsed?.error || 'Gateway not reachable';
-        } else if (!linked) {
-          statusText = 'not linked';
-        } else {
-          statusText = 'linked';
-        }
-      } catch {
-        statusText = 'status unavailable';
-      }
-    }
-
-    result.whatsapp = {
-      linked,
-      dmPolicy: (whatsapp.dmPolicy ?? 'pairing') as string,
-      allowFrom: (Array.isArray(whatsapp.allowFrom) ? whatsapp.allowFrom : []) as string[],
-      selfChatMode: whatsapp.selfChatMode === true,
-      status: statusText,
-    };
   }
 
   return result;
@@ -263,100 +209,6 @@ export function removeTelegram(agentId: string): { success: boolean; error?: str
   }
 }
 
-// ── WhatsApp ─────────────────────────────────
-
-export function enableWhatsApp(agentId: string): {
-  success: boolean;
-  error?: string;
-} {
-  const container = findContainerById(agentId);
-  if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
-
-  try {
-    const config = readConfigJson(container) ?? {};
-    if (!config.channels) config.channels = {};
-    const channels = config.channels as Record<string, unknown>;
-
-    const existing = channels.whatsapp as Record<string, unknown> | undefined;
-    channels.whatsapp = {
-      ...existing,
-      enabled: true,
-      dmPolicy: 'pairing',
-    };
-
-    ensureBinding(config, agentId, 'whatsapp', undefined);
-
-    writeConfigJson(container, config);
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: (e as Error).message };
-  }
-}
-
-export function disableWhatsApp(agentId: string): {
-  success: boolean;
-  error?: string;
-} {
-  const container = findContainerById(agentId);
-  if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
-
-  try {
-    // Try logout first (requires gateway running; if not, just disable config)
-    containerExecNoFail(container, 'openclaw channels logout --channel whatsapp 2>/dev/null || true');
-
-    const config = readConfigJson(container);
-    if (config) {
-      const channels = config.channels as Record<string, unknown> | undefined;
-      if (channels?.whatsapp) {
-        (channels.whatsapp as Record<string, unknown>).enabled = false;
-      }
-
-      // Clean up pairing files — they belong to the disconnected session
-      containerExecNoFail(
-        container,
-        `rm -f ${pairingFiles('whatsapp')} 2>/dev/null`,
-      );
-
-      removeBindings(config, agentId, 'whatsapp');
-      writeConfigJson(container, config);
-    }
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: (e as Error).message };
-  }
-}
-
-export function getWhatsAppStatus(agentId: string): {
-  linked: boolean;
-  status: string;
-  gatewayOk: boolean;
-} {
-  const container = findContainerById(agentId);
-  if (!container) return { linked: false, status: 'container not found', gatewayOk: false };
-
-  const raw = containerExecNoFail(container, 'openclaw channels status --channel whatsapp --json 2>/dev/null');
-  if (!raw) return { linked: false, status: 'command failed', gatewayOk: false };
-
-  try {
-    const parsed = JSON.parse(raw);
-    const linked = parsed?.linked === true || parsed?.connected === true;
-    const gatewayOk = parsed?.gatewayReachable === true;
-
-    let status: string;
-    if (parsed?.configOnly) {
-      status = parsed?.error || 'Gateway not reachable (config-only mode)';
-    } else if (linked) {
-      status = 'linked';
-    } else {
-      status = 'not linked';
-    }
-
-    return { linked, status, gatewayOk };
-  } catch {
-    return { linked: false, status: 'status unavailable', gatewayOk: false };
-  }
-}
-
 // ── Internal helpers ─────────────────────────
 
 /**
@@ -423,7 +275,7 @@ function pairingFiles(channel: string): string {
   return `/root/.openclaw/credentials/${channel}-pairing.json /root/.openclaw/credentials/${channel}-default-allowFrom.json`;
 }
 
-/** Get pending + approved pairings for a channel (telegram | whatsapp) */
+/** Get pending + approved pairings for a channel */
 export function getPairings(agentId: string, channel: string = 'telegram'): PairingState {
   const container = findContainerById(agentId);
   const fallback: PairingState = { pending: [], approved: [] };
@@ -464,7 +316,7 @@ export function getPairings(agentId: string, channel: string = 'telegram'): Pair
   return { pending, approved };
 }
 
-/** Approve a pending pairing code for a channel (telegram | whatsapp) */
+/** Approve a pending pairing code */
 export function approvePairing(agentId: string, code: string, channel: string = 'telegram'): { success: boolean; error?: string } {
   const container = findContainerById(agentId);
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
@@ -481,7 +333,7 @@ export function approvePairing(agentId: string, code: string, channel: string = 
   }
 }
 
-/** Revoke an approved sender from the allowlist for a channel (telegram | whatsapp) */
+/** Revoke an approved sender from the allowlist */
 export function revokePairing(agentId: string, senderId: string, channel: string = 'telegram'): { success: boolean; error?: string } {
   const container = findContainerById(agentId);
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };

@@ -9,7 +9,7 @@ export const maxDuration = 15; // 15-second timeout for channels summary
  * GET /api/agents/channels-summary
  *
  * Returns a lightweight channel status map for all running agents.
- * { [agentId]: { telegram: boolean, whatsapp: boolean } }
+ * { [agentId]: { telegram: boolean } }
  */
 export async function GET(
   _request: NextRequest,
@@ -22,13 +22,12 @@ export async function GET(
     ).trim();
 
     const agentIds = out ? out.split('\n').filter(Boolean) : [];
-    const summary: Record<string, { telegram: boolean; whatsapp: boolean }> = {};
+    const summary: Record<string, { telegram: boolean }> = {};
 
     for (const agentId of agentIds) {
       const channels = getChannels(agentId);
       summary[agentId] = {
         telegram: channels.telegram?.connected === true,
-        whatsapp: channels.whatsapp?.linked === true || channels.whatsapp !== null,
       };
     }
 

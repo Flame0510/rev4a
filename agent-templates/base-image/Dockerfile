@@ -57,8 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Agent containers route model requests through Olympus provider proxy
 RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
-# WhatsApp channel plugin — required for WhatsApp connectivity
-    && openclaw plugins install clawhub:@openclaw/whatsapp \
 # Supabase CLI — installed via official GitHub release (npm global no longer supported on Linux)
 # Pinned to v2.109.1. Bump the version here to update.
     && curl -fsSL https://github.com/supabase/cli/releases/download/v2.109.1/supabase_linux_amd64.tar.gz -o /tmp/supabase.tar.gz \

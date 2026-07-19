@@ -77,7 +77,7 @@ export default function AgentsPageClient() {
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenSaving, setTokenSaving] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean; whatsapp: boolean }>>({});
+  const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -272,10 +272,9 @@ export default function AgentsPageClient() {
                 {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
                 {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
               </div>
-              {chSummary[agent.agentId] && (chSummary[agent.agentId].telegram || chSummary[agent.agentId].whatsapp) && (
+              {chSummary[agent.agentId]?.telegram && (
                 <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                  <Badge tone={chSummary[agent.agentId].telegram ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
-                  <Badge tone={chSummary[agent.agentId].whatsapp ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>WA</span></Badge>
+                  <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
                 </div>
               )}
             </ListItem>
@@ -325,10 +324,9 @@ export default function AgentsPageClient() {
                   {agent.ip && <span>{agent.ip}</span>}
                   {agent.ports && <span style={{ color: '#888' }}>{agent.ports}</span>}
                 </div>
-                {chSummary[agent.agentId] && (chSummary[agent.agentId].telegram || chSummary[agent.agentId].whatsapp) && (
+                {chSummary[agent.agentId]?.telegram && (
                   <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                    <Badge tone={chSummary[agent.agentId].telegram ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
-                    <Badge tone={chSummary[agent.agentId].whatsapp ? 'success' : 'neutral'}><span style={{ fontSize: 8, padding: '1px 6px' }}>WA</span></Badge>
+                    <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
                   </div>
                 )}
               </ListItem>
@@ -479,7 +477,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
         ))}
       </div>
 
-      {/* Channels — Telegram & WhatsApp */}
+      {/* Channels — Telegram */}
       <ChannelSection agentId={agent.agentId} agentName={agent.name} />
 
       {/* Config — View openclaw.json */}
@@ -896,11 +894,11 @@ function RecreateSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Channel section — Telegram & WhatsApp ─── */
+/* ─── Channel section — Telegram ─── */
 
 function ChannelSection({ agentId, agentName }: { agentId: string; agentName: string }) {
   const [open, setOpen] = useState(false);
-  const [preview, setPreview] = useState<{ telegram: boolean; whatsapp: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ telegram: boolean } | null>(null);
   const previewAbortRef = useRef<AbortController | null>(null);
 
   const doFetchPreview = useCallback(() => {
@@ -913,7 +911,6 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
         if (data) {
           setPreview({
             telegram: data.telegram?.connected === true,
-            whatsapp: data.whatsapp?.linked === true || data.whatsapp !== null,
           });
         }
       })
@@ -940,9 +937,6 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
               <>
                 <Badge tone={preview.telegram ? 'success' : 'neutral'}>
                   <span style={{ fontSize: 9 }}>{preview.telegram ? 'TG: Connected' : 'TG: Not Set'}</span>
-                </Badge>
-                <Badge tone={preview.whatsapp ? 'success' : 'neutral'}>
-                  <span style={{ fontSize: 9 }}>{preview.whatsapp ? 'WA: Active' : 'WA: Not Set'}</span>
                 </Badge>
               </>
             )}
