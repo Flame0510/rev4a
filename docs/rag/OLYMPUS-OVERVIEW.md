@@ -19,7 +19,13 @@ First-run setup wizard that guides new users through configuration. Four steps:
 The wizard is always accessible from the sidebar. A progress badge (e.g. "1/3") shows how many steps are complete. Once finished, the badge disappears and the dashboard banner goes away.
 
 ### Agents (`/agents`)
-Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups), and create new agents. Each agent card shows its template, status, and a direct link to its Control UI.
+Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups, Telegram/WhatsApp channels), and create new agents. Each agent card shows its template, status, TG/WA channel chips, and a direct link to its Control UI.
+
+**Channel Manager:** Each agent detail panel has a "CHANNELS" section with TG/WA status badges and a "Manage Channels" button. The modal lets you:
+- **Telegram:** connect a bot (paste bot token → save → restart agent), disconnect, and manage pairings (approve pending codes, revoke approved senders). Pairings are polled every 5 seconds.
+- **WhatsApp:** enable/disable the WhatsApp channel, check link status, and see terminal instructions for QR-based linking (`docker exec -it <agent> openclaw channels login --channel whatsapp`).
+
+The agent list also shows compact TG/WA chips next to each agent name (green = connected, no chip = not configured).
 
 The Agents page includes a banner for the **agent base image** (`openclaw-agent-base:latest`):
 - Green: image is up-to-date (no banner shown)

@@ -12,11 +12,20 @@ An AI assistant configured with a specific role, AI model, and workspace. Each a
 ## Agent Template
 A pre-built configuration used when creating a new agent. Templates include default files (AGENTS.md, SOUL.md, MEMORY.md, IDENTITY.md, TOOLS.md, HEARTBEAT.md), environment variables, and settings. Located in `agent-templates/`. Examples: Prometheus, Argus, Atlas.
 
+## Badge
+A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
+
 ## Backup (Agent)
 A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `olympus-backups` Docker volume. Used for restore operations and auto-created before each recreate.
 
 ## Container
 A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.), with CPU/memory metrics, logs, and a web terminal.
+
+## Channel
+A communication channel (Telegram or WhatsApp) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect channels and manage Telegram pairings (approve/reject senders). Channel status is shown as compact TG/WA chips on the agent list.
+
+## Channel Manager
+Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, check link status, QR-based linking via terminal. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
 
 ## Cost
 The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Olympus shows cost by today, 7 days, 30 days, all-time, and by model.
@@ -72,6 +81,15 @@ Replace an agent's persistent volume with a previously created backup. The conta
 ## Session
 One instance of an agent doing work. Tracks: start/end time, tokens used, cost, model, status, and task description. A session starts when an agent receives a task and ends when it completes or fails.
 
+## Pairing
+A security mechanism for Telegram channels. When a user sends `/start` to the bot, a 4-digit pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time.
+
+## Telegram
+A messaging channel type. Agents can be connected to Telegram via a bot token from @BotFather. Once connected, users send `/start` to get a pairing code, which an admin approves in the Channel Manager.
+
+## WhatsApp
+A messaging channel type. Agents can be linked to WhatsApp via QR code (`openclaw channels login --channel whatsapp`). Requires the WhatsApp plugin installed in the agent base image. Status can be checked from the Channel Manager.
+
 ## Session ID
 A unique identifier for a session. Format: `agent:<name>:<role>` (e.g. `agent:ops:main`) or `agent:<name>:subagent:<uuid>` for temporary child agents.
 
@@ -84,6 +102,24 @@ Current state of a session:
 - **working** — agent is actively processing a task (consuming tokens)
 - **completed** — task finished successfully
 - **error** — task failed
+
+## Badge
+A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
+
+## Channel
+A communication channel (Telegram or WhatsApp) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect channels and manage Telegram pairings (approve/reject senders). Channel status is shown as compact TG/WA chips on the agent list.
+
+## Channel Manager
+Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, check link status, QR-based linking via terminal. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
+
+## Pairing
+A security mechanism for Telegram channels. When a user sends `/start` to the bot, a 4-digit pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time.
+
+## Telegram
+A messaging channel type. Agents can be connected to Telegram via a bot token from @BotFather. Once connected, users send `/start` to get a pairing code, which an admin approves in the Channel Manager.
+
+## WhatsApp
+A messaging channel type. Agents can be linked to WhatsApp via QR code (`openclaw channels login --channel whatsapp`). Requires the WhatsApp plugin installed in the agent base image. Status can be checked from the Channel Manager.
 
 ## Token
 The unit of text processed by an AI model. Input tokens (your prompt) and output tokens (the AI's response) are counted separately and used to calculate cost.

@@ -99,7 +99,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | Route | Description |
 |---|---|
 | `/dashboard` | System overview — containers, resources, quick links |
-| `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard |
+| `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard, channel manager (Telegram/WhatsApp pairing) |
 | `/containers` | All Docker containers on the host |
 | `/onboarding` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
@@ -248,9 +248,11 @@ View all running Docker containers with:
 ### Agent management (`/agents`)
 Lists all agents (Docker containers with `AGENT_ID` label), with:
 - Name, image, template, status, ports, IP
+- TG/WA channel status chips (green = connected, hidden if neither configured)
 - **Shared gateway token** — text input with Save & Sync. Changing the token saves it to `data/agents-token.json` and pushes it to all running containers.
 - **Control UI link** — direct Traefik URL with `#token=<token>` hash, reads the token from `agents-token.json` (source of truth), not from the container's local config.
 - **Agent creation wizard** — multi-step form at `/agents/create`.
+- **Channel Manager** — each agent detail panel has a Channels section with Telegram and WhatsApp configuration, pairing management, and link status.
 
 ### Agent Creation Wizard (`/agents/create`)
 

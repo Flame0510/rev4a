@@ -18,6 +18,10 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I open the file explorer?"
 - "Which page shows costs?"
 - "Where do I manage credentials (GitHub, Trello, etc.)?"
+- "How do I connect an agent to Telegram?"
+- "How do I link an agent to WhatsApp?"
+- "How do I approve a Telegram pairing?"
+- "What do the TG and WA badges mean?"
 - "How do I get to the gateway?"
 - "Where is the terminal for a container?"
 - "Where can I edit memory files?"
@@ -51,6 +55,9 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I log in to an agent's control UI?"
 - "How do I register a new provider via OAuth?"
 - "How do I manage agent model fallbacks?"
+- "How do I connect an agent to Telegram?"
+- "How do I link WhatsApp to an agent?"
+- "How do I approve a pairing code?"
 
 ## Explanation Questions
 
@@ -73,6 +80,9 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How does the SSE stream work?"
 - "What is the shared gateway token?"
 - "What are model fallbacks?"
+- "What is the Channel Manager?"
+- "What is Telegram pairing?"
+- "What are the TG and WA badges on the agent list?"
 
 ## Troubleshooting Questions
 
@@ -88,6 +98,9 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "What happens if I abort a build?"
 - "Can I close the build modal while it's running?"
 - "How do agent image rebuilds work?"
+- "Why is my Telegram bot not connecting?"
+- "Why can't I approve a pairing code?"
+- "Why are TG/WA badges missing from my agent?"
 
 ## What PYTHIA CANNOT do
 
