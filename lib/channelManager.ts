@@ -206,7 +206,7 @@ export function setTelegramConfig(
     if (oldToken && oldToken !== params.botToken && (existing.dmPolicy as string) === 'pairing') {
       containerExecNoFail(
         container,
-        'rm -f /root/.openclaw/credentials/telegram-default-allowFrom.json 2>/dev/null; rm -f /root/.openclaw/credentials/telegram-pairing.json 2>/dev/null',
+        `rm -f ${pairingFiles('telegram')} 2>/dev/null`,
       );
     }
 
@@ -252,7 +252,7 @@ export function removeTelegram(agentId: string): { success: boolean; error?: str
     // Clean up pairing files — they belong to the disconnected bot
     containerExecNoFail(
       container,
-      'rm -f /root/.openclaw/credentials/telegram-default-allowFrom.json 2>/dev/null; rm -f /root/.openclaw/credentials/telegram-pairing.json 2>/dev/null',
+      `rm -f ${pairingFiles('telegram')} 2>/dev/null`,
     );
 
     removeBindings(config, agentId, 'telegram');
@@ -310,6 +310,14 @@ export function disableWhatsApp(agentId: string): {
       if (channels?.whatsapp) {
         (channels.whatsapp as Record<string, unknown>).enabled = false;
       }
+
+      // Clean up pairing files — they belong to the disconnected session
+      containerExecNoFail(
+        container,
+        `rm -f ${pairingFiles('whatsapp')} 2>/dev/null`,
+      );
+
+      removeBindings(config, agentId, 'whatsapp');
       writeConfigJson(container, config);
     }
     return { success: true };
@@ -407,14 +415,22 @@ export interface PairingState {
   approved: ApprovedPairing[];
 }
 
-/** Get pending + approved pairings for Telegram */
-export function getPairings(agentId: string): PairingState {
+function pairingAllowFile(channel: string): string {
+  return `/root/.openclaw/credentials/${channel}-default-allowFrom.json`;
+}
+
+function pairingFiles(channel: string): string {
+  return `/root/.openclaw/credentials/${channel}-pairing.json /root/.openclaw/credentials/${channel}-default-allowFrom.json`;
+}
+
+/** Get pending + approved pairings for a channel (telegram | whatsapp) */
+export function getPairings(agentId: string, channel: string = 'telegram'): PairingState {
   const container = findContainerById(agentId);
   const fallback: PairingState = { pending: [], approved: [] };
   if (!container) return fallback;
 
   // Pending
-  const pendingRaw = containerExecNoFail(container, 'openclaw pairing list --channel telegram --json 2>/dev/null');
+  const pendingRaw = containerExecNoFail(container, `openclaw pairing list --channel ${channel} --json 2>/dev/null`);
   const pending: PendingPairing[] = [];
   if (pendingRaw) {
     try {
@@ -429,7 +445,7 @@ export function getPairings(agentId: string): PairingState {
   }
 
   // Approved: read from OpenClaw credentials file
-  const allowRaw = containerExecNoFail(container, 'cat /root/.openclaw/credentials/telegram-default-allowFrom.json 2>/dev/null');
+  const allowRaw = containerExecNoFail(container, `cat ${pairingAllowFile(channel)} 2>/dev/null`);
   const approved: ApprovedPairing[] = [];
   if (allowRaw) {
     try {
@@ -448,13 +464,13 @@ export function getPairings(agentId: string): PairingState {
   return { pending, approved };
 }
 
-/** Approve a pending Telegram pairing code */
-export function approvePairing(agentId: string, code: string): { success: boolean; error?: string } {
+/** Approve a pending pairing code for a channel (telegram | whatsapp) */
+export function approvePairing(agentId: string, code: string, channel: string = 'telegram'): { success: boolean; error?: string } {
   const container = findContainerById(agentId);
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
 
   try {
-    const out = containerExecNoFail(container, `openclaw pairing approve telegram ${escapeShellArg(code)} 2>&1`);
+    const out = containerExecNoFail(container, `openclaw pairing approve ${channel} ${escapeShellArg(code)} 2>&1`);
     if (out && out.includes('error')) {
       return { success: false, error: out };
     }
@@ -465,8 +481,8 @@ export function approvePairing(agentId: string, code: string): { success: boolea
   }
 }
 
-/** Revoke an approved Telegram sender from the allowlist */
-export function revokePairing(agentId: string, senderId: string): { success: boolean; error?: string } {
+/** Revoke an approved sender from the allowlist for a channel (telegram | whatsapp) */
+export function revokePairing(agentId: string, senderId: string, channel: string = 'telegram'): { success: boolean; error?: string } {
   const container = findContainerById(agentId);
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
 
@@ -474,7 +490,7 @@ export function revokePairing(agentId: string, senderId: string): { success: boo
     // Try native revoke command first, fall back to direct file manipulation
     const nativeOut = containerExecNoFail(
       container,
-      `openclaw pairing revoke telegram ${escapeShellArg(senderId)} 2>&1`,
+      `openclaw pairing revoke ${channel} ${escapeShellArg(senderId)} 2>&1`,
     );
 
     if (nativeOut && !nativeOut.includes('Unknown command') && !nativeOut.includes('not found')) {
@@ -482,7 +498,7 @@ export function revokePairing(agentId: string, senderId: string): { success: boo
     }
 
     // Fallback: remove from credentials file directly
-    const filePath = '/root/.openclaw/credentials/telegram-default-allowFrom.json';
+    const filePath = pairingAllowFile(channel);
     containerExecNoFail(
       container,
       `node -e "const p='${filePath}';try{const d=JSON.parse(require('fs').readFileSync(p,'utf8'));d.allowFrom=(d.allowFrom||[]).filter(e=>e!=='${senderId.replace(/'/g, "'\\''")}');require('fs').writeFileSync(p,JSON.stringify(d,null,2),'utf8')}catch(e){}"`,

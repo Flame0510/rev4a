@@ -47,23 +47,31 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   const [channels, setChannels] = useState<ChannelsData | null>(null);
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [pairingsLoading, setPairingsLoading] = useState(true);
+  const [waPairingsLoading, setWaPairingsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waLoading, setWaLoading] = useState(false);
   const [approvingCode, setApprovingCode] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [waApprovingCode, setWaApprovingCode] = useState<string | null>(null);
+  const [waRevokingId, setWaRevokingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
   const [tgToken, setTgToken] = useState('');
   const [restarting, setRestarting] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<{ type: 'revoke'; senderId: string } | { type: 'disconnect' } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'revoke'; channel: string; senderId: string } | { type: 'disconnect'; channel: string } | null>(null);
 
   const [pending, setPending] = useState<PendingPairing[]>([]);
   const [approved, setApproved] = useState<ApprovedPairing[]>([]);
+  const [waPending, setWaPending] = useState<PendingPairing[]>([]);
+  const [waApproved, setWaApproved] = useState<ApprovedPairing[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const waPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pairingsAbortRef = useRef<AbortController | null>(null);
+  const waPairingsAbortRef = useRef<AbortController | null>(null);
   const channelsAbortRef = useRef<AbortController | null>(null);
 
   const [waChecking, setWaChecking] = useState(false);
@@ -86,50 +94,68 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   }, [agentId]);
 
   // Shared fetch helper for pairings — cancels previous in-flight request
-  const doFetchPairings = useCallback(async (showLoading: boolean) => {
-    pairingsAbortRef.current?.abort();
+  const doFetchPairings = useCallback(async (channel: string, showLoading: boolean) => {
+    const abortRef = channel === 'whatsapp' ? waPairingsAbortRef : pairingsAbortRef;
+    const setData = channel === 'whatsapp'
+      ? { setPending: setWaPending, setApproved: setWaApproved, setLoading: setWaPairingsLoading }
+      : { setPending: setPending, setApproved: setApproved, setLoading: setPairingsLoading };
+
+    abortRef.current?.abort();
     const controller = new AbortController();
-    pairingsAbortRef.current = controller;
-    if (showLoading) setPairingsLoading(true);
+    abortRef.current = controller;
+    if (showLoading) setData.setLoading(true);
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing`, { signal: controller.signal });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}`, { signal: controller.signal });
       if (res.ok) {
         const data = await res.json();
-        setPending(data.pending ?? []);
-        setApproved(data.approved ?? []);
+        setData.setPending(data.pending ?? []);
+        setData.setApproved(data.approved ?? []);
       }
     } catch (e: any) {
       if (e?.name !== 'AbortError') { /* ignore aborted */ }
     }
-    finally { if (showLoading) setPairingsLoading(false); }
+    finally { if (showLoading) setData.setLoading(false); }
   }, [agentId]);
 
-  const fetchPairings = useCallback(() => doFetchPairings(true), [doFetchPairings]);
-  const pollPairings = useCallback(() => doFetchPairings(false), [doFetchPairings]);
+  const fetchPairings = useCallback(() => doFetchPairings('telegram', true), [doFetchPairings]);
+  const pollPairings = useCallback(() => doFetchPairings('telegram', false), [doFetchPairings]);
+  const fetchWaPairings = useCallback(() => doFetchPairings('whatsapp', true), [doFetchPairings]);
+  const pollWaPairings = useCallback(() => doFetchPairings('whatsapp', false), [doFetchPairings]);
 
   useEffect(() => {
     if (open) {
       setChannelsLoading(true);
       setPairingsLoading(true);
+      setWaPairingsLoading(true);
       setChannels(null);
       setPending([]);
       setApproved([]);
+      setWaPending([]);
+      setWaApproved([]);
       fetchChannels();
       setError('');
       setSuccess('');
       setTgToken('');
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (waPollRef.current) clearInterval(waPollRef.current);
+    };
   }, [open, fetchChannels]);
 
-  // Initial pairings fetch when channels load and telegram is connected
+  // Initial pairings fetch when channels load
   useEffect(() => {
-    if (!channelsLoading && channels?.telegram?.connected) {
-      fetchPairings();
+    if (!channelsLoading) {
+      if (channels?.telegram?.connected) {
+        fetchPairings();
+      }
+      if (channels?.whatsapp?.linked) {
+        fetchWaPairings();
+      }
     }
-  }, [channelsLoading, channels?.telegram?.connected, fetchPairings]);
+  }, [channelsLoading, channels?.telegram?.connected, channels?.whatsapp?.linked, fetchPairings, fetchWaPairings]);
 
-  // Poll pairings when on Telegram tab and connected
+  // Poll pairings when on the active tab and connected/linked
   useEffect(() => {
     if (open && activeTab === 0 && channels?.telegram?.connected) {
       pollRef.current = setInterval(pollPairings, PAIRING_POLL_MS);
@@ -138,6 +164,15 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [open, activeTab, channels?.telegram?.connected, pollPairings]);
+
+  useEffect(() => {
+    if (open && activeTab === 1 && channels?.whatsapp?.linked) {
+      waPollRef.current = setInterval(pollWaPairings, PAIRING_POLL_MS);
+    } else {
+      if (waPollRef.current) clearInterval(waPollRef.current);
+    }
+    return () => { if (waPollRef.current) clearInterval(waPollRef.current); };
+  }, [open, activeTab, channels?.whatsapp?.linked, pollWaPairings]);
 
   const handleTelegramConnect = async () => {
     setLoading(true); setError(''); setSuccess('');
@@ -161,24 +196,26 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   };
 
   const handleTelegramDisconnect = async () => {
-    setConfirmAction({ type: 'disconnect' });
+    setConfirmAction({ type: 'disconnect', channel: 'telegram' });
   };
 
-  const executeDisconnect = async () => {
+  const executeDisconnect = async (channel: string) => {
     setConfirmAction(null);
-    setDisconnecting(true); setError(''); setSuccess('');
+    const isTg = channel === 'telegram';
+    const setDisc = isTg ? setDisconnecting : setWaDisconnecting;
+    setDisc(true); setError(''); setSuccess('');
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/telegram`, { method: 'DELETE' });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/${channel}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed' }));
-        setError(data.error || 'Failed to disconnect Telegram');
+        setError(data.error || `Failed to disconnect ${channel}`);
       } else {
-        setSuccess('Telegram disconnected.');
-        setPending([]);
+        setSuccess(`${channel === 'telegram' ? 'Telegram' : 'WhatsApp'} disconnected.`);
+        if (isTg) setPending([]); else setWaPending([]);
         fetchChannels();
       }
     } catch { setError('Network error'); }
-    finally { setDisconnecting(false); }
+    finally { setDisc(false); }
   };
 
   const handleRestartAgent = async () => {
@@ -196,10 +233,11 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     finally { setRestarting(false); }
   };
 
-  const handleApprovePairing = async (code: string) => {
-    setApprovingCode(code); setError(''); setSuccess('');
+  const handleApprovePairing = async (code: string, channel: string = 'telegram') => {
+    const setAppr = channel === 'whatsapp' ? setWaApprovingCode : setApprovingCode;
+    setAppr(code); setError(''); setSuccess('');
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing`, {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),
@@ -209,22 +247,23 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         setError(data.error || 'Failed to approve');
       } else {
         setSuccess(`Pairing ${code} approved.`);
-        await fetchPairings();
+        await doFetchPairings(channel, false);
       }
     } catch { setError('Network error'); }
-    finally { setApprovingCode(null); }
+    finally { setAppr(null); }
   };
 
-  const handleRevokePairing = async (senderId: string) => {
-    setConfirmAction({ type: 'revoke', senderId });
+  const handleRevokePairing = async (senderId: string, channel: string = 'telegram') => {
+    setConfirmAction({ type: 'revoke', channel, senderId });
   };
 
-  const executeRevoke = async (senderId: string) => {
+  const executeRevoke = async (senderId: string, channel: string) => {
     setConfirmAction(null);
-    setRevokingId(senderId); setError(''); setSuccess('');
+    const setRev = channel === 'whatsapp' ? setWaRevokingId : setRevokingId;
+    setRev(senderId); setError(''); setSuccess('');
     try {
       const res = await fetch(
-        `/api/agents/${encodeURIComponent(agentId)}/channels/pairing?senderId=${encodeURIComponent(senderId)}`,
+        `/api/agents/${encodeURIComponent(agentId)}/channels/pairing?channel=${channel}&senderId=${encodeURIComponent(senderId)}`,
         { method: 'DELETE' },
       );
       const data = await res.json();
@@ -232,10 +271,10 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         setError(data.error || 'Failed to revoke');
       } else {
         setSuccess(`Revoked ${senderId}.`);
-        await fetchPairings();
+        await doFetchPairings(channel, false);
       }
     } catch { setError('Network error'); }
-    finally { setRevokingId(null); }
+    finally { setRev(null); }
   };
 
   const handleWhatsAppEnable = async () => {
@@ -254,18 +293,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   };
 
   const handleWhatsAppDisable = async () => {
-    setWaLoading(true); setError(''); setSuccess('');
-    try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/whatsapp`, { method: 'DELETE' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed' }));
-        setError(data.error || 'Failed to disable WhatsApp');
-      } else {
-        setSuccess('WhatsApp disabled.');
-        fetchChannels();
-      }
-    } catch { setError('Network error'); }
-    finally { setWaLoading(false); }
+    setConfirmAction({ type: 'disconnect', channel: 'whatsapp' });
   };
 
   const handleCheckWhatsAppStatus = async () => {
@@ -310,15 +338,17 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
         <p style={{ fontSize: 12, color: 'var(--text)', margin: '0 0 16px 0' }}>
           {confirmAction?.type === 'revoke'
             ? `Revoke access for sender ${confirmAction.senderId}?`
-            : 'Disconnect Telegram? All paired users will be removed.'}
+            : confirmAction?.channel === 'telegram'
+              ? 'Disconnect Telegram? All paired users will be removed.'
+              : 'Disconnect WhatsApp? The linked session will be logged out and all paired users removed.'}
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
-            variant={confirmAction?.type === 'revoke' ? 'danger' : 'danger'}
+            variant="danger"
             size="sm"
             onClick={() => {
-              if (confirmAction?.type === 'revoke') executeRevoke(confirmAction.senderId);
-              else if (confirmAction?.type === 'disconnect') executeDisconnect();
+              if (confirmAction?.type === 'revoke') executeRevoke(confirmAction.senderId, confirmAction.channel);
+              else if (confirmAction?.type === 'disconnect') executeDisconnect(confirmAction.channel);
             }}
           >
             Confirm
@@ -348,8 +378,8 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
           onConnect={handleTelegramConnect}
           onDisconnect={handleTelegramDisconnect}
           onRestart={handleRestartAgent}
-          onApprove={handleApprovePairing}
-          onRevoke={handleRevokePairing}
+          onApprove={(code) => handleApprovePairing(code, 'telegram')}
+          onRevoke={(senderId) => handleRevokePairing(senderId, 'telegram')}
         />
       ) : (
         <WhatsAppTab
@@ -357,9 +387,17 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
           wa={wa ?? null}
           waLoading={waLoading}
           waChecking={waChecking}
+          waDisconnecting={waDisconnecting}
+          waPending={waPending}
+          waApproved={waApproved}
+          waPairingsLoading={waPairingsLoading}
+          waApprovingCode={waApprovingCode}
+          waRevokingId={waRevokingId}
           onEnable={handleWhatsAppEnable}
           onDisable={handleWhatsAppDisable}
           onCheckStatus={handleCheckWhatsAppStatus}
+          onApprove={(code) => handleApprovePairing(code, 'whatsapp')}
+          onRevoke={(senderId) => handleRevokePairing(senderId, 'whatsapp')}
         />
       )}
     </Modal>
@@ -541,16 +579,25 @@ function PairingSection({
 // ── WhatsApp Tab ─────────────────────────────
 
 function WhatsAppTab({
-  agentId, wa, waLoading, waChecking,
-  onEnable, onDisable, onCheckStatus,
+  agentId, wa, waLoading, waChecking, waDisconnecting,
+  waPending, waApproved, waPairingsLoading, waApprovingCode, waRevokingId,
+  onEnable, onDisable, onCheckStatus, onApprove, onRevoke,
 }: {
   agentId: string;
   wa: WhatsAppChannel | null;
   waLoading: boolean;
   waChecking: boolean;
+  waDisconnecting: boolean;
+  waPending: PendingPairing[];
+  waApproved: ApprovedPairing[];
+  waPairingsLoading: boolean;
+  waApprovingCode: string | null;
+  waRevokingId: string | null;
   onEnable: () => void;
   onDisable: () => void;
   onCheckStatus: () => void;
+  onApprove: (code: string) => void;
+  onRevoke: (senderId: string) => void;
 }) {
   if (wa?.linked) {
     return (
@@ -561,7 +608,23 @@ function WhatsAppTab({
           <Button variant="secondary" size="sm" onClick={onCheckStatus} loading={waChecking}>
             Refresh Status
           </Button>
-          <Button variant="danger" size="sm" onClick={onDisable} loading={waLoading} disabled={waLoading}>{waLoading ? 'Disabling…' : 'Disable WhatsApp'}</Button>
+        </div>
+
+        {/* Pairing */}
+        <PairingSection
+          pending={waPending}
+          approved={waApproved}
+          pairingsLoading={waPairingsLoading}
+          approvingCode={waApprovingCode}
+          revokingId={waRevokingId}
+          onApprove={onApprove}
+          onRevoke={onRevoke}
+        />
+
+        <div style={{ marginTop: 16 }}>
+          <Button variant="danger" size="sm" onClick={onDisable} loading={waDisconnecting} disabled={waDisconnecting}>
+            {waDisconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
+          </Button>
         </div>
       </div>
     );
@@ -589,6 +652,7 @@ function WhatsAppTab({
 
       <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '0 0 10px' }}>
         Scan the QR code with WhatsApp (Linked Devices &rarr; Link a Device).
+        Once linked, return here and click Check Status to see the pairing manager.
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

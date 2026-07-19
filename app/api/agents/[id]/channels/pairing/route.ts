@@ -3,12 +3,17 @@ import { getPairings, approvePairing, revokePairing } from '@/lib/channelManager
 
 export const dynamic = 'force-dynamic';
 
+function getChannel(request: NextRequest): string {
+  return request.nextUrl.searchParams.get('channel') || 'telegram';
+}
+
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await params;
-  const result = getPairings(id);
+  const channel = getChannel(request);
+  const result = getPairings(id, channel);
   return NextResponse.json(result);
 }
 
@@ -17,6 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await params;
+  const channel = getChannel(request);
 
   try {
     const body = await request.json();
@@ -25,7 +31,7 @@ export async function POST(
       return NextResponse.json({ error: 'Pairing code is required' }, { status: 400 });
     }
 
-    const result = approvePairing(id, body.code.trim());
+    const result = approvePairing(id, body.code.trim(), channel);
 
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 404 });
@@ -42,13 +48,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await params;
+  const channel = getChannel(request);
   const senderId = request.nextUrl.searchParams.get('senderId');
 
   if (!senderId || !senderId.trim()) {
     return NextResponse.json({ error: 'senderId query param is required' }, { status: 400 });
   }
 
-  const result = revokePairing(id, senderId);
+  const result = revokePairing(id, senderId, channel);
 
   if (!result.success) {
     return NextResponse.json({ error: result.error }, { status: 404 });

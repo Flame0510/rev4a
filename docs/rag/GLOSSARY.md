@@ -110,10 +110,10 @@ A small inline label component used for status indicators and channel chips. Sup
 A communication channel (Telegram or WhatsApp) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect channels and manage Telegram pairings (approve/reject senders). Channel status is shown as compact TG/WA chips on the agent list.
 
 ## Channel Manager
-Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, check link status, QR-based linking via terminal. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
+Modal in the agent detail panel for configuring Telegram and WhatsApp channels. Telegram: connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). WhatsApp: enable/disable, check link status, QR-based linking via terminal, and manage pairings just like Telegram. Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
 
 ## Pairing
-A security mechanism for Telegram channels. When a user sends `/start` to the bot, a 4-digit pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time.
+A security mechanism for Telegram and WhatsApp channels. When a user sends `/start` to the bot (Telegram) or messages for the first time (WhatsApp), a pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time. Supported channels: telegram, whatsapp.
 
 ## Telegram
 A messaging channel type. Agents can be connected to Telegram via a bot token from @BotFather. Once connected, users send `/start` to get a pairing code, which an admin approves in the Channel Manager.

@@ -21,6 +21,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I connect an agent to Telegram?"
 - "How do I link an agent to WhatsApp?"
 - "How do I approve a Telegram pairing?"
+- "How do I approve a WhatsApp pairing?"
 - "What do the TG and WA badges mean?"
 - "How do I get to the gateway?"
 - "Where is the terminal for a container?"
@@ -58,6 +59,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I connect an agent to Telegram?"
 - "How do I link WhatsApp to an agent?"
 - "How do I approve a pairing code?"
+- "How do I revoke a WhatsApp sender?"
 
 ## Explanation Questions
 
@@ -81,7 +83,9 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "What is the shared gateway token?"
 - "What are model fallbacks?"
 - "What is the Channel Manager?"
+- "What is pairing?"
 - "What is Telegram pairing?"
+- "What is WhatsApp pairing?"
 - "What are the TG and WA badges on the agent list?"
 
 ## Troubleshooting Questions
@@ -100,6 +104,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do agent image rebuilds work?"
 - "Why is my Telegram bot not connecting?"
 - "Why can't I approve a pairing code?"
+- "Why is my WhatsApp pairing not showing?"
 - "Why are TG/WA badges missing from my agent?"
 
 ## What PYTHIA CANNOT do
