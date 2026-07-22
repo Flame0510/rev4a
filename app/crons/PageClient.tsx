@@ -12,7 +12,6 @@ import { formatDateTimeInTimezone } from '@/lib/timezone';
 interface CronSchedule { kind?: string; expr?: string; tz?: string; [k: string]: unknown }
 interface CronPayload { kind?: string; message?: string; model?: string; [k: string]: unknown }
 interface CronState { lastStatus?: string; nextRunAtMs?: number | null; lastRunAtMs?: number | null; [k: string]: unknown }
-
 interface CronDelivery { mode?: string; channel?: string; to?: string; [k: string]: unknown }
 
 interface CronJob {
@@ -20,6 +19,7 @@ interface CronJob {
   name?: string;
   description?: string;
   agentId?: string;
+  containerName?: string;
   sessionKey?: string;
   sessionTarget?: string;
   wakeMode?: string;
@@ -31,6 +31,7 @@ interface CronJob {
   state?: CronState;
   enabled?: boolean;
   createdAtMs?: number;
+  source?: 'host' | 'container';
   [key: string]: unknown;
 }
 
@@ -84,34 +85,28 @@ function describeCron(expr: string): string {
   const everyN = (f: string) => f.startsWith('*/');
   const fixed = (f: string) => /^\d+$/.test(f);
 
-  // Every minute
   if (every(min) && every(hour) && every(dom) && every(month) && every(dow))
     return 'ogni minuto';
 
-  // Every N minutes: */N * * * *
   if (everyN(min) && every(hour) && every(dom) && every(month) && every(dow)) {
     const n = min.split('/')[1];
     return `ogni ${n} minut${n === '1' ? 'o' : 'i'}`;
   }
 
-  // Every hour at minute 0: 0 * * * *
   if (fixed(min) && every(hour) && every(dom) && every(month) && every(dow))
     return min === '0' ? 'ogni ora' : `ogni ora al minuto ${min}`;
 
-  // Every N hours: 0 */N * * *
   if (everyN(hour) && every(dom) && every(month) && every(dow)) {
     const n = hour.split('/')[1];
     const suffix = fixed(min) && min !== '0' ? ` al minuto ${min}` : '';
     return `ogni ${n} ore${suffix}`;
   }
 
-  // Daily at HH:MM: MM HH * * *
   if (fixed(min) && fixed(hour) && every(dom) && every(month) && every(dow)) {
     const h = hour.padStart(2, '0'), m = min.padStart(2, '0');
     return `ogni giorno alle ${h}:${m}`;
   }
 
-  // Weekly: MM HH * * D
   if (fixed(min) && fixed(hour) && every(dom) && every(month) && fixed(dow)) {
     const days = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
     const d = days[parseInt(dow)] ?? dow;
@@ -119,7 +114,6 @@ function describeCron(expr: string): string {
     return `ogni settimana (${d}) alle ${h}:${m}`;
   }
 
-  // Monthly: MM HH D * *
   if (fixed(min) && fixed(hour) && fixed(dom) && every(month) && every(dow)) {
     const h = hour.padStart(2, '0'), m = min.padStart(2, '0');
     return `il giorno ${dom} di ogni mese alle ${h}:${m}`;
@@ -144,24 +138,75 @@ function displaySessionDuration(session: CronSession): string {
   return formatDuration(session.started_at, end);
 }
 
+// ── Agent filter helpers ──────────────────────────────────────────────────
+
+interface AgentFilter {
+  key: string;       // 'all' | 'host' | containerName
+  label: string;     // 'ALL' | 'HOST' | agentId
+  source: string;    // 'all' | 'host' | 'container'
+  containerName?: string;
+}
+
+function buildAgentFilters(jobs: CronJob[]): AgentFilter[] {
+  const seen = new Set<string>();
+  const filters: AgentFilter[] = [{ key: 'all', label: 'ALL', source: 'all' }];
+
+  for (const job of jobs) {
+    if (job.source === 'host' && !seen.has('host')) {
+      seen.add('host');
+      filters.push({ key: 'host', label: 'HOST', source: 'host' });
+    }
+    if (job.containerName && !seen.has(job.containerName)) {
+      seen.add(job.containerName);
+      filters.push({
+        key: job.containerName,
+        label: job.agentId ?? job.containerName,
+        source: 'container',
+        containerName: job.containerName,
+      });
+    }
+  }
+  return filters;
+}
+
+function filterJobs(jobs: CronJob[], agentKey: string): CronJob[] {
+  if (agentKey === 'all') return jobs;
+  if (agentKey === 'host') return jobs.filter(j => j.source === 'host');
+  return jobs.filter(j => j.containerName === agentKey);
+}
+
+function filterSessions(sessions: CronSession[], agentKey: string): CronSession[] {
+  if (agentKey === 'all') return sessions;
+  return sessions.filter(s => s.session_id.startsWith(`cron:${agentKey}:`) || s.session_id.startsWith(`:cron:${agentKey}:`));
+}
+
+
 export default function CronsPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [sessions, setSessions] = useState<CronSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [agentFilter, setAgentFilter] = useState('all');
   const isMobile = useResponsive('lg');
   const [tab, setTab] = useState<'jobs' | 'runs'>('jobs');
   const timezone = useOlympusTimezone();
+
+  const agentFilters = buildAgentFilters(jobs);
+  const filteredJobs = filterJobs(jobs, agentFilter);
+  const filteredSessions = filterSessions(sessions, agentFilter);
 
   async function toggleJob(job: CronJob) {
     const id = job.id;
     if (!id) return;
     setToggling(id);
     try {
+      const body: Record<string, unknown> = { enabled: !(job.enabled !== false) };
+      if (job.containerName) body.containerName = job.containerName;
+
       const res = await apiFetch(`/api/crons/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !(job.enabled !== false) }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const updated = await res.json() as CronJob;
@@ -183,8 +228,7 @@ export default function CronsPage() {
       }
       if (sessRes.ok) {
         const data = await sessRes.json();
-        const all = (Array.isArray(data) ? data : data.sessions ?? []) as CronSession[];
-        setSessions(all.filter((s) => s.session_id?.includes(':cron:')));
+        setSessions((Array.isArray(data) ? data : data.sessions ?? []) as CronSession[]);
       }
     } catch { /* keep UI alive */ }
     finally { setLoading(false); }
@@ -205,6 +249,22 @@ export default function CronsPage() {
 
       {loading && <LoadingSpinner compact />}
 
+      {/* Agent filter bar */}
+      {agentFilters.length > 1 && (
+        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+          {agentFilters.map((af) => (
+            <Button
+              key={af.key}
+              variant={agentFilter === af.key ? 'primary' : 'ghost'}
+              size="sm"
+              onClick={() => setAgentFilter(af.key)}
+            >
+              {af.label} ({filterJobs(jobs, af.key).length})
+            </Button>
+          ))}
+        </div>
+      )}
+
       {isMobile && (
         <div className="crons-mobile-tabs">
           <Button variant={tab === 'jobs' ? 'primary' : 'ghost'} size="sm" onClick={() => setTab('jobs')}>JOBS</Button>
@@ -216,13 +276,13 @@ export default function CronsPage() {
         {/* Scheduled jobs */}
         <section style={{ width: isMobile ? '100%' : '40%', borderRight: isMobile ? 'none' : '1px solid var(--border)', display: isMobile && tab !== 'jobs' ? 'none' : 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 10, color: '#555', flexShrink: 0 }}>
-            SCHEDULED JOBS ({jobs.length})
+            SCHEDULED JOBS ({filteredJobs.length})
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {jobs.length === 0 && !loading && (
+            {filteredJobs.length === 0 && !loading && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No scheduled jobs found</div>
             )}
-            {jobs.map((job, i) => {
+            {filteredJobs.map((job, i) => {
               const expr = job.scheduleExpr
                 ?? (typeof job.schedule === 'string' ? job.schedule : (job.schedule as CronSchedule | undefined)?.expr ?? '');
               const tz = typeof job.schedule === 'object' && job.schedule !== null
@@ -233,6 +293,7 @@ export default function CronsPage() {
               const lastRun = job.state?.lastRunAtMs;
               const lastStatus = job.state?.lastStatus;
               const isEnabled = job.enabled !== false;
+              const isContainered = job.source === 'container' && !!job.containerName;
               return (
                 <div key={job.id ?? i} style={{
                   padding: '12px 14px', borderBottom: '1px solid var(--border)',
@@ -248,36 +309,41 @@ export default function CronsPage() {
                         <div style={{ fontSize: 10, color: '#888', marginTop: 2, lineHeight: 1.4 }}>{String(job.description)}</div>
                       )}
                     </div>
-                    {job.id && (
-                      <button
-                        onClick={() => void toggleJob(job)}
-                        disabled={toggling === job.id}
-                        title={isEnabled ? 'Disable job' : 'Enable job'}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                          padding: '3px 8px 3px 5px',
-                          border: `1px solid ${isEnabled ? '#255b3f' : 'var(--border)'}`,
-                          borderRadius: 0,
-                          background: isEnabled ? 'rgba(34,197,94,0.08)' : 'var(--bg2)',
-                          cursor: toggling === job.id ? 'not-allowed' : 'pointer',
-                          opacity: toggling === job.id ? 0.5 : 1,
-                          transition: 'all 0.15s', outline: 'none',
-                        }}
-                      >
-                        <span style={{
-                          display: 'inline-flex', width: 26, height: 14, borderRadius: 0,
-                          background: toggling === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
-                          alignItems: 'center', padding: '0 2px',
-                          justifyContent: isEnabled ? 'flex-end' : 'flex-start',
-                          transition: 'all 0.15s', flexShrink: 0,
-                        }}>
-                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#fff' }} />
-                        </span>
-                        <span style={{ fontSize: 9, letterSpacing: '0.07em', color: isEnabled ? 'var(--green)' : '#666' }}>
-                          {toggling === job.id ? '···' : isEnabled ? 'ON' : 'OFF'}
-                        </span>
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                      {isContainered && (
+                        <span style={{ fontSize: 9 }}><Pill tone="success">{job.agentId ?? 'agent'}</Pill></span>
+                      )}
+                      {job.id && (
+                        <button
+                          onClick={() => void toggleJob(job)}
+                          disabled={toggling === job.id}
+                          title={isEnabled ? 'Disable job' : 'Enable job'}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5,
+                            padding: '3px 8px 3px 5px',
+                            border: `1px solid ${isEnabled ? '#255b3f' : 'var(--border)'}`,
+                            borderRadius: 0,
+                            background: isEnabled ? 'rgba(34,197,94,0.08)' : 'var(--bg2)',
+                            cursor: toggling === job.id ? 'not-allowed' : 'pointer',
+                            opacity: toggling === job.id ? 0.5 : 1,
+                            transition: 'all 0.15s', outline: 'none',
+                          }}
+                        >
+                          <span style={{
+                            display: 'inline-flex', width: 26, height: 14, borderRadius: 0,
+                            background: toggling === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
+                            alignItems: 'center', padding: '0 2px',
+                            justifyContent: isEnabled ? 'flex-end' : 'flex-start',
+                            transition: 'all 0.15s', flexShrink: 0,
+                          }}>
+                            <span style={{ width: 10, height: 10, borderRadius: 1, background: '#fff' }} />
+                          </span>
+                          <span style={{ fontSize: 9, letterSpacing: '0.07em', color: isEnabled ? 'var(--green)' : '#666' }}>
+                            {toggling === job.id ? '···' : isEnabled ? 'ON' : 'OFF'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Schedule */}
@@ -296,19 +362,19 @@ export default function CronsPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6 }}>
                     {nextRun != null && (
                       <div>
-                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>PROSSIMO AVVIO</div>
+                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>NEXT RUN</div>
                         <div style={{ fontSize: 11, color: isEnabled ? '#22c55e' : '#666' }}>{formatTs(nextRun, timezone)}</div>
                       </div>
                     )}
                     {lastRun != null && (
                       <div>
-                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>ULTIMO AVVIO</div>
+                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>LAST RUN</div>
                         <div style={{ fontSize: 11, color: '#888' }}>{formatTs(lastRun, timezone)}</div>
                       </div>
                     )}
                     {job.createdAtMs != null && (
                       <div>
-                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>CREATO</div>
+                        <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.06em', marginBottom: 1 }}>CREATED</div>
                         <div style={{ fontSize: 11, color: '#888' }}>{formatTs(job.createdAtMs as number, timezone)}</div>
                       </div>
                     )}
@@ -322,6 +388,8 @@ export default function CronsPage() {
                   {/* Meta row */}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 10, color: '#555', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
                     {job.agentId && <span>agent: <span style={{ color: '#888' }}>{String(job.agentId)}</span></span>}
+                    {job.source === 'host' && <span>source: <span style={{ color: '#888' }}>host (gateway)</span></span>}
+                    {isContainered && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
                     {model && <span>model: <span style={{ color: '#888' }}>{String(model)}</span></span>}
                     {job.sessionTarget && <span>target: <span style={{ color: '#888' }}>{String(job.sessionTarget)}</span></span>}
                     {job.delivery?.channel && <span>→ <span style={{ color: '#888' }}>{String(job.delivery.channel)}</span></span>}
@@ -331,7 +399,7 @@ export default function CronsPage() {
                   {/* Prompt preview */}
                   {prompt && (
                     <div style={{ fontSize: 10, color: '#444', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
-                      "{String(prompt).slice(0, 120)}{String(prompt).length > 120 ? '…' : ''}"
+                      &ldquo;{String(prompt).slice(0, 120)}{String(prompt).length > 120 ? '…' : ''}&rdquo;
                     </div>
                   )}
                 </div>
@@ -343,13 +411,13 @@ export default function CronsPage() {
         {/* Cron session history */}
         <section style={{ flex: 1, display: isMobile && tab !== 'runs' ? 'none' : 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 10, color: '#555', flexShrink: 0 }}>
-            RUN HISTORY
+            RUN HISTORY {agentFilter !== 'all' ? `(${agentFilter})` : ''}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {sessions.length === 0 && !loading && (
+            {filteredSessions.length === 0 && !loading && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No cron runs in history</div>
             )}
-            {sessions
+            {filteredSessions
               .slice()
               .sort((a, b) => latestSessionTs(b) - latestSessionTs(a))
               .map((s) => {
@@ -363,12 +431,12 @@ export default function CronsPage() {
                   }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot(s.status), display: 'inline-block', flexShrink: 0 }} />
+                        <span style={{ width: 6, height: 6, borderRadius: 1, background: statusDot(s.status), display: 'inline-block', flexShrink: 0 }} />
                         <span style={{ fontSize: 11, color: 'var(--copper)' }}>{agentId}</span>
                         <span style={{ fontSize: 10, color: '#555' }}>#{runId}</span>
                       </div>
                       <div style={{ fontSize: 10, color: '#555' }}>
-                        ultimo agg. {formatTs(latestSessionTs(s), timezone)} · durata {displaySessionDuration(s)}
+                        last update {formatTs(latestSessionTs(s), timezone)} &middot; duration {displaySessionDuration(s)}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>

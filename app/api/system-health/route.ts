@@ -241,22 +241,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const cron = await listOpenClawCronJobs();
-    if (!cron.ok) {
-      const details = cron.unavailableReason === 'scope-upgrade-pending'
-        ? 'Direct OpenClaw cron read blocked: scope upgrade pending approval.'
-        : 'Olympus cannot read cron jobs direttamente da OpenClaw.';
-      checks.push({ id: 'cron.openclaw', label: 'Cron jobs', health: 'warning', value: 'unavailable', details, source: 'cron' });
-      recommendations.push({ id: 'cron.openclaw-unavailable', severity: 'warning', source: 'cron', title: 'OpenClaw cron list unavailable', details, actionHref: '/crons', dismissible: false, createdAt });
-    } else {
-      const enabled = cron.jobs.filter((job) => job.enabled !== false).length;
-      checks.push({ id: 'cron.jobs', label: 'Cron jobs', health: enabled > 0 ? 'ok' : 'warning', value: enabled, details: `${cron.total} totali · source ${cron.source}`, source: 'cron' });
-      if (enabled === 0) {
-        recommendations.push({ id: 'cron.enable-watchdog', severity: 'warning', source: 'cron', title: 'No enabled cron detected', details: 'OpenClaw non riporta cron abilitati.', actionHref: '/crons', dismissible: false, createdAt });
-      }
+    const enabled = cron.jobs.filter((job) => job.enabled !== false).length;
+    const hostCount = cron.jobs.filter((j) => j.source === 'host').length;
+    const containerCount = cron.jobs.filter((j) => j.source === 'container').length;
+    checks.push({ id: 'cron.jobs', label: 'Cron jobs', health: enabled > 0 ? 'ok' : 'warning', value: enabled, details: `${hostCount} host · ${containerCount} container`, source: 'cron' });
+    if (enabled === 0) {
+      recommendations.push({ id: 'cron.enable-watchdog', severity: 'warning', source: 'cron', title: 'No enabled cron detected', details: 'No cron jobs are enabled on the host or any agent container.', actionHref: '/crons', dismissible: false, createdAt });
     }
   } catch (error) {
     checks.push({ id: 'cron.openclaw', label: 'Cron jobs', health: 'warning', value: 'warning', details: (error as Error).message, source: 'cron' });
-    recommendations.push({ id: 'cron.openclaw-unavailable', severity: 'warning', source: 'cron', title: 'OpenClaw cron list unavailable', details: 'Olympus cannot read cron jobs direttamente da OpenClaw.', actionHref: '/crons', dismissible: false, createdAt });
+    recommendations.push({ id: 'cron.openclaw-unavailable', severity: 'warning', source: 'cron', title: 'Cron list unavailable', details: 'Failed to list cron jobs.', actionHref: '/crons', dismissible: false, createdAt });
   }
 
   const health = topHealth(checks.map((check) => check.health));

@@ -1174,7 +1174,10 @@ Aggregated health checks with recommendations.
 ## Crons
 
 ### `GET /api/crons`
-List of scheduled cron jobs from the OpenClaw gateway.
+List of scheduled cron jobs from all sources: the host OpenClaw gateway and every running Docker container with the `AGENT_ID` label.
+
+Jobs from agent containers include `containerName` and `source: "container"` fields.
+Jobs from the host gateway have `source: "host"`.
 
 **Auth:** Bearer or browser cookie
 
@@ -1184,13 +1187,63 @@ List of scheduled cron jobs from the OpenClaw gateway.
   {
     "id": "eef708de-...",
     "name": "openclaw-hygiene-nightly",
+    "description": "Nightly workspace cleanup",
     "schedule": "15 3 * * *",
+    "scheduleExpr": "15 3 * * *",
     "model": "openai-codex/gpt-5.4-mini",
     "enabled": true,
-    "lastRun": 1749100000000,
-    "nextRun": 1749186000000
+    "source": "host",
+    "state": {
+      "lastStatus": "ok",
+      "lastRunAtMs": 1749100000000,
+      "nextRunAtMs": 1749186000000
+    },
+    "computedNextRunAtMs": 1749186000000,
+    "createdAtMs": 1748000000000
+  },
+  {
+    "id": "c1b3e47f-...",
+    "name": "atlas-weekly-report",
+    "schedule": "0 9 * * 1",
+    "enabled": true,
+    "source": "container",
+    "agentId": "atlas",
+    "containerName": "openclaw-atlas",
+    "computedNextRunAtMs": 1749600000000
   }
 ]
+```
+
+### `PATCH /api/crons/[id]`
+Update a cron job. Only the `enabled` field can be patched.
+
+For jobs inside a container, pass `containerName` in the body to identify which container to write to.
+
+**Auth:** Bearer or browser cookie
+
+**Body:**
+```json
+{
+  "enabled": false
+}
+```
+
+**Body (container cron):**
+```json
+{
+  "enabled": false,
+  "containerName": "openclaw-atlas"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "eef708de-...",
+  "name": "openclaw-hygiene-nightly",
+  "enabled": false,
+  "scheduleExpr": "15 3 * * *"
+}
 ```
 
 ---

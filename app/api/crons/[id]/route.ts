@@ -20,6 +20,7 @@ export async function PATCH(
   // Only allow patching safe fields
   const allowed: Record<string, unknown> = {};
   if (typeof body.enabled === 'boolean') allowed.enabled = body.enabled;
+  if (typeof body.containerName === 'string') allowed.containerName = body.containerName;
 
   if (Object.keys(allowed).length === 0) {
     return NextResponse.json({ error: 'No patchable fields provided' }, { status: 400 });

@@ -105,7 +105,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
-| `/crons` | Scheduled jobs |
+| `/crons` | Scheduled jobs per agent — grouped by source (host gateway, agent containers), on/off toggle, run history filtered by agent |
 | `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase) — JSON vault with audit trail, sync to agent containers via CLI auth (gh, vercel, supabase) or env files (trello) |
 | `/providers` | LLM provider configuration |
 | `/plugins` | Plugin manager |
