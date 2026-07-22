@@ -110,7 +110,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/providers` | LLM provider configuration |
 | `/plugins` | Plugin manager |
 | `/plugins-skills` | Plugin skills |
-| `/skills` | Skill registry |
+| `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. |
 | `/tools` | Tool configuration |
 | `/gateway` | LLM provider sync + agent model configuration — see [GATEWAY.md](dev/GATEWAY.md) |
 | `/config` | Environment management and server restart |

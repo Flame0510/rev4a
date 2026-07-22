@@ -89,7 +89,12 @@ Catalog of every tool available to agents — built-in commands, MCP server tool
 Browse installed OpenClaw plugins. Enable/disable toggle per plugin. Plugins extend agent capabilities with new tools and integrations.
 
 ### Skills (`/skills`)
-Reusable prompt/tool bundles agents can invoke. Skills appear in the registry with name, path, and description.
+Skill registry showing all skills across three sources:
+- **Shared** — global skills from `/docker/shared-skills`, available to all agents
+- **Per-agent** — skills in each agent's workspace (`<workspace>/skills`), shown with agent label
+- **Bundled** — skills shipped with OpenClaw (read-only)
+
+Filter by source, view and edit SKILL.md content, and **promote** agent-local skills to shared with one click.
 
 ### Plugins & Skills (`/plugins-skills`)
 Combined view showing both plugins and skills side by side.

@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { execSync, execFileSync } from 'child_process';
 
-const SKILL_ROOTS = [
-  { type: 'shared', dir: '/data/.openclaw/shared-skills' },
-  { type: 'workspace', dir: '/data/.openclaw/workspace-ops/.skills' },
-  { type: 'bundled', dir: '/usr/local/lib/node_modules/openclaw/skills' },
-];
+const SHARED_SKILLS_DIR = '/docker/shared-skills';
+const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
 
-function readSkillMeta(skillDir, name, type) {
+function readSkillMeta(skillDir, name, type, agentId) {
   const skillMdPath = path.join(skillDir, name, 'SKILL.md');
   let description = '';
   let version = '';
@@ -23,7 +21,7 @@ function readSkillMeta(skillDir, name, type) {
     if (verMatch) version = verMatch[1].trim();
   } catch {}
 
-  return {
+  const result = {
     name,
     type,
     path: path.join(skillDir, name),
@@ -32,24 +30,146 @@ function readSkillMeta(skillDir, name, type) {
     description,
     version,
   };
+
+  if (agentId) result.agentId = agentId;
+
+  return result;
+}
+
+/**
+ * Discover agent containers with AGENT_ID label.
+ * Returns [{ containerName, agentId }]
+ */
+function discoverAgentContainers() {
+  try {
+    // Get container names with AGENT_ID label
+    const namesRaw = execFileSync('docker', [
+      'ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}}'
+    ], { encoding: 'utf8', timeout: 5000 }).trim();
+    if (!namesRaw) return [];
+
+    return namesRaw.split('\n').map(name => {
+      const containerName = name.trim();
+      if (!containerName) return null;
+      // Get agent ID from label using docker inspect
+      const agentId = execFileSync('docker', [
+        'inspect', containerName, '--format', '{{index .Config.Labels "AGENT_ID"}}'
+      ], { encoding: 'utf8', timeout: 5000 }).trim();
+      return { containerName, agentId: agentId || containerName };
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read skill directories from a container agent's workspace via docker exec.
+ * Returns an array of skill names found.
+ */
+function readContainerSkillDirs(containerName) {
+  const workspaceSkillsPath = '/root/.openclaw/workspace/skills';
+  try {
+    // Check if the skills directory exists
+    execFileSync('docker', ['exec', containerName, 'test', '-d', workspaceSkillsPath], {
+      encoding: 'utf8', timeout: 5000
+    });
+
+    // List subdirectories (each is a potential skill)
+    const raw = execFileSync('docker', ['exec', containerName, 'ls', '-1', workspaceSkillsPath], {
+      encoding: 'utf8', timeout: 5000
+    }).trim();
+
+    if (!raw) return [];
+
+    return raw.split('\n').map(line => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read SKILL.md content from inside a container.
+ */
+function readContainerSkillMd(containerName, skillName) {
+  const filePath = `/root/.openclaw/workspace/skills/${skillName}/SKILL.md`;
+  try {
+    return execFileSync('docker', ['exec', containerName, 'cat', filePath], {
+      encoding: 'utf8', timeout: 5000
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse description and version from SKILL.md content string.
+ */
+function parseSkillContent(content) {
+  let description = '';
+  let version = '';
+  if (!content) return { description, version };
+
+  const descMatch = content.match(/^description:\s*(.+)$/m);
+  const verMatch = content.match(/^\*\*Version:\*\*\s*(.+)$/m) || content.match(/^version:\s*(.+)$/m);
+  if (descMatch) description = descMatch[1].trim();
+  if (verMatch) version = verMatch[1].trim();
+
+  return { description, version };
 }
 
 export async function GET(_request) {
   const skills = [];
 
-  for (const root of SKILL_ROOTS) {
-    try {
-      const entries = fs.readdirSync(root.dir, { withFileTypes: true });
+  // 1. Shared skills
+  try {
+    if (fs.existsSync(SHARED_SKILLS_DIR)) {
+      const entries = fs.readdirSync(SHARED_SKILLS_DIR, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        // Only include dirs that have a SKILL.md
-        const skillMd = path.join(root.dir, entry.name, 'SKILL.md');
+        const skillMd = path.join(SHARED_SKILLS_DIR, entry.name, 'SKILL.md');
         if (fs.existsSync(skillMd)) {
-          skills.push(readSkillMeta(root.dir, entry.name, root.type));
+          skills.push(readSkillMeta(SHARED_SKILLS_DIR, entry.name, 'shared', null));
         }
       }
-    } catch {}
+    }
+  } catch {}
+
+  // 2. Agent container skills (workspace-local)
+  const agents = discoverAgentContainers();
+  for (const agent of agents) {
+    const dirs = readContainerSkillDirs(agent.containerName);
+    for (const dir of dirs) {
+      const content = readContainerSkillMd(agent.containerName, dir);
+      if (content) {
+        const { description, version } = parseSkillContent(content);
+        skills.push({
+          name: dir,
+          type: 'workspace',
+          agentId: agent.agentId,
+          containerName: agent.containerName,
+          path: `/root/.openclaw/workspace/skills/${dir}`,
+          skillMdPath: `/root/.openclaw/workspace/skills/${dir}/SKILL.md`,
+          hasSkillMd: true,
+          description,
+          version,
+        });
+      }
+    }
   }
+
+  // 3. Bundled skills (read-only)
+  try {
+    if (fs.existsSync(BUNDLED_SKILLS_DIR)) {
+      const entries = fs.readdirSync(BUNDLED_SKILLS_DIR, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const skillMd = path.join(BUNDLED_SKILLS_DIR, entry.name, 'SKILL.md');
+        if (fs.existsSync(skillMd)) {
+          skills.push(readSkillMeta(BUNDLED_SKILLS_DIR, entry.name, 'bundled', null));
+        }
+      }
+    }
+  } catch {}
 
   return NextResponse.json({ skills });
 }

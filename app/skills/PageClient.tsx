@@ -8,8 +8,8 @@ export default function SkillsPage() {
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
-      background: '#0A0A0B',
-      color: '#E8E8E8',
+      background: 'var(--bg)',
+      color: 'var(--text)',
       overflow: 'hidden',
     }}>
       <div style={{

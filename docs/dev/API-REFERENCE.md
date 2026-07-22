@@ -1641,12 +1641,132 @@ Enable or disable a plugin.
 
 ## Skills
 
+Skill discovery across three sources:
+- **Shared:** skills in `/docker/shared-skills` on the VPS host (global, available to all agents)
+- **Workspace:** skills in `<workspace>/skills` inside each agent container (discovered via `docker exec`)
+- **Bundled:** skills shipped with OpenClaw (read-only)
+
 ### `GET /api/skills`
-List available agent skills in the workspace.
+List all available skills from all sources.
 
 **Auth:** browser cookie
 
-**Response:** `{ "skills": [ { "name": "olympus", "path": "...", "description": "..." } ] }`
+**Response:**
+```json
+{
+  "skills": [
+    {
+      "name": "code-review",
+      "type": "shared",
+      "path": "/docker/shared-skills/code-review",
+      "skillMdPath": "/docker/shared-skills/code-review/SKILL.md",
+      "hasSkillMd": true,
+      "description": "Systematic code review patterns...",
+      "version": "1.0"
+    },
+    {
+      "name": "my-custom-skill",
+      "type": "workspace",
+      "agentId": "atlas",
+      "containerName": "openclaw-atlas",
+      "path": "/root/.openclaw/workspace/skills/my-custom-skill",
+      "skillMdPath": "/root/.openclaw/workspace/skills/my-custom-skill/SKILL.md",
+      "hasSkillMd": true,
+      "description": "Custom agent skill"
+    }
+  ]
+}
+```
+
+### `GET /api/skills/save?path=<path>[&containerName=<name>]`
+Read a SKILL.md file. For container skills, pass `containerName`.
+
+**Auth:** browser cookie
+
+**Response:** `{ "content": "---\nname: my-skill\n..." }`
+
+### `POST /api/skills/save`
+Write a SKILL.md file. Supports shared directory and container workspaces.
+
+**Auth:** browser cookie
+
+**Body:**
+```json
+{
+  "skillPath": "/root/.openclaw/workspace/skills/my-skill/SKILL.md",
+  "content": "---\nname: my-skill\n...",
+  "containerName": "openclaw-atlas"
+}
+```
+- `containerName` is required for container skills, omitted for shared/host skills
+- Bundled skills are read-only
+
+**Response:** `{ "ok": true, "saved": "..." }`
+
+### `POST /api/skills/promote`
+Copy a skill from an agent's workspace to the shared skills directory, making it available to all agents.
+
+**Auth:** browser cookie
+
+**Body:**
+```json
+{
+  "containerName": "openclaw-atlas",
+  "skillName": "my-custom-skill"
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "skillName": "my-custom-skill",
+  "agentId": "atlas",
+  "containerName": "openclaw-atlas",
+  "destPath": "/docker/shared-skills/my-custom-skill",
+  "overwritten": false,
+  "extraCopied": 0
+}
+```
+
+- `overwritten`: `true` if a shared skill with the same name already existed
+- `extraCopied`: number of additional files (beyond SKILL.md) copied from the skill directory
+- The skill name is validated against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`
+- Container must have an `AGENT_ID` Docker label
+
+### `DELETE /api/skills/delete`
+Delete a skill from shared skills directory or from an agent's workspace.
+
+**Auth:** browser cookie
+
+**Body (shared skill):**
+```json
+{
+  "skillName": "my-custom-skill"
+}
+```
+
+**Body (workspace/container skill):**
+```json
+{
+  "skillName": "my-custom-skill",
+  "containerName": "openclaw-atlas"
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "skillName": "my-custom-skill",
+  "deleted": true,
+  "from": "shared"
+}
+```
+
+- `from` is either `"shared"` or `"workspace"`
+- Bundled skills cannot be deleted (read-only)
+- The skill name is validated against the same regex as promote
 
 ---
 

@@ -1,42 +1,61 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { execSync, execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/olympus-auth';
 
-// Only allow writing SKILL.md files in allowed roots
-const ALLOWED_ROOTS = [
-  '/data/.openclaw/shared-skills',
-  '/data/.openclaw/workspace-ops/.skills',
-];
+const SHARED_SKILLS_DIR = '/docker/shared-skills';
+const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
 
-const READ_ALLOWED_ROOTS = [
-  ...ALLOWED_ROOTS,
-  '/usr/local/lib/node_modules/openclaw/skills',
-];
-
-function resolveAllowedSkillPath(skillPath, roots = ALLOWED_ROOTS) {
-  if (!skillPath || typeof skillPath !== 'string') {
-    throw new Error('Missing path');
+/**
+ * Read SKILL.md content from various sources:
+ * - Host path (shared / bundled)
+ * - Container path (via docker exec)
+ */
+function readSkillContent(skillPath, containerName) {
+  if (containerName) {
+    // Container skill — read via docker exec
+    try {
+      return execFileSync('docker', ['exec', containerName, 'cat', skillPath], {
+        encoding: 'utf8', timeout: 5000
+      });
+    } catch {
+      throw Object.assign(new Error(`Skill not found in container ${containerName}`), { status: 404 });
+    }
   }
 
-  if (!skillPath.endsWith('SKILL.md')) {
-    const error = new Error('Only SKILL.md files can be accessed');
-    error.status = 403;
-    throw error;
+  // Host skill
+  if (!fs.existsSync(skillPath)) {
+    throw Object.assign(new Error('Skill not found'), { status: 404 });
   }
 
-  const resolved = path.resolve(skillPath);
-  const allowed = roots.some((root) => {
-    const resolvedRoot = path.resolve(root);
-    return resolved === path.join(resolvedRoot, 'SKILL.md') || resolved.startsWith(resolvedRoot + path.sep);
-  });
-  if (!allowed) {
-    const error = new Error('Path not in allowed roots');
-    error.status = 403;
-    throw error;
+  return fs.readFileSync(skillPath, 'utf8');
+}
+
+/**
+ * Write SKILL.md content.
+ * Shared skills — write to host filesystem.
+ * Container workspace skills — write via docker exec.
+ */
+function writeSkillContent(skillPath, containerName, content) {
+  if (containerName) {
+    // Container skill — write via docker exec heredoc
+    const escapedContent = content
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "'\\''");
+    execSync(
+      `docker exec ${containerName} sh -c "cat > '${skillPath}' << 'NEXUS_EOF'\n${escapedContent}\nNEXUS_EOF"`,
+      { encoding: 'utf8', timeout: 10000 }
+    );
+    return;
   }
 
-  return resolved;
+  // Host skill
+  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+  if (fs.existsSync(skillPath)) {
+    fs.copyFileSync(skillPath, skillPath + '.bak');
+  }
+  fs.writeFileSync(skillPath, content, 'utf8');
 }
 
 export async function POST(request) {
@@ -44,23 +63,41 @@ export async function POST(request) {
   if (denied) return denied;
 
   try {
-    const { skillPath, content } = await request.json();
+    const { skillPath, content, containerName } = await request.json();
 
     if (!skillPath || !content) {
       return NextResponse.json({ error: 'Missing skillPath or content' }, { status: 400 });
     }
 
-    const resolved = resolveAllowedSkillPath(skillPath, ALLOWED_ROOTS);
-
-    // Backup original
-    if (fs.existsSync(resolved)) {
-      fs.copyFileSync(resolved, resolved + '.bak');
+    // Validate path ends with SKILL.md
+    if (!skillPath.endsWith('SKILL.md')) {
+      return NextResponse.json({ error: 'Only SKILL.md files can be saved' }, { status: 403 });
     }
 
-    fs.writeFileSync(resolved, content, 'utf8');
-    return NextResponse.json({ ok: true, saved: resolved });
+    // Determine if this is a shared, bundled, or container skill
+    const absPath = path.resolve(skillPath);
+    const absShared = path.resolve(SHARED_SKILLS_DIR);
+    const absBundled = path.resolve(BUNDLED_SKILLS_DIR);
+
+    const isShared = absPath.startsWith(absShared + path.sep) || absPath === absShared;
+    const isBundled = absPath.startsWith(absBundled + path.sep) || absPath === absBundled;
+    const isContainer = !!containerName;
+
+    if (isBundled) {
+      return NextResponse.json({ error: 'Bundled skills are read-only' }, { status: 403 });
+    }
+
+    if (!isShared && !isContainer) {
+      return NextResponse.json({ error: 'Path not in allowed roots and no containerName provided' }, { status: 403 });
+    }
+
+    writeSkillContent(isContainer ? skillPath : absPath, containerName || null, content);
+
+    return NextResponse.json({ ok: true, saved: isContainer ? skillPath : absPath });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const msg = err instanceof Error ? err.message : 'Internal error';
+    const status = err.status || 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
 
@@ -70,16 +107,36 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const skillPath = searchParams.get('path');
+  const containerName = searchParams.get('containerName');
 
   if (!skillPath) {
     return NextResponse.json({ error: 'Missing path' }, { status: 400 });
   }
 
   try {
-    const resolved = resolveAllowedSkillPath(skillPath, READ_ALLOWED_ROOTS);
-    const content = fs.readFileSync(resolved, 'utf8');
+    if (containerName) {
+      // Read from container via docker exec
+      const content = readSkillContent(skillPath, containerName);
+      return NextResponse.json({ content });
+    }
+
+    // Read from host path
+    const absPath = path.resolve(skillPath);
+    const absShared = path.resolve(SHARED_SKILLS_DIR);
+    const absBundled = path.resolve(BUNDLED_SKILLS_DIR);
+
+    const isShared = absPath.startsWith(absShared + path.sep) || absPath === absShared;
+    const isBundled = absPath.startsWith(absBundled + path.sep) || absPath === absBundled;
+
+    if (!isShared && !isBundled) {
+      return NextResponse.json({ error: 'Host path not in allowed skill roots' }, { status: 403 });
+    }
+
+    const content = readSkillContent(absPath, null);
     return NextResponse.json({ content });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 404 });
+    const msg = err instanceof Error ? err.message : 'Internal error';
+    const status = err.status || 404;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
