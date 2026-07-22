@@ -17,6 +17,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `app/api/provider/v1/**` | `docs/dev/PROVIDERS.md` — proxy auth, model list, completions |
 | `app/api/vault/**` | `docs/dev/PROVIDERS.md` — key management section |
 | `app/gateway/**` | `docs/dev/GATEWAY.md` — Gateway UI, overlay, polling |
+| `app/api/skills/**` | `docs/dev/API-REFERENCE.md` — skills list, save, promote endpoints |
 | `app/api/**` (other) | `docs/dev/API-REFERENCE.md` — add/update endpoint description, params, response shape |
 | `daemon.js` | (no dedicated doc — update `docs/ARCHITECTURE.md` if needed) |
 | `lib/**` | `docs/ARCHITECTURE.md` and/or `docs/FRONTEND-ARCHITECTURE.md` |
