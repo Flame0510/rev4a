@@ -151,10 +151,10 @@ function writeJobsFile(filePath: string, jobs: OpenClawCronJob[]): void {
 function writeJobsToContainer(containerName: string, jobs: OpenClawCronJob[]): void {
   const containerPath = '/data/.openclaw/cron/jobs.json';
   const jsonStr = JSON.stringify(jobs, null, 2);
-  const base64 = Buffer.from(jsonStr).toString('base64');
-  execFileSync('docker', ['exec', containerName, 'sh', '-c',
-    `mkdir -p /data/.openclaw/cron && echo '${base64}' | base64 -d > '${containerPath}'`
-  ], { encoding: 'utf8', timeout: 10000 });
+  // Use stdin pipe instead of base64 injection to avoid shell quoting risks
+  execFileSync('docker', ['exec', '-i', containerName, 'sh', '-c',
+    `mkdir -p /data/.openclaw/cron && cat > '${containerPath}'`
+  ], { input: jsonStr, encoding: 'utf8', timeout: 10000 });
 }
 
 // ── List: aggregate from host + all containers ──────────────────────────
@@ -204,8 +204,9 @@ export async function patchCronJob(id: string, patch: Partial<OpenClawCronJob>):
     const idx = containerJobs.findIndex((j) => j.id === id);
     if (idx === -1) return { ok: false, error: `Job ${id} not found in container ${containerName}` };
 
-    containerJobs[idx] = { ...containerJobs[idx], ...patch };
-    delete containerJobs[idx].containerName; // don't persist the routing field
+    // Strip routing field before persisting
+    const { containerName: _routing, ...cleanPatch } = patch;
+    containerJobs[idx] = { ...containerJobs[idx], ...cleanPatch };
 
     try {
       writeJobsToContainer(containerName, containerJobs);

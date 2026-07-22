@@ -4,6 +4,8 @@ import { patchCronJob } from '@/lib/openclaw-cron';
 
 export const dynamic = 'force-dynamic';
 
+const CONTAINER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -20,7 +22,12 @@ export async function PATCH(
   // Only allow patching safe fields
   const allowed: Record<string, unknown> = {};
   if (typeof body.enabled === 'boolean') allowed.enabled = body.enabled;
-  if (typeof body.containerName === 'string') allowed.containerName = body.containerName;
+  if (typeof body.containerName === 'string') {
+    if (!CONTAINER_NAME_RE.test(body.containerName)) {
+      return NextResponse.json({ error: 'Invalid containerName format' }, { status: 400 });
+    }
+    allowed.containerName = body.containerName;
+  }
 
   if (Object.keys(allowed).length === 0) {
     return NextResponse.json({ error: 'No patchable fields provided' }, { status: 400 });
