@@ -32,9 +32,12 @@ export async function PATCH(
     return NextResponse.json({ error: 'No patchable fields provided' }, { status: 400 });
   }
 
-  const result = await patchCronJob(id, allowed);
+  const result = patchCronJob(id, allowed);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 404 });
+    const status = result.error?.includes('not found') ? 404
+      : result.error?.includes('gateway') || result.error?.includes('Failed') ? 502
+      : 500;
+    return NextResponse.json({ error: result.error }, { status });
   }
 
   return NextResponse.json(result.job);

@@ -74,7 +74,7 @@ Manage third-party service credentials: GitHub, Trello, Vercel, Supabase. Each c
 View configured AI providers (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) and their available models. Check which API keys are set, which models are ready, and manage OAuth device-code logins.
 
 ### Crons (`/crons`)
-Scheduled tasks grouped by source — the host gateway and each agent container. Jobs are automatically discovered from the host gateway (`/data/.openclaw/cron/jobs.json`) and every running Docker container with the `AGENT_ID` label (via `docker exec`). Filter jobs by agent using the toolbar tabs. Each job shows name, description, cron expression, next run, last run, and last status. Toggle on/off per job. The run history panel shows recent cron session executions, filtered by the selected agent.
+Scheduled tasks auto-discovered from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`). Filter jobs by agent using the toolbar tabs. Each job shows name, description, cron expression, next run, last run, and last status. Toggle on/off per job. The run history panel shows recent cron run executions for the selected job, loaded on demand from the container's gateway.
 
 ### Memory / Context (`/memory`)
 Browse agent memory files — MEMORY.md, SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md, HEARTBEAT.md. These files define how agents behave, what they know, and their personality. Also shows total memory budget vs usage.

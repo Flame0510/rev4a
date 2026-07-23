@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
@@ -69,37 +69,37 @@ function describeCron(expr: string): string {
   const fixed = (f: string) => /^\d+$/.test(f);
 
   if (every(min) && every(hour) && every(dom) && every(month) && every(dow))
-    return 'ogni minuto';
+    return 'every minute';
 
   if (everyN(min) && every(hour) && every(dom) && every(month) && every(dow)) {
     const n = min.split('/')[1];
-    return `ogni ${n} minut${n === '1' ? 'o' : 'i'}`;
+    return n === '1' ? 'every minute' : `every ${n} minutes`;
   }
 
   if (fixed(min) && every(hour) && every(dom) && every(month) && every(dow))
-    return min === '0' ? 'ogni ora' : `ogni ora al minuto ${min}`;
+    return min === '0' ? 'every hour' : `every hour at minute ${min}`;
 
   if (everyN(hour) && every(dom) && every(month) && every(dow)) {
     const n = hour.split('/')[1];
-    const suffix = fixed(min) && min !== '0' ? ` al minuto ${min}` : '';
-    return `ogni ${n} ore${suffix}`;
+    const suffix = fixed(min) && min !== '0' ? ` at minute ${min}` : '';
+    return n === '1' ? `every hour${suffix}` : `every ${n} hours${suffix}`;
   }
 
   if (fixed(min) && fixed(hour) && every(dom) && every(month) && every(dow)) {
     const h = hour.padStart(2, '0'), m = min.padStart(2, '0');
-    return `ogni giorno alle ${h}:${m}`;
+    return `every day at ${h}:${m}`;
   }
 
   if (fixed(min) && fixed(hour) && every(dom) && every(month) && fixed(dow)) {
-    const days = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const d = days[parseInt(dow)] ?? dow;
     const h = hour.padStart(2, '0'), m = min.padStart(2, '0');
-    return `ogni settimana (${d}) alle ${h}:${m}`;
+    return `every ${d} at ${h}:${m}`;
   }
 
   if (fixed(min) && fixed(hour) && fixed(dom) && every(month) && every(dow)) {
     const h = hour.padStart(2, '0'), m = min.padStart(2, '0');
-    return `il giorno ${dom} di ogni mese alle ${h}:${m}`;
+    return `on day ${dom} of each month at ${h}:${m}`;
   }
 
   return '';
@@ -159,6 +159,9 @@ export default function CronsPage() {
   const agentFilters = buildAgentFilters(jobs);
   const filteredJobs = filterJobs(jobs, agentFilter);
 
+  // Prevent stale responses overwriting the latest requested job's runs
+  const latestRunRequest = useRef<string | null>(null);
+
   async function toggleJob(job: CronJob) {
     const id = job.id;
     if (!id) return;
@@ -180,14 +183,22 @@ export default function CronsPage() {
   }
 
   async function loadRuns(job: CronJob) {
-    if (!job.id || !job.containerName) return;
+    const jobId = job.id;
+    const cName = job.containerName;
+    if (!jobId || !cName) return;
+
+    const requestKey = `${cName}:${jobId}`;
+    latestRunRequest.current = requestKey;
+
     setRunsLoading(true);
     setRunsError(null);
     setRuns([]);
     try {
       const res = await apiFetch(
-        `/api/crons/runs?containerName=${encodeURIComponent(job.containerName)}&jobId=${encodeURIComponent(job.id)}&limit=30`
+        `/api/crons/runs?containerName=${encodeURIComponent(cName)}&jobId=${encodeURIComponent(jobId)}&limit=30`
       );
+      // Discard stale responses
+      if (latestRunRequest.current !== requestKey) return;
       if (res.ok) {
         const data = await res.json();
         setRuns((data.entries ?? []) as CronRunEntry[]);
@@ -195,9 +206,10 @@ export default function CronsPage() {
         setRunsError('Failed to load runs');
       }
     } catch {
+      if (latestRunRequest.current !== requestKey) return;
       setRunsError('Failed to load runs');
     } finally {
-      setRunsLoading(false);
+      if (latestRunRequest.current === requestKey) setRunsLoading(false);
     }
   }
 
@@ -212,9 +224,17 @@ export default function CronsPage() {
     finally { setLoading(false); }
   }
 
+  // Clear selected job when filter changes (old selection may no longer be visible)
+  useEffect(() => {
+    setSelectedJob(null);
+    setRuns([]);
+    setRunsError(null);
+  }, [agentFilter]);
+
   // Load runs when a job is selected
   useEffect(() => {
     if (selectedJob) void loadRuns(selectedJob);
+    else { setRuns([]); setRunsError(null); }
   }, [selectedJob?.id, selectedJob?.containerName]);
 
   useEffect(() => {

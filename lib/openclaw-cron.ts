@@ -98,7 +98,7 @@ function discoverAgentContainers(): AgentInfo[] {
   }
 }
 
-// ── Read cron jobs from a single source ──────────────────────────────────
+// ── Parse CLI output ─────────────────────────────────────────────────────
 
 function parseCronListOutput(raw: string): OpenClawCronJob[] | null {
   try {
@@ -125,34 +125,22 @@ function listJobsOnHost(): OpenClawCronJob[] | null {
 }
 
 function listJobsInContainer(containerName: string): OpenClawCronJob[] | null {
-  // Strategy 1: OpenClaw CLI via known gateway ports
-  // The gateway may run on a non-default port (e.g. 3000 instead of 18789).
-  // Try $OPENCLAW_GATEWAY_URL first, then common ports (3000, 18789).
+  // Try both common agent gateway ports. Agents default to 3000 (OpenClaw
+  // gateway --bind lan --port 3000) but may also run on 18789 (default).
   const gatewayUrls = [
-    `http://127.0.0.1:3000`,
-    `http://127.0.0.1:18789`,
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:18789',
   ];
 
   for (const gwUrl of gatewayUrls) {
     try {
-      const raw = execFileSync('docker', ['exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`, containerName, 'openclaw', 'cron', 'list', '--json'], {
-        encoding: 'utf8', timeout: 15000,
-      });
+      const raw = execFileSync('docker', [
+        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
+        containerName, 'openclaw', 'cron', 'list', '--json',
+      ], { encoding: 'utf8', timeout: 15000 });
       const parsed = parseCronListOutput(raw);
       if (parsed) return parsed;
     } catch { /* try next gateway port */ }
-  }
-
-  // Strategy 2: read ~/.openclaw/cron/jobs.json directly (gateway not reachable)
-  // OpenClaw doc: 'Job definitions persist at ~/.openclaw/cron/jobs.json'
-  for (const path of ['/root/.openclaw/cron/jobs.json', '/data/.openclaw/cron/jobs.json']) {
-    try {
-      const raw = execFileSync('docker', ['exec', containerName, 'cat', path], {
-        encoding: 'utf8', timeout: 5000,
-      });
-      const parsed = parseCronListOutput(raw);
-      if (parsed) return parsed;
-    } catch { /* try next path */ }
   }
 
   return null;
@@ -173,26 +161,42 @@ function toggleOnHost(jobId: string, enabled: boolean): boolean {
 }
 
 function toggleInContainer(containerName: string, jobId: string, enabled: boolean): boolean {
-  try {
-    const action = enabled ? 'enable' : 'disable';
-    execFileSync('docker', ['exec', containerName, 'openclaw', 'cron', action, jobId], {
-      encoding: 'utf8', timeout: 10000,
-    });
-    return true;
-  } catch {
-    return false;
+  const gatewayUrls = [
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:18789',
+  ];
+  for (const gwUrl of gatewayUrls) {
+    try {
+      const action = enabled ? 'enable' : 'disable';
+      execFileSync('docker', [
+        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
+        containerName, 'openclaw', 'cron', action, jobId,
+      ], { encoding: 'utf8', timeout: 10000 });
+      return true;
+    } catch { /* try next gateway port */ }
   }
+  return false;
 }
 
-// ── List: per-container cron only (AGENT_ID containers) ────────────────
+// ── List: host gateway + per-container cron ─────────────────────────────
 
-export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
+export function listOpenClawCronJobs(): OpenClawCronListResult {
   const seen = new Set<string>();
   const jobs: OpenClawCronJob[] = [];
 
-  // Only discover cron jobs from containers with AGENT_ID label
-  const agents = discoverAgentContainers();
+  // 1. Host gateway cron jobs
+  const hostJobs = listJobsOnHost();
+  if (hostJobs) {
+    for (const job of hostJobs) {
+      job.scheduleExpr = extractScheduleExpr(job);
+      job.source = 'host';
+      jobs.push(job);
+      if (job.id) seen.add(job.id);
+    }
+  }
 
+  // 2. Agent container cron jobs
+  const agents = discoverAgentContainers();
   for (const agent of agents) {
     const containerJobs = listJobsInContainer(agent.containerName);
     if (containerJobs) {
@@ -221,7 +225,7 @@ export interface CronPatchResult {
   error?: string;
 }
 
-// ── Cron run history ───────────────────────────────────────────────────
+// ── Cron run history ─────────────────────────────────────────────────────
 
 export interface CronRunEntry {
   ts?: number;
@@ -236,20 +240,10 @@ export interface CronRunEntry {
   nextRunAtMs?: number;
   model?: string;
   provider?: string;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    total_tokens?: number;
-    [key: string]: unknown;
-  };
+  usage?: Record<string, number>;
   diagnostics?: {
     summary?: string;
-    entries?: Array<{
-      ts?: number;
-      source?: string;
-      severity?: string;
-      message?: string;
-    }>;
+    entries?: Array<{ ts?: number; source?: string; severity?: string; message?: string }>;
   };
   [key: string]: unknown;
 }
@@ -260,15 +254,14 @@ export interface CronRunsResult {
   error?: string;
 }
 
-export async function getCronRuns(
+export function getCronRuns(
   containerName: string,
   jobId: string,
-  limit: number = 20
-): Promise<CronRunsResult> {
-  // Try both gateway ports that container agents may use
+  limit: number = 20,
+): CronRunsResult {
   const gatewayUrls = [
-    `http://127.0.0.1:3000`,
-    `http://127.0.0.1:18789`,
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:18789',
   ];
 
   for (const gwUrl of gatewayUrls) {
@@ -280,17 +273,18 @@ export async function getCronRuns(
       ], { encoding: 'utf8', timeout: 15000 });
 
       const parsed = JSON.parse(raw.trim()) as { entries?: CronRunEntry[] };
+      // Accept both empty and populated entries arrays
       if (parsed && Array.isArray(parsed.entries)) {
         return { ok: true, entries: parsed.entries };
       }
-      return { ok: false, entries: [], error: 'Unexpected response format' };
+      // Not the expected format; try next port
     } catch { /* try next gateway port */ }
   }
 
   return { ok: false, entries: [], error: 'Cannot connect to container gateway for runs' };
 }
 
-export async function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): Promise<CronPatchResult> {
+export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronPatchResult {
   if (typeof patch.enabled !== 'boolean') {
     return { ok: false, error: 'Only the enabled field can be patched' };
   }

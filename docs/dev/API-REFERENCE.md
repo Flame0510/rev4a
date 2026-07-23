@@ -1174,7 +1174,7 @@ Aggregated health checks with recommendations.
 ## Crons
 
 ### `GET /api/crons`
-List of scheduled cron jobs from all sources: the host OpenClaw gateway and every running Docker container with the `AGENT_ID` label.
+List of scheduled cron jobs from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`).
 
 Jobs from agent containers include `containerName` and `source: "container"` fields.
 Jobs from the host gateway have `source: "host"`.
@@ -1245,6 +1245,41 @@ For jobs inside a container, pass `containerName` in the body to identify which 
   "scheduleExpr": "15 3 * * *"
 }
 ```
+
+### `GET /api/crons/runs`
+Run history for a specific cron job. Queries the container's gateway via `openclaw cron runs --id <jobId> --limit <limit>`.
+
+**Auth:** Bearer or browser cookie
+
+**Query params:**
+- `containerName` (required) — Docker container name
+- `jobId` (required) — cron job UUID
+- `limit` (optional, default 20, max 100) — number of recent runs to return
+
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "ts": 1784820036635,
+      "jobId": "7a607208-...",
+      "action": "finished",
+      "status": "error",
+      "error": "Channel is required ...",
+      "runAtMs": 1784820025581,
+      "durationMs": 11046,
+      "model": "deepseek/deepseek-v4-flash",
+      "usage": { "input_tokens": 15872, "output_tokens": 597 }
+    }
+  ]
+}
+```
+
+On gateway-connection failure:
+```json
+{ "error": "Cannot connect to container gateway for runs", "entries": [] }
+```
+(HTTP 502)
 
 ---
 

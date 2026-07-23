@@ -19,9 +19,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Missing or invalid jobId' }, { status: 400 });
   }
 
-  const result = await getCronRuns(containerName, jobId, limit);
+  const result = getCronRuns(containerName, jobId, limit);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error, entries: [] }, { status: 200 });
+    return NextResponse.json({ error: result.error, entries: [] }, { status: 502 });
   }
 
   return NextResponse.json({ entries: result.entries });
