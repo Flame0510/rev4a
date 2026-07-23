@@ -56,7 +56,7 @@ function findAvailablePort(): number {
 }
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120; // 120s ceiling: docker run (60s) + health check (60s)
+export const maxDuration = 180; // docker run (60s) + health check (60s) + seeding (60s)
 
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
 const MODELS_CONFIG = path.join(process.cwd(), 'models.config.json');

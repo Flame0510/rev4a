@@ -6,7 +6,7 @@ import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 import { buildOlympusProviderConfig } from '@/app/api/gateway/sync';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120; // docker run (60s) + health check (60s)
+export const maxDuration = 180; // docker run (60s) + health check (60s) + config patch (60s)
 
 const BACKUP_VOLUME = 'olympus-backups';
 const SHARED_SKILLS = '/docker/shared-skills';

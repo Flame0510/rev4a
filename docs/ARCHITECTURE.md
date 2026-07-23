@@ -81,10 +81,10 @@
 | Feature | Status | Notes |
 |---|---|---|
 | Vault (UI + API) | 🟢 Implemented | JSON file, no encryption yet |
-| Spawn agent script | 🟢 Working | `scripts/spawn-agent.sh` |
 | Container page | 🟢 Functional | Lists all containers, logs, resources |
-| Provider proxy | 🔴 Not started | Agents still use direct API keys |
-| Shared volumes | 🔴 Not configured | Skills, repos, memory are not shared |
+| Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
+| Provider proxy | 🟢 Implemented | Agents route through Olympus provider gateway |
+| Shared volumes | 🟢 Implemented | Skills + repos mounted on all agents |
 | Central Oracle DB | 🔴 Not started | Events are per-container |
 | Auto-registration | 🔴 Not started | New containers must be manually added |
 
@@ -109,7 +109,7 @@ The central container, running the Next.js dashboard + orchestration API.
 ```
 /path/to/olympus/data  → /data (persistent)
 /var/run/docker.sock          → /var/run/docker.sock
-/docker/shared-skills          → /data/.openclaw/shared-skills (rw)
+/docker/shared-skills          → /data/.openclaw/shared-skills (ro)
 /docker/shared-repos           → /data/repos (rw)
 ```
 
@@ -119,9 +119,9 @@ Docker image for every agent container.
 
 **Contents:**
 ```dockerfile
-FROM node:24-alpine
-RUN npm install -g openclaw pm2 @flame0510/olympus
-RUN apk add --no-cache git gh curl jq
+FROM node:24-bookworm-slim
+RUN npm install -g openclaw@2026.7.1 vercel trello-cli
+RUN apt-get update && apt-get install -y --no-install-recommends git gh curl jq
 ```
 
 **Volume mounts (per agent):**
@@ -293,7 +293,7 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
 - The setup script (`scripts/setup/olympus.sh`) creates `/docker/shared-skills` with correct permissions on first install.
-- The spawn script (`scripts/spawn-agent.sh`) ensures the directory exists and mounts it `ro` into new containers.
+- The Olympus wizard (`app/api/agents/create`) mounts shared volumes on every new agent and guarantees `extraDirs` + provider proxy in the container config.
 
 ### Shared Repositories (`/docker/shared-repos`)
 ```

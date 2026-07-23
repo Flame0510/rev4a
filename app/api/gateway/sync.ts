@@ -76,8 +76,9 @@ function readContainerJson(container: string, remotePath: string): Record<string
 
 function writeContainerJson(container: string, remotePath: string, data: Record<string, unknown>): void {
   const jsonStr = JSON.stringify(data, null, 2);
+  // Use shell-quoted heredoc to avoid word-splitting on paths with spaces
   execSync(
-    `docker exec -i ${container} sh -c 'cat > ${remotePath}'`,
+    `docker exec -i ${container} sh -c "cat > '${remotePath}'"`,
     { timeout: 10000, maxBuffer: 1024 * 1024, input: jsonStr },
   );
 }
