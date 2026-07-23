@@ -221,6 +221,75 @@ export interface CronPatchResult {
   error?: string;
 }
 
+// ── Cron run history ───────────────────────────────────────────────────
+
+export interface CronRunEntry {
+  ts?: number;
+  jobId?: string;
+  action?: string;
+  status?: string;
+  error?: string;
+  summary?: string;
+  runId?: string;
+  runAtMs?: number;
+  durationMs?: number;
+  nextRunAtMs?: number;
+  model?: string;
+  provider?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    [key: string]: unknown;
+  };
+  diagnostics?: {
+    summary?: string;
+    entries?: Array<{
+      ts?: number;
+      source?: string;
+      severity?: string;
+      message?: string;
+    }>;
+  };
+  [key: string]: unknown;
+}
+
+export interface CronRunsResult {
+  ok: boolean;
+  entries: CronRunEntry[];
+  error?: string;
+}
+
+export async function getCronRuns(
+  containerName: string,
+  jobId: string,
+  limit: number = 20
+): Promise<CronRunsResult> {
+  // Try both gateway ports that container agents may use
+  const gatewayUrls = [
+    `http://127.0.0.1:3000`,
+    `http://127.0.0.1:18789`,
+  ];
+
+  for (const gwUrl of gatewayUrls) {
+    try {
+      const raw = execFileSync('docker', [
+        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
+        containerName, 'openclaw', 'cron', 'runs', '--id', jobId,
+        '--limit', String(limit),
+      ], { encoding: 'utf8', timeout: 15000 });
+
+      const parsed = JSON.parse(raw.trim()) as { entries?: CronRunEntry[] };
+      if (parsed && Array.isArray(parsed.entries)) {
+        return { ok: true, entries: parsed.entries };
+      }
+      return { ok: false, entries: [], error: 'Unexpected response format' };
+    } catch { /* try next gateway port */ }
+  }
+
+  return { ok: false, entries: [], error: 'Cannot connect to container gateway for runs' };
+}
+
 export async function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): Promise<CronPatchResult> {
   if (typeof patch.enabled !== 'boolean') {
     return { ok: false, error: 'Only the enabled field can be patched' };

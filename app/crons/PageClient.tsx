@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill } from '../components/ui';
-import type { Tone } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
@@ -36,38 +35,21 @@ interface CronJob {
   [key: string]: unknown;
 }
 
-interface CronSession {
-  session_id: string;
-  status: string;
-  started_at: number;
-  updated_at?: number;
-  ended_at?: number;
-  cost_usd?: number;
-  label?: string;
-}
-
-function statusTone(status: string): Tone {
-  if (status === 'working' || status === 'active') return 'success';
-  if (status === 'completed') return 'info';
-  if (status === 'error') return 'danger';
-  return 'neutral';
-}
-
-function statusLabel(status: string): string {
-  if (status === 'idle') return 'INATTIVO';
-  return status.toUpperCase();
-}
-
-function statusHint(status: string): string {
-  if (status === 'idle') return 'Session created without final state: not an error';
-  return status;
-}
-
-function statusDot(status: string): string {
-  if (status === 'working' || status === 'active') return 'var(--green)';
-  if (status === 'completed') return 'var(--blue)';
-  if (status === 'error') return 'var(--red)';
-  return 'var(--gray)';
+interface CronRunEntry {
+  ts?: number;
+  jobId?: string;
+  action?: string;
+  status?: string;
+  error?: string;
+  summary?: string;
+  runId?: string;
+  runAtMs?: number;
+  durationMs?: number;
+  nextRunAtMs?: number;
+  model?: string;
+  usage?: Record<string, number>;
+  diagnostics?: { summary?: string; entries?: Array<Record<string, unknown>> };
+  [key: string]: unknown;
 }
 
 function formatTs(ms: number, timezone: string): string {
@@ -123,22 +105,6 @@ function describeCron(expr: string): string {
   return '';
 }
 
-function formatDuration(startMs: number, endMs?: number): string {
-  const dur = (endMs ?? Date.now()) - startMs;
-  const s = Math.floor(dur / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function latestSessionTs(session: CronSession): number {
-  return Math.max(Number(session.updated_at ?? 0), Number(session.ended_at ?? 0), Number(session.started_at ?? 0));
-}
-
-function displaySessionDuration(session: CronSession): string {
-  const end = session.ended_at && session.ended_at >= session.started_at ? session.ended_at : session.updated_at;
-  return formatDuration(session.started_at, end);
-}
-
 // ── Agent filter helpers ──────────────────────────────────────────────────
 
 interface AgentFilter {
@@ -176,25 +142,22 @@ function filterJobs(jobs: CronJob[], agentKey: string): CronJob[] {
   return jobs.filter(j => j.containerName === agentKey);
 }
 
-function filterSessions(sessions: CronSession[], agentKey: string): CronSession[] {
-  if (agentKey === 'all') return sessions;
-  return sessions.filter(s => s.session_id.startsWith(`cron:${agentKey}:`) || s.session_id.startsWith(`:cron:${agentKey}:`));
-}
-
 
 export default function CronsPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
-  const [sessions, setSessions] = useState<CronSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState('all');
+  const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
+  const [runs, setRuns] = useState<CronRunEntry[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
   const isMobile = useResponsive('lg');
   const [tab, setTab] = useState<'jobs' | 'runs'>('jobs');
   const timezone = useOlympusTimezone();
 
   const agentFilters = buildAgentFilters(jobs);
   const filteredJobs = filterJobs(jobs, agentFilter);
-  const filteredSessions = filterSessions(sessions, agentFilter);
 
   async function toggleJob(job: CronJob) {
     const id = job.id;
@@ -216,23 +179,43 @@ export default function CronsPage() {
     finally { setToggling(null); }
   }
 
+  async function loadRuns(job: CronJob) {
+    if (!job.id || !job.containerName) return;
+    setRunsLoading(true);
+    setRunsError(null);
+    setRuns([]);
+    try {
+      const res = await apiFetch(
+        `/api/crons/runs?containerName=${encodeURIComponent(job.containerName)}&jobId=${encodeURIComponent(job.id)}&limit=30`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setRuns((data.entries ?? []) as CronRunEntry[]);
+      } else {
+        setRunsError('Failed to load runs');
+      }
+    } catch {
+      setRunsError('Failed to load runs');
+    } finally {
+      setRunsLoading(false);
+    }
+  }
+
   async function load() {
     try {
-      const [jobsRes, sessRes] = await Promise.all([
-        apiFetch('/api/crons'),
-        apiFetch('/api/sessions?filter=cron&limit=50'),
-      ]);
+      const jobsRes = await apiFetch('/api/crons');
       if (jobsRes.ok) {
         const data = await jobsRes.json() as CronJob[] | { jobs: CronJob[] };
         setJobs(Array.isArray(data) ? data : (data.jobs ?? []));
       }
-      if (sessRes.ok) {
-        const data = await sessRes.json();
-        setSessions((Array.isArray(data) ? data : data.sessions ?? []) as CronSession[]);
-      }
     } catch { /* keep UI alive */ }
     finally { setLoading(false); }
   }
+
+  // Load runs when a job is selected
+  useEffect(() => {
+    if (selectedJob) void loadRuns(selectedJob);
+  }, [selectedJob?.id, selectedJob?.containerName]);
 
   useEffect(() => {
     void load();
@@ -244,7 +227,7 @@ export default function CronsPage() {
     <div className="crons-page">
       <div className="crons-header">
         <span className="crons-header__title">CRONS</span>
-        <span className="crons-header__meta">{sessions.length} runs in history</span>
+        <span className="crons-header__meta">{runs.length} runs loaded</span>
       </div>
 
       {loading && <SkeletonLines count={4} />}
@@ -294,10 +277,18 @@ export default function CronsPage() {
               const lastStatus = job.state?.lastStatus;
               const isEnabled = job.enabled !== false;
               const isContainered = job.source === 'container' && !!job.containerName;
+              const isSelected = selectedJob?.id === job.id;
               return (
-                <div key={job.id ?? i} style={{
+                <div 
+                  key={job.id ?? i} 
+                  onClick={() => setSelectedJob(isSelected ? null : job)}
+                  style={{
                   padding: '12px 14px', borderBottom: '1px solid var(--border)',
                   opacity: isEnabled ? 1 : 0.6,
+                  cursor: 'pointer',
+                  background: isSelected ? 'var(--copper-bg)' : 'transparent',
+                  borderLeft: isSelected ? '2px solid var(--copper)' : '2px solid transparent',
+                  transition: 'background 0.15s, border-color 0.15s',
                 }}>
                   {/* Header row */}
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
@@ -387,7 +378,6 @@ export default function CronsPage() {
 
                   {/* Meta row */}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 10, color: '#555', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
-                    {job.containerName && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
                     {job.source === 'host' && <span>source: <span style={{ color: '#888' }}>host (gateway)</span></span>}
                     {isContainered && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
                     {model && <span>model: <span style={{ color: '#888' }}>{String(model)}</span></span>}
@@ -408,45 +398,68 @@ export default function CronsPage() {
           </div>
         </section>
 
-        {/* Cron session history */}
+        {/* Cron run history */}
         <section style={{ flex: 1, display: isMobile && tab !== 'runs' ? 'none' : 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 10, color: '#555', flexShrink: 0 }}>
-            RUN HISTORY {agentFilter !== 'all' ? `(${agentFilter})` : ''}
+            RUN HISTORY {selectedJob ? `— ${selectedJob.name ?? selectedJob.id?.slice(0, 8) ?? ''}` : ''}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {filteredSessions.length === 0 && !loading && (
-              <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No cron runs in history</div>
+            {!selectedJob && !loading && (
+              <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>Select a cron job to view its run history</div>
             )}
-            {filteredSessions
+            {selectedJob && runsLoading && <SkeletonLines count={3} />}
+            {selectedJob && !runsLoading && runsError && (
+              <div style={{ padding: '20px 12px', fontSize: 11, color: 'var(--red)' }}>{runsError}</div>
+            )}
+            {selectedJob && !runsLoading && !runsError && runs.length === 0 && (
+              <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No runs recorded yet</div>
+            )}
+            {selectedJob && !runsLoading && runs
               .slice()
-              .sort((a, b) => latestSessionTs(b) - latestSessionTs(a))
-              .map((s) => {
-                const agentParts = s.session_id.split(':');
-                const containerName = agentParts[1] ?? '?';
-                const runId = agentParts[3]?.slice(0, 8) ?? '?';
+              .sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0))
+              .map((r) => {
+                const ts = r.ts ?? 0;
+                const status = r.status ?? 'unknown';
+                const action = r.action ?? '';
+                const dur = r.durationMs;
+                const runId = r.runId?.slice(-12) ?? '';
+                const error = r.error ?? r.diagnostics?.summary;
                 return (
-                  <div key={s.session_id} style={{
-                    padding: '8px 12px', borderBottom: '1px solid var(--border)',
-                    display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr auto', gap: '4px 12px', alignItems: 'start',
+                  <div key={r.runId ?? ts} style={{
+                    padding: '8px 12px',
+                    borderBottom: '1px solid var(--border)',
                   }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: 1, background: statusDot(s.status), display: 'inline-block', flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, color: 'var(--copper)' }}>{containerName}</span>
-                        <span style={{ fontSize: 10, color: '#555' }}>#{runId}</span>
-                      </div>
-                      <div style={{ fontSize: 10, color: '#555' }}>
-                        last update {formatTs(latestSessionTs(s), timezone)} &middot; duration {displaySessionDuration(s)}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span title={statusHint(s.status)}>
-                        <Pill tone={statusTone(s.status)}>{statusLabel(s.status)}</Pill>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: 1,
+                        background: status === 'ok' ? 'var(--green)' : status === 'error' ? 'var(--red)' : 'var(--yellow)',
+                        display: 'inline-block', flexShrink: 0,
+                      }} />
+                      <span style={{ fontSize: 10, color: 'var(--copper)', letterSpacing: '0.06em' }}>
+                        {action.toUpperCase()}
                       </span>
-                      {s.cost_usd != null && s.cost_usd > 0 && (
-                        <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>${s.cost_usd.toFixed(4)}</div>
+                      <Pill tone={status === 'ok' ? 'success' : status === 'error' ? 'danger' : 'neutral'}>
+                        {status.toUpperCase()}
+                      </Pill>
+                      {dur != null && (
+                        <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto' }}>
+                          {dur >= 1000 ? `${(dur / 1000).toFixed(1)}s` : `${dur}ms`}
+                        </span>
                       )}
                     </div>
+                    <div style={{ fontSize: 10, color: '#555', marginBottom: error ? 4 : 0 }}>
+                      {formatTs(ts, timezone)}{runId ? ` · #${runId}` : ''}
+                    </div>
+                    {error && (
+                      <div style={{
+                        fontSize: 9, color: 'var(--red)',
+                        padding: '4px 6px', background: 'rgba(239,68,68,0.06)',
+                        marginTop: 2, maxHeight: 50, overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}>
+                        {String(error).slice(0, 180)}
+                      </div>
+                    )}
                   </div>
                 );
               })}
