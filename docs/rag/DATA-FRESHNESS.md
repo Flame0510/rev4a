@@ -104,6 +104,6 @@ The System Health page shows a check like "last event X seconds ago". If this nu
 
 You can also run this command on the server to check directly:
 ```bash
-sqlite3 /data/.openclaw/workspace-ops/olympus-next-ts/events.db \
+sqlite3 data/events.db \
   "SELECT datetime(MAX(ts)/1000, 'unixepoch', 'localtime') FROM events"
 ```
