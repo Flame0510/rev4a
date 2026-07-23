@@ -57,7 +57,7 @@
 │  │ SHARED VOLUMES                                           │  │
 │  │ • /docker/shared-skills → read-only on all agents        │  │
 │  │ • /docker/shared-repos  → shared project repos           │  │
-│  │ • /docker/shared-memory → centralized memory store       │  │
+│  └──────────────────────────────────────────────────────────┘  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -117,13 +117,11 @@ The central container, running the Next.js dashboard + orchestration API.
 
 Docker image for every agent container.
 
-**Contents:**
-```dockerfile
-FROM node:24-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl openssl gpg
-RUN npm install -g openclaw@2026.7.1 vercel trello-cli
-```
+**Contents:** See the live Dockerfile at
+`agent-templates/base-image/Dockerfile` (authoritative source).
+The image installs `openclaw`, `vercel`, `trello-cli`, `gh`, `supabase`,
+copies the entrypoint script, and applies baseline gateway config patches.
+
 
 **Volume mounts (per agent):**
 ```

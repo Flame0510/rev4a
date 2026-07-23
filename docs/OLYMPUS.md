@@ -82,7 +82,7 @@ to any specific reverse proxy.
 When environment variables are saved via the Config page (Save & Restart):
 
 1. Values are written to `.env` in the project root
-2. The systemd service file is synced (all `Environment=` lines replaced with current vars)
+2. The systemd service file is synced — only keys matching `OLYMPUS_*` and `PROVIDER_*` are forwarded as `Environment=` lines. Other vars (passwords, non-Olympus keys) stay in `.env` for the application to read at runtime.
 3. `systemctl daemon-reload` is run
 4. The server restarts with the new environment
 

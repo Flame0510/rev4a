@@ -124,9 +124,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Validate template exists
+    // Validate template — must be a valid identifier (no path traversal).
+    if (!isDockerCompatibleName(template)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid template name' },
+        { status: 400 },
+      );
+    }
+
+    // Validate template directory exists
     const templateDir = path.join(TEMPLATES_DIR, template);
-    if (!template || !fs.existsSync(templateDir) || !fs.statSync(templateDir).isDirectory()) {
+    if (!fs.existsSync(templateDir) || !fs.statSync(templateDir).isDirectory()) {
       return NextResponse.json(
         {
           success: false,
