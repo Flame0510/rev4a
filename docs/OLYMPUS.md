@@ -234,7 +234,8 @@ Container workspaces are discovered dynamically — any Docker container with an
 ### Vault (`/vault`)
 Store and manage credentials (API keys, tokens) with per-agent permissions.
 
-- **File-based storage:** `vault.json` in the project root
+- **SQLite storage:** `credentials.db` in the data directory
+- **Provider keys:** stored in `data/provider-keys.json`, managed via the Gateway UI
 - **Agent permissions:** each credential can be scoped to specific agents
 - **Service management:** add/remove provider API keys and service tokens via the UI
 
@@ -271,7 +272,7 @@ Available templates:
 **Post-creation pipeline:**
 1. The container boots with the **openclaw-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
-3. The route waits for the gateway to be fully ready (health check poll, up to 20 s).
+3. The route waits for the gateway to be fully ready (health check poll, up to 60 s).
 4. Once ready, the route writes:
    - `gateway.controlUi.allowedOrigins` — Olympus dashboard URL + Traefik hostname (required for browser Control UI access)
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
@@ -496,11 +497,10 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 │   └── ARCHITECTURE.md      # Design & future vision
 ├── lib/                     # Shared utilities (apiFetch, vault, memory-context)
 ├── public/                  # Static assets
-├── scripts/                 # Utility scripts (spawn-agent, generate-env)
+├── scripts/                 # Utility scripts (setup, helpers)
 ├── .env                     # Local env vars (gitignored)
 ├── ecosystem.config.js      # PM2 config
-├── proxy.ts                  # Auth proxy (replaced middleware.ts)
-├── vault.json               # Credential storage (gitignored)
+├── proxy.ts                  # Auth proxy
 ├── next.config.mjs
 └── package.json
 ```
