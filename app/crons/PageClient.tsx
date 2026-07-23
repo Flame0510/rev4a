@@ -200,13 +200,10 @@ export default function CronsPage() {
     if (!id) return;
     setToggling(id);
     try {
-      const body: Record<string, unknown> = { enabled: !(job.enabled !== false) };
-      if (job.containerName) body.containerName = job.containerName;
-
       const res = await apiFetch(`/api/crons/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ enabled: !(job.enabled !== false) }),
       });
       if (res.ok) {
         const updated = await res.json() as CronJob;
