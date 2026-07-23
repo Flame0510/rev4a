@@ -127,7 +127,7 @@ function buildAgentFilters(jobs: CronJob[]): AgentFilter[] {
       seen.add(job.containerName);
       filters.push({
         key: job.containerName,
-        label: job.agentId ?? job.containerName,
+        label: job.containerName,
         source: 'container',
         containerName: job.containerName,
       });
