@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { syncAgent, buildOlympusProviderConfig } from '../../gateway/sync';
+import { buildOlympusProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
 
 /**

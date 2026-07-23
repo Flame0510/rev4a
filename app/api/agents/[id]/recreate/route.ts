@@ -139,8 +139,17 @@ export async function POST(
       );
     }
 
-    // Stop & remove the old container
-    execSync(`docker rm -f ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
+    // Stop & remove the old container. If removal fails (Docker daemon
+    // overloaded, container stuck in "removal in progress"), abort — we
+    // can't run a new container with a conflicting name.
+    try {
+      execSync(`docker rm -f ${containerName}`, { timeout: 15000 });
+    } catch (rmErr) {
+      return NextResponse.json(
+        { error: `Failed to remove old container '${containerName}': ${(rmErr as Error).message}. The original container may still be running.` },
+        { status: 500 },
+      );
+    }
 
     // Run the new container with all mounts (persistent volume + shared skills + shared repos)
     const cmd = [
