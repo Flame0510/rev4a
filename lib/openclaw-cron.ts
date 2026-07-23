@@ -125,17 +125,25 @@ function listJobsOnHost(): OpenClawCronJob[] | null {
 }
 
 function listJobsInContainer(containerName: string): OpenClawCronJob[] | null {
-  // Strategy 1: use OpenClaw CLI (needs active gateway)
-  try {
-    const raw = execFileSync('docker', ['exec', containerName, 'openclaw', 'cron', 'list', '--json'], {
-      encoding: 'utf8', timeout: 15000,
-    });
-    return parseCronListOutput(raw);
-  } catch {
-    // Gateway not running — fall back to reading the jobs file directly
+  // Strategy 1: OpenClaw CLI via known gateway ports
+  // The gateway may run on a non-default port (e.g. 3000 instead of 18789).
+  // Try $OPENCLAW_GATEWAY_URL first, then common ports (3000, 18789).
+  const gatewayUrls = [
+    `http://127.0.0.1:3000`,
+    `http://127.0.0.1:18789`,
+  ];
+
+  for (const gwUrl of gatewayUrls) {
+    try {
+      const raw = execFileSync('docker', ['exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`, containerName, 'openclaw', 'cron', 'list', '--json'], {
+        encoding: 'utf8', timeout: 15000,
+      });
+      const parsed = parseCronListOutput(raw);
+      if (parsed) return parsed;
+    } catch { /* try next gateway port */ }
   }
 
-  // Strategy 2: read ~/.openclaw/cron/jobs.json directly
+  // Strategy 2: read ~/.openclaw/cron/jobs.json directly (gateway not reachable)
   // OpenClaw doc: 'Job definitions persist at ~/.openclaw/cron/jobs.json'
   for (const path of ['/root/.openclaw/cron/jobs.json', '/data/.openclaw/cron/jobs.json']) {
     try {
@@ -176,26 +184,14 @@ function toggleInContainer(containerName: string, jobId: string, enabled: boolea
   }
 }
 
-// ── List: host cron + per-container cron ────────────────────────────────
+// ── List: per-container cron only (AGENT_ID containers) ────────────────
 
 export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   const seen = new Set<string>();
   const jobs: OpenClawCronJob[] = [];
 
-  // 1. Host gateway cron jobs
-  const hostJobs = listJobsOnHost();
-  if (hostJobs) {
-    for (const job of hostJobs) {
-      job.scheduleExpr = extractScheduleExpr(job);
-      job.source = 'host';
-      jobs.push(job);
-      if (job.id) seen.add(job.id);
-    }
-  }
-
-  // 2. Per-container cron jobs (docker exec openclaw cron list --json)
+  // Only discover cron jobs from containers with AGENT_ID label
   const agents = discoverAgentContainers();
-  const agentToContainer = new Map(agents.map(a => [a.agentId, a.containerName]));
 
   for (const agent of agents) {
     const containerJobs = listJobsInContainer(agent.containerName);
@@ -206,27 +202,11 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
         job.containerName = agent.containerName;
         if (!job.agentId) job.agentId = agent.agentId;
 
-        // If same id already came from host, merge fields instead of duplicating
-        if (job.id && seen.has(job.id)) {
-          const existing = jobs.find(j => j.id === job.id);
-          if (existing) {
-            existing.containerName = agent.containerName;
-            existing.source = 'container'; // container wins as authoritative source
-          }
-          continue;
-        }
+        if (job.id && seen.has(job.id)) continue;
 
         jobs.push(job);
         if (job.id) seen.add(job.id);
       }
-    }
-  }
-
-  // 3. Enrich host-origin jobs that have agentId pointing to a known container
-  //    (these were already found on host, but still tag them with containerName)
-  for (const job of jobs) {
-    if (!job.containerName && job.agentId && agentToContainer.has(job.agentId)) {
-      job.containerName = agentToContainer.get(job.agentId);
     }
   }
 
