@@ -80,7 +80,7 @@
 
 | Feature | Status | Notes |
 |---|---|---|
-| Vault (UI + API) | 🟢 Implemented | JSON file, no encryption yet |
+| Vault (UI + API) | 🟢 Implemented | SQLite + JSON, no encryption yet |
 | Container page | 🟢 Functional | Lists all containers, logs, resources |
 | Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
 | Provider proxy | 🟢 Implemented | Agents route through Olympus provider gateway |
@@ -120,16 +120,16 @@ Docker image for every agent container.
 **Contents:**
 ```dockerfile
 FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl openssl gpg
 RUN npm install -g openclaw@2026.7.1 vercel trello-cli
-RUN apt-get update && apt-get install -y --no-install-recommends git gh curl jq
 ```
 
 **Volume mounts (per agent):**
 ```
 /docker/shared-skills  → /data/.openclaw/shared-skills  (ro)
 /docker/shared-repos   → /data/repos                      (rw)
-/docker/shared-memory  → /data/.openclaw/workspace/memory (rw)
-/docker/agent-{id}/data → /data                           (rw, per-agent state)
+/docker/agent-{id}-data → /root                           (rw, per-agent persistent state)
 ```
 
 **Injected environment variables (from Olympus vault):**
@@ -185,7 +185,9 @@ detailed documentation.
 
 ## 4. Credential Management (Vault)
 
-All credentials live in a single file (`vault.json`) on Olympus. At agent spawn time, Olympus injects only the credentials the agent is permitted to use.
+Provider API keys are stored in `data/provider-keys.json`. Third-party service credentials
+(GitHub, Trello, Vercel, Supabase) are stored in `data/credentials.db` (SQLite).
+At agent spawn time, Olympus injects only the credentials the agent is permitted to use.
 
 ```json
 {
@@ -206,7 +208,7 @@ All credentials live in a single file (`vault.json`) on Olympus. At agent spawn 
 }
 ```
 
-**Current implementation:** plain JSON file (no encryption). Future: encrypted with GPG or integrated with HashiCorp Vault / Vaultwarden.
+**Current implementation:** SQLite (`credentials.db`) for services, JSON file (`provider-keys.json`) for provider keys (no encryption yet). Future: encrypted with AES-256-GCM or integrated with HashiCorp Vault / Vaultwarden.
 
 ---
 
@@ -259,15 +261,14 @@ Olympus Dashboard UI
 └──────────────────────────────────────┘
 ```
 
-### Planned API endpoints
+### Implemented API endpoints
 
 ```
-POST   /api/agents/spawn           Create new container agent
+POST   /api/agents/create          Create new container agent (template + model)
 DELETE /api/agents/{id}            Destructive: remove container + volume + backups
 POST   /api/agents/{id}/restart    Restart container
-GET    /api/agents/{id}/status     Healthcheck + metrics
-GET    /api/agents                 List all agents
-GET    /api/agents/{id}/logs       Container logs
+POST   /api/agents/{id}/recreate   Rebuild from latest image (volume preserved)
+GET    /api/agents                 List all agents (Docker containers with AGENT_ID)
 ```
 
 ---
@@ -302,13 +303,6 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
   projects/    # project repos for agents to work on
 ```
 **Permissions:** rw for Olympus and agents that need to write code.
-
-### Shared Memory (`/docker/shared-memory`)
-Two possible approaches:
-- **Centralized:** Single SQLite DB with all agent memories. Simpler but contention risk.
-- **Distributed:** Each agent has local memory + Olympus periodically syncs a central index. More resilient.
-
-**Recommendation:** distributed with a central index.
 
 ---
 
@@ -534,7 +528,7 @@ for the full rationale.
 | Database | SQLite (WAL mode) | Current `events.db`, may need to scale |
 | Memory | Per-agent SQLite + central index | New |
 | Config | Generated YAML/JSON | New |
-| Vault | JSON file + encryption | Current: plain JSON. Future: encrypted |
+| Vault | SQLite + JSON | Current: credentials.db + provider-keys.json. Future: encrypted |
 | Reverse proxy | Traefik | Already in use |
 | Monitoring | Olympus daemon (extended) | Evolution of current daemon |
 | Version control | Git + GitHub | `github.com/Flame0510/olympus.git` |
