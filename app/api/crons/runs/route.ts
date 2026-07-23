@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getCronRuns } from '@/lib/openclaw-cron';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // docker exec + gateway API call can take up to 15s
 
 const CONTAINER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 
