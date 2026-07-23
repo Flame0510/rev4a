@@ -119,12 +119,17 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           // inspect non-critical, continue with partial data
         }
 
-        // Determine template from image name or AGENT_ID
+        // Determine template from AGENT_ID — only if a matching
+        // template directory exists in agent-templates/.
         const image: string = c.Image || '';
         let template: string | null = null;
         if (image.startsWith('openclaw-agent-base')) {
-          // Template matches agentId if there is a dir with that name
-          template = agentId;
+          const candidateDir = path.join(process.cwd(), 'agent-templates', agentId);
+          if (fs.existsSync(candidateDir) && fs.statSync(candidateDir).isDirectory()) {
+            template = agentId;
+          } else {
+            template = 'custom';
+          }
         }
 
         const ports = (c.Ports || [])
