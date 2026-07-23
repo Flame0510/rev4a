@@ -216,13 +216,15 @@ create_systemd_service() {
   # Read .env for Environment= lines
   local env_lines=""
   if [[ -f "${OLYMPUS_APP}/.env" ]]; then
-    while IFS='=' read -r key value; do
+    while IFS='=' read -r line; do
       # Skip comments, empty lines, and lines without =
-      [[ "$key" =~ ^# ]] && continue
-      [[ -z "$key" ]] && continue
-      [[ "$key" != *"="* ]] && continue
-      key="${key%%=*}"
-      value="${key#*=}"
+      [[ "$line" =~ ^# ]] && continue
+      [[ -z "$line" ]] && continue
+      [[ "$line" != *"="* ]] && continue
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      # Only forward OLYMPUS_ and PROVIDER_ keys to systemd
+      [[ "$key" =~ ^(OLYMPUS_|PROVIDER_) ]] || continue
       env_lines+="Environment=${key}=${value}"$'\n'
     done < "${OLYMPUS_APP}/.env"
   fi
@@ -239,7 +241,7 @@ User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
 Environment=NODE_ENV=production
 Environment=PORT=${OLYMPUS_PORT}
-ExecStart=${npm_path} start
+${env_lines}ExecStart=${npm_path} start
 Restart=always
 RestartSec=5
 StandardOutput=journal
