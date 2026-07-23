@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { syncAgent } from '../../gateway/sync';
+import { buildOlympusProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
 
 /**
@@ -11,7 +11,7 @@ import { detectPublicHost } from '@/lib/docker-utils';
  * Polls every 2s, gives up after timeoutMs.
  * Returns true if the gateway is reachable, false on timeout.
  */
-function waitForContainerReady(name: string, timeoutMs = 20000): boolean {
+function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -56,11 +56,14 @@ function findAvailablePort(): number {
 }
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 180; // docker run (60s) + health check (60s) + seeding (60s)
 
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
 const MODELS_CONFIG = path.join(process.cwd(), 'models.config.json');
 const AGENTS_TOKEN_PATH = path.join(process.cwd(), 'data', 'agents-token.json');
 const DEFAULT_NETWORK = 'openclaw-core_default';
+const SHARED_SKILLS = '/docker/shared-skills';
+const SHARED_REPOS = '/docker/shared-repos';
 
 function isDockerCompatibleName(name: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
@@ -173,6 +176,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // Ensure shared volumes exist (created by setup script on first install)
+    for (const vol of [SHARED_SKILLS, SHARED_REPOS]) {
+      if (!fs.existsSync(vol)) {
+        fs.mkdirSync(vol, { recursive: true });
+        try { execSync(`chown 1000:1000 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
+        try { execSync(`chmod 2775 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
+      }
+    }
+
     // Build docker run command
     const image = 'openclaw-agent-base:latest';
     const network = getNetwork();
@@ -223,6 +235,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
       -v agent-${name}-data:/root \
+      -v ${SHARED_SKILLS}:/data/.openclaw/shared-skills:ro \
+      -v ${SHARED_REPOS}:/data/repos:rw \
       ${labelOpts} \
       ${envOpts} \
       ${portOpt} \
@@ -255,97 +269,120 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // DB logging is optional, ignore failures
     }
 
-    // Wait for container to be ready (HTTP health check)
+    // Wait for container to be ready (HTTP health check, up to 60s).
+    // If it doesn't come up, remove the container and return an error —
+    // a zombie agent with no config is worse than an explicit failure.
     const ready = waitForContainerReady(name);
-    if (ready) {
-      try {
-        // Create workspace dir (OpenClaw does not create it automatically if
-        // agents.defaults.workspace is not configured).
-        execSync(
-          `docker exec ${name} mkdir -p /root/.openclaw/workspace`,
-          { timeout: 10000, stdio: 'pipe' },
-        );
+    if (!ready) {
+      try { execSync(`docker rm -f ${name}`, { timeout: 10000 }); } catch { /* best-effort */ }
+      return NextResponse.json(
+        { success: false, error: `Container started but gateway did not become healthy within 60s. Container removed — try again.` },
+        { status: 500 },
+      );
+    }
 
-        // Check if the workspace already has template files (persisted from a
-        // previous container via the agent-<name>-data volume). If so, skip the
-        // copy — the user may have edited them.
-        // Copy template files into the container (NOT bind-mount, so agent edits
-        // never spill back to the Olympus repo). Always copy — templates are
-        // the canonical source of truth for a new agent.
-        for (const tf of templateFiles) {
-          const src = path.join(templateDir, tf);
-          if (fs.existsSync(src) && fs.statSync(src).isFile()) {
-            try {
-              execSync(
-                `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
-                { timeout: 10000, stdio: 'pipe' },
-              );
-            } catch (cpErr) {
-              console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
-            }
-          }
-        }
+    // ── Container is up, now seed the workspace and config ──
+    try {
+      // Create workspace dir
+      execSync(
+        `docker exec ${name} mkdir -p /root/.openclaw/workspace`,
+        { timeout: 10000, stdio: 'pipe' },
+      );
 
-        // Step 1: Read current config (OpenClaw has already written its default)
-        const raw = execSync(
-          `docker exec ${name} cat /root/.openclaw/openclaw.json`,
-          { timeout: 8000, encoding: 'utf-8' },
-        ).trim();
-        const config = JSON.parse(raw);
-
-        // Step 2: Seed controlUi.allowedOrigins for browser Control UI access.
-        // Must be done after OpenClaw's first boot since OpenClaw discards it.
-        // Allow all origins — agents are protected by the gateway token anyway.
-        const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
-        gatewaySection.controlUi = {
-          allowedOrigins: ['*'],
-          dangerouslyDisableDeviceAuth: true,
-        };
-        config.gateway = gatewaySection;
-
-        // Step 3: Set primary model reference if provided by the wizard
-        if (model) {
-          const modelRef = model.startsWith('olympus/') ? model : `olympus/${model}`;
-          const fallbackRefs = (fallbacks || []).map((fb: string) =>
-            fb.startsWith('olympus/') ? fb : `olympus/${fb}`,
-          );
-
-          const agents = (config.agents || {}) as Record<string, unknown>;
-          const defaults = (agents.defaults || {}) as Record<string, unknown>;
-          defaults.model = {
-            primary: modelRef,
-            fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
-          };
-          agents.defaults = defaults;
-          config.agents = agents;
-        }
-
-        // Step 3b: Disable update check
-        // Agents are managed through Olympus (rebuild image + recreate container),
-        // not through `openclaw update`. Suppress the "Update Available" banner
-        // in the Control UI and the startup update hint.
-        config.update = {
-          checkOnStart: false,
-          auto: { enabled: false },
-        };
-
-        // Write the merged config back
-        execSync(
-          `docker exec -i ${name} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-          { timeout: 15000, input: JSON.stringify(config, null, 2) },
-        );
-
-        // Step 4: Sync provider config (models.providers.olympus)
-        // This is done AFTER writing controlUi + model ref so syncAgent's
-        // readContainerJson sees a stable config with gateway section intact
+      // Copy template files into the container workspace.
+      // Skip files that already exist (user may have edited them on a prior
+      // deployment — the volume persists across recreates).
+      for (const tf of templateFiles) {
+        const src = path.join(templateDir, tf);
+        if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
+        // Check if the file already exists in the container workspace
         try {
-          syncAgent(name);
+          execSync(
+            `docker exec ${name} test -f /root/.openclaw/workspace/${tf}`,
+            { timeout: 5000, stdio: 'pipe' },
+          );
+          // File exists — skip to preserve user edits
+          continue;
         } catch {
-          // sync failure is non-fatal; models can be synced manually from Gateway page
+          // File does not exist — copy it
         }
-      } catch {
-        // post-creation config is non-fatal; can be synced manually
+        try {
+          execSync(
+            `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
+            { timeout: 10000, stdio: 'pipe' },
+          );
+        } catch (cpErr) {
+          console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
+        }
       }
+
+      // Read the config OpenClaw generated on first boot
+      const raw = execSync(
+        `docker exec ${name} cat /root/.openclaw/openclaw.json`,
+        { timeout: 8000, encoding: 'utf-8' },
+      ).trim();
+      const config = JSON.parse(raw);
+
+      // Merge all required sections in one pass (single write, single restart)
+
+      // controlUi — allow browser Control UI access
+      const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
+      gatewaySection.controlUi = {
+        allowedOrigins: ['*'],
+        dangerouslyDisableDeviceAuth: true,
+      };
+      config.gateway = gatewaySection;
+
+      // Model reference (primary + fallbacks)
+      if (model) {
+        const modelRef = model.startsWith('olympus/') ? model : `olympus/${model}`;
+        const fallbackRefs = (fallbacks || []).map((fb: string) =>
+          fb.startsWith('olympus/') ? fb : `olympus/${fb}`,
+        );
+        const agents = (config.agents || {}) as Record<string, unknown>;
+        const defaults = (agents.defaults || {}) as Record<string, unknown>;
+        defaults.model = {
+          primary: modelRef,
+          fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
+        };
+        agents.defaults = defaults;
+        config.agents = agents;
+      }
+
+      // Disable update check (agents are managed through Olympus)
+      config.update = {
+        checkOnStart: false,
+        auto: { enabled: false },
+      };
+
+      // Guarantee shared-skills discovery
+      const skills = (config.skills || {}) as Record<string, unknown>;
+      const load = (skills.load || {}) as Record<string, unknown>;
+      load.extraDirs = ['/data/.openclaw/shared-skills'];
+      skills.load = load;
+      config.skills = skills;
+
+      // Provider proxy (models.providers.olympus)
+      const providerConfig = buildOlympusProviderConfig();
+      const models = (config.models || {}) as Record<string, unknown>;
+      if (!models.providers) models.providers = {};
+      (models.providers as Record<string, unknown>)['olympus'] = providerConfig;
+      config.models = models;
+
+      // Single write
+      execSync(
+        `docker exec -i ${name} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+        { timeout: 15000, input: JSON.stringify(config, null, 2) },
+      );
+
+      // Single restart to pick up the merged config
+      try {
+        execSync(`docker exec ${name} openclaw gateway restart`, { timeout: 15000 });
+      } catch {
+        // restart failure is non-fatal; config is on disk, picked up on next boot
+      }
+    } catch {
+      // post-creation config is non-fatal; can be synced manually
     }
 
     return NextResponse.json({

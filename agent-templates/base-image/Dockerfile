@@ -66,8 +66,12 @@ RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
     && echo '{"gateway":{"mode":"local","controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
        | openclaw config patch --stdin
 
-# Default config directory
-RUN mkdir -p /data/.openclaw
+# Default config directory + shared-skills extraDirs pre-wired.
+# Note: config patch replaces arrays, does not merge.
+# Extra dirs added post-build will overwrite this list.
+RUN mkdir -p /data/.openclaw \
+    && echo '{"skills":{"load":{"extraDirs":["/data/.openclaw/shared-skills"]}}}' \
+       | openclaw config patch --stdin
 
 # Standard entrypoint
 COPY entrypoint.sh /agent-entrypoint.sh

@@ -36,7 +36,7 @@ export default function ContainersPage() {
   useEffect(() => { const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
 
   return (
-    <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <h1 style={{ fontSize: 22, fontWeight: 400, color: 'var(--copper)', letterSpacing: 2, marginBottom: 4 }}>CONTAINERS</h1>
       <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 20 }}>
         {containers.length} container · {new Date().toLocaleTimeString('it-IT')}

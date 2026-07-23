@@ -76,8 +76,9 @@ function readContainerJson(container: string, remotePath: string): Record<string
 
 function writeContainerJson(container: string, remotePath: string, data: Record<string, unknown>): void {
   const jsonStr = JSON.stringify(data, null, 2);
+  // Use shell-quoted heredoc to avoid word-splitting on paths with spaces
   execSync(
-    `docker exec -i ${container} sh -c 'cat > ${remotePath}'`,
+    `docker exec -i ${container} sh -c "cat > '${remotePath}'"`,
     { timeout: 10000, maxBuffer: 1024 * 1024, input: jsonStr },
   );
 }
@@ -97,27 +98,35 @@ function restartContainerGateway(container: string): string | null {
 /* ------------------------------------------------------------------ */
 
 /**
- * Sync models.providers.olympus to all agent containers.
- * Does NOT touch agents.defaults.model or agents.list[].model.
+ * Build the models.providers.olympus config object from local state.
+ * Shared between the create wizard and syncAgent — single source of truth
+ * for the provider block injected into every agent container.
  */
-export function syncAllAgents(): string[] {
+export function buildOlympusProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] } {
   const providerKeys = readProviderKeys();
   const olympusApiKey = providerKeys['olympus'] || '';
-  if (!olympusApiKey) {
-    return ['ERROR: OLYMPUS_API_KEY not found in provider-keys.json (add "olympus" key)'];
-  }
-
   const allModels = loadModelsConfig();
   const activeModels = getActiveOlympusModels(allModels);
-  const olympusProviderConfig = {
+  return {
     baseUrl: PROVIDER_GATEWAY_BASE_URL,
     apiKey: olympusApiKey,
     api: 'openai-completions',
     models: activeModels,
   };
+}
+
+/**
+ * Sync models.providers.olympus to all agent containers.
+ * Does NOT touch agents.defaults.model or agents.list[].model.
+ */
+export function syncAllAgents(): string[] {
+  const olympusProviderConfig = buildOlympusProviderConfig();
+  if (!olympusProviderConfig.apiKey) {
+    return ['ERROR: OLYMPUS_API_KEY not found in provider-keys.json (add "olympus" key)'];
+  }
 
   const containers = getAgentContainers();
-  const results: string[] = [`Active models: ${activeModels.length} across ${containers.length} agent(s)`];
+  const results: string[] = [`Active models: ${olympusProviderConfig.models.length} across ${containers.length} agent(s)`];
 
   for (const container of containers) {
     try {
@@ -141,21 +150,10 @@ export function syncAllAgents(): string[] {
  * Does NOT touch agents.defaults.model or agents.list[].model.
  */
 export function syncAgent(containerName: string): string {
-  const providerKeys = readProviderKeys();
-  const olympusApiKey = providerKeys['olympus'] || '';
-  if (!olympusApiKey) {
+  const olympusProviderConfig = buildOlympusProviderConfig();
+  if (!olympusProviderConfig.apiKey) {
     throw new Error('OLYMPUS_API_KEY not found in provider-keys.json (add "olympus" key)');
   }
-
-  const allModels = loadModelsConfig();
-  const activeModels = getActiveOlympusModels(allModels);
-  const olympusProviderConfig = {
-    baseUrl: PROVIDER_GATEWAY_BASE_URL,
-    apiKey: olympusApiKey,
-    api: 'openai-completions',
-    models: activeModels,
-  };
-
   return syncContainer(containerName, olympusProviderConfig);
 }
 
