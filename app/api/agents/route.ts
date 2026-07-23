@@ -124,8 +124,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
         const image: string = c.Image || '';
         let template: string | null = null;
         if (image.startsWith('openclaw-agent-base')) {
-          const envList: string[] = c.Config?.Env || [];
-          const templateLine = envList.find((e: string) => e.startsWith('AGENT_TEMPLATE='));
+          const templateLine = env.find((e: string) => e.startsWith('AGENT_TEMPLATE='));
           template = templateLine ? templateLine.split('=').slice(1).join('=') : 'custom';
         }
 
