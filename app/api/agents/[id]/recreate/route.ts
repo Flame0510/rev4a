@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+import { buildOlympusProviderConfig } from '@/app/api/gateway/sync';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120; // docker run (60s) + health check (60s)
 
 const BACKUP_VOLUME = 'olympus-backups';
+const SHARED_SKILLS = '/docker/shared-skills';
+const SHARED_REPOS = '/docker/shared-repos';
 
 /** Timestamp YYYY-MM-DD_HHmmssSSS (ms precision avoids same-second collisions). */
 function ts(): string {
@@ -15,9 +21,29 @@ function ts(): string {
 }
 
 /**
+ * Wait for the container gateway to respond on port 3000.
+ */
+function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      execSync(
+        `docker exec ${name} sh -c 'curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1 || wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1'`,
+        { timeout: 5000 },
+      );
+      return true;
+    } catch { /* not ready */ }
+    execSync('sleep 2', { timeout: 3000 });
+  }
+  return false;
+}
+
+/**
  * POST /api/agents/[id]/recreate
- * Stop -> rm -> run with same image, env, labels, and the persistent volume.
- * Workspace data, credentials, and state are preserved in the volume.
+ * Stop -> backup -> rm -> run with same params + shared volumes.
+ * Workspace data and state are preserved in the persistent volume.
+ * Shared volumes (skills, repos) are always mounted.
+ * After the container is up, guarantee extraDirs + provider config.
  */
 export async function POST(
   _req: Request,
@@ -87,9 +113,16 @@ export async function POST(
 
     const volumeName = `agent-${id}-data`;
 
-    // Auto-backup the volume BEFORE destroying the container. If the backup
-    // fails we abort and leave the running container untouched — never recreate
-    // without a safety net (e.g. in case a version migration goes wrong).
+    // Ensure shared volumes exist
+    for (const vol of [SHARED_SKILLS, SHARED_REPOS]) {
+      if (!fs.existsSync(vol)) {
+        fs.mkdirSync(vol, { recursive: true });
+        try { execSync(`chown 1000:1000 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
+        try { execSync(`chmod 2775 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
+      }
+    }
+
+    // Auto-backup the volume BEFORE destroying the container
     const backupFile = `agent-${id}-prerecreate-${ts()}.tar.gz`;
     try {
       execSync(
@@ -106,10 +139,10 @@ export async function POST(
       );
     }
 
-    // Stop & remove the old container (backup is safe on the olympus-backups volume)
+    // Stop & remove the old container
     execSync(`docker rm -f ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
 
-    // Run the new container with the same image, env, labels, network, and volume
+    // Run the new container with all mounts (persistent volume + shared skills + shared repos)
     const cmd = [
       `docker run -d`,
       `--name "${id}"`,
@@ -117,6 +150,8 @@ export async function POST(
       `--restart unless-stopped`,
       `--add-host host.docker.internal:host-gateway`,
       `-v ${volumeName}:/root`,
+      `-v ${SHARED_SKILLS}:/data/.openclaw/shared-skills:ro`,
+      `-v ${SHARED_REPOS}:/data/repos:rw`,
       labelOpts,
       envOpts,
       portOpts,
@@ -124,6 +159,51 @@ export async function POST(
     ].filter(Boolean).join(' \\\n  ');
 
     execSync(cmd, { timeout: 60000, encoding: 'utf-8' });
+
+    // Wait for the new container to be healthy
+    const ready = waitForContainerReady(id);
+    if (!ready) {
+      return NextResponse.json(
+        { success: false, error: 'Container started but gateway did not become healthy within 60s.' },
+        { status: 500 },
+      );
+    }
+
+    // Lightweight config patch: guarantee extraDirs + provider proxy.
+    // Read current config → merge only the keys we own → write back.
+    // Everything else (model, workspace, user customizations) is left untouched.
+    try {
+      const raw = execSync(
+        `docker exec ${id} cat /root/.openclaw/openclaw.json`,
+        { timeout: 8000, encoding: 'utf-8' },
+      ).trim();
+      const config = JSON.parse(raw);
+
+      // Guarantee skills.load.extraDirs
+      const skills = (config.skills || {}) as Record<string, unknown>;
+      const load = (skills.load || {}) as Record<string, unknown>;
+      load.extraDirs = ['/data/.openclaw/shared-skills'];
+      skills.load = load;
+      config.skills = skills;
+
+      // Guarantee models.providers.olympus
+      const providerConfig = buildOlympusProviderConfig();
+      const models = (config.models || {}) as Record<string, unknown>;
+      if (!models.providers) models.providers = {};
+      (models.providers as Record<string, unknown>)['olympus'] = providerConfig;
+      config.models = models;
+
+      execSync(
+        `docker exec -i ${id} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+        { timeout: 15000, input: JSON.stringify(config, null, 2) },
+      );
+
+      try {
+        execSync(`docker exec ${id} openclaw gateway restart`, { timeout: 15000 });
+      } catch { /* non-fatal */ }
+    } catch {
+      // config patch is best-effort on recreate
+    }
 
     return NextResponse.json({ success: true, name: id, image, network, backup: backupFile });
   } catch (e: unknown) {
@@ -134,4 +214,3 @@ export async function POST(
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
-
