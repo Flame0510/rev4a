@@ -165,6 +165,30 @@ JSONEOF
 }
 
 # ------------------------------------------------------------------------------
+# Create shared volumes (skills, repos, memory)
+create_shared_volumes() {
+  local shared_skills="/docker/shared-skills"
+  local shared_repos="/docker/shared-repos"
+
+  for dir in "$shared_skills" "$shared_repos"; do
+    if [[ ! -d "$dir" ]]; then
+      log_info "Creating shared volume: $dir"
+      $SUDO mkdir -p "$dir"
+      # uid 1000 = node (default user in agent containers)
+      if id -u 1000 &>/dev/null; then
+        $SUDO chown 1000:1000 "$dir"
+      else
+        log_warn "uid 1000 not found on host — shared volume ownership may be wrong"
+      fi
+      $SUDO chmod 2775 "$dir"
+      log_ok "Shared volume created: $dir"
+    else
+      log_ok "Shared volume already exists: $dir"
+    fi
+  done
+}
+
+# ------------------------------------------------------------------------------
 # Build the Next.js app
 build_olympus() {
   cd "$OLYMPUS_APP"
@@ -319,6 +343,7 @@ setup_olympus() {
   clone_olympus
   npm_install
   create_data_dirs
+  create_shared_volumes
   create_env
   build_olympus
   build_agent_image

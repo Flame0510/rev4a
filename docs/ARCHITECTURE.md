@@ -109,9 +109,8 @@ The central container, running the Next.js dashboard + orchestration API.
 ```
 /path/to/olympus/data  → /data (persistent)
 /var/run/docker.sock          → /var/run/docker.sock
-/docker/shared-skills          → /data/shared-skills (rw)
-/docker/shared-repos           → /data/shared-repos (rw)
-/docker/shared-memory          → /data/shared-memory (rw)
+/docker/shared-skills          → /data/.openclaw/shared-skills (rw)
+/docker/shared-repos           → /data/repos (rw)
 ```
 
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
@@ -278,11 +277,23 @@ GET    /api/agents/{id}/logs       Container logs
 ### Shared Skills (`/docker/shared-skills`)
 ```
 /docker/shared-skills/
-  core/        # core OpenClaw skills (browser-automation, canvas, …)
-  ops/         # operational skills (audit, healthcheck, …)
-  dev/         # development skills (code-review, frontend-architecture, …)
+  my-custom-skill/    # promoted from an agent workspace
+    SKILL.md
+  another-skill/
+    SKILL.md
 ```
-**Permissions:** rw for Olympus (to update skills), ro for all agent containers.
+
+Skills are stored in a flat structure (no subcategory folders like `core/`, `ops/`, `dev/`).
+This keeps the layout simple and avoids hierarchy debates at this stage.
+**Permissions:**
+- Olympus host: rw (writes during promote, reads for listing)
+- Agent containers: ro (mounted at `/data/.openclaw/shared-skills`)
+- Owner: uid 1000 (node), group: 1000, mode: 2775 (setgid)
+
+**Auto-configuration:**
+- The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
+- The setup script (`scripts/setup/olympus.sh`) creates `/docker/shared-skills` with correct permissions on first install.
+- The spawn script (`scripts/spawn-agent.sh`) ensures the directory exists and mounts it `ro` into new containers.
 
 ### Shared Repositories (`/docker/shared-repos`)
 ```
