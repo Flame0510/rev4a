@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Pill, LoadingSpinner } from '../components/ui';
+import { Button, Pill } from '../components/ui';
 import type { Tone } from '../components/ui';
+import { SkeletonLines } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
@@ -246,7 +247,7 @@ export default function CronsPage() {
         <span className="crons-header__meta">{sessions.length} runs in history</span>
       </div>
 
-      {loading && <LoadingSpinner compact />}
+      {loading && <SkeletonLines count={4} />}
 
       {/* Agent filter bar */}
       {agentFilters.length > 1 && (
@@ -310,7 +311,7 @@ export default function CronsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                       {isContainered && (
-                        <span style={{ fontSize: 9 }}><Pill tone="success">{job.agentId ?? 'agent'}</Pill></span>
+                        <span style={{ fontSize: 9 }}><Pill tone="success">{job.containerName ?? job.agentId ?? 'agent'}</Pill></span>
                       )}
                       {job.id && (
                         <button
@@ -386,7 +387,7 @@ export default function CronsPage() {
 
                   {/* Meta row */}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 10, color: '#555', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
-                    {job.agentId && <span>agent: <span style={{ color: '#888' }}>{String(job.agentId)}</span></span>}
+                    {job.containerName && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
                     {job.source === 'host' && <span>source: <span style={{ color: '#888' }}>host (gateway)</span></span>}
                     {isContainered && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
                     {model && <span>model: <span style={{ color: '#888' }}>{String(model)}</span></span>}
@@ -421,7 +422,7 @@ export default function CronsPage() {
               .sort((a, b) => latestSessionTs(b) - latestSessionTs(a))
               .map((s) => {
                 const agentParts = s.session_id.split(':');
-                const agentId = agentParts[1] ?? '?';
+                const containerName = agentParts[1] ?? '?';
                 const runId = agentParts[3]?.slice(0, 8) ?? '?';
                 return (
                   <div key={s.session_id} style={{
@@ -431,7 +432,7 @@ export default function CronsPage() {
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                         <span style={{ width: 6, height: 6, borderRadius: 1, background: statusDot(s.status), display: 'inline-block', flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, color: 'var(--copper)' }}>{agentId}</span>
+                        <span style={{ fontSize: 11, color: 'var(--copper)' }}>{containerName}</span>
                         <span style={{ fontSize: 10, color: '#555' }}>#{runId}</span>
                       </div>
                       <div style={{ fontSize: 10, color: '#555' }}>
