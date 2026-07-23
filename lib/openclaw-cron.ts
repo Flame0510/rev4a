@@ -115,7 +115,7 @@ function parseCronListOutput(raw: string): OpenClawCronJob[] | null {
 
 function listJobsOnHost(): OpenClawCronJob[] | null {
   try {
-    const raw = execFileSync('openclaw', ['cron', 'list', '--json'], {
+    const raw = execFileSync('openclaw', ['cron', 'list', '--json', '--all'], {
       encoding: 'utf8', timeout: 15000,
     });
     return parseCronListOutput(raw);
@@ -136,7 +136,7 @@ function listJobsInContainer(containerName: string): OpenClawCronJob[] | null {
     try {
       const raw = execFileSync('docker', [
         'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
-        containerName, 'openclaw', 'cron', 'list', '--json',
+        containerName, 'openclaw', 'cron', 'list', '--json', '--all',
       ], { encoding: 'utf8', timeout: 15000 });
       const parsed = parseCronListOutput(raw);
       if (parsed) return parsed;
@@ -300,4 +300,51 @@ export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronP
   const ok = toggleOnHost(id, patch.enabled);
   if (ok) return { ok: true, job: { id, enabled: patch.enabled } as OpenClawCronJob };
   return { ok: false, error: 'Failed to toggle cron on host gateway' };
+}
+
+// ── Remove ─────────────────────────────────────────────────────────────
+
+export interface CronRemoveResult {
+  ok: boolean;
+  error?: string;
+}
+
+function removeOnHost(jobId: string): boolean {
+  try {
+    execFileSync('openclaw', ['cron', 'remove', jobId], {
+      encoding: 'utf8', timeout: 10000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeInContainer(containerName: string, jobId: string): boolean {
+  const gatewayUrls = [
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:18789',
+  ];
+  for (const gwUrl of gatewayUrls) {
+    try {
+      execFileSync('docker', [
+        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
+        containerName, 'openclaw', 'cron', 'remove', jobId,
+      ], { encoding: 'utf8', timeout: 10000 });
+      return true;
+    } catch { /* try next gateway port */ }
+  }
+  return false;
+}
+
+export function removeCronJob(id: string, containerName?: string): CronRemoveResult {
+  if (containerName) {
+    const ok = removeInContainer(containerName, id);
+    if (ok) return { ok: true };
+    return { ok: false, error: `Failed to remove cron job in container ${containerName}` };
+  }
+
+  const ok = removeOnHost(id);
+  if (ok) return { ok: true };
+  return { ok: false, error: 'Failed to remove cron job on host gateway' };
 }

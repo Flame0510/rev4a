@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { patchCronJob } from '@/lib/openclaw-cron';
+import { patchCronJob, removeCronJob } from '@/lib/openclaw-cron';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,4 +41,26 @@ export async function PATCH(
   }
 
   return NextResponse.json(result.job);
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+
+  const { id } = await params;
+  const { searchParams } = new URL(request.url);
+  const containerName = searchParams.get('containerName') ?? undefined;
+
+  if (containerName !== undefined && !CONTAINER_NAME_RE.test(containerName)) {
+    return NextResponse.json({ error: 'Invalid containerName format' }, { status: 400 });
+  }
+
+  const result = removeCronJob(id, containerName);
+  if (!result.ok) {
+    const status = result.error?.includes('not found') ? 404 : 502;
+    return NextResponse.json({ error: result.error }, { status });
+  }
+
+  return NextResponse.json({ ok: true });
 }

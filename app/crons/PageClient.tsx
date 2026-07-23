@@ -146,7 +146,7 @@ function filterJobs(jobs: CronJob[], agentKey: string): CronJob[] {
 export default function CronsPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toggling, setToggling] = useState<string | null>(null);
+  const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState('all');
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const [runs, setRuns] = useState<CronRunEntry[]>([]);
@@ -165,7 +165,7 @@ export default function CronsPage() {
   async function toggleJob(job: CronJob) {
     const id = job.id;
     if (!id) return;
-    setToggling(id);
+    setBusyJobId(id);
     try {
       const body: Record<string, unknown> = { enabled: !(job.enabled !== false) };
       if (job.containerName) body.containerName = job.containerName;
@@ -179,38 +179,26 @@ export default function CronsPage() {
         setJobs((prev) => prev.map((j) => j.id === id ? { ...j, ...updated } : j));
       }
     } catch { /* keep UI alive */ }
-    finally { setToggling(null); }
+    finally { setBusyJobId(null); }
   }
 
-  async function loadRuns(job: CronJob) {
-    const jobId = job.id;
-    const cName = job.containerName;
-    if (!jobId || !cName) return;
-
-    const requestKey = `${cName}:${jobId}`;
-    latestRunRequest.current = requestKey;
-
-    setRunsLoading(true);
-    setRunsError(null);
-    setRuns([]);
+  async function deleteJob(job: CronJob) {
+    const id = job.id;
+    if (!id) return;
+    if (!confirm(`Delete cron job "${job.name ?? id}"? This cannot be undone.`)) return;
+    setBusyJobId(id);
     try {
-      const res = await apiFetch(
-        `/api/crons/runs?containerName=${encodeURIComponent(cName)}&jobId=${encodeURIComponent(jobId)}&limit=30`
-      );
-      // Discard stale responses
-      if (latestRunRequest.current !== requestKey) return;
+      const params = new URLSearchParams();
+      if (job.containerName) params.set('containerName', job.containerName);
+      const res = await apiFetch(`/api/crons/${encodeURIComponent(id)}?${params.toString()}`, {
+        method: 'DELETE',
+      });
       if (res.ok) {
-        const data = await res.json();
-        setRuns((data.entries ?? []) as CronRunEntry[]);
-      } else {
-        setRunsError('Failed to load runs');
+        setJobs((prev) => prev.filter((j) => j.id !== id));
+        if (selectedJob?.id === id) { setSelectedJob(null); setRuns([]); setRunsError(null); }
       }
-    } catch {
-      if (latestRunRequest.current !== requestKey) return;
-      setRunsError('Failed to load runs');
-    } finally {
-      if (latestRunRequest.current === requestKey) setRunsLoading(false);
-    }
+    } catch { /* keep UI alive */ }
+    finally { setBusyJobId(null); }
   }
 
   async function load() {
@@ -233,8 +221,46 @@ export default function CronsPage() {
 
   // Load runs when a job is selected
   useEffect(() => {
-    if (selectedJob) void loadRuns(selectedJob);
-    else { setRuns([]); setRunsError(null); }
+    const job = selectedJob;
+    if (!job) { setRuns([]); setRunsError(null); return; }
+
+    const jobId = job.id;
+    const cName = job.containerName;
+    if (!jobId || !cName) {
+      setRuns([]);
+      setRunsError(null);
+      setRunsLoading(false);
+      return;
+    }
+
+    const requestKey = `${cName}:${jobId}`;
+    latestRunRequest.current = requestKey;
+
+    let cancelled = false;
+    setRunsLoading(true);
+    setRunsError(null);
+    setRuns([]);
+
+    (async () => {
+      try {
+        const res = await apiFetch(
+          `/api/crons/runs?containerName=${encodeURIComponent(cName)}&jobId=${encodeURIComponent(jobId)}&limit=30`
+        );
+        if (cancelled || latestRunRequest.current !== requestKey) return;
+        if (res.ok) {
+          const data = await res.json();
+          setRuns((data.entries ?? []) as CronRunEntry[]);
+        } else {
+          setRunsError('Failed to load runs');
+        }
+      } catch {
+        if (!cancelled && latestRunRequest.current === requestKey) setRunsError('Failed to load runs');
+      } finally {
+        if (!cancelled && latestRunRequest.current === requestKey) setRunsLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [selectedJob?.id, selectedJob?.containerName]);
 
   useEffect(() => {
@@ -325,9 +351,10 @@ export default function CronsPage() {
                         <span style={{ fontSize: 9 }}><Pill tone="success">{job.containerName ?? job.agentId ?? 'agent'}</Pill></span>
                       )}
                       {job.id && (
+                        <>
                         <button
                           onClick={() => void toggleJob(job)}
-                          disabled={toggling === job.id}
+                          disabled={busyJobId === job.id}
                           title={isEnabled ? 'Disable job' : 'Enable job'}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 5,
@@ -335,14 +362,14 @@ export default function CronsPage() {
                             border: `1px solid ${isEnabled ? '#255b3f' : 'var(--border)'}`,
                             borderRadius: 0,
                             background: isEnabled ? 'rgba(34,197,94,0.08)' : 'var(--bg2)',
-                            cursor: toggling === job.id ? 'not-allowed' : 'pointer',
-                            opacity: toggling === job.id ? 0.5 : 1,
+                            cursor: busyJobId === job.id ? 'not-allowed' : 'pointer',
+                            opacity: busyJobId === job.id ? 0.5 : 1,
                             transition: 'all 0.15s', outline: 'none',
                           }}
                         >
                           <span style={{
                             display: 'inline-flex', width: 26, height: 14, borderRadius: 0,
-                            background: toggling === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
+                            background: busyJobId === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
                             alignItems: 'center', padding: '0 2px',
                             justifyContent: isEnabled ? 'flex-end' : 'flex-start',
                             transition: 'all 0.15s', flexShrink: 0,
@@ -350,9 +377,27 @@ export default function CronsPage() {
                             <span style={{ width: 10, height: 10, borderRadius: 1, background: '#fff' }} />
                           </span>
                           <span style={{ fontSize: 9, letterSpacing: '0.07em', color: isEnabled ? 'var(--green)' : '#666' }}>
-                            {toggling === job.id ? '···' : isEnabled ? 'ON' : 'OFF'}
+                            {busyJobId === job.id ? '···' : isEnabled ? 'ON' : 'OFF'}
                           </span>
                         </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void deleteJob(job); }}
+                          disabled={busyJobId === job.id}
+                          title="Delete job"
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 3,
+                            padding: '3px 6px',
+                            border: '1px solid var(--border)',
+                            borderRadius: 0,
+                            background: 'var(--bg2)',
+                            cursor: busyJobId === job.id ? 'not-allowed' : 'pointer',
+                            opacity: busyJobId === job.id ? 0.5 : 1,
+                            transition: 'all 0.15s', outline: 'none',
+                          }}
+                        >
+                          <span style={{ fontSize: 9, letterSpacing: '0.07em', color: 'var(--red)' }}>DEL</span>
+                        </button>
+                        </>
                       )}
                     </div>
                   </div>
