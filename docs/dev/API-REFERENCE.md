@@ -568,11 +568,8 @@ Create a new agent container from a template.
   "name": "my-agent",
   "template": "prometheus",
   "port": 3033,
-  "model": "deepseek/deepseek-v4-flash"
-},
-  "template": "prometheus",
-  "port": 3033,
-  "model": "deepseek/deepseek-v4-flash"
+  "model": "deepseek/deepseek-v4-flash",
+  "fallbacks": []
 }
 ```
 
@@ -580,8 +577,9 @@ Create a new agent container from a template.
 |---|---|---|
 | `name` | yes | Container name, also becomes `AGENT_ID` and subdomain |
 | `template` | yes | Template name (directory in `agent-templates/`) |
-| `port` | no | Optional host port (auto-assigned if empty and no Traefik) |
+| `port` | no | Optional host port (auto-assigned if empty) |
 | `model` | no | Primary model ID from `models.config.json` |
+| `fallbacks` | no | Array of fallback model IDs |
 
 **Every agent is created with a host port mapping:**
 - `-p <port>:3000` — the container's port 3000 is mapped to an auto-assigned (or user-specified) host port
@@ -601,14 +599,14 @@ Create a new agent container from a template.
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
-2. The route waits for the gateway to be fully up (health check poll, up to 20 s)
+2. The route waits for the gateway to be fully up (health check poll, up to 60 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
 4. Calls `syncAgent(name)` to write `models.providers.olympus` into the container
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
 **Side effects:**
-- Template files (`AGENTS.md`, `SOUL.md`, etc.) are volume-mounted from the template directory
+- Template files (`AGENTS.md`, `SOUL.md`, etc.) are copied into the container workspace via `docker cp`
 - The agent URL is included in the response
 - An event is logged to `data/events.db` if available
 
@@ -1245,6 +1243,22 @@ For jobs inside a container, pass `containerName` in the body to identify which 
   "scheduleExpr": "15 3 * * *"
 }
 ```
+
+### `DELETE /api/crons/[id]`
+Remove a cron job permanently. For jobs inside a container, pass `containerName` as a query parameter.
+
+**Auth:** Bearer or browser cookie
+
+**Query params:**
+- `containerName` (optional) — Docker container name for container-scoped jobs
+
+**Response:**
+```json
+{ "ok": true }
+```
+
+**Error (404):** `{ "error": "Job ... not found" }`
+**Error (502):** `{ "error": "Failed to remove cron job in container ..." }`
 
 ### `GET /api/crons/runs`
 Run history for a specific cron job. Queries the container's gateway via `openclaw cron runs --id <jobId> --limit <limit>`.
