@@ -210,15 +210,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const envVars: string[] = [
       `AGENT_ID=${name}`,
       `AGENT_NAME=${name}`,
+      `AGENT_TEMPLATE=${template}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
       `AGENT_HOSTNAME=${agentHostname}`,
       `TZ=Europe/Rome`,
     ];
-
-    // Pass the selected model to the entrypoint so it writes it at first boot
-    if (model) {
-      envVars.push(`OPENCLAW_MODEL_PRIMARY=${model}`);
-    }
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');

@@ -119,17 +119,14 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           // inspect non-critical, continue with partial data
         }
 
-        // Determine template from AGENT_ID — only if a matching
-        // template directory exists in agent-templates/.
+        // Determine template from AGENT_TEMPLATE env var.
+        // Falls back to 'custom' if not set (agent created before this feature).
         const image: string = c.Image || '';
         let template: string | null = null;
         if (image.startsWith('openclaw-agent-base')) {
-          const candidateDir = path.join(process.cwd(), 'agent-templates', agentId);
-          if (fs.existsSync(candidateDir) && fs.statSync(candidateDir).isDirectory()) {
-            template = agentId;
-          } else {
-            template = 'custom';
-          }
+          const envList: string[] = c.Config?.Env || [];
+          const templateLine = envList.find((e: string) => e.startsWith('AGENT_TEMPLATE='));
+          template = templateLine ? templateLine.split('=').slice(1).join('=') : 'custom';
         }
 
         const ports = (c.Ports || [])
