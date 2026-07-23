@@ -8,11 +8,10 @@ The base image for all agent containers in the Olympus ecosystem.
 
 The image includes the minimum static labels required by Traefik:
 - `traefik.enable=true`
-- `traefik.http.services.agent.loadbalancer.server.port=3000`
 
 Dynamic labels (router rule, hostname, certresolver) must be passed at
-`docker run` time. The `scripts/spawn-agent.sh` script generates them
-automatically.
+`docker run` time. The Olympus agent creation wizard (`/agents/create`)
+generates them automatically.
 
 ### Required Traefik Labels
 
@@ -31,19 +30,6 @@ docker run -d \
   -l "traefik.http.services.agent-<id>.loadbalancer.server.port=3000" \
   -e AGENT_ID=<id> \
   openclaw-agent-base:latest
-```
-
-### `scripts/spawn-agent.sh`
-
-Use the script to create an agent with all labels preconfigured:
-
-```bash
-bash scripts/spawn-agent.sh <agent_id>
-```
-
-Example:
-```bash
-bash scripts/spawn-agent.sh argus
 ```
 
 After creation:
