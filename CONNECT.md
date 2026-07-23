@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - npm
 - SQLite3 (runtime dependency, auto-installed via npm)
 - An OpenClaw instance (optional — Olympus works standalone for testing)
