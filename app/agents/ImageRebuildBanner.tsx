@@ -14,7 +14,7 @@ interface ImageStatus {
 
 const POLL_MS = 2000;
 
-export default function ImageRebuildBanner() {
+export default function ImageRebuildBanner({ onImageReady }: { onImageReady?: () => void }) {
   const [status, setStatus] = useState<ImageStatus | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -85,6 +85,22 @@ export default function ImageRebuildBanner() {
     refreshStatus();
   }, [refreshStatus]);
 
+  // ─── Fix 1: global status polling while build is active (modal open or not) ───
+  useEffect(() => {
+    if (status?.building) {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const id = setInterval(refreshStatus, POLL_MS);
+      return () => clearInterval(id);
+    }
+  }, [status?.building, refreshStatus]);
+
+  // ─── Fix 2: notify parent when image becomes ready ───
+  useEffect(() => {
+    if (status && !status.building && status.exists && !status.needsRebuild) {
+      onImageReady?.();
+    }
+  }, [status?.building, status?.exists, status?.needsRebuild, onImageReady]);
+
   // When status confirms build is running, clear optimistic flag
   useEffect(() => {
     if (status && status.building && optimisticBuilding) {
@@ -138,11 +154,14 @@ export default function ImageRebuildBanner() {
   }, [status?.building, startPolling]);
 
   const handleClose = useCallback(() => {
-    stopPolling();
+    // ─── Fix 3: keep polling alive if build still running, so banner stays updated ───
+    if (!status?.building && !optimisticBuilding) {
+      stopPolling();
+    }
     setOptimisticBuilding(false);
     setModalOpen(false);
-    refreshStatus();
-  }, [stopPolling, refreshStatus]);
+    // refreshStatus will be called by the global polling effect
+  }, [stopPolling, status?.building, optimisticBuilding]);
 
   const handleAbort = useCallback(async () => {
     setOptimisticBuilding(false);
