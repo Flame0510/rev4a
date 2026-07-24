@@ -11,10 +11,24 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync as execSyncRaw } from 'child_process';
 
 let isBuilding = false;
 let buildLogPath: string | null = null;
 let buildChildProcess: ReturnType<(typeof import('child_process'))['exec']> | null = null;
+
+/** Check whether the docker CLI is available and functional. */
+function dockerAvailable(): boolean {
+  try {
+    execSyncRaw('docker version --format "{{.Client.Version}}" 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 3000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Returns the SHA256 hash of the current Dockerfile. */
 export function getDockerfileHash(): string | null {
@@ -113,6 +127,12 @@ export interface BuildOptions {
  */
 export async function buildAgentImage(opts: BuildOptions): Promise<void> {
   const { force = false, onEvent, signal } = opts;
+
+  if (!dockerAvailable()) {
+    const msg = 'Docker is not available — please install Docker and try again';
+    onEvent?.(JSON.stringify({ type: 'error', message: msg }));
+    throw new Error(msg);
+  }
 
   if (!tryAcquireLock()) {
     throw new Error('A build is already in progress');

@@ -46,9 +46,9 @@ install_node() {
 install_system_deps() {
   log_info "Installing system dependencies..."
   $SUDO apt-get update -qq
-  $SUDO apt-get install -y -qq git curl openssl jq build-essential python3
+  $SUDO apt-get install -y -qq git curl openssl jq build-essential python3 ca-certificates docker.io
 
-  for dep in git curl openssl; do
+  for dep in git curl openssl docker; do
     if has_cmd "$dep"; then
       log_ok "$dep is available"
     else
@@ -59,22 +59,39 @@ install_system_deps() {
 }
 
 # ------------------------------------------------------------------------------
-# Clone or update the Olympus repository
+# Ensure the Olympus repository is at OLYMPUS_APP.
+# Since this script lives inside the repo (scripts/setup/olympus.sh), we prefer
+# to copy the repo from the script's own location instead of cloning from
+# GitHub — no auth needed, and it works in containers.
 clone_olympus() {
   ensure_dir "$OLYMPUS_ROOT"
 
+  # Already in place?
   if [[ -d "${OLYMPUS_APP}/.git" ]]; then
-    log_info "Olympus repository already exists. Pulling latest..."
-    cd "$OLYMPUS_APP"
-    $SUDO git fetch origin
-    $SUDO git checkout "$OLYMPUS_BRANCH"
-    $SUDO git pull origin "$OLYMPUS_BRANCH"
-    log_ok "Olympus repository updated"
-  else
-    log_info "Cloning Olympus repository..."
-    $SUDO git clone --branch "$OLYMPUS_BRANCH" "$OLYMPUS_REPO" "$OLYMPUS_APP"
-    log_ok "Olympus repository cloned to $OLYMPUS_APP"
+    log_ok "Repository already present at ${OLYMPUS_APP}"
+    return 0
   fi
+
+  # Detect repo root: SCRIPT_DIR is scripts/setup/ inside the repo
+  local repo_root
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+  if [[ -f "${repo_root}/package.json" && -d "${repo_root}/.git" ]]; then
+    log_info "Copying repository from ${repo_root} → ${OLYMPUS_APP}"
+    $SUDO cp -a "$repo_root" "$OLYMPUS_APP"
+    log_ok "Repository copied to ${OLYMPUS_APP}"
+    return 0
+  fi
+
+  # Last resort: clone from GitHub (requires auth for private repos)
+  log_info "Cloning from ${OLYMPUS_REPO}..."
+  if is_container; then
+    log_warn "Repository not found and clone requires authentication"
+    log_warn "Pre-copy the repo to ${OLYMPUS_APP} before running in a container"
+    die "Cannot proceed without repository"
+  fi
+  $SUDO git clone --branch "$OLYMPUS_BRANCH" "$OLYMPUS_REPO" "$OLYMPUS_APP"
+  log_ok "Olympus repository cloned to $OLYMPUS_APP"
 }
 
 # ------------------------------------------------------------------------------

@@ -14,10 +14,26 @@
  */
 import { NextResponse } from 'next/server';
 import { buildAgentImage, getIsBuilding } from '@/lib/buildAgentImage';
+import { execSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
+function dockerOk(): boolean {
+  try {
+    execSync('docker version --format "{{.Client.Version}}" 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(): Promise<NextResponse> {
+  if (!dockerOk()) {
+    return NextResponse.json({ exists: false });
+  }
   try {
     const { exec } = await import('child_process');
     const result = await new Promise<string>((resolve, reject) => {

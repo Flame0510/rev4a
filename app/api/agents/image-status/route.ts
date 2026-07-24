@@ -11,7 +11,21 @@ import { getDockerfileHash, getIsBuilding, getBuildLogPath } from '@/lib/buildAg
 
 export const dynamic = 'force-dynamic';
 
+/** Check whether docker CLI is usable. */
+function dockerOk(): boolean {
+  try {
+    execSync('docker version --format "{{.Client.Version}}" 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getImageHash(): string | null {
+  if (!dockerOk()) return null;
   try {
     const label = execSync(
       `docker image inspect openclaw-agent-base:latest --format '{{index .Config.Labels "olympus.dockerfile_hash"}}' 2>/dev/null`,
@@ -24,6 +38,7 @@ function getImageHash(): string | null {
 }
 
 function imageExists(): boolean {
+  if (!dockerOk()) return false;
   try {
     execSync(
       'docker image inspect openclaw-agent-base:latest --format "{{.ID}}" 2>/dev/null',
