@@ -26,7 +26,6 @@ export default function SetupPageClient() {
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [restarting, setRestarting] = useState(false);
 
   const [imageStatus, setImageStatus] = useState<ImageStatus>({
     exists: false, building: false, error: null, logs: [],
@@ -70,6 +69,8 @@ export default function SetupPageClient() {
       });
 
       if (res.ok) {
+        // Password saved to .env — login route reads it from file.
+        // No restart needed: JWT_SECRET was inlined at build time.
         setSaving(false);
         setStep('image');
         return;
@@ -133,24 +134,9 @@ export default function SetupPageClient() {
     }
   }, []);
 
-  // ─── Done / Restart ────────────────────────────────────────────────
+  // ─── Done — go straight to login, no restart needed ─────────────────
 
   const handleDone = useCallback(async () => {
-    setRestarting(true);
-
-    try {
-      await fetch('/api/setup/restart', { method: 'POST' });
-    } catch { /* restart kills the connection — expected */ }
-
-    // Poll until back, then login
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const ping = await fetch('/api/auth/status');
-        if (ping.ok) break;
-      } catch { /* still restarting */ }
-    }
-
     router.push('/login');
   }, [router]);
 
@@ -317,8 +303,8 @@ export default function SetupPageClient() {
                   </div>
                 ))}
               </div>
-              <Button variant="primary" size="md" onClick={handleDone} loading={restarting} disabled={restarting}>
-                {restarting ? 'Restarting...' : <>Start Using Olympus <ArrowRightIcon /></>}
+              <Button variant="primary" size="md" onClick={handleDone}>
+                Start Using Olympus <ArrowRightIcon />
               </Button>
             </div>
           )}
