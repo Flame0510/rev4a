@@ -56,7 +56,7 @@ const STATUS_BULLET: Record<string, string> = {
 };
 
 function fmtCreated(created: string | null): string {
-  if (!created) return '—';
+  if (!created) return '-';
   const ms = Date.now() - new Date(created).getTime();
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
@@ -64,6 +64,47 @@ function fmtCreated(created: string | null): string {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
+
+/** NoProviderBanner — shown when no provider API keys are configured */
+function NoProviderBanner() {
+  return (
+    <div style={{
+      padding: '10px 14px',
+      background: 'rgba(251,191,36,0.08)',
+      borderBottom: '1px solid rgba(251,191,36,0.2)',
+      fontSize: 12,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexShrink: 0,
+      flexWrap: 'wrap',
+      gap: 8,
+    }}>
+      <div>
+        <strong style={{ color: '#fbbf24' }}>⚠ No provider API keys configured.</strong>
+        {' '}Agents can't run without a model provider. Add API keys in the&nbsp;
+        <a href="/providers" style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
+          Providers section
+        </a>.
+      </div>
+      <a
+        href="/providers"
+        style={{
+          padding: '4px 10px',
+          border: '1px solid var(--copper)',
+          color: 'var(--copper)',
+          fontSize: 11,
+          textDecoration: 'none',
+          background: 'transparent',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Configure Providers →
+      </a>
+    </div>
+  );
+}
+
 
 export default function AgentsPageClient() {
   const router = useRouter();
@@ -80,6 +121,7 @@ export default function AgentsPageClient() {
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   const [imageReady, setImageReady] = useState(true);
+  const [providersConfigured, setProvidersConfigured] = useState(false);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -115,6 +157,16 @@ export default function AgentsPageClient() {
       .then((r) => r.json())
       .then((d: { exists: boolean }) => setImageReady(d.exists))
       .catch(() => setImageReady(false));
+  }, []);
+
+  // Check if any provider is configured (at least one valid auth profile)
+  useEffect(() => {
+    fetch('/api/providers')
+      .then((r) => r.json())
+      .then((d: { auth?: { providers?: Array<{ status: string }> } }) =>
+        setProvidersConfigured((d.auth?.providers || []).some((p) => p.status === 'ok'))
+      )
+      .catch(() => setProvidersConfigured(false));
   }, []);
 
   const loadToken = useCallback(async () => {
@@ -231,7 +283,7 @@ export default function AgentsPageClient() {
     if (!showList && selected) {
       return (
         <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
-          {/* Mobile header back — fixed top */}
+          {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
@@ -240,6 +292,7 @@ export default function AgentsPageClient() {
             <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
           </div>
           <ImageRebuildBanner />
+        {!providersConfigured && <NoProviderBanner />}
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             <DetailPanel agent={selected} />
@@ -264,9 +317,10 @@ export default function AgentsPageClient() {
             <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
               {f}
             </Button>
-          ))}
+          ))} 
         </div>
         <ImageRebuildBanner />
+        {!providersConfigured && <NoProviderBanner />}
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
@@ -306,7 +360,7 @@ export default function AgentsPageClient() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
-          <Button variant="ghost" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
+          <Button variant="ghost" size="sm" disabled={!imageReady || !providersConfigured} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : !providersConfigured ? 'No providers configured' : undefined}>
             + NEW
           </Button>
         </div>
@@ -320,6 +374,7 @@ export default function AgentsPageClient() {
         ))}
       </div>
       <ImageRebuildBanner />
+      {!providersConfigured && <NoProviderBanner />}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: '38%', minWidth: 300, borderRight: '1px solid var(--border)', overflow: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
@@ -408,7 +463,7 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '10px 14px', borderBottom: '1px solid var(--border)',
         }}>
-          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json — {agent.name}</span>
+          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json - {agent.name}</span>
           <Button variant="ghost" size="sm" onClick={onClose}>
             ✕
           </Button>
@@ -484,10 +539,10 @@ function DetailPanel({ agent }: { agent: Agent }) {
           ['Container ID', agent.id],
           ['Image', agent.image],
           ['Tag', agent.imageTag],
-          ['Template', agent.template || '—'],
+          ['Template', agent.template || '-'],
           ['State', agent.state],
-          ['Ports', agent.ports || '—'],
-          ['Internal IP', agent.ip || '—'],
+          ['Ports', agent.ports || '-'],
+          ['Internal IP', agent.ip || '-'],
           ['Created', fmtCreated(agent.created)],
         ] as const).map(([label, value]) => (
           <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
@@ -497,10 +552,10 @@ function DetailPanel({ agent }: { agent: Agent }) {
         ))}
       </div>
 
-      {/* Channels — Telegram */}
+      {/* Channels - Telegram */}
       <ChannelSection agentId={agent.agentId} agentName={agent.name} />
 
-      {/* Config — View openclaw.json */}
+      {/* Config - View openclaw.json */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="CONFIG" />
         <div style={{ padding: '12px 14px' }}>
@@ -508,21 +563,21 @@ function DetailPanel({ agent }: { agent: Agent }) {
             View openclaw.json
           </Button>
           <div style={{ fontSize: 10, color: '#666', marginTop: 6 }}>
-            Inspect the full container config — providers, models, auth mode.
+            Inspect the full container config - providers, models, auth mode.
           </div>
         </div>
       </div>
 
-      {/* Integrations — credentials synced to this agent */}
+      {/* Integrations - credentials synced to this agent */}
       <IntegrationSection agentName={agent.name} />
 
       {/* Restart */}
       <RestartSection agentName={agent.name} />
 
-      {/* Backup — persistent volume backup & restore */}
+      {/* Backup - persistent volume backup & restore */}
       <BackupSection agentName={agent.name} />
 
-      {/* Access — agent URL (token inline in link) */}
+      {/* Access - agent URL (token inline in link) */}
       {agent.traefikUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
           <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS" />
@@ -586,7 +641,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
           <SectionHeader icon={<TerminalIcon size={12} />} label="ENV (AGENT_ / MODEL_)" />
           {agent.env.map((e) => (
             <div key={e} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: '#aaa', fontFamily: 'var(--font-mono-stack)' }}>
-              {e.split('=').map((v, i) => i === 1 && v.length > 0 ? `${v.slice(0, 20)}${v.length > 20 ? '…' : ''}` : v).join('=')}
+              {e.split('=').map((v, i) => i === 1 && v.length > 0 ? `${v.slice(0, 20)}${v.length > 20 ? '...' : ''}` : v).join('=')}
             </div>
           ))}
         </div>
@@ -595,7 +650,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   );
 }
 
-/* ─── Integration section — credentials synced to this agent ─── */
+/* ─── Integration section - credentials synced to this agent ─── */
 
 function IntegrationSection({ agentName }: { agentName: string }) {
   const [profiles, setProfiles] = useState<{ providerId: string; label: string }[]>([]);
@@ -626,7 +681,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
       <SectionHeader icon={<LinkIcon size={12} />} label="INTEGRATIONS" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {loading ? (
-          <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>
+          <div style={{ fontSize: 11, color: '#888' }}>Loading...</div>
         ) : (
           <>
             <div style={{ fontSize: 12, color: 'var(--text)' }}>
@@ -656,7 +711,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Backup section — persistent volume backup & restore ─── */
+/* ─── Backup section - persistent volume backup & restore ─── */
 
 function BackupSection({ agentName }: { agentName: string }) {
   const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
@@ -771,7 +826,7 @@ function BackupSection({ agentName }: { agentName: string }) {
         )}
         {!status && (
           <>
-            {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
+            {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading...</div>}
             {!loading && backups.length === 0 && (
               <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
             )}
@@ -829,7 +884,7 @@ function BackupSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Restart section — simple container restart ─── */
+/* ─── Restart section - simple container restart ─── */
 
 function RestartSection({ agentName }: { agentName: string }) {
   const [restarting, setRestarting] = useState(false);
@@ -876,7 +931,7 @@ function RestartSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Recreate section — rebuild container from same image while keeping volume ─── */
+/* ─── Recreate section - rebuild container from same image while keeping volume ─── */
 
 function RecreateSection({ agentName }: { agentName: string }) {
   const [recreating, setRecreating] = useState(false);
@@ -936,7 +991,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
           </div>
         )}
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-          Takes an automatic backup, then rebuilds the container from the latest image — keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
+          Takes an automatic backup, then rebuilds the container from the latest image - keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
         </div>
         <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={() => setShowConfirm(true)}>
           {recreating ? 'Recreating...' : 'Recreate Container'}
@@ -962,7 +1017,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Channel section — Telegram ─── */
+/* ─── Channel section - Telegram ─── */
 
 function ChannelSection({ agentId, agentName }: { agentId: string; agentName: string }) {
   const [open, setOpen] = useState(false);
@@ -1000,7 +1055,7 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {preview === null ? (
-              <span style={{ color: 'var(--text-dim)' }}>Loading…</span>
+              <span style={{ color: 'var(--text-dim)' }}>Loading...</span>
             ) : (
               <>
                 <Badge tone={preview.telegram ? 'success' : 'neutral'}>
@@ -1022,4 +1077,5 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
       />
     </>
   );
+
 }
