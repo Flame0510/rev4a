@@ -79,6 +79,7 @@ export default function AgentsPageClient() {
   const [tokenSaving, setTokenSaving] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
+  const [imageReady, setImageReady] = useState(true);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -107,6 +108,14 @@ export default function AgentsPageClient() {
   }, []);
 
   useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, [load]);
+
+  // Check if agent base image exists (needed for creating agents)
+  useEffect(() => {
+    fetch('/api/agents/image-status')
+      .then((r) => r.json())
+      .then((d: { exists: boolean }) => setImageReady(d.exists))
+      .catch(() => setImageReady(false));
+  }, []);
 
   const loadToken = useCallback(async () => {
     try {
@@ -245,7 +254,7 @@ export default function AgentsPageClient() {
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/agents/create')}>
+          <Button variant="ghost" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
             + NEW
           </Button>
         </div>
@@ -297,7 +306,7 @@ export default function AgentsPageClient() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/agents/create')}>
+          <Button variant="ghost" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
             + NEW
           </Button>
         </div>
