@@ -161,10 +161,10 @@ export default function AgentsPageClient() {
 
   // Check if any provider is configured in the Gateway
   useEffect(() => {
-    fetch('/api/gateway')
+    fetch('/api/gateway/provider')
       .then((r) => r.json())
-      .then((d: { apiKeys?: { configured?: string[] } }) =>
-        setProvidersConfigured((d.apiKeys?.configured || []).length > 0)
+      .then((d: { providers?: Array<{ configured: boolean }> }) =>
+        setProvidersConfigured((d.providers || []).some((p) => p.configured))
       )
       .catch(() => setProvidersConfigured(false));
   }, []);
