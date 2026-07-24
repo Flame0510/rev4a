@@ -81,14 +81,14 @@ function NoProviderBanner() {
       gap: 8,
     }}>
       <div>
-        <strong style={{ color: '#fbbf24' }}>⚠ No provider API keys configured.</strong>
-        {' '}Agents can't run without a model provider. Add API keys in the&nbsp;
-        <a href="/providers" style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
-          Providers section
+        <strong style={{ color: '#fbbf24' }}>⚠ No providers configured.</strong>
+        {' '}Agents need model providers to run. Configure them in the&nbsp;
+        <a href="/gateway" style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
+          Gateway
         </a>.
       </div>
       <a
-        href="/providers"
+        href="/gateway"
         style={{
           padding: '4px 10px',
           border: '1px solid var(--copper)',
@@ -99,7 +99,7 @@ function NoProviderBanner() {
           whiteSpace: 'nowrap',
         }}
       >
-        Configure Providers →
+        Open Gateway →
       </a>
     </div>
   );
