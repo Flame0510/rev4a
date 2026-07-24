@@ -5,30 +5,25 @@ import * as path from 'path';
 /**
  * GET /api/auth/status
  *
- * Returns { configured: true } if a password has been set (either
- * in the environment or in the .env file created by the setup wizard).
- * No auth required — used by the frontend to decide whether to show
- * the setup wizard or the login form.
+ * Returns { configured: true } if a password has been set on disk.
+ * Reads ONLY from the .env file — never from process.env, because
+ * Next.js inlines env vars at build time and they are not reliable
+ * when the .env file is created at runtime by the setup wizard.
+ *
+ * No auth required.
  */
 export function GET(): NextResponse {
-  let password = process.env.OLYMPUS_PASSWORD;
-
-  // Fallback: read .env file if env var is empty (Next.js inlines at build)
-  if (typeof password !== 'string' || password.length === 0) {
-    try {
-      const envPath = path.join(process.cwd(), '.env');
-      if (fs.existsSync(envPath)) {
-        const content = fs.readFileSync(envPath, 'utf-8');
-        const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
-        if (match && match[1].trim()) {
-          password = match[1].trim();
-        }
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+      if (match && match[1].trim().length > 0) {
+        return NextResponse.json({ configured: true });
       }
-    } catch {
-      // ignore
     }
+  } catch {
+    // .env unreadable → treat as not configured
   }
-
-  const configured = typeof password === 'string' && password.length > 0;
-  return NextResponse.json({ configured });
+  return NextResponse.json({ configured: false });
 }
