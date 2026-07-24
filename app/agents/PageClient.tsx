@@ -159,12 +159,12 @@ export default function AgentsPageClient() {
       .catch(() => setImageReady(false));
   }, []);
 
-  // Check if any provider is configured (at least one valid auth profile)
+  // Check if any provider is configured in the Gateway
   useEffect(() => {
-    fetch('/api/providers')
+    fetch('/api/gateway')
       .then((r) => r.json())
-      .then((d: { auth?: { providers?: Array<{ status: string }> } }) =>
-        setProvidersConfigured((d.auth?.providers || []).some((p) => p.status === 'ok'))
+      .then((d: { apiKeys?: { configured?: string[] } }) =>
+        setProvidersConfigured((d.apiKeys?.configured || []).length > 0)
       )
       .catch(() => setProvidersConfigured(false));
   }, []);
