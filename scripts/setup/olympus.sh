@@ -114,7 +114,7 @@ OLYMPUS_TOKEN=${token}
 OLYMPUS_JWT_SECRET=${jwt_secret}
 
 # Path to the events database (optional, default: data/events.db)
-# OLYMPUS_DB=data/events.db
+# OLYMPUS_DB=${OLYMPUS_APP}/data/events.db  (absolute path; daemon ignores cwd)
 
 # Workspace root for local file explorer (optional)
 # OLYMPUS_WORKSPACE_ROOT=/home
