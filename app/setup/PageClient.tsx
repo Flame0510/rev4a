@@ -5,20 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Button } from '../components/ui';
 import { ArrowRightIcon, CheckCircleIcon } from '../wizard/icons';
 
-type Step = 'password' | 'image' | 'done';
+type Step = 'password' | 'done';
 
 const STEPS = [
   { key: 'password' as const, label: 'Password' },
-  { key: 'image' as const,    label: 'Image' },
   { key: 'done' as const,     label: 'Done' },
 ];
-
-interface ImageStatus {
-  exists: boolean;
-  building: boolean;
-  error: string | null;
-  logs: string[];
-}
 
 export default function SetupPageClient() {
   const router = useRouter();
@@ -26,10 +18,6 @@ export default function SetupPageClient() {
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [saving, setSaving] = useState(false);
-
-  const [imageStatus, setImageStatus] = useState<ImageStatus>({
-    exists: false, building: false, error: null, logs: [],
-  });
 
   const stepIndex = STEPS.findIndex((s) => s.key === step);
 
@@ -43,13 +31,7 @@ export default function SetupPageClient() {
       .catch(() => {});
   }, [router]);
 
-  // Check agent image status
-  useEffect(() => {
-    fetch('/api/setup/agent-image')
-      .then((r) => r.json())
-      .then((d: { exists: boolean }) => setImageStatus((prev) => ({ ...prev, exists: d.exists })))
-      .catch(() => {});
-  }, []);
+
 
   // ─── Password ─────────────────────────────────────────────────────
 
@@ -72,7 +54,7 @@ export default function SetupPageClient() {
         // Password saved to .env — login route reads it from file.
         // No restart needed: JWT_SECRET was inlined at build time.
         setSaving(false);
-        setStep('image');
+        setStep('done');
         return;
       }
 
@@ -84,57 +66,9 @@ export default function SetupPageClient() {
     setSaving(false);
   }, [password]);
 
-  // ─── Image build ──────────────────────────────────────────────────
 
-  const buildImage = useCallback(async () => {
-    setImageStatus((prev) => ({ ...prev, building: true, error: null, logs: [] }));
 
-    try {
-      const res = await fetch('/api/setup/agent-image', { method: 'POST' });
-      if (!res.ok || !res.body) throw new Error('Failed to start build');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const data = line.replace(/^data: /, '').trim();
-          if (!data) continue;
-          try {
-            const parsed = JSON.parse(data);
-            setImageStatus((prev) => {
-              if (parsed.type === 'step') {
-                return { ...prev, logs: [...prev.logs.slice(-20), parsed.message] };
-              }
-              if (parsed.type === 'complete') {
-                return { ...prev, building: false, exists: true, logs: [...prev.logs.slice(-20), parsed.message] };
-              }
-              if (parsed.type === 'error') {
-                return { ...prev, building: false, error: parsed.message };
-              }
-              return prev;
-            });
-          } catch { /* skip */ }
-        }
-      }
-    } catch (e: unknown) {
-      setImageStatus((prev) => ({
-        ...prev,
-        building: false,
-        error: (e as Error).message || 'Build failed',
-      }));
-    }
-  }, []);
-
-  // ─── Done — go straight to login, no restart needed ─────────────────
+  // ─── Done — go straight to login ───────────────────────────────────
 
   const handleDone = useCallback(async () => {
     router.push('/login');
@@ -195,87 +129,7 @@ export default function SetupPageClient() {
             </div>
           )}
 
-          {step === 'image' && (
-            <div style={{ display: 'grid', gap: 14 }}>
-              <h2 style={{
-                fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
-                color: 'var(--copper)', margin: 0,
-              }}>
-                Agent Base Image
-              </h2>
-              <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                Olympus runs agents as Docker containers. The base image provides Node.js,
-                OpenClaw, and all tooling agents need. It only needs to be built once.
-              </p>
 
-              {imageStatus.exists ? (
-                <div style={{
-                  padding: '10px 12px',
-                  background: 'rgba(52,211,153,0.06)',
-                  border: '1px solid rgba(52,211,153,0.15)',
-                  fontSize: 12, color: 'var(--text)',
-                }}>
-                  ✅ Agent base image is ready.
-                </div>
-              ) : imageStatus.building ? (
-                <div style={{
-                  padding: '10px 12px',
-                  background: 'rgba(96,165,250,0.06)',
-                  border: '1px solid rgba(96,165,250,0.15)',
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
-                    Building image...
-                  </div>
-                  <div style={{
-                    height: 4, background: 'var(--border)', overflow: 'hidden', marginBottom: 6,
-                  }}>
-                    <div style={{
-                      height: 4,
-                      background: 'linear-gradient(90deg, var(--copper), #60a5fa)',
-                      animation: 'setup-progress 2s ease-in-out infinite',
-                      width: '30%',
-                    }} />
-                  </div>
-                  <div style={{ fontSize: 9, color: 'var(--text-dim)', maxHeight: 80, overflowY: 'auto' }}>
-                    {imageStatus.logs.map((l, i) => (
-                      <div key={i} style={{ lineHeight: 1.5 }}>{l}</div>
-                    ))}
-                  </div>
-                  {imageStatus.error && (
-                    <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>{imageStatus.error}</div>
-                  )}
-                </div>
-              ) : (
-                <div style={{
-                  padding: '10px 12px',
-                  background: 'rgba(96,165,250,0.06)',
-                  border: '1px solid rgba(96,165,250,0.15)',
-                }}>
-                  <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: '0 0 8px' }}>
-                    The image needs to be built. This pulls Node.js and installs OpenClaw packages.
-                    Takes about 3-5 minutes the first time.
-                  </p>
-                  <Button variant="secondary" size="sm" onClick={buildImage}>
-                    Build Image
-                  </Button>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                <Button variant="ghost" size="sm" onClick={() => setStep('done')}>
-                  Skip for now
-                </Button>
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => setStep('done')}
-                  disabled={!imageStatus.exists && !imageStatus.error}
-                >
-                  Continue <ArrowRightIcon />
-                </Button>
-              </div>
-            </div>
-          )}
 
           {step === 'done' && (
             <div style={{ display: 'grid', gap: 14, textAlign: 'center' }}>
@@ -295,7 +149,7 @@ export default function SetupPageClient() {
               <div style={{ display: 'grid', gap: 6, textAlign: 'left', padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)' }}>
                 {[
                   'Set admin password',
-                  imageStatus.exists ? 'Agent base image ready' : 'Agent image — build later',
+                  'Agent base image is built by the setup script',
                   'Next: add providers & agents in the wizard',
                 ].map((t) => (
                   <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text)' }}>
@@ -355,12 +209,6 @@ export default function SetupPageClient() {
           outline: none; width: 100%; box-sizing: border-box;
         }
         .setup-input:focus { border-color: var(--copper); }
-
-        @keyframes setup-progress {
-          0% { width: 0%; }
-          50% { width: 60%; }
-          100% { width: 0%; }
-        }
 
         @media (min-width: 481px) {
           .setup-outer { align-items: center; padding: 24px; }
