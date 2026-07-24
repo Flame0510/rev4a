@@ -46,14 +46,15 @@ async function getModels(): Promise<ModelInfo[]> {
       const keysRaw = fs.readFileSync(keysPath, 'utf-8');
       configuredProviders = Object.keys(JSON.parse(keysRaw));
     } catch {
-      // fallback: show all models
+      // no keys configured yet
     }
 
     if (configuredProviders.length > 0) {
       return allModels.filter((m) => configuredProviders.includes(m.provider));
     }
 
-    return allModels;
+    // No providers configured — show no models
+    return [];
   } catch {
     return [];
   }
