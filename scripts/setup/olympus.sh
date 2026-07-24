@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # olympus.sh — clone, configure, and start the Olympus dashboard
+# Supports bare-metal (systemd) and Docker containers (direct process start).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
@@ -7,6 +8,16 @@ source "${SCRIPT_DIR}/helpers.sh"
 OLYMPUS_REPO="${OLYMPUS_REPO:-https://github.com/Flame0510/olympus.git}"
 OLYMPUS_BRANCH="${OLYMPUS_BRANCH:-main}"
 OLYMPUS_PORT="${OLYMPUS_PORT:-3740}"
+
+# ------------------------------------------------------------------------------
+# Detect whether we're running inside a Docker container (no systemd available)
+is_container() {
+  # /.dockerenv is created by Docker at container creation
+  [[ -f /.dockerenv ]] && return 0
+  # /proc/1/cgroup mentions docker / kubepods / lxc
+  grep -Eq 'docker|kubepods|lxc' /proc/1/cgroup 2>/dev/null && return 0
+  return 1
+}
 
 # ------------------------------------------------------------------------------
 # Install Node.js (>= 18) if not present
@@ -219,7 +230,13 @@ _resolve_node_path() {
 
 # ------------------------------------------------------------------------------
 # Create systemd service units (next + daemon + terminal-ws)
+# Skipped inside Docker containers — systemd is not available.
 create_systemd_service() {
+  if is_container; then
+    log_info "Container detected — skipping systemd services (not needed)"
+    return 0
+  fi
+
   local next_service="/etc/systemd/system/olympus-next.service"
   local daemon_service="/etc/systemd/system/olympus-daemon.service"
   local ws_service="/etc/systemd/system/olympus-terminal-ws.service"
@@ -387,8 +404,55 @@ build_agent_image() {
 }
 
 # ------------------------------------------------------------------------------
-# Start all Olympus services via systemd target
+# Start all Olympus services
+# Bare-metal: uses systemd target (olympus.target)
+# Container:   starts processes directly with nohup
 start_olympus() {
+  if is_container; then
+    # ── Container mode: start Next.js + daemon + terminal-ws directly ──
+    local node_path logs_dir
+    node_path=$(_resolve_node_path)
+    logs_dir="${OLYMPUS_DATA}/logs"
+    mkdir -p "$logs_dir"
+
+    # Load env vars from .env for child processes
+    set -a; source "${OLYMPUS_APP}/.env"; set +a
+    export NODE_ENV=production
+    export PORT="${OLYMPUS_PORT}"
+    export OLYMPUS_DB="${OLYMPUS_APP}/data/events.db"
+
+    log_info "Container mode — starting services directly..."
+
+    # Next.js
+    log_info "Starting Next.js on port ${OLYMPUS_PORT}..."
+    nohup npx next start -p "${OLYMPUS_PORT}" > "${logs_dir}/next.log" 2>&1 &
+    log_ok "Next.js PID $!"
+
+    # Daemon
+    log_info "Starting daemon..."
+    nohup "${node_path}" daemon.js > "${logs_dir}/daemon.log" 2>&1 &
+    log_ok "Daemon PID $!"
+
+    # Terminal WS
+    log_info "Starting terminal WebSocket on port 3741..."
+    TERMINAL_WS_PORT=3741 nohup "${node_path}" terminal-ws-server.js > "${logs_dir}/terminal-ws.log" 2>&1 &
+    log_ok "Terminal WS PID $!"
+
+    # Wait for Next.js to come up
+    log_info "Waiting for Olympus to start..."
+    for i in $(seq 1 20); do
+      if curl -sf --max-time 2 "http://127.0.0.1:${OLYMPUS_PORT}/api/auth/status" &>/dev/null; then
+        log_ok "Olympus is healthy"
+        return 0
+      fi
+      sleep 2
+    done
+
+    log_error "Olympus did not start within 40s — check ${logs_dir}/next.log"
+    return 1
+  fi
+
+  # ── Bare-metal mode: systemd ──
   log_info "Starting Olympus services..."
 
   # Enable at boot (olympus.target pulls all three services via Wants)
@@ -490,7 +554,23 @@ print_summary() {
   echo "     • Adding provider API keys"
   echo "     • Creating your first agent"
   echo ""
-  echo "  Olympus auto-starts on every system reboot."
+  if is_container; then
+    echo "  ── Container mode ──"
+    echo "  Logs:         ${OLYMPUS_DATA}/logs/next.log"
+    echo "  Daemon logs:  ${OLYMPUS_DATA}/logs/daemon.log"
+    echo ""
+    echo "  Olympus runs as background processes (nohup)."
+    echo "  It will restart only if the container restarts."
+  else
+    echo "  ── Service management ──"
+    echo "  Status:       sudo systemctl status olympus.target"
+    echo "  Restart:      sudo systemctl restart olympus.target"
+    echo "  Stop:         sudo systemctl stop olympus.target"
+    echo "  Next.js logs: sudo journalctl -u olympus-next -f"
+    echo "  Daemon logs:  sudo journalctl -u olympus-daemon -f"
+    echo ""
+    echo "  Olympus auto-starts on every system reboot."
+  fi
   echo "  Run this script again anytime — it's safe."
   echo "=============================================="
 }
