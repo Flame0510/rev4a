@@ -198,22 +198,13 @@ build_olympus() {
 }
 
 # ------------------------------------------------------------------------------
-# Read .env and build Environment= lines for systemd units
-_build_env_lines() {
-  local env_lines=""
-  if [[ -f "${OLYMPUS_APP}/.env" ]]; then
-    while IFS='=' read -r line; do
-      [[ "$line" =~ ^# ]] && continue
-      [[ -z "$line" ]] && continue
-      [[ "$line" != *"="* ]] && continue
-      local key="${line%%=*}"
-      local value="${line#*=}"
-      # Forward OLYMPUS_, PROVIDER_, and OPENCLAW_ env vars plus PATH-aware vars
-      [[ "$key" =~ ^(OLYMPUS_|PROVIDER_|OPENCLAW_|NODE_) ]] || continue
-      env_lines+="Environment=${key}=${value}"$'\n'
-    done < "${OLYMPUS_APP}/.env"
-  fi
-  echo "$env_lines"
+# Build shared environment block for systemd units.
+# Secrets are loaded via EnvironmentFile= (the 600-permissioned .env).
+# Non-secret overrides go here as Environment= lines (loaded after .env, so they win).
+_build_shared_env() {
+  echo "Environment=NODE_ENV=production
+Environment=PATH=${node_bin_dir}:/usr/local/bin:/usr/bin:/bin
+Environment=OLYMPUS_DB=${OLYMPUS_APP}/data/events.db"
 }
 
 # ------------------------------------------------------------------------------
@@ -246,18 +237,13 @@ create_systemd_service() {
   local node_path
   node_path=$(_resolve_node_path)
 
-  local env_lines
-  env_lines=$(_build_env_lines)
-
   # Determine node bin directory (for PATH in service units)
   local node_bin_dir
   node_bin_dir=$(dirname "$node_path")
 
+  # shared_env: non-secret overrides (loaded AFTER EnvironmentFile, so they win)
   local shared_env
-  shared_env="Environment=NODE_ENV=production
-Environment=PATH=${node_bin_dir}:/usr/local/bin:/usr/bin:/bin
-Environment=OLYMPUS_DB=${OLYMPUS_APP}/data/events.db
-${env_lines}"
+  shared_env=$(_build_shared_env)
 
   # Resolve next binary (in node_modules/.bin, not alongside node)
   local next_path="${OLYMPUS_APP}/node_modules/.bin/next"
@@ -279,6 +265,7 @@ PartOf=olympus.target
 Type=simple
 User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
+EnvironmentFile=${OLYMPUS_APP}/.env
 Environment=PORT=${OLYMPUS_PORT}
 ${shared_env}ExecStart=${node_bin_dir}/npx next start -p ${OLYMPUS_PORT}
 Restart=always
@@ -301,6 +288,7 @@ PartOf=olympus.target
 Type=simple
 User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
+EnvironmentFile=${OLYMPUS_APP}/.env
 Environment=PORT=${OLYMPUS_PORT}
 ${shared_env}ExecStart=${next_path} start -p ${OLYMPUS_PORT}
 Restart=always
@@ -325,6 +313,7 @@ PartOf=olympus.target
 Type=simple
 User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
+EnvironmentFile=${OLYMPUS_APP}/.env
 ${shared_env}ExecStart=${node_path} daemon.js
 Restart=always
 RestartSec=10
@@ -347,6 +336,7 @@ PartOf=olympus.target
 Type=simple
 User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
+EnvironmentFile=${OLYMPUS_APP}/.env
 Environment=TERMINAL_WS_PORT=3741
 ${shared_env}ExecStart=${node_path} terminal-ws-server.js
 Restart=always
@@ -465,6 +455,14 @@ print_summary() {
     olympus_token=$(grep -E '^OLYMPUS_TOKEN=' "${OLYMPUS_APP}/.env" | cut -d= -f2- || echo "(not set)")
   fi
 
+  # Show only first 4 chars to avoid terminal history leaks
+  local pwd_preview="${olympus_password:0:4}..."
+  local tok_preview="${olympus_token:0:4}..."
+  if [[ ${#olympus_password} -le 4 ]]; then
+    pwd_preview="${olympus_password}"
+    tok_preview="${olympus_token}"
+  fi
+
   echo ""
   echo "=============================================="
   echo "  Olympus is ready!"
@@ -473,8 +471,8 @@ print_summary() {
   echo "  URL:          http://${host_ip}:${OLYMPUS_PORT}"
   echo ""
   echo "  ── Credentials (save these!) ──"
-  echo "  Password:     ${olympus_password}"
-  echo "  API Token:    ${olympus_token}"
+  echo "  Password:     ${pwd_preview}  (full value: sudo cat ${OLYMPUS_APP}/.env | grep OLYMPUS_PASSWORD)"
+  echo "  API Token:    ${tok_preview}  (full value: sudo cat ${OLYMPUS_APP}/.env | grep OLYMPUS_TOKEN)"
   echo ""
   echo "  ── Service management ──"
   echo "  Status:       sudo systemctl status olympus.target"

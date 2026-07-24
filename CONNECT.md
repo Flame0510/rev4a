@@ -38,10 +38,10 @@ npm install
 npm run build
 
 # Start all three services (for dev/testing):
-npx olympus all
+npm run start:all
 
 # Or start individually:
-npx olympus start --port 3740    # Next.js dashboard
+npx olympus start --port 3740    # Next.js dashboard (or: npm start)
 npx olympus daemon               # Session poller
 npx olympus terminal-ws          # WebSocket PTY server
 ```
