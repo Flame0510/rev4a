@@ -43,12 +43,13 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
             }
           });
         }
-        // Authenticated — if wizard not done and we are not on /wizard, redirect
+        // Authenticated — only redirect to wizard if not already on /wizard
+        // AND password is not configured (fresh install)
         if (pathname !== '/wizard') {
-          fetch('/api/wizard/status')
+          fetch('/api/auth/status')
             .then((r3) => r3.json())
-            .then((d3: { done: boolean }) => {
-              if (!d3.done) {
+            .then((d3: { configured: boolean }) => {
+              if (!d3.configured) {
                 router.replace('/wizard');
               }
               setChecking(false);
