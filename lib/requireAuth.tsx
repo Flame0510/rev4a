@@ -1,10 +1,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.OLYMPUS_JWT_SECRET ?? '',
-);
+import { readJwtSecret } from '@/lib/env';
 
 export async function requireAuth(): Promise<void> {
   const cookieStore = await cookies();
@@ -12,10 +9,14 @@ export async function requireAuth(): Promise<void> {
 
   if (token) {
     try {
-      await jwtVerify(token, JWT_SECRET);
-      return; // valid JWT
+      const secret = readJwtSecret();
+      if (secret) {
+        const key = new TextEncoder().encode(secret);
+        await jwtVerify(token, key);
+        return;
+      }
     } catch {
-      // Invalid — redirect
+      // Invalid token — redirect
     }
   }
   redirect('/login');

@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { DB_PATH, ensureDbReady } from './db';
+import { readEnv } from '@/lib/env';
 
 export type AlertKind = 'db-freshness';
 
@@ -26,10 +27,10 @@ const ALERTS_TABLE = `
 
 function getConfig() {
   return {
-    enabled: process.env.OLYMPUS_ALERTS_ENABLED === 'true',
-    token: process.env.OLYMPUS_TELEGRAM_BOT_TOKEN?.trim() ?? '',
-    chatId: process.env.OLYMPUS_TELEGRAM_CHAT_ID?.trim() ?? '',
-    cooldownMs: Math.max(0, Number(process.env.OLYMPUS_ALERT_COOLDOWN_MS ?? 10 * 60 * 1000)),
+    enabled: readEnv('OLYMPUS_ALERTS_ENABLED') === 'true',
+    token: readEnv('OLYMPUS_TELEGRAM_BOT_TOKEN'),
+    chatId: readEnv('OLYMPUS_TELEGRAM_CHAT_ID'),
+    cooldownMs: Math.max(0, Number(readEnv('OLYMPUS_ALERT_COOLDOWN_MS') || 10 * 60 * 1000)),
   };
 }
 

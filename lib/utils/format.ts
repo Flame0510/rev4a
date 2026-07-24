@@ -16,7 +16,10 @@ export function formatTokens(value: number | null | undefined): string {
   return String(n);
 }
 
-let _timezone = process.env.OLYMPUS_TIMEZONE || 'Europe/Rome';
+let _timezone = 'Europe/Rome';
+if (typeof process !== 'undefined' && process.env?.OLYMPUS_TIMEZONE) {
+  _timezone = process.env.OLYMPUS_TIMEZONE;
+}
 
 export function setTimeZone(tz: string): void {
   _timezone = tz;
