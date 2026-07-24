@@ -198,61 +198,183 @@ build_olympus() {
 }
 
 # ------------------------------------------------------------------------------
-# Create and enable the systemd service
-create_systemd_service() {
-  local service_file="/etc/systemd/system/olympus.service"
-
-  if systemctl is-enabled olympus &>/dev/null; then
-    log_ok "Systemd service 'olympus' already exists"
-    return 0
-  fi
-
-  log_info "Creating systemd service..."
-
-  # Resolve npm path (may differ across distros)
-  local npm_path
-  npm_path=$(command -v npm || echo "/usr/bin/npm")
-
-  # Read .env for Environment= lines
+# Read .env and build Environment= lines for systemd units
+_build_env_lines() {
   local env_lines=""
   if [[ -f "${OLYMPUS_APP}/.env" ]]; then
     while IFS='=' read -r line; do
-      # Skip comments, empty lines, and lines without =
       [[ "$line" =~ ^# ]] && continue
       [[ -z "$line" ]] && continue
       [[ "$line" != *"="* ]] && continue
       local key="${line%%=*}"
       local value="${line#*=}"
-      # Only forward OLYMPUS_ and PROVIDER_ keys to systemd
-      [[ "$key" =~ ^(OLYMPUS_|PROVIDER_) ]] || continue
+      # Forward OLYMPUS_, PROVIDER_, and OPENCLAW_ env vars plus PATH-aware vars
+      [[ "$key" =~ ^(OLYMPUS_|PROVIDER_|OPENCLAW_|NODE_) ]] || continue
       env_lines+="Environment=${key}=${value}"$'\n'
     done < "${OLYMPUS_APP}/.env"
   fi
+  echo "$env_lines"
+}
 
-  $SUDO tee "$service_file" > /dev/null << SERVICEEOF
+# ------------------------------------------------------------------------------
+# Resolve node binary path (nvm-aware)
+_resolve_node_path() {
+  if command -v node &>/dev/null; then
+    command -v node
+  elif [[ -f "${HOME}/.nvm/nvm.sh" ]]; then
+    source "${HOME}/.nvm/nvm.sh" 2>/dev/null
+    command -v node || echo "/usr/bin/node"
+  else
+    echo "/usr/bin/node"
+  fi
+}
+
+# ------------------------------------------------------------------------------
+# Create systemd service units (next + daemon + terminal-ws)
+create_systemd_service() {
+  local next_service="/etc/systemd/system/olympus-next.service"
+  local daemon_service="/etc/systemd/system/olympus-daemon.service"
+  local ws_service="/etc/systemd/system/olympus-terminal-ws.service"
+
+  if systemctl is-enabled olympus-next &>/dev/null; then
+    log_ok "Systemd services already exist"
+    return 0
+  fi
+
+  log_info "Creating systemd services..."
+
+  local node_path
+  node_path=$(_resolve_node_path)
+
+  local env_lines
+  env_lines=$(_build_env_lines)
+
+  # Determine node bin directory (for PATH in service units)
+  local node_bin_dir
+  node_bin_dir=$(dirname "$node_path")
+
+  local shared_env
+  shared_env="Environment=NODE_ENV=production
+Environment=PATH=${node_bin_dir}:/usr/local/bin:/usr/bin:/bin
+Environment=OLYMPUS_DB=${OLYMPUS_APP}/data/events.db
+${env_lines}"
+
+  # Resolve next binary (in node_modules/.bin, not alongside node)
+  local next_path="${OLYMPUS_APP}/node_modules/.bin/next"
+  if [[ ! -x "$next_path" ]]; then
+    # Fallback: use npx (may be slower but always works)
+    next_path="npx next"
+  fi
+
+  # ── olympus-next.service ────────────────────────────────────────────
+  if [[ "$next_path" == "npx next" ]]; then
+    $SUDO tee "$next_service" > /dev/null << SERVICEEOF
 [Unit]
-Description=Olympus Dashboard
+Description=Olympus Dashboard (Next.js)
 After=network.target docker.service
 Wants=docker.service
+PartOf=olympus.target
 
 [Service]
 Type=simple
 User=${USER}
 WorkingDirectory=${OLYMPUS_APP}
-Environment=NODE_ENV=production
 Environment=PORT=${OLYMPUS_PORT}
-${env_lines}ExecStart=${npm_path} start
+${shared_env}ExecStart=${node_bin_dir}/npx next start -p ${OLYMPUS_PORT}
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=olympus.target
+SERVICEEOF
+  else
+    $SUDO tee "$next_service" > /dev/null << SERVICEEOF
+[Unit]
+Description=Olympus Dashboard (Next.js)
+After=network.target docker.service
+Wants=docker.service
+PartOf=olympus.target
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${OLYMPUS_APP}
+Environment=PORT=${OLYMPUS_PORT}
+${shared_env}ExecStart=${next_path} start -p ${OLYMPUS_PORT}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=olympus.target
+SERVICEEOF
+  fi
+
+  # ── olympus-daemon.service ──────────────────────────────────────────
+  $SUDO tee "$daemon_service" > /dev/null << SERVICEEOF
+[Unit]
+Description=Olympus Daemon (session poller + metrics)
+After=olympus-next.service
+Wants=olympus-next.service
+PartOf=olympus.target
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${OLYMPUS_APP}
+${shared_env}ExecStart=${node_path} daemon.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=olympus.target
 SERVICEEOF
 
+  # ── olympus-terminal-ws.service ─────────────────────────────────────
+  $SUDO tee "$ws_service" > /dev/null << SERVICEEOF
+[Unit]
+Description=Olympus Terminal WebSocket
+After=olympus-next.service
+Wants=olympus-next.service
+PartOf=olympus.target
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${OLYMPUS_APP}
+Environment=TERMINAL_WS_PORT=3741
+${shared_env}ExecStart=${node_path} terminal-ws-server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=olympus.target
+SERVICEEOF
+
+  # ── olympus.target ──────────────────────────────────────────────────
+  $SUDO tee /etc/systemd/system/olympus.target > /dev/null << TARGETEOF
+[Unit]
+Description=Olympus Dashboard (all services)
+Wants=olympus-next.service olympus-daemon.service olympus-terminal-ws.service
+After=network.target docker.service
+
+[Install]
+WantedBy=multi-user.target
+TARGETEOF
+
   $SUDO systemctl daemon-reload
-  log_ok "Systemd service created at ${service_file}"
+  log_ok "Systemd services created:"
+  log_info "  - olympus-next.service       (Next.js dashboard)"
+  log_info "  - olympus-daemon.service       (session poller)"
+  log_info "  - olympus-terminal-ws.service  (WebSocket PTY)"
+  log_info "  - olympus.target              (boots all three)"
 }
 
 # ------------------------------------------------------------------------------
@@ -278,29 +400,49 @@ build_agent_image() {
 }
 
 # ------------------------------------------------------------------------------
-# Start the Olympus service
+# Start all Olympus services via systemd target
 start_olympus() {
-  if systemctl is-active --quiet olympus; then
-    log_info "Restarting Olympus service..."
-    $SUDO systemctl restart olympus
+  log_info "Starting Olympus services..."
+
+  # Enable at boot (olympus.target pulls all three services via Wants)
+  $SUDO systemctl enable olympus.target 2>/dev/null || true
+
+  if systemctl is-active --quiet olympus.target; then
+    log_info "Restarting Olympus services..."
+    $SUDO systemctl restart olympus.target
   else
-    log_info "Starting Olympus service..."
-    $SUDO systemctl enable --now olympus
+    log_info "Starting Olympus target..."
+    $SUDO systemctl start olympus.target
   fi
 
-  # Wait for it to come up
+  # Wait for Next.js to come up
   log_info "Waiting for Olympus to start (up to 30s)..."
   for i in $(seq 1 15); do
     if curl -sf --max-time 2 "http://127.0.0.1:${OLYMPUS_PORT}/api/health" &>/dev/null; then
-      log_ok "Olympus is running and healthy"
-      return 0
+      log_ok "Olympus Next.js is running and healthy"
+      break
     fi
     sleep 2
   done
 
-  log_error "Olympus did not become healthy within 30s."
-  log_error "Check logs: sudo journalctl -u olympus --no-pager -n 50"
-  return 1
+  # Verify all three services
+  local all_ok=true
+  for svc in olympus-next olympus-daemon olympus-terminal-ws; do
+    if systemctl is-active --quiet "$svc"; then
+      log_ok "$svc is active"
+    else
+      log_error "$svc failed to start"
+      log_error "Check logs: sudo journalctl -u $svc --no-pager -n 20"
+      all_ok=false
+    fi
+  done
+
+  if ! $all_ok; then
+    log_error "Some services did not start. Review logs above."
+    return 1
+  fi
+
+  return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -315,24 +457,45 @@ print_summary() {
     host_ip="$public_ip"
   fi
 
+  # Read credentials from .env (if they exist)
+  local olympus_password="(see .env)"
+  local olympus_token="(see .env)"
+  if [[ -f "${OLYMPUS_APP}/.env" ]]; then
+    olympus_password=$(grep -E '^OLYMPUS_PASSWORD=' "${OLYMPUS_APP}/.env" | cut -d= -f2- || echo "(not set)")
+    olympus_token=$(grep -E '^OLYMPUS_TOKEN=' "${OLYMPUS_APP}/.env" | cut -d= -f2- || echo "(not set)")
+  fi
+
   echo ""
   echo "=============================================="
   echo "  Olympus is ready!"
   echo "=============================================="
   echo ""
-  echo "  URL:      http://${host_ip}:${OLYMPUS_PORT}"
+  echo "  URL:          http://${host_ip}:${OLYMPUS_PORT}"
   echo ""
-  echo "  Service:  sudo systemctl [status|restart|stop] olympus"
-  echo "  Logs:     sudo journalctl -u olympus -f"
-  echo "  Config:   ${OLYMPUS_APP}/.env"
+  echo "  ── Credentials (save these!) ──"
+  echo "  Password:     ${olympus_password}"
+  echo "  API Token:    ${olympus_token}"
+  echo ""
+  echo "  ── Service management ──"
+  echo "  Status:       sudo systemctl status olympus.target"
+  echo "  Restart:      sudo systemctl restart olympus.target"
+  echo "  Stop:         sudo systemctl stop olympus.target"
+  echo "  Next.js logs: sudo journalctl -u olympus-next -f"
+  echo "  Daemon logs:  sudo journalctl -u olympus-daemon -f"
+  echo "  Config:       ${OLYMPUS_APP}/.env"
+  echo ""
+  echo "  ── Firewall (if using UFW) ──"
+  echo "  sudo ufw allow ${OLYMPUS_PORT}/tcp"
   echo ""
   echo "  ── First-time setup ──"
-  echo "  1. Open the URL above in your browser"
-  echo "  2. Follow the setup wizard to:"
-  echo "     • Set your admin password"
-  echo "     • Add a provider API key"
-  echo "     • Create your first agent"
+  echo "  1. Open http://${host_ip}:${OLYMPUS_PORT} in your browser"
+  echo "  2. You'll be redirected to the setup wizard"
+  echo "  3. Set your admin password and build the agent image"
+  echo "  4. After login, the wizard guides you through:"
+  echo "     • Adding provider API keys"
+  echo "     • Creating your first agent"
   echo ""
+  echo "  Olympus auto-starts on every system reboot."
   echo "  Run this script again anytime — it's safe."
   echo "=============================================="
 }

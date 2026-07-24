@@ -67,6 +67,17 @@ deploy_traefik() {
     cp "${repo_traefik_dir}/traefik.yml" "${TRAEFIK_DIR}/"
   fi
 
+  # Replace placeholder ACME email in traefik.yml
+  local acme_email="${TRAEFIK_ACME_EMAIL:-admin@example.com}"
+  if [[ -f "${TRAEFIK_DIR}/traefik.yml" ]]; then
+    $SUDO sed -i "s/admin@example\.com/${acme_email}/" "${TRAEFIK_DIR}/traefik.yml"
+    log_info "ACME email set to: ${acme_email}"
+    if [[ "$acme_email" == "admin@example.com" ]]; then
+      log_warn "Using default ACME email. Set TRAEFIK_ACME_EMAIL env var for Let's Encrypt certificates."
+      log_warn "  Example: TRAEFIK_ACME_EMAIL=your@email.com sudo -E bash scripts/setup.sh"
+    fi
+  fi
+
   # Create empty dynamic config (placeholders for runtime routes)
   if [[ ! -f "${TRAEFIK_DIR}/dynamic/olympus.yml" ]]; then
     cat > "${TRAEFIK_DIR}/dynamic/olympus.yml" << 'YML'

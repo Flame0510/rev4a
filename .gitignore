@@ -28,4 +28,5 @@ test-results/
 
 # Local config and state (not committed)
 .env.removed
+ecosystem.config.js
 data/
