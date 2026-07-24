@@ -83,3 +83,4 @@ EXPOSE 3000
 ENTRYPOINT ["/agent-entrypoint.sh"]
 CMD ["openclaw", "gateway", "--bind", "lan", "--port", "3000"]
 
+# force rebuild 1784921630
