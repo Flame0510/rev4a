@@ -1,23 +1,23 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { readToken, readJwtSecret } from '@/lib/env';
+import { TOKEN } from '@/lib/db';
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.OLYMPUS_JWT_SECRET ?? 'olympus-jwt-secret-change-in-prod',
+);
 
 export async function requireBrowserAuth(request: NextRequest): Promise<NextResponse | null> {
-  const TOKEN = readToken();
-  const JWT_SECRET = readJwtSecret();
-
   const token = new URL(request.url).searchParams.get('token');
   const auth = request.headers.get('authorization');
 
-  if (TOKEN && (token === TOKEN || auth === `Bearer ${TOKEN}`)) {
+  if (token === TOKEN || auth === `Bearer ${TOKEN}`) {
     return null;
   }
 
   const cookieToken = request.cookies.get('olympus_token')?.value;
-  if (cookieToken && JWT_SECRET) {
+  if (cookieToken) {
     try {
-      const key = new TextEncoder().encode(JWT_SECRET);
-      await jwtVerify(cookieToken, key);
+      await jwtVerify(cookieToken, JWT_SECRET);
       return null;
     } catch {
       // Fall through to unauthorized.

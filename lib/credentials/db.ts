@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { readEnv } from '@/lib/env';
+import { DB_PATH } from '@/lib/db';
 
 // credentials.db lives alongside events.db in the same data directory
 export const CREDENTIALS_DB_PATH =
-  readEnv('OLYMPUS_CREDENTIALS_DB') ||
-  path.join(path.dirname(readEnv('OLYMPUS_DB') || path.join(process.cwd(), 'data', 'events.db')), 'credentials.db');
+  process.env.OLYMPUS_CREDENTIALS_DB ??
+  path.join(path.dirname(DB_PATH), 'credentials.db');
 
 function bootstrap(): void {
   fs.mkdirSync(path.dirname(CREDENTIALS_DB_PATH), { recursive: true });

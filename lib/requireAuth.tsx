@@ -1,7 +1,26 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { jwtVerify } from 'jose';
-import { readJwtSecret } from '@/lib/env';
+import * as fs from 'fs';
+import * as path from 'path';
+
+function getJwtSecret(): Uint8Array {
+  const fromEnv = process.env.OLYMPUS_JWT_SECRET;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) {
+    return new TextEncoder().encode(fromEnv);
+  }
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_JWT_SECRET=(.+)$/m)
+      if (match && match[1].trim()) {
+        return new TextEncoder().encode(match[1].trim());
+      }
+    }
+  } catch { /* ignore */ }
+  return new TextEncoder().encode('');
+}
 
 export async function requireAuth(): Promise<void> {
   const cookieStore = await cookies();
@@ -9,14 +28,10 @@ export async function requireAuth(): Promise<void> {
 
   if (token) {
     try {
-      const secret = readJwtSecret();
-      if (secret) {
-        const key = new TextEncoder().encode(secret);
-        await jwtVerify(token, key);
-        return;
-      }
+      await jwtVerify(token, getJwtSecret());
+      return;
     } catch {
-      // Invalid token — redirect
+      // Invalid — redirect
     }
   }
   redirect('/login');

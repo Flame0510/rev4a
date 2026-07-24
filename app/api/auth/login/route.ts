@@ -3,23 +3,40 @@ import { SignJWT } from 'jose';
 import * as fs from 'fs';
 import * as path from 'path';
 
-/**
- * POST /api/auth/login
- *
- * Validates the password and returns a signed JWT on success.
- * Reads credentials ONLY from .env on disk, never from process.env,
- * because Next.js inlines env vars at build time and the .env file
- * is created at runtime by the setup wizard.
- */
+// ---------------------------------------------------------------------------
+// Resolve credentials at runtime.
+// Next.js inlines process.env at build time, so a freshly-created .env
+// (written by the setup wizard) won't be visible until restart.
+// As a fallback, read the .env file directly.
+// ---------------------------------------------------------------------------
+function getEnvPassword(): string {
+  const fromEnv = process.env.OLYMPUS_PASSWORD;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
-function readEnvValue(key: string): string {
   try {
     const envPath = path.join(process.cwd(), '.env');
-    if (!fs.existsSync(envPath)) return '';
-    const content = fs.readFileSync(envPath, 'utf-8');
-    const regex = new RegExp('^' + key + '=(.*)$', 'm');
-    const match = content.match(regex);
-    if (match && match[1].trim()) return match[1].trim();
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
+      if (match && match[1].trim()) return match[1].trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+function getEnvJwtSecret(): string {
+  const fromEnv = process.env.OLYMPUS_JWT_SECRET;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_JWT_SECRET=(.+)$/m);
+      if (match && match[1].trim()) return match[1].trim();
+    }
   } catch {
     // ignore
   }
@@ -28,10 +45,11 @@ function readEnvValue(key: string): string {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const password = readEnvValue('OLYMPUS_PASSWORD');
-    const jwtSecret = readEnvValue('OLYMPUS_JWT_SECRET');
+    const password = getEnvPassword();
+    const jwtSecret = getEnvJwtSecret();
 
     if (!password) {
+      console.error('[auth] No password configured — rejecting login');
       return NextResponse.json(
         { error: 'Server not configured. Run the setup wizard first.' },
         { status: 401 },
@@ -39,6 +57,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (!jwtSecret) {
+      console.error('[auth] No JWT secret configured — rejecting login');
       return NextResponse.json(
         { error: 'Server not configured. JWT secret missing.' },
         { status: 401 },

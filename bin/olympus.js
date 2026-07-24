@@ -52,7 +52,7 @@ function start(port) {
   const child = spawn('npx', ['next', 'start', '-p', String(p)], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: { ...process.env, PORT: String(p), NODE_ENV: 'production', OLYMPUS_APP: ROOT },
+    env: { ...process.env, PORT: String(p), NODE_ENV: 'production' },
   });
   child.on('exit', (code) => {
     log('START', `Server exited (code ${code})`);
@@ -155,7 +155,7 @@ if (cmd === 'all') {
   const next = spawn('npx', ['next', 'start', '-p', String(port)], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'production', OLYMPUS_APP: ROOT },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'production' },
   });
   const daemon = spawn(process.execPath, ['daemon.js'], {
     cwd: ROOT,
