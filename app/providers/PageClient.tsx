@@ -386,7 +386,7 @@ export default function ProvidersPage() {
 
   async function loadAgents() {
     try {
-      const res = await fetch('/api/agent-providers?token=change-me', { cache: 'no-store', credentials: 'include' });
+      const res = await fetch('/api/agent-providers', { cache: 'no-store', credentials: 'include' });
       if (!res.ok) return;
       const json = await res.json() as AgentProviderStatus[];
       const agentTargets: AgentTarget[] = [
