@@ -33,7 +33,7 @@ Container Shell (bash, interactive, full PTY)
 | `olympus-next`   | 3740  | Next.js app (pages, API routes, auth) |
 | `olympus-terminal-ws` | 3741 | Standalone WebSocket server for terminal sessions |
 
-The terminal server is a separate process managed by PM2. It was isolated from
+The terminal server is a separate systemd service (olympus-terminal-ws). It was isolated from
 the Next.js app to avoid event-loop contention during high-throughput I/O (fast
 `seq`, `cat` on large files, interactive shell sessions).
 
@@ -257,8 +257,8 @@ app/containers/terminal/
 ├── [id]/
 │   ├── page.tsx               # Next.js page (auth-protected)
 │   └── TerminalClient.tsx     # Client-side terminal component
-terminal-ws-server.js           # WebSocket PTY server (PM2-managed)
-ecosystem.config.js             # PM2 config for both processes
+terminal-ws-server.js           # WebSocket PTY server (olympus-terminal-ws.service)
+olympus.target                  # Systemd target for all three services
 ```
 
 ## Known Limitations

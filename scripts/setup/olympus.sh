@@ -129,10 +129,8 @@ ENVEOF
 
   $SUDO chmod 600 "$env_file"
   log_ok ".env created with random passwords"
-  log_warn "Credentials saved to ${env_file}:"
-  log_info "  Password: ${password}"
-  log_info "  Token:    ${token}"
-  log_info "  Save these credentials somewhere safe. You will need them to log in."
+  log_info "  Password: ${password:0:4}... (save these credentials somewhere safe)"
+  log_info "  Full credentials shown in summary below after services start."
 }
 
 # ------------------------------------------------------------------------------
@@ -202,6 +200,7 @@ build_olympus() {
 # Secrets are loaded via EnvironmentFile= (the 600-permissioned .env).
 # Non-secret overrides go here as Environment= lines (loaded after .env, so they win).
 _build_shared_env() {
+  local node_bin_dir="${node_bin_dir:-$(dirname "$(command -v node || echo /usr/bin/node)")}"
   echo "Environment=NODE_ENV=production
 Environment=PATH=${node_bin_dir}:/usr/local/bin:/usr/bin:/bin
 Environment=OLYMPUS_DB=${OLYMPUS_APP}/data/events.db"
@@ -459,8 +458,8 @@ print_summary() {
   local pwd_preview="${olympus_password:0:4}..."
   local tok_preview="${olympus_token:0:4}..."
   if [[ ${#olympus_password} -le 4 ]]; then
-    pwd_preview="${olympus_password}"
-    tok_preview="${olympus_token}"
+    pwd_preview="${olympus_password:-\(not set\)}"
+    tok_preview="${olympus_token:-\(not set\)}"
   fi
 
   echo ""

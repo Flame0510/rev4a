@@ -31,12 +31,17 @@ git clone https://github.com/Flame0510/olympus.git
 cd olympus
 npm install
 npm run build
+
+# Start all services (dashboard + daemon + terminal):
+npm run start:all
+
+# Or dashboard only:
 npm start
 ```
 
 Open `http://localhost:3740`. Login with your configured password or token.
 
-> **Coming soon:** `npx create-olympus` — one-command install with project setup.
+> **One-command install:** `curl -fsSL https://raw.githubusercontent.com/Flame0510/olympus/main/scripts/setup.sh \| bash`
 
 ---
 

@@ -15,7 +15,7 @@
 │  openclaw-core (1 container)                │
 │                                             │
 │  Olympus (Next.js + daemon + SQLite)        │
-│  OpenClaw runtime + PM2                     │
+│  OpenClaw runtime + systemd                  │
 │  Subagents via sessions_spawn (same process)│
 │  3+ agent workspaces (ops, prometheus, …)   │
 │                                             │
@@ -407,7 +407,7 @@ The daemon compares the last two metric samples. If a threshold is exceeded and 
 
 - WAL mode + `PRAGMA synchronous = NORMAL` for concurrent read safety
 - `PRAGMA wal_checkpoint(PASSIVE)` runs after each poll cycle
-- On `uncaughtException` the daemon logs but does NOT exit — relies on PM2 watchdog for restart
+- On `uncaughtException` the daemon logs but does NOT exit — relies on systemd Restart=always for recovery
 
 ### Migrations
 
@@ -502,7 +502,7 @@ a WebSocket-connected PTY. The implementation is documented in detail in
 | `olympus-next` (Next.js) | 3740 | Serves the terminal page, auth, API |
 | `olympus-terminal-ws` (standalone) | 3741 | WebSocket PTY server via `node-pty` |
 
-The terminal server runs as a separate PM2 process to avoid event-loop
+The terminal server runs as a separate systemd service (olympus-terminal-ws) to avoid event-loop
 contention with Next.js during high-throughput I/O.
 
 ### Why custom DOM over xterm.js

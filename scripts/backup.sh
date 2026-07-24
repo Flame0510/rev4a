@@ -33,6 +33,9 @@ echo "  Target: ${ARCHIVE}"
 
 cd "$OLYMPUS_ROOT"
 
+# Restrict permissions during archive creation
+umask 077
+
 # Create tar with only the files we care about
 tar -czf "$ARCHIVE" \
   --exclude='node_modules' \
