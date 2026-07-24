@@ -1,12 +1,16 @@
 /**
  * POST /api/setup/restart
  *
- * No auth required. Syncs password from .env to the Next.js service
- * environment, then restarts the entire Olympus target via systemd.
+ * No auth required. Restarts the Olympus server so that changes to
+ * .env (especially OLYMPUS_PASSWORD) take effect.
  *
- * In systemd deployments, the service reads EnvironmentFile=.env
- * at startup — so we restart olympus.target to pick up changes.
- * No manual inlining of Environment= lines needed.
+ * Next.js inlines env vars at build time, so a runtime process.env
+ * mutation is not enough — the process must restart to reload .env.
+ *
+ * Strategy:
+ *   1. If running under systemd (olympus.target), restart via systemctl.
+ *   2. Otherwise send SIGTERM to the current process. The parent process
+ *      manager (npx olympus all or a shell wrapper) should restart it.
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
@@ -20,7 +24,6 @@ export async function POST(): Promise<NextResponse> {
   try {
     const envFile = path.join(process.cwd(), '.env');
 
-    // Verify .env exists and has a non-empty password
     if (!fs.existsSync(envFile)) {
       return NextResponse.json({ error: '.env file not found' }, { status: 500 });
     }
@@ -34,20 +37,38 @@ export async function POST(): Promise<NextResponse> {
       );
     }
 
-    // Reload systemd and restart the entire target.
-    // EnvironmentFile=.env in olympus-next.service picks up the new password.
-    execSync('sudo systemctl daemon-reload', { timeout: 5000 });
+    // Try systemd first (production).
+    // If it fails, fall back to SIGTERM (dev mode / container).
+    let usedSystemd = false;
+    try {
+      execSync('sudo systemctl daemon-reload', { timeout: 5000 });
+      usedSystemd = true;
+    } catch {
+      // systemctl not available — fine, we'll SIGTERM
+    }
 
-    // Deferred restart so the HTTP response can flush before the service dies
-    const response = NextResponse.json({ status: 'ok', restarting: true });
+    const response = NextResponse.json({
+      status: 'ok',
+      restarting: true,
+      mode: usedSystemd ? 'systemd' : 'process',
+    });
 
-    setTimeout(() => {
-      try {
-        execSync('sudo systemctl restart olympus.target', { timeout: 15000 });
-      } catch (err) {
-        console.error('[setup/restart] olympus.target restart failed:', err);
-      }
-    }, 2000);
+    if (usedSystemd) {
+      setTimeout(() => {
+        try {
+          execSync('sudo systemctl restart olympus.target', { timeout: 15000 });
+        } catch (err) {
+          console.error('[setup/restart] systemd restart failed:', err);
+        }
+      }, 2000);
+    } else {
+      // Dev mode / container: send SIGTERM after flushing response.
+      // The parent (npx olympus all or shell) will restart the process,
+      // which will re-read .env at startup.
+      setTimeout(() => {
+        process.kill(process.pid, 'SIGTERM');
+      }, 2000);
+    }
 
     return response;
   } catch (e: unknown) {
