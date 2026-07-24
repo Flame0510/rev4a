@@ -43,7 +43,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       exists: false,
       needsRebuild: true,
-      building: false,
+      building: getIsBuilding(),
       dockerfileHash,
     });
   }
