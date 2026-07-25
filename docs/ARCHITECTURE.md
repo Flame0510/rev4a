@@ -331,7 +331,7 @@ The Olympus daemon (`daemon.js`) is a standalone Node.js process that bridges th
 
 ### Responsibilities
 
-1. Poll `openclaw sessions --json` on a configurable interval
+1. Poll `openclaw sessions --json --all-agents` on a configurable interval
 2. Upsert session rows into `events.db`
 3. Emit `spawn` / `complete` / `error` events into the `events` table
 4. Collect system metrics (CPU, RAM, disk) every poll cycle

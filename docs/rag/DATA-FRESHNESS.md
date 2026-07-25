@@ -10,7 +10,7 @@ Understanding how current the data in Olympus is — and what is truly real-time
 
 **Update frequency:** every 15–30 seconds
 
-The daemon polls `openclaw sessions --json` on this schedule:
+The daemon polls `openclaw sessions --json --all-agents` on this schedule:
 - 15 seconds when at least one session has status `working`
 - 30 seconds when no sessions are actively working
 

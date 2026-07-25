@@ -4,6 +4,10 @@
 
 ## One-Command Install
 
+> **Note:** The repository is currently private. The one-command installer works
+> only when the repo is public or when you have authenticated GitHub access.
+> As an alternative, clone the repo manually and run `sudo bash scripts/setup.sh`.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Flame0510/olympus/main/scripts/setup.sh | bash
 ```
