@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
 
 export async function POST() {
   try {
-    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus', {
+    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus.target', {
       timeout: 15000,
       stdio: 'pipe',
     });

@@ -113,41 +113,13 @@ export async function PUT(request: NextRequest) {
     fs.writeFileSync(ENV_PATH, serializeEnvFile(current), 'utf-8');
 
 
-    // Sync to systemd service file so restart picks up the same vars
+    // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
+    // No need to write individual Environment= lines into unit files —
+    // olympus-next.service already reads .env via EnvironmentFile=.
     try {
-      const allowedKeys = Object.keys(current).filter((k) => isAllowedKey(k));
-
-      // Build new environment block for systemd: remove all existing OLYMPUS_/PROVIDER_
-      // lines, then append current ones
-      const servicePath = '/etc/systemd/system/olympus.service';
-      const rawService = fs.readFileSync(servicePath, 'utf-8');
-      const svcLines = rawService.split('\n');
-      const keep: string[] = [];
-      for (const svcLine of svcLines) {
-        const trimmed = svcLine.trim();
-        if (trimmed.startsWith('Environment=OLYMPUS_') || trimmed.startsWith('Environment=PROVIDER_')) {
-          continue;
-        }
-        keep.push(svcLine);
-      }
-
-      // Append current vars before the [Install] section
-      const insertIdx = keep.findIndex(l => l.trim().startsWith('[Install]'));
-      const envLines = allowedKeys.map(k => `Environment=${k}=${current[k]}`);
-      if (insertIdx >= 0) {
-        keep.splice(insertIdx, 0, ...envLines, '# --- Environment (synced from .env) ---');
-      } else {
-        keep.push(...envLines);
-      }
-
-      const serviceContent = keep.join('\n');
-      fs.writeFileSync('/tmp/olympus.service.tmp', serviceContent, 'utf-8');
-      execSync('sudo cp /tmp/olympus.service.tmp /etc/systemd/system/olympus.service', { timeout: 5000 });
-      fs.unlinkSync('/tmp/olympus.service.tmp');
       execSync('sudo systemctl daemon-reload', { timeout: 5000 });
     } catch (syncErr) {
-      // Non-fatal — log but don't fail the request
-      console.warn('Failed to sync env to systemd:', syncErr);
+      console.warn('Failed to reload systemd:', syncErr);
     }
 
     return NextResponse.json({ status: 'ok', updated: Object.keys(body.env) });
