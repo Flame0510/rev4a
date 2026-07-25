@@ -228,6 +228,7 @@ build_olympus() {
 _build_shared_env() {
   local node_bin_dir="${node_bin_dir:-$(dirname "$(command -v node || echo /usr/bin/node)")}"
   echo "Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
 Environment=PATH=${node_bin_dir}:/usr/local/bin:/usr/bin:/bin
 Environment=OLYMPUS_DB=${OLYMPUS_APP}/data/events.db"
 }

@@ -17,7 +17,7 @@ function getEnvPassword(): string {
     const envPath = path.join(process.cwd(), '.env');
     if (fs.existsSync(envPath)) {
       const content = fs.readFileSync(envPath, 'utf-8');
-      const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
+      const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
       if (match && match[1].trim()) return match[1].trim();
     }
   } catch {

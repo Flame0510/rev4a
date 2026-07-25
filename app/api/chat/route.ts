@@ -1,11 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { execSync } from 'child_process';
 import Database from 'better-sqlite3';
+import { DB_PATH } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
-
-const DB_PATH = '/data/olympus/events.db';
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || '/usr/bin/openclaw';
 
 const AGENT_KEY_PREFIX: Record<string, string> = {

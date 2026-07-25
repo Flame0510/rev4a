@@ -29,7 +29,7 @@ export async function POST(): Promise<NextResponse> {
     }
 
     const envContent = fs.readFileSync(envFile, 'utf-8');
-    const match = envContent.match(/^OLYMPUS_PASSWORD=(.+)$/m);
+    const match = envContent.match(/^OLYMPUS_PASSWORD=(.*)$/m);
     if (!match || !match[1].trim()) {
       return NextResponse.json(
         { error: 'OLYMPUS_PASSWORD is empty or missing in .env' },

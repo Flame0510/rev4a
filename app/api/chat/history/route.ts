@@ -1,9 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import Database from 'better-sqlite3';
+import { DB_PATH } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
-
-const DB_PATH = '/data/olympus/events.db';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const sessionKey = request.nextUrl.searchParams.get('sessionKey') || '';

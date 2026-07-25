@@ -19,7 +19,8 @@
 'use strict';
 
 const Database = require('better-sqlite3');
-const DB_PATH = '/data/olympus/events.db';
+const path = require('path');
+const DB_PATH = process.env.OLYMPUS_DB || path.join(__dirname, 'data', 'events.db');
 
 const [,, childId, parentId, agentName] = process.argv;
 
