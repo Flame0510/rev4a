@@ -23,7 +23,20 @@ function generateSecret(len: number): string {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const currentPassword = process.env.OLYMPUS_PASSWORD;
+  // Check both env and .env file (same fallback pattern as login/status routes)
+  let currentPassword = process.env.OLYMPUS_PASSWORD;
+  if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
+    try {
+      const envPath = path.join(process.cwd(), '.env');
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const match = content.match(/^OLYMPUS_PASSWORD=***
+        if (match && match[1].trim()) {
+          currentPassword = match[1].trim();
+        }
+      }
+    } catch { /* ignore */ }
+  }
   if (typeof currentPassword === 'string' && currentPassword.length > 0) {
     return NextResponse.json(
       { error: 'Password is already configured. Use the Config page to change it.' },

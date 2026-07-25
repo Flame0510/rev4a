@@ -14,7 +14,7 @@ function getJwtSecret(): Uint8Array {
     const envPath = path.join(process.cwd(), '.env');
     if (fs.existsSync(envPath)) {
       const content = fs.readFileSync(envPath, 'utf-8');
-      const match = content.match(/^OLYMPUS_JWT_SECRET=(.+)$/m)
+      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m)
       if (match && match[1].trim()) {
         return new TextEncoder().encode(match[1].trim());
       }

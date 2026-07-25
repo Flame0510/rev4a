@@ -65,7 +65,7 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
-/** NoProviderBanner — shown when no provider API keys are configured */
+/** NoProviderBanner - shown when no provider API keys are configured */
 function NoProviderBanner() {
   return (
     <div style={{
