@@ -1,0 +1,16 @@
+node_modules
+.next
+.env
+data
+.git
+.gitignore
+*.md
+!AGENTS.md
+test
+tests
+scripts
+__pycache__
+*.pyc
+venv
+env
+.venv

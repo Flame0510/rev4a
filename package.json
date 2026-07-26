@@ -47,9 +47,8 @@
   "scripts": {
     "dev": "next dev -p 3720",
     "build": "next build",
-    "start": "next start -p 3740",
-    "start:all": "npx olympus all --port 3740",
-    "daemon": "node daemon.js",
+    "start": "olympus serve",
+    "start:all": "olympus serve",
     "smoke:db-bootstrap": "node scripts/smoke-db-bootstrap.mjs",
     "postinstall": "node bin/postinstall.js"
   },

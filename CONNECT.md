@@ -39,44 +39,46 @@ This single command:
 git clone https://github.com/Flame0510/olympus
 cd olympus
 npm install
-npm run build
 
-# Start all three services (for dev/testing):
-npm run start:all
-
-# Or start individually:
-npx olympus start --port 3740    # Next.js dashboard (or: npm start)
-npx olympus daemon               # Session poller
-npx olympus terminal-ws          # WebSocket PTY server
+# That's it. One command starts everything:
+olympus serve
 ```
 
-Open `http://localhost:3740` in your browser.
+Olympus auto-builds on first run and generates `.env` with credentials.
+Open `http://localhost:3740` in your browser and follow the setup wizard.
+
+```bash
+# Custom port:
+olympus serve --port 8080
+
+# Or via env:
+PORT=8080 olympus serve
+```
+
+`olympus serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process group. Ctrl+C cleanly stops everything.
 
 ## Production (systemd)
 
-The setup script creates three systemd services managed by a target:
+For production deployments on bare-metal Linux, the setup script creates three
+systemd services managed by a target. This is optional — `olympus serve` works
+everywhere.
 
 ```bash
-# Start everything
+# One-command production install:
+sudo bash scripts/setup.sh
+
+# Or manage manually:
 sudo systemctl start olympus.target
-
-# Auto-start on boot
-sudo systemctl enable olympus.target
-
-# Check status of all services
+sudo systemctl enable olympus.target   # auto-start on boot
 sudo systemctl status olympus.target
-
-# View logs
-sudo journalctl -u olympus-next -f       # Next.js dashboard
-sudo journalctl -u olympus-daemon -f     # Session poller
-sudo journalctl -u olympus-terminal-ws -f  # WebSocket PTY
+sudo journalctl -u olympus-next -f     # logs
 ```
 
 Services:
 - `olympus-next.service` — Next.js dashboard on port 3740
 - `olympus-daemon.service` — Session poller + metrics collector
 - `olympus-terminal-ws.service` — WebSocket PTY server on port 3741
-- `olympus.target` — Master target that starts/stopped all three
+- `olympus.target` — Master target that starts/stops all three
 
 ## Configuration
 
@@ -116,13 +118,13 @@ Backups include: `data/*.db`, `data/provider-keys.json`, `data/agents-token.json
 
 ## Architecture
 
-Olympus has three processes:
+Olympus runs three processes under the hood:
 
 1. **Next.js app** — serves the dashboard UI and API routes (port 3740)
 2. **Daemon** (`daemon.js`) — polls sessions every 30s, writes to SQLite, collects system metrics
 3. **Terminal WebSocket** (`terminal-ws-server.js`) — provides PTY terminal access to containers (port 3741)
 
-All three are managed by systemd in production. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
+`olympus serve` manages all three as a single process group. On Ctrl+C or SIGTERM, all children are cleanly stopped. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
 
 ## Using the Lineage Utility
 
@@ -137,7 +139,7 @@ node lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
 | Problem | Likely cause | Solution |
 |---|---|---|
 | Port in use | Another process on PORT | Change `PORT` env var |
-| Blank dashboard | Daemon stopped | `sudo systemctl restart olympus-daemon` |
+| Blank dashboard | Daemon stopped | Restart `olympus serve` |
 | Auth 401 | Wrong token | Check `OLYMPUS_TOKEN` |
 | SQLite error | Missing system dep | `apt-get install sqlite3` on Linux |
 | `better-sqlite3` build fail | Native binding mismatch | `npm rebuild better-sqlite3` |

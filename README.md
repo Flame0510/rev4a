@@ -30,18 +30,20 @@
 git clone https://github.com/Flame0510/olympus.git
 cd olympus
 npm install
-npm run build
 
-# Start all services (dashboard + daemon + terminal):
-npm run start:all
-
-# Or dashboard only:
-npm start
+# One command to start everything:
+olympus serve
 ```
 
-Open `http://localhost:3740`. Login with your configured password or token.
+Olympus auto-builds on first run, generates `.env` with credentials,
+and starts all services. Open `http://localhost:3740` and follow the setup wizard.
 
-> **One-command install:** `curl -fsSL https://raw.githubusercontent.com/Flame0510/olympus/main/scripts/setup.sh \| bash`
+```bash
+# Custom port:
+olympus serve --port 8080
+```
+
+> **Production install:** `sudo bash scripts/setup.sh` — deploys with systemd for auto-restart on boot.
 
 ---
 

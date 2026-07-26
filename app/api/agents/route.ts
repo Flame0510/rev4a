@@ -32,7 +32,21 @@ function dockerFetch(method: string, path: string): Promise<any> {
 
 export const dynamic = 'force-dynamic';
 
+function dockerAvailable(): boolean {
+  try {
+    fs.accessSync(DOCKER_SOCKET, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(_request: NextRequest): Promise<NextResponse> {
+  // If Docker is not available (e.g. testing environment), return empty list
+  if (!dockerAvailable()) {
+    return NextResponse.json([]);
+  }
+
   try {
     // List all running containers with AGENT_ID label via Docker API
     const containers: any[] = await dockerFetch(

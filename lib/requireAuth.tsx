@@ -9,16 +9,19 @@ function getJwtSecret(): Uint8Array {
   if (typeof fromEnv === 'string' && fromEnv.length > 0) {
     return new TextEncoder().encode(fromEnv);
   }
-  try {
-    const envPath = path.join(process.cwd(), '.env');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
-      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m)
-      if (match && match[1].trim()) {
-        return new TextEncoder().encode(match[1].trim());
+  // Fallback: try root .env, then data/.env (persistent volume)
+  for (const relPath of ['.env', path.join('data', '.env')]) {
+    try {
+      const envPath = path.join(process.cwd(), relPath);
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+        if (match && match[1].trim()) {
+          return new TextEncoder().encode(match[1].trim());
+        }
       }
-    }
-  } catch { /* ignore */ }
+    } catch { /* try next */ }
+  }
   return new TextEncoder().encode('');
 }
 

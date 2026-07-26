@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, Badge, ConfirmModal, type Tone } from '../components/ui';
-import PasswordInput from '../components/PasswordInput';
 import ImageRebuildBanner from './ImageRebuildBanner';
 import ChannelManager from './ChannelManager';
 import {
@@ -115,10 +114,6 @@ export default function AgentsPageClient() {
   const [selected, setSelected] = useState<Agent | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [showList, setShowList] = useState(true);
-  const [token, setToken] = useState('');
-  const [tokenLoading, setTokenLoading] = useState(true);
-  const [tokenSaving, setTokenSaving] = useState(false);
-  const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   const [imageReady, setImageReady] = useState(true);
   const [providersConfigured, setProvidersConfigured] = useState(false);
@@ -169,29 +164,6 @@ export default function AgentsPageClient() {
       .catch(() => setProvidersConfigured(false));
   }, []);
 
-  const loadToken = useCallback(async () => {
-    try {
-      const res = await fetch('/api/agents/token');
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      const data = await res.json();
-      setToken(typeof data.token === 'string' ? data.token : '');
-    } catch (e: any) {
-      setTokenStatus({ type: 'error', message: e.message || 'Token loading error' });
-    } finally {
-      setTokenLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadToken();
-  }, [loadToken]);
-
-  useEffect(() => {
-    if (!tokenStatus) return;
-    const timeoutId = window.setTimeout(() => setTokenStatus(null), 4000);
-    return () => window.clearTimeout(timeoutId);
-  }, [tokenStatus]);
-
   const filtered = useMemo(() => {
     let list = [...agents];
     if (filter === 'running') list = list.filter((a) => a.state === 'running');
@@ -207,53 +179,6 @@ export default function AgentsPageClient() {
   function backToList() {
     setShowList(true);
   }
-
-  async function saveToken() {
-    setTokenSaving(true);
-    setTokenStatus(null);
-    try {
-      const res = await fetch('/api/agents/token', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Save failed');
-      }
-      setTokenStatus({
-        type: 'success',
-        message: `✓ Token saved and synced to ${data.containersUpdated} containers`,
-      });
-      load();
-    } catch (e: any) {
-      setTokenStatus({ type: 'error', message: e.message || 'Save failed' });
-    } finally {
-      setTokenSaving(false);
-    }
-  }
-
-  const tokenSection = (
-    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <PasswordInput
-          value={token}
-          onChange={setToken}
-          placeholder="Agents Gateway Token"
-          disabled={tokenSaving || tokenLoading}
-          style={{ flex: '1 1 280px', minWidth: 180 }}
-        />
-        <Button variant="secondary" size="sm" loading={tokenSaving} disabled={tokenLoading} onClick={saveToken}>
-          {tokenSaving ? 'Saving...' : 'Save & Sync'}
-        </Button>
-      </div>
-      {tokenStatus && (
-        <div style={{ marginTop: 8, fontSize: 11, color: tokenStatus.type === 'success' ? '#22c55e' : '#ef4444' }}>
-          {tokenStatus.message}
-        </div>
-      )}
-    </div>
-  );
 
   if (loading) {
     return (
@@ -311,7 +236,6 @@ export default function AgentsPageClient() {
             + NEW
           </Button>
         </div>
-        {tokenSection}
         <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)' }}>
           {(['all', 'running', 'exited'] as const).map((f) => (
             <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
@@ -365,7 +289,6 @@ export default function AgentsPageClient() {
           </Button>
         </div>
       </div>
-      {tokenSection}
       <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         {(['all', 'running', 'exited'] as const).map((f) => (
           <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>

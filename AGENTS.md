@@ -165,11 +165,11 @@ When the user asks you to do something on this repository:
 ```bash
 npm run dev          # Start Next.js dev server
 npm run build        # Build for production
-npm run start:all    # Start all services (dashboard + daemon + terminal, dev mode)
-npm start            # Start dashboard only
-sudo systemctl status olympus.target  # Check running services
-sudo journalctl -u olympus-next -f    # View Next.js logs
-sudo journalctl -u olympus-daemon -f  # View daemon logs
+olympus serve        # Start all services (dashboard + daemon + terminal)
+npm start            # Same as olympus serve
+sudo systemctl status olympus.target  # Production: check running services
+sudo journalctl -u olympus-next -f    # Production: Next.js logs
+sudo journalctl -u olympus-daemon -f  # Production: daemon logs
 ```
 
 ---

@@ -1,12 +1,12 @@
 /**
  * POST /api/agents/rebuild-image
  *
- * Triggers a rebuild of the openclaw-agent-base image.
- * Returns 202 Accepted immediately — the build runs in the background.
+ * Triggers a fresh pull (or build) of the openclaw-agent-base image.
+ * Returns 202 Accepted immediately — the operation runs in the background.
  * Poll GET /api/agents/build-logs for progress and
  * GET /api/agents/image-status for completion.
  *
- * Requires auth. Returns 409 if a build is already running.
+ * Requires auth. Returns 409 if an operation is already running.
  */
 import { NextResponse } from 'next/server';
 import { buildAgentImage, getIsBuilding } from '@/lib/buildAgentImage';

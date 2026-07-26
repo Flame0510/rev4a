@@ -6,7 +6,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 **URL:** `http://<vps-ip>:3740` (or behind a reverse proxy of your choice)
 **Port:** 3740
-**Process manager:** systemd with 3 unit files + olympus.target for production. Development: `npx olympus all`.
+**Process manager:** `olympus serve` (single command). Production deploy: `sudo bash scripts/setup.sh` (systemd).
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
 
 ---
@@ -181,15 +181,16 @@ Environment=NEXT_TELEMETRY_DISABLED=1
 ```bash
 cd /path/to/olympus
 
-# Build
+# One command (builds + starts):
+olympus serve
+
+# Manual build:
 npm run build
 
-# Full rebuild (start fresh)
-rm -rf .next
-npm run build
+# Full rebuild:
+rm -rf .next && npm run build
 
-# Deploy (kill old process, start new)
-fuser -k 3740/tcp && sleep 2
+# Production systemd (after setup script):
 sudo systemctl start olympus.target
 ```
 
