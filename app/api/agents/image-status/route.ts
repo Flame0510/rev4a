@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
-import { getIsBuilding, getBuildLogPath } from '@/lib/buildAgentImage';
+import { getIsDownloading } from '@/lib/buildAgentImage';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,13 +69,13 @@ function getRemoteDigest(): string | null {
 export async function GET(): Promise<NextResponse> {
   const exists = localImageExists();
   const localId = getLocalImageId();
-  const building = getIsBuilding();
+  const downloading = getIsDownloading();
 
   if (!exists) {
     return NextResponse.json({
       exists: false,
       needsUpdate: true,
-      building,
+      downloading,
       localId: null,
     });
   }
@@ -113,8 +113,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     exists: true,
     needsUpdate,
-    building,
-    buildLog: getBuildLogPath() ? true : false,
+    downloading,
     localId,
   });
 }

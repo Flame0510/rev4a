@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, Badge, ConfirmModal, type Tone } from '../components/ui';
-import ImageRebuildBanner from './ImageRebuildBanner';
+import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
@@ -164,6 +164,10 @@ export default function AgentsPageClient() {
       .catch(() => setProvidersConfigured(false));
   }, []);
 
+  const handleImageReady = useCallback(() => {
+    setImageReady(true);
+  }, []);
+
   const filtered = useMemo(() => {
     let list = [...agents];
     if (filter === 'running') list = list.filter((a) => a.state === 'running');
@@ -216,7 +220,7 @@ export default function AgentsPageClient() {
             </Button>
             <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
           </div>
-          <ImageRebuildBanner />
+          <ImageDownloadBanner onImageReady={handleImageReady} />
         {!providersConfigured && <NoProviderBanner />}
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -243,7 +247,7 @@ export default function AgentsPageClient() {
             </Button>
           ))} 
         </div>
-        <ImageRebuildBanner />
+        <ImageDownloadBanner onImageReady={handleImageReady} />
         {!providersConfigured && <NoProviderBanner />}
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
@@ -296,7 +300,7 @@ export default function AgentsPageClient() {
           </Button>
         ))}
       </div>
-      <ImageRebuildBanner />
+      <ImageDownloadBanner onImageReady={handleImageReady} />
       {!providersConfigured && <NoProviderBanner />}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: '38%', minWidth: 300, borderRight: '1px solid var(--border)', overflow: 'auto' }}>
