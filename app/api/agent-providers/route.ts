@@ -99,8 +99,8 @@ function getAgentStatus(containerName: string): AgentProvidersStatus | { error: 
 }
 
 // GET /api/agent-providers
-//   ?agent=<containerName>  -> status di un singolo agente
-//   (no params)             -> lista di tutti gli agenti con status
+//   ?agent=<containerName>  -> status of a single agent
+//   (no params)             -> list of all agents with status
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const agent = request.nextUrl.searchParams.get('agent');
 

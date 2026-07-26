@@ -67,10 +67,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   try {
     responseContent = callAgent(agentId, effectiveSessionKey, safeMsg, model || undefined);
   } catch (err: unknown) {
-    responseContent = `⚠️ Errore agente: ${(err as Error)?.message || String(err)}`;
+    responseContent = `⚠️ Agent error: ${(err as Error)?.message || String(err)}`;
   }
 
-  if (!responseContent) responseContent = '[nessuna risposta]';
+  if (!responseContent) responseContent = '[no response]';
 
   // Save to DB
   saveMessages(effectiveSessionKey, agentId, safeMsg, responseContent, model || '');

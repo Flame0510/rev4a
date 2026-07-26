@@ -22,7 +22,7 @@ export default function ContainersPage() {
   async function load() {
     try {
       const res = await fetch('/api/containers');
-      if (!res.ok) throw new Error(`Errore ${res.status}`);
+      if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
       setContainers(Array.isArray(data) ? data : []);
     } catch(e: any) {

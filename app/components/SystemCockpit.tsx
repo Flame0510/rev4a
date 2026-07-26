@@ -77,7 +77,7 @@ export default function SystemCockpit({ sessions, events, costs, loading = false
         .catch((error) => setSystemHealth({
           health: 'warning',
           checks: [{ id: 'system-health.api', label: 'System health API', health: 'warning', value: 'warning', details: error.message, source: 'runtime' }],
-          recommendations: [{ id: 'system-health.api', severity: 'warning', source: 'runtime', title: 'System health non leggibile', details: error.message, dismissible: false, createdAt: new Date().toISOString() }],
+          recommendations: [{ id: 'system-health.api', severity: 'warning', source: 'runtime', title: 'System health unreadable', details: error.message, dismissible: false, createdAt: new Date().toISOString() }],
           generatedAt: new Date().toISOString(),
         }));
     };
@@ -112,9 +112,9 @@ export default function SystemCockpit({ sessions, events, costs, loading = false
             {systemLoading ? <SkeletonMetric width={120} /> : <span className={`cockpit__health cockpit__health--${health}`}>{health}</span>}
             <span className="ui-muted" style={{ fontSize: 11 }}>{runtimeFreshness}</span>
           </div>
-          <div className="ui-muted" style={{ marginTop: 10, fontSize: 11 }}>Monitor server-side da `/api/system-health`.</div>
+          <div className="ui-muted" style={{ marginTop: 10, fontSize: 11 }}>Server-side monitor from `/api/system-health`.</div>
         </Surface>
-        <Metric title="Sessioni attive" value={metrics.active} subtitle={`${sessions.length} totali`} loading={loading} />
+        <Metric title="Active sessions" value={metrics.active} subtitle={`${sessions.length} total`} loading={loading} />
         <Metric title="Costo a consumo" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
         <Metric title="Memory health" value={(memoryCheck?.health ?? 'warning').toUpperCase()} subtitle={String(memoryCheck?.value ?? 'n/d')} tone={toneFromHealth(memoryCheck?.health ?? 'warning')} loading={systemLoading} />
       </div>

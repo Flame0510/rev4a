@@ -16,7 +16,7 @@ function getSourceLabel(key: string): string {
   return 'other';
 }
 
-// Cache: sempre resettare su richieste fresh
+// Cache: always reset on fresh requests
 let sessionsCache: { data: any[]; ts: number } | null = null;
 const CACHE_TTL = 10000; // 10 secondi
 

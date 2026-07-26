@@ -75,7 +75,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
       } catch (e: unknown) {
         if (!controller.signal.aborted) {
           setDetail(null);
-          setError(e instanceof Error ? e.message : 'Errore inatteso');
+          setError(e instanceof Error ? e.message : 'Unexpected error');
         }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -201,7 +201,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
           </Section>
 
           <Section title="AZIONI RECENTI">
-            {events.length === 0 && <Muted>Nessun evento</Muted>}
+            {events.length === 0 && <Muted>No events</Muted>}
             {events.map((evt) => (
               <div key={evt.id ?? `${evt.ts ?? 0}-${evt.type ?? 'event'}`} style={{ fontSize: 12 }}>
                 <span style={{ color: 'var(--text-dim)', marginRight: 6 }}>

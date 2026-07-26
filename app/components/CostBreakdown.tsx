@@ -10,7 +10,7 @@ interface CostBreakdownProps {
 export default function CostBreakdown({ byModel }: CostBreakdownProps) {
   return (
     <article className="panel cost-panel">
-      <h2>Costi per Modello (Oggi)</h2>
+      <h2>Costs by Model (Today)</h2>
       <div>
         {byModel.length === 0 ? (
           <div className="cost-row">
