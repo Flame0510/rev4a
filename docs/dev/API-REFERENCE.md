@@ -976,17 +976,14 @@ Check the status of the `openclaw-agent-base` Docker image.
 ```json
 {
   "exists": true,
-  "needsRebuild": true,
-  "building": false,
-  "buildLog": false,
-  "dockerfileHash": "209e0ef8245b...",
-  "imageHash": "a1b2c3d4e5f6..."
+  "needsUpdate": false,
+  "downloading": false,
+  "localId": "sha256:a1b2c3d4e5f6..."
 }
 ```
 
 | Field | Description |
 |---|---|
-| `exists` | Whether the image exists locally |
 | `exists` | Whether `openclaw-agent-base:latest` exists locally |
 | `needsUpdate` | `true` if local image has no matching registry digest |
 | `downloading` | Whether a download is currently running |
