@@ -50,18 +50,9 @@ export function getDockerfileHash(): string | null {
 }
 
 
-/** Checks if a download is already running. */
+/** Checks if a download is already running (in-process flag only). */
 export function getIsDownloading(): boolean {
-  if (isDownloading) return true;
-  try {
-    const out = execSyncRaw(
-      'ps aux | grep -E "[d]ocker.*(pull|build).*openclaw-agent-base"',
-      { encoding: 'utf-8', timeout: 2000 },
-    ).trim();
-    return out.length > 0;
-  } catch {
-    return false;
-  }
+  return isDownloading;
 }
 
 /** Acquire the lock atomically. Returns false if already locked. */
@@ -185,8 +176,7 @@ async function pullFromRegistry(
 
     child.on('error', (err: Error) => {
       appendLog(`Pull process error: ${err.message}`);
-      downloadChildProcess = null;
-      isDownloading = false;
+      releaseLock();
       resolve(false);
     });
   });
@@ -254,7 +244,6 @@ function localBuild(
     });
 
     child.on('close', (code: number) => {
-      opts.signal?.removeEventListener('abort', () => {});
       if (code === 0) {
         appendLog('=== Build completed successfully ===');
         emit(JSON.stringify({ type: 'complete', message: 'Agent base image built successfully' }));
@@ -268,7 +257,6 @@ function localBuild(
     });
 
     child.on('error', (err: Error) => {
-      opts.signal?.removeEventListener('abort', () => {});
       appendLog(`=== Build error: ${err.message} ===`);
       releaseLock();
       reject(err);

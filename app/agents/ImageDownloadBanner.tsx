@@ -26,6 +26,7 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
       try {
         const res = await fetch('/api/agents/image-status');
         if (!active) return;
+        if (!res.ok) return;
         const data: ImageStatus = await res.json();
         setStatus(data);
 
