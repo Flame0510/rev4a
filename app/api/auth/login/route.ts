@@ -1,30 +1,84 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.OLYMPUS_JWT_SECRET,
-);
-const OLYMPUS_PASSWORD =
-  process.env.OLYMPUS_PASSWORD;
+// ---------------------------------------------------------------------------
+// Resolve credentials at runtime.
+// Next.js inlines process.env at build time, so a freshly-created .env
+// (written by the setup wizard) won't be visible until restart.
+// As a fallback, read the .env file directly.
+// ---------------------------------------------------------------------------
+function getEnvPassword(): string {
+  const fromEnv = process.env.OLYMPUS_PASSWORD;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
-if (!OLYMPUS_PASSWORD) {
-  console.error('[auth] Fatal: OLYMPUS_PASSWORD not set in environment. Server will reject all logins.');
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+      if (match && match[1].trim()) return match[1].trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
 }
-if (!process.env.OLYMPUS_JWT_SECRET) {
-  console.error('[auth] Fatal: OLYMPUS_JWT_SECRET not set in environment.');
+
+function getEnvJwtSecret(): string {
+  const fromEnv = process.env.OLYMPUS_JWT_SECRET;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+      if (match && match[1].trim()) return match[1].trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { password } = (await request.json()) as { password?: string };
-    if (!password || password !== OLYMPUS_PASSWORD) {
+    const password = getEnvPassword();
+    const jwtSecret = getEnvJwtSecret();
+
+    if (!password) {
+      console.error('[auth] No password configured — rejecting login');
+      return NextResponse.json(
+        { error: 'Server not configured. Run the setup wizard first.' },
+        { status: 401 },
+      );
+    }
+
+    if (!jwtSecret) {
+      console.error('[auth] No JWT secret configured — rejecting login');
+      return NextResponse.json(
+        { error: 'Server not configured. JWT secret missing.' },
+        { status: 401 },
+      );
+    }
+
+    const { password: input } = (await request.json()) as {
+      password?: string;
+    };
+
+    if (!input || input !== password) {
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
     }
+
+    const secretKey = new TextEncoder().encode(jwtSecret);
     const token = await new SignJWT({ role: 'admin' })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime('7d')
-      .sign(JWT_SECRET);
+      .sign(secretKey);
+
     const response = NextResponse.json({ ok: true });
     response.cookies.set('olympus_token', token, {
       httpOnly: true,

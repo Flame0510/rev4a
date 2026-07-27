@@ -26,17 +26,25 @@
 ## Quick Start
 
 ```bash
-# Requirements: Node.js 20+ and Docker
+# Requirements: Node.js 22+ and Docker
 git clone https://github.com/Flame0510/olympus.git
 cd olympus
 npm install
-npm run build
-npm start
+
+# One command to start everything:
+olympus serve
 ```
 
-Open `http://localhost:3740`. Login with your configured password or token.
+Olympus auto-builds on first run, generates `.env` with credentials,
+and starts all services. Open `http://localhost:3740` and follow the setup wizard.
 
-> **Coming soon:** `npx create-olympus` — one-command install with project setup.
+```bash
+# Custom port:
+olympus serve --port 8080
+```
+
+> **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
+> **Container deploy:** `docker run -d --name olympus -v olympus-data:/olympus/data -v /var/run/docker.sock:/var/run/docker.sock -p 3740:3740 ghcr.io/flame0510/olympus:latest`
 
 ---
 
@@ -44,7 +52,7 @@ Open `http://localhost:3740`. Login with your configured password or token.
 
 | Dependency | Minimum | Notes |
 |---|---|---|
-| Node.js | 20 | Required for the dashboard server |
+| Node.js | 22 | Required for the dashboard server |
 | Docker | 24+ | Required for creating agent containers |
 | npm | 10+ | Comes with Node.js |
 

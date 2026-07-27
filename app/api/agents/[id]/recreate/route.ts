@@ -188,10 +188,11 @@ export async function POST(
       ).trim();
       const config = JSON.parse(raw);
 
-      // Guarantee skills.load.extraDirs
+      // Guarantee skills.load.extraDirs (merge with existing, dedupe)
       const skills = (config.skills || {}) as Record<string, unknown>;
       const load = (skills.load || {}) as Record<string, unknown>;
-      load.extraDirs = ['/data/.openclaw/shared-skills'];
+      const existing: string[] = Array.isArray(load.extraDirs) ? load.extraDirs as string[] : [];
+      load.extraDirs = [...new Set([...existing, '/data/.openclaw/shared-skills'])];
       skills.load = load;
       config.skills = skills;
 

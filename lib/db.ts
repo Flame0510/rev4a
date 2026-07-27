@@ -1,10 +1,11 @@
 // Shared DB helpers for API routes
 import Database from 'better-sqlite3';
+import * as path from 'path';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { initializeOlympusDb } from './db-bootstrap.mjs';
 
-export const DB_PATH = process.env.OLYMPUS_DB ?? '/data/olympus/events.db';
+export const DB_PATH = process.env.OLYMPUS_DB || path.join(process.cwd(), 'data', 'events.db');
 export const TOKEN = process.env.OLYMPUS_TOKEN ?? '';
 
 export function requireAuth(request: NextRequest): NextResponse | null {

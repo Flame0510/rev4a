@@ -1,15 +1,34 @@
+import { NextResponse } from 'next/server';
+import * as fs from 'fs';
+import * as path from 'path';
+
 /**
  * GET /api/auth/status
  *
- * Public endpoint — no auth required.
- * Returns whether Olympus is fully configured (password set) or in setup mode.
+ * Returns { configured: true } if a password has been set (either
+ * in the environment or in the .env file created by the setup wizard).
+ * No auth required — used by the frontend to decide whether to show
+ * the setup wizard or the login form.
  */
-import { NextResponse } from 'next/server';
-
-export const dynamic = 'force-dynamic';
-
 export function GET(): NextResponse {
-  const password = process.env.OLYMPUS_PASSWORD;
+  let password = process.env.OLYMPUS_PASSWORD;
+
+  // Fallback: read .env file if env var is empty (Next.js inlines at build)
+  if (typeof password !== 'string' || password.length === 0) {
+    try {
+      const envPath = path.join(process.cwd(), '.env');
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+        if (match && match[1].trim()) {
+          password = match[1].trim();
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const configured = typeof password === 'string' && password.length > 0;
   return NextResponse.json({ configured });
 }

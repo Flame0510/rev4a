@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server';
 import * as http from 'http';
+import * as fs from 'fs';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
+
+function dockerAvailable(): boolean {
+  try {
+    fs.accessSync(DOCKER_SOCKET, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function dockerFetch(method: string, path: string): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -27,6 +37,10 @@ function dockerFetch(method: string, path: string): Promise<any> {
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  if (!dockerAvailable()) {
+    return NextResponse.json([]);
+  }
+
   try {
     const containers: any[] = await dockerFetch('GET', '/containers/json?all=true');
 

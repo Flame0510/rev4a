@@ -1,11 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.OLYMPUS_JWT_SECRET ?? 'olympus-jwt-secret-change-in-prod',
-);
+const JWT_SECRET = (() => {
+  const s = process.env.OLYMPUS_JWT_SECRET;
+  if (!s) throw new Error('OLYMPUS_JWT_SECRET is required');
+  return new TextEncoder().encode(s);
+})();
 
-const TOKEN = process.env.OLYMPUS_TOKEN ?? 'change-me';
+const TOKEN = (() => {
+  const t = process.env.OLYMPUS_TOKEN;
+  if (!t) throw new Error('OLYMPUS_TOKEN is required');
+  return t;
+})();
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -28,11 +34,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/api/models') ||
     pathname === '/api/agents-config' ||
     pathname === '/api/agents/image-status' ||
-    pathname === '/api/agents/build-logs' ||
-    pathname === '/api/agents/rebuild-image' ||
-    pathname === '/api/agents/abort-build' ||
-    pathname.startsWith('/api/provider') ||
-    pathname.startsWith('/api/gateway') ||
+    pathname === '/api/agents/download-image' ||
+    pathname.startsWith('/api/provider/v1/') ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/favicon') ||
     pathname.startsWith('/icon-') ||

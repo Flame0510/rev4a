@@ -23,7 +23,7 @@
     "olympus": "./bin/olympus.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "files": [
     "bin/",
@@ -47,8 +47,8 @@
   "scripts": {
     "dev": "next dev -p 3720",
     "build": "next build",
-    "start": "next start -p 3740",
-    "daemon": "node daemon.js",
+    "start": "olympus serve",
+    "start:all": "olympus serve",
     "smoke:db-bootstrap": "node scripts/smoke-db-bootstrap.mjs",
     "postinstall": "node bin/postinstall.js"
   },
@@ -73,10 +73,10 @@
     "@playwright/test": "^1.61.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/d3": "^7.4.3",
-    "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
+    "@types/node": "25.9.5",
+    "@types/react": "19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
-    "typescript": "^6.0.3"
+    "typescript": "6.0.3"
   }
 }

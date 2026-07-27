@@ -6,7 +6,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 **URL:** `http://<vps-ip>:3740` (or behind a reverse proxy of your choice)
 **Port:** 3740
-**Runtime:** systemd service `olympus`
+**Process manager:** `olympus serve` (single command). Production: systemd service (`olympus.service`).
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
 
 ---
@@ -34,7 +34,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
                          │
               ┌──────────┴──────────┐
               │  olympus             │
-              │  systemd service    │
+              │  systemd (olympus.target)    │
               │  :3740              │
               │  Next.js 16         │
               └─────────────────────┘
@@ -82,7 +82,7 @@ to any specific reverse proxy.
 When environment variables are saved via the Config page (Save & Restart):
 
 1. Values are written to `.env` in the project root
-2. The systemd service file is synced — only keys matching `OLYMPUS_*` and `PROVIDER_*` are forwarded as `Environment=` lines. Other vars (passwords, non-Olympus keys) stay in `.env` for the application to read at runtime.
+2. Secrets are loaded via `EnvironmentFile=` pointing to `.env` (chmod 600). Only non-secret vars (`NODE_ENV`, `PATH`, `OLYMPUS_DB`) are in the unit file. Other vars (passwords, non-Olympus keys) stay in `.env` for the application to read at runtime.
 3. `systemctl daemon-reload` is run
 4. The server restarts with the new environment
 
@@ -143,16 +143,16 @@ OLYMPUS_JWT_SECRET=***  # Secret for signing JWTs
 
 ```bash
 # Start
-sudo systemctl start olympus
+sudo systemctl start olympus.target
 
 # Stop
-sudo systemctl stop olympus
+sudo systemctl stop olympus.target
 
 # Restart
-sudo systemctl restart olympus
+sudo systemctl restart olympus.target
 
 # Status
-sudo systemctl status olympus
+sudo systemctl status olympus.target
 
 # Logs (follow)
 sudo journalctl -u olympus -f
@@ -160,7 +160,7 @@ sudo journalctl -u olympus -f
 
 ### Systemd environment override
 
-File: `/etc/systemd/system/olympus.service.d/env.conf`
+File: `/etc/systemd/system/olympus-next.service` (EnvironmentFile)
 
 ```ini
 [Service]
@@ -181,16 +181,17 @@ Environment=NEXT_TELEMETRY_DISABLED=1
 ```bash
 cd /path/to/olympus
 
-# Build
+# One command (builds + starts):
+olympus serve
+
+# Manual build:
 npm run build
 
-# Full rebuild (start fresh)
-rm -rf .next
-npm run build
+# Full rebuild:
+rm -rf .next && npm run build
 
-# Deploy (kill old process, start new)
-fuser -k 3740/tcp && sleep 2
-sudo systemctl start olympus
+# Production systemd (after setup script):
+sudo systemctl start olympus.target
 ```
 
 > **Important:** API routes (`route.ts`) are compiled at build time by Next.js. After editing any API route, a full `npm run build` is required. Restarting the server alone is not enough.
@@ -441,7 +442,7 @@ Olympus-generated direct links should use `#token=<gateway-token>` for automatic
 ### Old version persists after rebuild
 1. Kill process: `fuser -k 3740/tcp`
 2. Wait 2 seconds
-3. Restart: `sudo systemctl start olympus`
+3. Restart: `sudo systemctl restart olympus.target`
 4. Check `public/sw.js` exists (delete if so)
 
 ---
@@ -499,7 +500,6 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ├── public/                  # Static assets
 ├── scripts/                 # Utility scripts (setup, helpers)
 ├── .env                     # Local env vars (gitignored)
-├── ecosystem.config.js      # PM2 config
 ├── proxy.ts                  # Auth proxy
 ├── next.config.mjs
 └── package.json

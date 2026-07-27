@@ -129,11 +129,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       kind: 'db-freshness',
       title: 'Olympus DB freshness',
       message: !hasSystemMetrics
-        ? 'system_metrics table unavailable: freshness runtime non verificabile.'
+        ? 'system_metrics table unavailable: freshness runtime not verifiable.'
         : latestMetricAgeSeconds === null
           ? 'No heartbeat metrics detected.'
           : `Last heartbeat metrics ${latestMetricAgeSeconds}s fa (soglia ${staleThresholdSeconds}s).`,
-      resolvedMessage: 'DB Olympus tornato fresco.',
+      resolvedMessage: 'DB Olympus fresh again.',
       stale: hasSystemMetrics ? (latestMetricAgeSeconds === null ? true : latestMetricAgeSeconds > staleThresholdSeconds) : false,
     });
 
@@ -201,7 +201,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         severity: 'warning',
         source: 'cost',
         title: 'Unclassified models in billing',
-        details: `${billing.unknownModels.length} modelli non classificati hanno DB estimate $${billing.buckets.unknown.cost_usd.toFixed(2)}.`,
+        details: `${billing.unknownModels.length} unclassified models have DB estimate $${billing.buckets.unknown.cost_usd.toFixed(2)}.`,
         actionHref: '/providers',
         dismissible: true,
         createdAt,

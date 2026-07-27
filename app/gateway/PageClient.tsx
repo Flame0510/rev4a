@@ -92,7 +92,7 @@ function FallbackSelector({
         }}
       >
         {selected.length === 0 && (
-          <span style={{ color: 'var(--text-dim)' }}>Nessun fallback</span>
+          <span style={{ color: 'var(--text-dim)' }}>No fallbacks</span>
         )}
         {selected.map((id) => {
           const m = availableModels.find((a) => a.id === id);
@@ -226,7 +226,7 @@ function AgentEditForm({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {/* Primary model — styled native select */}
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Modello primario</div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Primary model</div>
           <select
             value={modelInput}
             onChange={(e) => setModelInput(e.target.value)}
@@ -356,7 +356,7 @@ export default function GatewayPageClient() {
       if (provRes.ok) {
         const provJson: ProviderApiResponse = await provRes.json();
         setProviders(provJson.providers);
-        // Carica le chiavi esistenti per ogni provider
+        // Load existing keys for each provider
         const configuredProviders = provJson.providers.filter((p) => p.configured);
         const keyEntries: Record<string, string> = {};
         const origEntries: Record<string, string> = {};
@@ -410,12 +410,12 @@ export default function GatewayPageClient() {
         });
         const json = await res.json();
         if (json.status === 'ok') {
-          setMessages((prev) => ({ ...prev, [provider]: { type: 'success', text: 'API key salvata.' } }));
+          setMessages((prev) => ({ ...prev, [provider]: { type: 'success', text: 'API key saved.' } }));
           setOriginalKeys((prev) => ({ ...prev, [provider]: key }));
           setProviders((prev) => prev.map((p) => p.provider === provider ? { ...p, configured: true } : p));
           await loadAll();
         } else {
-          setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: json.error || 'Errore' } }));
+          setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: json.error || 'Error' } }));
         }
       } catch (e: unknown) {
         setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
@@ -433,7 +433,7 @@ export default function GatewayPageClient() {
     const provider = removeConfirm;
     if (!provider) return;
     setRemoveConfirm(null);
-    await withOverlay(`Rimozione API key ${provider}…`, async () => {
+    await withOverlay(`Removing API key ${provider}…`, async () => {
       setMessages((prev) => ({ ...prev, [provider]: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
@@ -443,11 +443,11 @@ export default function GatewayPageClient() {
         });
         const json = await res.json();
         if (json.status === 'ok') {
-          setMessages((prev) => ({ ...prev, [provider]: { type: 'success', text: 'API key rimossa.' } }));
+          setMessages((prev) => ({ ...prev, [provider]: { type: 'success', text: 'API key removed.' } }));
           setProviders((prev) => prev.map((p) => p.provider === provider ? { ...p, configured: false } : p));
           await loadAll();
         } else {
-          setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: json.error || 'Errore' } }));
+          setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: json.error || 'Error' } }));
         }
       } catch (e: unknown) {
         setMessages((prev) => ({ ...prev, [provider]: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
@@ -469,11 +469,11 @@ export default function GatewayPageClient() {
         });
         const json = await res.json();
         if (json.status === 'ok') {
-          setMessages((prev) => ({ ...prev, olympus: { type: 'success', text: 'OLYMPUS API KEY salvata. Sync agent completato.' } }));
+          setMessages((prev) => ({ ...prev, olympus: { type: 'success', text: 'OLYMPUS API KEY saved. Agent sync complete.' } }));
           setOriginalKeys((prev) => ({ ...prev, olympus: key }));
           await loadAll();
         } else {
-          setMessages((prev) => ({ ...prev, olympus: { type: 'error', text: json.error || 'Errore' } }));
+          setMessages((prev) => ({ ...prev, olympus: { type: 'error', text: json.error || 'Error' } }));
         }
       } catch (e: unknown) {
         setMessages((prev) => ({ ...prev, olympus: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
@@ -483,7 +483,7 @@ export default function GatewayPageClient() {
 
   /* ---- Toggle model ---- */
   async function handleToggleModel(modelId: string, enabled: boolean) {
-    await withOverlay(`${enabled ? 'Activate' : 'Deactivate'} modello…`, async () => {
+    await withOverlay(`${enabled ? 'Enable' : 'Disable'} model…`, async () => {
       setMessages((prev) => ({ ...prev, [`model-${modelId}`]: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
@@ -503,7 +503,7 @@ export default function GatewayPageClient() {
             })),
           );
         } else {
-          setMessages((prev) => ({ ...prev, [`model-${modelId}`]: { type: 'error', text: json.error || 'Errore' } }));
+          setMessages((prev) => ({ ...prev, [`model-${modelId}`]: { type: 'error', text: json.error || 'Error' } }));
         }
       } catch (e: unknown) {
         setMessages((prev) => ({ ...prev, [`model-${modelId}`]: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
@@ -531,7 +531,7 @@ export default function GatewayPageClient() {
       setOverlay({ active: false, message: '' });
 
       if (json.status === 'ok') {
-        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'success', text: 'Riavvio gateway in corso…' } }));
+        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'success', text: 'Restarting gateway…' } }));
         setEditingAgent(null);
         setAgentModelInput('');
         setAgentFallbackInput('');
@@ -545,12 +545,12 @@ export default function GatewayPageClient() {
               setGatewayData(gwJson);
               break;
             }
-          } catch { /* riprova */ }
+          } catch { /* retry */ }
         }
         // Pulisci il messaggio
         setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: null }));
       } else {
-        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'error', text: json.error || 'Errore' } }));
+        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'error', text: json.error || 'Error' } }));
       }
     } catch (e: unknown) {
       setOverlay({ active: false, message: '' });
@@ -588,7 +588,7 @@ export default function GatewayPageClient() {
   if (error && providers.length === 0) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Olympus" title="Gateway" description="Errore" />
+        <PageHeader eyebrow="Olympus" title="Gateway" description="Error" />
         <Surface variant="panel" tone="danger">
           <div style={{ fontSize: 13, lineHeight: 1.5 }}>{error}</div>
         </Surface>
@@ -604,7 +604,7 @@ export default function GatewayPageClient() {
       <PageHeader
         eyebrow="Olympus"
         title="Gateway"
-        description="Provider, models and agents. Le API key sono salvate in .env."
+        description="Provider, models and agents. API keys are stored in .env."
       />
 
       {/* Sync all agents — propagate provider baseUrl + models to every container */}
@@ -656,7 +656,7 @@ export default function GatewayPageClient() {
               flexShrink: 0,
             }} />
             <div style={{ fontWeight: 600, fontSize: 14 }}>OLYMPUS API KEY</div>
-            {olympusKeyConfigured ? <Pill tone="success">Configurata</Pill> : <Pill tone="warning">Non configurata</Pill>}
+            {olympusKeyConfigured ? <Pill tone="success">Configured</Pill> : <Pill tone="warning">Not configured</Pill>}
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -721,8 +721,8 @@ export default function GatewayPageClient() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.configured ? 'var(--green)' : 'var(--gray)', flexShrink: 0 }} />
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
-                    {p.configured ? <Pill tone="success">Connesso</Pill> : <Pill tone="warning">Non configurato</Pill>}
-                    {enabledCount > 0 ? <Pill tone="accent">{enabledCount} modelli attivi</Pill> : <Pill>{enabledCount} modelli attivi</Pill>}
+                    {p.configured ? <Pill tone="success">Connected</Pill> : <Pill tone="warning">Not configured</Pill>}
+                    {enabledCount > 0 ? <Pill tone="accent">{enabledCount} active models</Pill> : <Pill>{enabledCount} active models</Pill>}
                   </div>
 
                   {/* API Key input con show/hide integrato */}
@@ -756,7 +756,7 @@ export default function GatewayPageClient() {
                   {/* Models with checkboxes */}
                   {p.models.length > 0 && (
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Modelli</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Models</div>
                       <div style={{ display: 'grid', gap: 4 }}>
                         {p.models.map((m) => {
                           const modelMsg = messages[`model-${m.id}`];
@@ -839,7 +839,7 @@ export default function GatewayPageClient() {
                         <Pill tone={agent.state === 'running' ? 'success' : 'danger'}>{agent.state}</Pill>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 16px', fontSize: 12 }}>
-                        <span style={{ color: 'var(--text-dim)' }}>Modello primario:</span>
+                        <span style={{ color: 'var(--text-dim)' }}>Primary model:</span>
                         <span style={{ fontWeight: 500 }}>{agent.defaultModel || '—'}</span>
                         <span style={{ color: 'var(--text-dim)' }}>Fallback:</span>
                         <span style={{ fontWeight: 500 }}>{agent.fallbacks.length > 0 ? agent.fallbacks.join(', ') : '—'}</span>

@@ -53,7 +53,7 @@ No Italian, no other languages in code or docs.
 - **React Server Components** by default; use `'use client'` only when necessary
 - **CSS** — inline styles or `globals.css` tokens (CSS variables). No CSS modules, no Tailwind.
 - **SQLite** — via `better-sqlite3`, synchronous API
-- **PM2** — process management via `ecosystem.config.js`
+- **Systemd** — production process management via `olympus.target`
 - **Python NOT allowed** — no Python scripts, no Jupyter, no notebooks in this repo
 
 ### 2.2a Design System (UI)
@@ -113,7 +113,7 @@ documentation is incomplete.
 
 ```
 domain:      <your-olympus-domain> (port 3740, proxied by Traefik)
-stack:       Next.js 16 + React 19 + TypeScript + SQLite + PM2
+stack:       Next.js 16 + React 19 + TypeScript + SQLite + systemd
 processes:   olympus-next (Next.js, port 3740)
              olympus-terminal-ws (WebSocket PTY, port 3741)
 repo:        github.com/Flame0510/olympus.git (branch main)
@@ -151,9 +151,9 @@ When the user asks you to do something on this repository:
 
 ### If you are a Nexus-level agent (infra access)
 
-- You have `docker`, `pm2`, `systemctl`, and filesystem access on the VPS
-- Use `pm2 restart olympus-next --update-env` after builds
-- Use `pm2 restart olympus-terminal-ws --update-env` after terminal server changes
+- You have `docker`, `systemctl`, and filesystem access on the VPS
+- Use `sudo systemctl restart olympus.target` after builds
+- Use `sudo journalctl -u olympus-next -f` to view Next.js logs
 - Use `npm run build` for Next.js builds
 - Never expose secrets in responses
 - Monitor `docs/MEMORY.md` is NOT part of this repo — it's a private workspace file
@@ -165,10 +165,11 @@ When the user asks you to do something on this repository:
 ```bash
 npm run dev          # Start Next.js dev server
 npm run build        # Build for production
-npm run start        # Start production server (via PM2)
-pm2 status           # Check running processes
-pm2 logs olympus-next           # View Next.js logs
-pm2 logs olympus-terminal-ws     # View terminal server logs
+olympus serve        # Start all services (dashboard + daemon + terminal)
+npm start            # Same as olympus serve
+sudo systemctl status olympus.target  # Production: check running services
+sudo journalctl -u olympus-next -f    # Production: Next.js logs
+sudo journalctl -u olympus-daemon -f  # Production: daemon logs
 ```
 
 ---

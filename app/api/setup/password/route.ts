@@ -3,6 +3,7 @@
  *
  * No auth required. Sets the admin password on first run.
  * Refuses if a password is already configured.
+ * Also generates a random JWT secret and API token if missing.
  *
  * Body: { password: string }
  *
@@ -12,12 +13,30 @@
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+function generateSecret(len: number): string {
+  return crypto.randomBytes(len).toString('base64url').slice(0, len);
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
-  const currentPassword = process.env.OLYMPUS_PASSWORD;
+  // Check both env and .env file (same fallback pattern as login/status routes)
+  let currentPassword = process.env.OLYMPUS_PASSWORD;
+  if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
+    try {
+      const envPath = path.join(process.cwd(), '.env');
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
+        if (match && match[1].trim()) {
+          currentPassword = match[1].trim();
+        }
+      }
+    } catch { /* ignore */ }
+  }
   if (typeof currentPassword === 'string' && currentPassword.length > 0) {
     return NextResponse.json(
       { error: 'Password is already configured. Use the Config page to change it.' },
@@ -37,28 +56,47 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   if (body.password.length < 8) {
-    return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Password must be at least 8 characters' },
+      { status: 400 },
+    );
   }
 
   try {
     const envFile = path.join(process.cwd(), '.env');
+    let content = '';
 
     if (fs.existsSync(envFile)) {
-      let content = fs.readFileSync(envFile, 'utf-8');
-      if (content.includes('OLYMPUS_PASSWORD=')) {
-        // Replace the OLYMPUS_PASSWORD line: match from key to end of line
-        content = content.split('\n').map((line) =>
+      content = fs.readFileSync(envFile, 'utf-8');
+    }
+
+    // Ensure password line
+    if (content.includes('OLYMPUS_PASSWORD=')) {
+      content = content
+        .split('\n')
+        .map((line) =>
           line.startsWith('OLYMPUS_PASSWORD=')
             ? `OLYMPUS_PASSWORD=${body.password}`
-            : line
-        ).join('\n');
-      } else {
-        content += `\nOLYMPUS_PASSWORD=${body.password}\n`;
-      }
-      fs.writeFileSync(envFile, content, 'utf-8');
+            : line,
+        )
+        .join('\n');
     } else {
-      fs.writeFileSync(envFile, `OLYMPUS_PASSWORD=${body.password}\n`, 'utf-8');
+      content += `\nOLYMPUS_PASSWORD=${body.password}\n`;
     }
+
+    // Generate JWT secret if missing
+    if (!content.includes('OLYMPUS_JWT_SECRET=')) {
+      const secret = generateSecret(64);
+      content += `\nOLYMPUS_JWT_SECRET=${secret}\n`;
+    }
+
+    // Generate API token if missing
+    if (!content.includes('OLYMPUS_TOKEN=')) {
+      const token = generateSecret(32);
+      content += `\nOLYMPUS_TOKEN=${token}\n`;
+    }
+
+    fs.writeFileSync(envFile, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
 
     // Update in-memory so proxy redirects work before restart
     process.env.OLYMPUS_PASSWORD = body.password;

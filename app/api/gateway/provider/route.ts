@@ -150,7 +150,7 @@ function setProviderApiKey(providerName: string, value: string | null): void {
 
 function restartService(): { stdout: string; stderr: string } {
   try {
-    const stdout = execSync('sudo systemctl restart olympus 2>&1', { timeout: 15000, maxBuffer: 64 * 1024 }).toString();
+    const stdout = execSync('sudo systemctl restart olympus.target 2>&1', { timeout: 15000, maxBuffer: 64 * 1024 }).toString();
     return { stdout, stderr: '' };
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };

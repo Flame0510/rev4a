@@ -15,7 +15,7 @@
 │  openclaw-core (1 container)                │
 │                                             │
 │  Olympus (Next.js + daemon + SQLite)        │
-│  OpenClaw runtime + PM2                     │
+│  OpenClaw runtime + systemd                  │
 │  Subagents via sessions_spawn (same process)│
 │  3+ agent workspaces (ops, prometheus, …)   │
 │                                             │
@@ -291,7 +291,7 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
-- The setup script (`scripts/setup/olympus.sh`) creates `/docker/shared-skills` with correct permissions on first install.
+- On first install, create `/docker/shared-skills` with `mkdir -p /docker/shared-skills && chmod 2775 /docker/shared-skills`.
 - The Olympus wizard (`app/api/agents/create`) mounts shared volumes on every new agent and guarantees `extraDirs` + provider proxy in the container config.
 
 ### Shared Repositories (`/docker/shared-repos`)
@@ -331,7 +331,7 @@ The Olympus daemon (`daemon.js`) is a standalone Node.js process that bridges th
 
 ### Responsibilities
 
-1. Poll `openclaw sessions --json` on a configurable interval
+1. Poll `openclaw sessions --json --all-agents` on a configurable interval
 2. Upsert session rows into `events.db`
 3. Emit `spawn` / `complete` / `error` events into the `events` table
 4. Collect system metrics (CPU, RAM, disk) every poll cycle
@@ -407,7 +407,7 @@ The daemon compares the last two metric samples. If a threshold is exceeded and 
 
 - WAL mode + `PRAGMA synchronous = NORMAL` for concurrent read safety
 - `PRAGMA wal_checkpoint(PASSIVE)` runs after each poll cycle
-- On `uncaughtException` the daemon logs but does NOT exit — relies on PM2 watchdog for restart
+- On `uncaughtException` the daemon logs but does NOT exit — relies on systemd Restart=always for recovery
 
 ### Migrations
 
@@ -502,7 +502,7 @@ a WebSocket-connected PTY. The implementation is documented in detail in
 | `olympus-next` (Next.js) | 3740 | Serves the terminal page, auth, API |
 | `olympus-terminal-ws` (standalone) | 3741 | WebSocket PTY server via `node-pty` |
 
-The terminal server runs as a separate PM2 process to avoid event-loop
+The terminal server runs as a separate systemd service (olympus-terminal-ws) to avoid event-loop
 contention with Next.js during high-throughput I/O.
 
 ### Why custom DOM over xterm.js

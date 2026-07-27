@@ -1,8 +1,16 @@
 /**
  * POST /api/setup/restart
  *
- * No auth required. Syncs password from .env to systemd service
- * and restarts the Olympus service.
+ * No auth required. Restarts the Olympus server so that changes to
+ * .env (especially OLYMPUS_PASSWORD) take effect.
+ *
+ * Next.js inlines env vars at build time, so a runtime process.env
+ * mutation is not enough — the process must restart to reload .env.
+ *
+ * Strategy:
+ *   1. If running under systemd (olympus.target), restart via systemctl.
+ *   2. Otherwise send SIGTERM to the current process. The parent process
+ *      manager (npx olympus all or a shell wrapper) should restart it.
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
@@ -15,60 +23,52 @@ export const runtime = 'nodejs';
 export async function POST(): Promise<NextResponse> {
   try {
     const envFile = path.join(process.cwd(), '.env');
-    let password = '';
 
-    // Read current password from .env
-    if (fs.existsSync(envFile)) {
-      const envContent = fs.readFileSync(envFile, 'utf-8');
-      for (const line of envContent.split('\n')) {
-        const match = line.match(/^OLYMPUS_PASSWORD=(.*)$/);
-        if (match) {
-          password = match[1].trim();
-          break;
+    if (!fs.existsSync(envFile)) {
+      return NextResponse.json({ error: '.env file not found' }, { status: 500 });
+    }
+
+    const envContent = fs.readFileSync(envFile, 'utf-8');
+    const match = envContent.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+    if (!match || !match[1].trim()) {
+      return NextResponse.json(
+        { error: 'OLYMPUS_PASSWORD is empty or missing in .env' },
+        { status: 400 },
+      );
+    }
+
+    // Try systemd first (production).
+    // If it fails, fall back to SIGTERM (dev mode / container).
+    let usedSystemd = false;
+    try {
+      execSync('sudo systemctl daemon-reload', { timeout: 5000 });
+      usedSystemd = true;
+    } catch {
+      // systemctl not available — fine, we'll SIGTERM
+    }
+
+    const response = NextResponse.json({
+      status: 'ok',
+      restarting: true,
+      mode: usedSystemd ? 'systemd' : 'process',
+    });
+
+    if (usedSystemd) {
+      setTimeout(() => {
+        try {
+          execSync('sudo systemctl restart olympus.target', { timeout: 15000 });
+        } catch (err) {
+          console.error('[setup/restart] systemd restart failed:', err);
         }
-      }
+      }, 2000);
+    } else {
+      // Dev mode / container: send SIGTERM after flushing response.
+      // The parent (npx olympus all or shell) will restart the process,
+      // which will re-read .env at startup.
+      setTimeout(() => {
+        process.kill(process.pid, 'SIGTERM');
+      }, 2000);
     }
-
-    // Sync to systemd service file
-    if (password) {
-      try {
-        const servicePath = '/etc/systemd/system/olympus.service';
-        let svcContent = fs.readFileSync(servicePath, 'utf-8');
-
-        // Remove any existing OLYMPUS_PASSWORD lines
-        svcContent = svcContent.split('\n')
-          .filter((l) => !l.trim().startsWith('Environment=OLYMPUS_PASSWORD='))
-          .join('\n');
-
-        // Add password line before [Install]
-        svcContent = svcContent.replace(
-          '[Install]',
-          'Environment=OLYMPUS_PASSWORD=' + password + '\n\n[Install]',
-        );
-
-        // Write to a unique temp file to avoid /tmp race conditions
-        const tmpPath = `/tmp/olympus.service.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-        fs.writeFileSync(tmpPath, svcContent, { encoding: 'utf-8', mode: 0o600 });
-        execSync(`sudo cp "${tmpPath}" /etc/systemd/system/olympus.service`, { timeout: 5000 });
-        try { fs.unlinkSync(tmpPath); } catch {}
-      } catch (syncErr) {
-        console.error('[setup/restart] systemd sync failed:', syncErr);
-      }
-    }
-
-    execSync('sudo systemctl daemon-reload', { timeout: 5000 });
-
-    // Clone the response so we can send headers before the restart kills the process.
-    // The 2000ms delay gives Next.js time to flush the response to the client.
-    const response = NextResponse.json({ status: 'ok', restarting: true });
-
-    setTimeout(() => {
-      try {
-        execSync('sudo systemctl restart olympus', { timeout: 5000 });
-      } catch (err) {
-        console.error('[setup/restart] restart failed:', err);
-      }
-    }, 2000);
 
     return response;
   } catch (e: unknown) {

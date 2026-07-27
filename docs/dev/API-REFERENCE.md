@@ -976,62 +976,38 @@ Check the status of the `openclaw-agent-base` Docker image.
 ```json
 {
   "exists": true,
-  "needsRebuild": true,
-  "building": false,
-  "buildLog": false,
-  "dockerfileHash": "209e0ef8245b...",
-  "imageHash": "a1b2c3d4e5f6..."
+  "needsUpdate": false,
+  "downloading": false,
+  "localId": "sha256:a1b2c3d4e5f6..."
 }
 ```
 
 | Field | Description |
 |---|---|
-| `exists` | Whether the image exists locally |
-| `needsRebuild` | `true` if Dockerfile hash != image hash (or image missing) |
-| `building` | Whether a build is currently running |
-| `buildLog` | Whether a log file exists from a previous build |
-| `dockerfileHash` | SHA256 of the current Dockerfile |
-| `imageHash` | SHA256 stored in the image label (`olympus.dockerfile_hash`) |
+| `exists` | Whether `openclaw-agent-base:latest` exists locally |
+| `needsUpdate` | `true` if local image has no matching registry digest |
+| `downloading` | Whether a download is currently running |
+| `localId` | SHA256 ID of the local image, or null |
 
-### `GET /api/agents/build-logs?after=N`
-Read build logs from the current or most recent build. Logs are written to
-`/tmp/olympus-build-<timestamp>.log` and survive page refreshes and modal closes.
-
-**Auth:** public (no auth required)
-
-**Query params:** `after` — skip the first N lines (for incremental polling)
-
-**Response:**
-```json
-{
-  "lines": ["line 1", "line 2", "..."],
-  "count": 42
-}
-```
-
-Use `after=<currentCount>` to fetch only new lines on each poll.
-
-### `POST /api/agents/rebuild-image`
-Start a Docker build of `openclaw-agent-base:latest`. Returns 202 Accepted
-immediately — the build runs in the background and writes logs to a file.
-The frontend polls `GET /api/agents/build-logs` and `GET /api/agents/image-status`
-to track progress.
+### `POST /api/agents/download-image`
+Starts pulling or building the `openclaw-agent-base:latest` image. Returns 202
+Accepted immediately — the operation runs in the background and writes logs.
+The frontend polls `GET /api/agents/image-status` for progress updates.
 
 **Auth:** public (no auth required)
 
 **Response (202):**
 ```json
-{ "status": "building" }
+{ "status": "downloading" }
 ```
 
 **Error (409):**
 ```json
-{ "error": "A build is already in progress" }
+{ "error": "A download is already in progress" }
 ```
 
-### `POST /api/agents/abort-build`
-Kill an in-progress build. The existing `openclaw-agent-base:latest` image is
-left intact — only the partial build is terminated.
+### `DELETE /api/agents/abort-download`
+Kills an in-progress docker pull/build.
 
 **Auth:** public (no auth required)
 
@@ -1040,14 +1016,12 @@ left intact — only the partial build is terminated.
 { "aborted": true }
 ```
 
-Build state is managed in `lib/buildAgentImage.ts`:
-- `buildAgentImage(opts)` — runs `docker build` with progress=plain, writes
-  all stdout/stderr to a log file, supports optional SSE `onEvent` callback
-  and `AbortSignal`
-- `abortBuild()` — sends SIGTERM to the child process + orphan cleanup, appends
-  "Build aborted by user" to the log, releases the build lock
-- `getBuildLogPath()` — returns the path to the current/last build log file
-- `getIsBuilding()` — checks the in-memory lock + orphaned docker processes
+Image state is managed in `lib/buildAgentImage.ts`:
+- `downloadAgentImage(opts)` — attempts `docker pull` from registry first, then falls back to `docker build`
+  all stdout/stderr to a log file, supports optional `onEvent` callback and `AbortSignal`
+- `abortDownload()` — sends SIGKILL to the child process, releases the download lock
+- `getDownloadLogPath()` — returns the path to the current/last download log file
+- `getIsDownloading()` — checks the in-memory lock flag
 
 ### `GET /api/agents-active`
 

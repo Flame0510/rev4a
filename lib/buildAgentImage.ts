@@ -1,20 +1,41 @@
 /**
  * buildAgentImage.ts
  *
- * Shared logic for building the openclaw-agent-base Docker image.
- * Used by both /api/setup/agent-image (first-run setup) and
- * /api/agents/rebuild-image (post-setup rebuild).
+ * Shared logic for obtaining the openclaw-agent-base Docker image.
+ * Used by /api/agents/download-image, /api/agents/image-status, and
+ * the olympus serve CLI.
  *
- * Logs are written to /tmp/olympus-build-<timestamp>.log so they survive
- * page refreshes and modal closes. The log path is exposed via getBuildLogPath().
+ * Strategy (in order):
+ *   1. docker pull from ghcr.io/flame0510/openclaw-agent-base:latest (public, no auth)
+ *   2. If pull fails (offline / no network) → fallback to local docker build
+ *
+ * Logs are written to /tmp/olympus-download-<timestamp>.log so they survive
+ * page refreshes and modal closes.
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync as execSyncRaw } from 'child_process';
 
-let isBuilding = false;
-let buildLogPath: string | null = null;
-let buildChildProcess: ReturnType<(typeof import('child_process'))['exec']> | null = null;
+const REGISTRY_IMAGE = 'ghcr.io/flame0510/openclaw-agent-base:latest';
+const LOCAL_IMAGE = 'openclaw-agent-base:latest';
+
+let isDownloading = false;
+let downloadLogPath: string | null = null;
+let downloadChildProcess: ReturnType<(typeof import('child_process'))['exec']> | null = null;
+
+/** Check whether the docker CLI is available and functional. */
+function dockerAvailable(): boolean {
+  try {
+    execSyncRaw('docker version --format "{{.Client.Version}}" 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 3000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Returns the SHA256 hash of the current Dockerfile. */
 export function getDockerfileHash(): string | null {
@@ -28,172 +49,202 @@ export function getDockerfileHash(): string | null {
   }
 }
 
-/** Returns the path to the current (or most recent) build log file. */
-export function getBuildLogPath(): string | null {
-  return buildLogPath;
+
+/** Checks if a download is already running (in-process flag only). */
+export function getIsDownloading(): boolean {
+  return isDownloading;
 }
 
-/** Checks if a docker build process is already running for the agent image. */
-export function getIsBuilding(): boolean {
-  if (isBuilding) return true;
-  // Also check for orphaned docker build processes (e.g. server restart mid-build).
-  try {
-    const { execSync } = require('child_process');
-    const out = execSync('ps aux | grep "[d]ocker.*build.*openclaw-agent-base"', {
-      encoding: 'utf-8',
-      timeout: 2000,
-    }).trim();
-    return out.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/** Acquire the build lock atomically. Returns false if already locked. */
+/** Acquire the lock atomically. Returns false if already locked. */
 function tryAcquireLock(): boolean {
-  if (getIsBuilding()) return false;
-  isBuilding = true;
+  if (getIsDownloading()) return false;
+  isDownloading = true;
   return true;
 }
 
-/** Release the build lock and clear state. */
+/** Release the lock and clear state. */
 function releaseLock(): void {
-  isBuilding = false;
-  buildLogPath = null;
-  buildChildProcess = null;
+  isDownloading = false;
+  downloadLogPath = null;
+  downloadChildProcess = null;
 }
 
-/**
- * Abort an in-progress build by killing the docker build process.
- * Returns true if a build was aborted, false if no build was running.
- */
-export function abortBuild(): boolean {
-  if (!isBuilding || !buildChildProcess) return false;
+
+function appendLog(msg: string): void {
+  if (!downloadLogPath) return;
   try {
-    appendLog('');
-    appendLog('=== Build aborted by user ===');
-    buildChildProcess.kill('SIGTERM');
-    // Also kill any orphaned docker build
-    try {
-      const { execSync } = require('child_process');
-      execSync("pkill -f 'docker.*build.*openclaw-agent-base' || true", { timeout: 2000 });
-    } catch { /* ok */ }
-    releaseLock();
+    fs.appendFileSync(downloadLogPath, msg + '\n', 'utf-8');
+  } catch { /* ignore */ }
+}
+
+/** Remove download log files older than 24 hours. */
+function cleanupOldLogs(): void {
+  try {
+    const tmpDir = '/tmp';
+    const files = fs.readdirSync(tmpDir);
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of files) {
+      if (!f.startsWith('olympus-download-') || !f.endsWith('.log')) continue;
+      const fullPath = path.join(tmpDir, f);
+      const stat = fs.statSync(fullPath);
+      if (stat.mtimeMs < cutoff) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+export interface DownloadOptions {
+  force?: boolean;
+  onEvent?: (data: string) => void;
+  signal?: AbortSignal;
+}
+
+function localImageExists(): boolean {
+  if (!dockerAvailable()) return false;
+  try {
+    execSyncRaw(
+      `docker image inspect ${LOCAL_IMAGE} --format "{{.ID}}" 2>/dev/null`,
+      { timeout: 3000 },
+    );
     return true;
   } catch {
     return false;
   }
 }
 
-/**
- * Append a line to the build log file.
- */
-function appendLog(msg: string): void {
-  if (!buildLogPath) return;
+function getLocalImageId(): string | null {
+  if (!dockerAvailable()) return null;
   try {
-    fs.appendFileSync(buildLogPath, msg + '\n', 'utf-8');
-  } catch { /* ignore write errors */ }
+    return execSyncRaw(
+      `docker image inspect ${LOCAL_IMAGE} --format "{{.ID}}" 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 3000 },
+    ).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Options for buildAgentImage.
+ * Get the digest of the remote image (without pulling).
+ * Returns null if not reachable.
  */
-export interface BuildOptions {
-  /** If true, always rebuild even if image already exists. */
-  force?: boolean;
-  /** Callback for SSE events. Omit to skip SSE (log-file-only mode). */
-  onEvent?: (data: string) => void;
-  /** AbortSignal to cancel the build on client disconnect */
-  signal?: AbortSignal;
+function getRemoteDigest(): string | null {
+  if (!dockerAvailable()) return null;
+  try {
+    const out = execSyncRaw(
+      `docker manifest inspect ${REGISTRY_IMAGE} 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 15000 },
+    );
+    const manifest = JSON.parse(out);
+    return manifest?.config?.digest || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Build the agent base image. All output is written to a log file;
- * SSE events are also emitted if onEvent is provided.
+ * Pull the image from the public registry and tag it locally.
  */
-export async function buildAgentImage(opts: BuildOptions): Promise<void> {
-  const { force = false, onEvent, signal } = opts;
-
-  if (!tryAcquireLock()) {
-    throw new Error('A build is already in progress');
+async function pullFromRegistry(
+  opts: DownloadOptions,
+  emit: (data: string) => void,
+): Promise<boolean> {
+  if (!dockerAvailable()) {
+    emit(JSON.stringify({ type: 'error', message: 'Docker is not available' }));
+    appendLog('Docker not available — cannot download image');
+    return false;
   }
 
-  const { exec } = await import('child_process');
+  emit(JSON.stringify({ type: 'status', message: `Downloading ${REGISTRY_IMAGE}...` }));
+  appendLog(`Downloading from registry: ${REGISTRY_IMAGE}`);
 
-  // Check if image already exists (skip unless forced)
-  if (!force) {
-    try {
-      await new Promise<string>((resolve, reject) => {
-        exec(
-          'docker image inspect openclaw-agent-base:latest --format "{{.ID}}" 2>/dev/null',
-          { timeout: 3000 },
-          (err, stdout) => { if (err) reject(err); else resolve(stdout.trim()); },
-        );
-      });
-      const msg = 'Image already exists';
-      onEvent?.(JSON.stringify({ type: 'complete', message: msg }));
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    const child = exec(
+      `docker pull ${REGISTRY_IMAGE}`,
+      { maxBuffer: 1024 * 1024 * 5, timeout: 300_000 },
+      (err: Error | null) => {
+        if (err) {
+          appendLog(`Download from registry failed: ${err.message}`);
+          emit(JSON.stringify({ type: 'log', message: 'Registry download failed, trying local build...' }));
+          resolve(false);
+          return;
+        }
+
+        try {
+          execSyncRaw(`docker tag ${REGISTRY_IMAGE} ${LOCAL_IMAGE}`, { timeout: 10_000 });
+        } catch { /* ignore tag error */ }
+        appendLog('Download completed successfully');
+        emit(JSON.stringify({ type: 'complete', message: 'Image downloaded from registry' }));
+        resolve(true);
+      },
+    );
+
+    downloadChildProcess = child;
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      appendLog(chunk.toString());
+    });
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      appendLog(chunk.toString());
+    });
+
+    child.on('error', (err: Error) => {
+      appendLog(`Pull process error: ${err.message}`);
       releaseLock();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Local docker build fallback. Returns a Promise.
+ */
+function localBuild(
+  opts: DownloadOptions,
+  emit: (data: string) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const dockerfileDir = path.join(process.cwd(), 'agent-templates', 'base-image');
+    const dockerfile = path.join(dockerfileDir, 'Dockerfile');
+
+    if (!fs.existsSync(dockerfile)) {
+      const msg = 'Dockerfile not found — cannot build locally';
+      emit(JSON.stringify({ type: 'error', message: msg }));
+      appendLog(msg);
+      releaseLock();
+      reject(new Error(msg));
       return;
-    } catch { /* doesn't exist — continue to build */ }
-  }
-
-  const hash = getDockerfileHash();
-  const timestamp = Date.now();
-
-  // Create log file
-  buildLogPath = `/tmp/olympus-build-${timestamp}.log`;
-  appendLog(force ? '=== Agent image rebuild started ===' : '=== Agent image build started ===');
-  appendLog(`Dockerfile hash: ${hash || 'unknown'}`);
-  appendLog('');
-
-  const emit = (data: string) => {
-    if (onEvent) onEvent(data);
-    // Also extract message and write to log
-    try {
-      const parsed = JSON.parse(data);
-      if (parsed.message) appendLog(parsed.message);
-    } catch { /* not JSON */ }
-  };
-
-  return new Promise<void>((resolve, reject) => {
-    let child: ReturnType<typeof exec> | null = null;
-
-    const cleanup = () => {
-      appendLog('');
-      if (child && !child.killed) child.kill('SIGTERM');
-      releaseLock();
-    };
-
-    if (signal) {
-      signal.addEventListener('abort', cleanup, { once: true });
     }
 
-    emit(JSON.stringify({ type: 'status', message: force ? 'Rebuilding agent base image...' : 'Building agent base image...' }));
-
-    const dockerfileDir = path.join(process.cwd(), 'agent-templates', 'base-image');
-
-    // Build with dockerfile_hash label and --no-cache for forced rebuilds
-    const noCache = force ? '--no-cache ' : '';
+    const hash = getDockerfileHash();
+    const noCache = opts.force ? '--no-cache ' : '';
     const cmd = hash
-      ? `docker build ${noCache}-t openclaw-agent-base:latest --label olympus.dockerfile_hash=${hash} --progress=plain .`
-      : `docker build ${noCache}-t openclaw-agent-base:latest --progress=plain .`;
+      ? `docker build ${noCache}-t ${LOCAL_IMAGE} --label "olympus.dockerfile_hash=${hash}" --progress=plain .`
+      : `docker build ${noCache}-t ${LOCAL_IMAGE} --progress=plain .`;
 
-    child = exec(cmd, {
+    appendLog('');
+    appendLog('=== Local build started (registry download failed) ===');
+    appendLog(`Dockerfile hash: ${hash || 'unknown'}`);
+    appendLog('');
+
+    emit(JSON.stringify({ type: 'status', message: 'Building agent base image locally...' }));
+
+    const { exec } = require('child_process');
+    const child = exec(cmd, {
       cwd: dockerfileDir,
       maxBuffer: 1024 * 1024 * 10,
     });
 
-    // Stash reference for abort
-    buildChildProcess = child;
+    downloadChildProcess = child;
 
     child.stdout?.on('data', (chunk: string) => {
       const lines = chunk.toString().split('\n').filter(Boolean);
       for (const line of lines) {
-        // Write all stdout to log file
         appendLog(line);
-
         if (line.startsWith('#')) {
-          // Buildkit output — emit as step/progress
           emit(JSON.stringify({ type: 'step', message: line }));
         } else if (line.includes('Downloading') || line.includes('Extracting') || line.includes('Pulling')) {
           emit(JSON.stringify({ type: 'progress', message: line }));
@@ -209,8 +260,7 @@ export async function buildAgentImage(opts: BuildOptions): Promise<void> {
       }
     });
 
-    child.on('close', (code) => {
-      if (signal) signal.removeEventListener('abort', cleanup);
+    child.on('close', (code: number) => {
       if (code === 0) {
         appendLog('=== Build completed successfully ===');
         emit(JSON.stringify({ type: 'complete', message: 'Agent base image built successfully' }));
@@ -223,11 +273,74 @@ export async function buildAgentImage(opts: BuildOptions): Promise<void> {
       }
     });
 
-    child.on('error', (err) => {
-      if (signal) signal.removeEventListener('abort', cleanup);
+    child.on('error', (err: Error) => {
       appendLog(`=== Build error: ${err.message} ===`);
       releaseLock();
       reject(err);
     });
   });
+}
+
+/**
+ * Main entry point: try pull first, fallback to local build.
+ */
+export async function downloadAgentImage(opts: DownloadOptions): Promise<void> {
+  const { force = false, onEvent, signal } = opts;
+
+  if (!dockerAvailable()) {
+    const msg = 'Docker is not available — please install Docker and try again';
+    onEvent?.(JSON.stringify({ type: 'error', message: msg }));
+    throw new Error(msg);
+  }
+
+  if (!tryAcquireLock()) {
+    throw new Error('A download is already in progress');
+  }
+
+  const timestamp = Date.now();
+  downloadLogPath = `/tmp/olympus-download-${timestamp}.log`;
+
+  const emit = (data: string) => {
+    onEvent?.(data);
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.message) appendLog(parsed.message);
+    } catch { /* not JSON */ }
+  };
+
+  // If not forced and image already exists, check if update is needed
+  if (!force && localImageExists()) {
+    const remoteDigest = getRemoteDigest();
+    if (!remoteDigest) {
+      emit(JSON.stringify({ type: 'complete', message: 'Image already downloaded (offline, cannot check for updates)' }));
+      releaseLock();
+      return;
+    }
+
+    emit(JSON.stringify({ type: 'complete', message: 'Image already downloaded' }));
+    releaseLock();
+    return;
+  }
+
+  // Force: remove local image first so we get a fresh pull
+  if (force) {
+    try {
+      execSyncRaw(`docker rmi -f ${LOCAL_IMAGE} ${REGISTRY_IMAGE} 2>/dev/null || true`, { timeout: 5000 });
+    } catch { /* ok */ }
+  }
+
+  appendLog(opts.force ? '=== Image refresh started ===' : '=== Image download started ===');
+
+  // Try download from registry first
+  const downloaded = await pullFromRegistry(opts, emit);
+
+  if (downloaded) {
+    cleanupOldLogs();
+    releaseLock();
+    return;
+  }
+
+  // Fallback: local build
+  await localBuild(opts, emit);
+  cleanupOldLogs();
 }

@@ -262,8 +262,8 @@ Restart the Olympus server (via systemd).
    `models.providers.olympus.models`, model IDs do NOT include the `olympus/`
    prefix. OpenClaw adds it automatically at runtime.
 
-3. **Provider keys in `data/provider-keys.json`** — Not in `ecosystem.config.js`
-   or env vars. This file is gitignored and managed exclusively through the
+3. **Provider keys in `data/provider-keys.json`** — Not in env vars or
+   committed code. This file is gitignored and managed exclusively through the
    Gateway UI.
 
 4. **No gateway restart after model sync** — The sync module writes `models.providers`

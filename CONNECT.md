@@ -2,28 +2,81 @@
 
 > A monitoring dashboard for AI agent systems — tracks sessions, costs, agent hierarchy, workspace files, and event streams.
 
+## Deploy on a VPS
+
+```bash
+git clone https://github.com/Flame0510/olympus.git
+cd olympus
+npm install
+
+# Start everything:
+olympus serve
+```
+
+For production (systemd auto-start on boot):
+
+```bash
+# Create systemd service file for olympus.service
+# See Production section below
+sudo systemctl enable --now olympus
+```
+
+**That's it.** Open `http://your-vps:3740` in your browser and follow the setup wizard.
+
 ## Prerequisites
 
-- Node.js 22+
-- npm
-- SQLite3 (runtime dependency, auto-installed via npm)
-- An OpenClaw instance (optional — Olympus works standalone for testing)
+| Dependency | Minimum | Notes |
+|---|---|---|
+| Linux | Ubuntu 20.04+ / Debian 11+ | The setup script targets these |
+| Docker | 24+ | Required for creating agent containers |
+| RAM | 2 GB | 4 GB recommended |
+| Disk | 5 GB free | 10 GB recommended for agents |
 
-## Quick Start
+**For the one-command install:** everything else (Node.js, Docker, dependencies) is installed automatically.
+**For manual install:** you need Node.js 22+, npm, and Docker pre-installed.
+
+## Quick Start (Manual)
 
 ```bash
 git clone https://github.com/Flame0510/olympus
 cd olympus
 npm install
-npm run build
-npm start
+
+# That's it. One command starts everything:
+olympus serve
 ```
 
-This runs both the Next.js dashboard (default port 3740) and the daemon (session poller).
+Olympus auto-builds on first run and generates `.env` with credentials.
+Open `http://localhost:3740` in your browser and follow the setup wizard.
+
+```bash
+# Custom port:
+olympus serve --port 8080
+
+# Or via env:
+PORT=8080 olympus serve
+```
+
+`olympus serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process group. Ctrl+C cleanly stops everything.
+
+## Production (systemd)
+
+For production deployments on bare-metal Linux, create a single systemd service
+that runs `olympus serve`. This is optional — `olympus serve` works everywhere.
+
+```bash
+# Manage manually:
+sudo systemctl start olympus
+sudo systemctl enable olympus   # auto-start on boot
+sudo systemctl status olympus
+sudo journalctl -u olympus -f   # logs
+```
+
+`olympus serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process managed by systemd.
 
 ## Configuration
 
-Olympus reads environment variables for configuration. Key variables:
+Olympus reads environment variables from `.env`. Key variables:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -31,6 +84,7 @@ Olympus reads environment variables for configuration. Key variables:
 | `OLYMPUS_DB` | `./data/events.db` | SQLite database path |
 | `OLYMPUS_TOKEN` | — | Auth token for API access (required) |
 | `OLYMPUS_PASSWORD` | — | Password for dashboard login |
+| `OLYMPUS_JWT_SECRET` | — | JWT signing secret (auto-generated) |
 
 Set them inline or via `.env`:
 
@@ -41,49 +95,30 @@ PORT=3740 OLYMPUS_PASSWORD=mysecret npm start
 ## Running for Development
 
 ```bash
-npm run dev          # Next.js dev server on port 3740
+npm run dev          # Next.js dev server on port 3720
 ```
 
-## Running in Production
-
-Use PM2, systemd, or your preferred process manager. Example systemd unit:
-
-```ini
-[Unit]
-Description=Olympus Dashboard
-After=network.target
-
-[Service]
-Type=simple
-User=your-user
-WorkingDirectory=/path/to/olympus
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-Environment=OLYMPUS_TOKEN=your-secure-token
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Verifying
+## Backup & Restore
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3740
-# Should return 200
+# Create a backup (DBs, configs, credentials)
+sudo bash scripts/backup.sh
+
+# Restore from a backup archive
+sudo bash scripts/restore.sh backups/olympus-backup-20260724-120000.tar.gz
 ```
 
-Open `http://localhost:3740` in your browser.
+Backups include: `data/*.db`, `data/provider-keys.json`, `data/agents-token.json`, `models.config.json`, `.env`.
 
 ## Architecture
 
-Olympus has two processes:
+Olympus runs three processes under the hood:
 
-1. **Next.js app** — serves the dashboard UI and API routes
-2. **Daemon** (`daemon.js`) — polls sessions every 30s and writes to SQLite
+1. **Next.js app** — serves the dashboard UI and API routes (port 3740)
+2. **Daemon** (`daemon.js`) — polls sessions every 30s, writes to SQLite, collects system metrics
+3. **Terminal WebSocket** (`terminal-ws-server.js`) — provides PTY terminal access to containers (port 3741)
 
-Both are started together by `npm start`. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
+`olympus serve` manages all three as a single process group. On Ctrl+C or SIGTERM, all children are cleanly stopped. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
 
 ## Using the Lineage Utility
 
@@ -98,7 +133,8 @@ node lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
 | Problem | Likely cause | Solution |
 |---|---|---|
 | Port in use | Another process on PORT | Change `PORT` env var |
-| Blank dashboard | Daemon stopped | Restart both processes |
+| Blank dashboard | Daemon stopped | Restart `olympus serve` |
 | Auth 401 | Wrong token | Check `OLYMPUS_TOKEN` |
 | SQLite error | Missing system dep | `apt-get install sqlite3` on Linux |
 | `better-sqlite3` build fail | Native binding mismatch | `npm rebuild better-sqlite3` |
+| Certificates not issued | Wrong ACME email | Set `TRAEFIK_ACME_EMAIL` env var, re-run setup |

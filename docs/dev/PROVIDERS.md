@@ -217,5 +217,4 @@ Key points:
   full keys are never exposed through the list endpoint.
 - The Gateway's `GET /api/provider/v1/models` endpoint returns an empty list when
   no valid token is provided, preventing model information leakage.
-- API keys live in `data/provider-keys.json` (gitignored), never in
-  `ecosystem.config.js` or committed code.
+- API keys live in `data/provider-keys.json` (gitignored), never in committed code.

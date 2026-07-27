@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = process.env.OLYMPUS_DB || '/data/olympus/events.db';
+const DB_PATH = process.env.OLYMPUS_DB || path.join(__dirname, 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_ACTIVE_MS = 15_000; // 15s when working sessions detected
 
@@ -62,7 +62,7 @@ try {
   log('✅ Database connected, WAL mode active');
 } catch (err) {
   console.error(`[FATAL] Cannot open DB at ${DB_PATH}: ${err.message}`);
-  console.error('Verify: path exists, permissions (744 on /data/olympus/), disk space');
+  console.error(`Verify: path exists, permissions on ${path.dirname(DB_PATH)}/, disk space`);
   process.exit(1);
 }
 

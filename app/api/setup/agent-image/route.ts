@@ -1,23 +1,39 @@
 /**
  * GET /api/setup/agent-image
  *
- * Checks if openclaw-agent-base:latest exists locally or needs building.
+ * Checks if openclaw-agent-base:latest exists locally or needs downloading.
  * Returns status and a hint for the UI.
  *
  * POST /api/setup/agent-image
  *
- * Builds openclaw-agent-base:latest from agent-templates/base-image/Dockerfile.
+ * Downloads openclaw-agent-base:latest from ghcr.io (public registry).
  * Streams progress via SSE so the setup wizard can show a live progress bar.
  *
- * Only one build at a time — returns 409 if a build is already running.
- * Cleans up the docker build process if the client disconnects.
+ * Only one download at a time — returns 409 if already running.
+ * Cleans up the docker process if the client disconnects.
  */
 import { NextResponse } from 'next/server';
-import { buildAgentImage, getIsBuilding } from '@/lib/buildAgentImage';
+import { downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
+import { execSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
+function dockerOk(): boolean {
+  try {
+    execSync('docker version --format "{{.Client.Version}}" 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(): Promise<NextResponse> {
+  if (!dockerOk()) {
+    return NextResponse.json({ exists: false });
+  }
   try {
     const { exec } = await import('child_process');
     const result = await new Promise<string>((resolve, reject) => {
@@ -40,9 +56,9 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(): Promise<Response> {
-  if (getIsBuilding()) {
+  if (getIsDownloading()) {
     return new Response(
-      JSON.stringify({ error: 'A build is already in progress' }),
+      JSON.stringify({ error: 'A download is already in progress' }),
       { status: 409, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -60,7 +76,7 @@ export async function POST(): Promise<Response> {
       const ctrl = controller as ReadableStreamDefaultController & { signal?: AbortSignal };
 
       try {
-        await buildAgentImage({
+        await downloadAgentImage({
           force: false, // setup: skip if already exists
           onEvent: send,
           signal: ctrl.signal,
@@ -68,12 +84,12 @@ export async function POST(): Promise<Response> {
       } catch (e: unknown) {
         send(JSON.stringify({
           type: 'error',
-          message: (e as Error).message || 'Failed to build agent image',
+          message: (e as Error).message || 'Failed to download agent image',
         }));
       }
       controller.close();
     },
-    cancel() { /* buildAgentImage handles cleanup via signal */ },
+    cancel() { /* downloadAgentImage handles cleanup via signal */ },
   });
 
   return new Response(stream, {

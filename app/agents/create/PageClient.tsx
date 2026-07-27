@@ -306,18 +306,30 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           {/* Model */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 6 }}>Model (optional)</label>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              style={{
-                width: '100%', padding: '10px 12px', borderRadius: 0, border: '1px solid var(--border)',
-                background: 'var(--bg)', color: 'var(--text)', fontSize: 14, outline: 'none',
-              }}
-            >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
-              ))}
-            </select>
+            {models.length === 0 ? (
+              <div style={{
+                padding: '10px 12px',
+                background: 'rgba(251,191,36,0.06)',
+                border: '1px solid rgba(251,191,36,0.2)',
+                fontSize: 12, color: '#fbbf24',
+                lineHeight: 1.5,
+              }}>
+                No provider keys configured. Add API keys in the Providers section to unlock model selection.
+              </div>
+            ) : (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: 0, border: '1px solid var(--border)',
+                  background: 'var(--bg)', color: 'var(--text)', fontSize: 14, outline: 'none',
+                }}
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Buttons */}

@@ -10,7 +10,7 @@ Understanding how current the data in Olympus is — and what is truly real-time
 
 **Update frequency:** every 15–30 seconds
 
-The daemon polls `openclaw sessions --json` on this schedule:
+The daemon polls `openclaw sessions --json --all-agents` on this schedule:
 - 15 seconds when at least one session has status `working`
 - 30 seconds when no sessions are actively working
 
@@ -72,10 +72,10 @@ The agents list, Telegram accounts, and bindings are read directly from `opencla
 
 **Update frequency:** polled every 2 seconds during a build; on page load otherwise
 
-The `GET /api/agents/image-status` endpoint compares the SHA256 hash of the
-current Dockerfile against the label on the built image. Build logs are polled
-via `GET /api/agents/build-logs?after=N` and survive page refreshes and modal
-closes (written to `/tmp/olympus-build-<timestamp>.log`).
+The `GET /api/agents/image-status` endpoint compares the local image digest
+with the remote registry digest (ghcr.io). Download progress is shown inline
+via polling `GET /api/agents/image-status` and reading logs from
+`/tmp/olympus-download-<timestamp>.log`.
 
 ---
 
