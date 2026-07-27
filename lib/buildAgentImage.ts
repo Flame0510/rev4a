@@ -77,6 +77,23 @@ function appendLog(msg: string): void {
   } catch { /* ignore */ }
 }
 
+/** Remove download log files older than 24 hours. */
+function cleanupOldLogs(): void {
+  try {
+    const tmpDir = '/tmp';
+    const files = fs.readdirSync(tmpDir);
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of files) {
+      if (!f.startsWith('olympus-download-') || !f.endsWith('.log')) continue;
+      const fullPath = path.join(tmpDir, f);
+      const stat = fs.statSync(fullPath);
+      if (stat.mtimeMs < cutoff) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 export interface DownloadOptions {
   force?: boolean;
   onEvent?: (data: string) => void;
@@ -205,7 +222,7 @@ function localBuild(
     const hash = getDockerfileHash();
     const noCache = opts.force ? '--no-cache ' : '';
     const cmd = hash
-      ? `docker build ${noCache}-t ${LOCAL_IMAGE} --label olympus.dockerfile_hash=${hash} --progress=plain .`
+      ? `docker build ${noCache}-t ${LOCAL_IMAGE} --label "olympus.dockerfile_hash=${hash}" --progress=plain .`
       : `docker build ${noCache}-t ${LOCAL_IMAGE} --progress=plain .`;
 
     appendLog('');
@@ -318,10 +335,12 @@ export async function downloadAgentImage(opts: DownloadOptions): Promise<void> {
   const downloaded = await pullFromRegistry(opts, emit);
 
   if (downloaded) {
+    cleanupOldLogs();
     releaseLock();
     return;
   }
 
   // Fallback: local build
   await localBuild(opts, emit);
+  cleanupOldLogs();
 }

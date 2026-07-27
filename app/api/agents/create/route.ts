@@ -329,7 +329,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Merge all required sections in one pass (single write, single restart)
 
-      // controlUi — allow browser Control UI access
+      // controlUi — allow browser Control UI access.
+      // deviceAuth is disabled because agent containers are only reachable
+      // on the internal Docker network; the gateway token is the sole auth barrier.
       const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
       gatewaySection.controlUi = {
         allowedOrigins: ['*'],
@@ -359,10 +361,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         auto: { enabled: false },
       };
 
-      // Guarantee shared-skills discovery
+      // Guarantee shared-skills discovery (merge with existing, dedupe)
       const skills = (config.skills || {}) as Record<string, unknown>;
       const load = (skills.load || {}) as Record<string, unknown>;
-      load.extraDirs = ['/data/.openclaw/shared-skills'];
+      const existing: string[] = Array.isArray(load.extraDirs) ? load.extraDirs as string[] : [];
+      load.extraDirs = [...new Set([...existing, '/data/.openclaw/shared-skills'])];
       skills.load = load;
       config.skills = skills;
 
