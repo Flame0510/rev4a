@@ -30,4 +30,4 @@ jobs:
           context: agent-templates/base-image
           file: agent-templates/base-image/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/openclaw-agent-base:latest
+          tags: ghcr.io/flame0510/openclaw-agent-base:latest
