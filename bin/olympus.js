@@ -33,7 +33,7 @@ const ENV_SOURCE = join(DATA_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_IMAGE = 'openclaw-agent-base:latest';
-const AGENT_IMAGE_REGISTRY = 'ghcr.io/Flame0510/olympus/openclaw-agent-base:latest';
+const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
 
 let pkg;
 try { pkg = require(PKG_JSON); } catch { pkg = { version: '0.0.0' }; }

@@ -6,7 +6,7 @@
  * the olympus serve CLI.
  *
  * Strategy (in order):
- *   1. docker pull from ghcr.io/Flame0510/olympus/openclaw-agent-base:latest (public, no auth)
+ *   1. docker pull from ghcr.io/flame0510/olympus/openclaw-agent-base:latest (public, no auth)
  *   2. If pull fails (offline / no network) → fallback to local docker build
  *
  * Logs are written to /tmp/olympus-download-<timestamp>.log so they survive
@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync as execSyncRaw } from 'child_process';
 
-const REGISTRY_IMAGE = 'ghcr.io/Flame0510/olympus/openclaw-agent-base:latest';
+const REGISTRY_IMAGE = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
 const LOCAL_IMAGE = 'openclaw-agent-base:latest';
 
 let isDownloading = false;
