@@ -79,18 +79,6 @@ const NAV: NavItem[] = [
     ),
   },
   {
-    href: '/providers',
-    label: 'Providers',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-        <path d="M4 4.5C5.5 6 6.5 7 8 8s2.5 2 4 3.5" stroke="currentColor" strokeWidth="1" />
-        <path d="M12 4.5C10.5 6 9.5 7 8 8S5.5 10 4 11.5" stroke="currentColor" strokeWidth="1" />
-      </svg>
-    ),
-  },
-  {
     href: '/crons',
     label: 'Crons',
     icon: (

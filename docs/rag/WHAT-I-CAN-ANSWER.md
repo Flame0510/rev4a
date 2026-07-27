@@ -12,7 +12,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I get to the container list?"
 - "Where can I see the onboarding wizard?"
 - "Is there a page for cron jobs?"
-- "Where can I see my AI providers?"
+- "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers, models, agent assignments.
 - "How do I create a new agent?"
 - "What templates are available?"
 - "What is the Custom template?"

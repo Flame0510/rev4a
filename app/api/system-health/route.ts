@@ -190,7 +190,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         source: 'cost',
         title: 'High usage-based cost',
         details: `Provider usage-based today: $${billing.usageBasedCost.toFixed(2)}. Include OpenRouter e altri provider pay-per-use, non i piani fissi.`,
-        actionHref: '/providers',
+        actionHref: '/gateway',
         dismissible: true,
         createdAt,
       });
@@ -202,7 +202,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         source: 'cost',
         title: 'Unclassified models in billing',
         details: `${billing.unknownModels.length} unclassified models have DB estimate $${billing.buckets.unknown.cost_usd.toFixed(2)}.`,
-        actionHref: '/providers',
+        actionHref: '/gateway',
         dismissible: true,
         createdAt,
       });

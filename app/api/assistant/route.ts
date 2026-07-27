@@ -30,12 +30,6 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Browse available agent templates', 'Name your agent and select its AI model', 'Add environment variables (KEY=*** pairs)', 'Optionally enable Traefik routing with a custom subdomain', 'Create the agent and start it immediately'],
     hints: 'Templates provide pre-built agent configurations. You can customize the image, model, and env vars after selecting a template.',
   },
-  '/providers': {
-    title: 'Providers',
-    description: 'Configuration page for AI providers and their models. Shows all configured providers (OpenAI, Anthropic, Groq, OpenRouter, etc.) with their API status and model availability.',
-    actions: ['View which providers are configured and have valid API keys', 'See all models available per provider', 'Check API key status (configured or missing)'],
-    hints: 'A provider shows as "configured" if its API key is set. Missing keys prevent that provider\'s models from being used.',
-  },
   '/gateway': {
     title: 'Gateway',
     description: 'Central gateway management page. Shows OpenClaw gateway status, all configured AI providers with their models, and each agent\'s model assignment with fallback models.',

@@ -68,15 +68,6 @@ const navItems = [
     ),
   },
   {
-    label: 'Providers',
-    path: '/providers',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="2" width="14" height="14" rx="3"/><line x1="2" y1="7" x2="16" y2="7"/><line x1="7" y1="7" x2="7" y2="16"/>
-      </svg>
-    ),
-  },
-  {
     label: 'Crons',
     path: '/crons',
     icon: (

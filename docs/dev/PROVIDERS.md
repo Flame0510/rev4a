@@ -1,10 +1,14 @@
-# Providers & Key Management
+# Provider Gateway & Key Management
 
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-27
 
-This document covers the Providers UI, the Olympus Provider Gateway (proxy),
+This document covers the Olympus Provider Gateway (proxy),
 the vault key endpoint, and how agent containers authenticate against the
 Olympus proxy.
+
+> **Note:** The old `/providers` UI page and its API routes (`/api/providers/*`,
+> `/api/agent-providers`) have been removed (2026-07-27). Provider/API-key
+> configuration is now centralized in the [Gateway](../GATEWAY.md) page.
 
 ---
 
@@ -213,8 +217,6 @@ Key points:
 - The UI **must never** log, screenshot, or otherwise persist the revealed key
   outside the active screen view.
 - All secrets in documentation, logs, or reports must be masked (e.g. `sk-...ast4`).
-- The `/api/providers` list endpoint always returns masked key status only;
-  full keys are never exposed through the list endpoint.
 - The Gateway's `GET /api/provider/v1/models` endpoint returns an empty list when
   no valid token is provided, preventing model information leakage.
 - API keys live in `data/provider-keys.json` (gitignored), never in committed code.

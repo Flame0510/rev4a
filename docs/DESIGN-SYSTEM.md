@@ -94,7 +94,6 @@ The hook uses `matchMedia` (passive, zero-CPU) and returns `boolean`.
 | Agents | `lg` (992px) | Single-column stacked: AGENTS → FILES+CONFIG → EDITOR |
 | Crons | `lg` (992px) | Tab navigation: jobs / runs |
 | Plugins/Skills | `lg` (992px) | Sidebar → Detail step |
-| Providers | `md` (768px) | Tab navigation: providers / details |
 | Dashboard | `md` (768px) | Mobile header nav |
 | Lineage | `md` (768px) | Mobile tab: graph / feed |
 | SessionDrawer | `md` (768px) | Full-width drawer / compact |

@@ -64,7 +64,7 @@ First-time setup wizard at `/onboarding`. Four steps: Welcome → Providers → 
 An extension that adds new tools and capabilities to agents. Plugins are installed in the workspace and appear in the Plugins page with enable/disable toggles.
 
 ## Provider
-An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway or via the onboarding wizard. OAuth device-code login is supported for some providers.
+An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway page or via the onboarding wizard.
 
 ## Provider Gateway
 Olympus's built-in proxy that gives all agents unified access to configured LLM providers. Agents point to `http://host.docker.internal:3740/api/provider/v1` and Olympus routes requests to the correct upstream using the stored API keys.

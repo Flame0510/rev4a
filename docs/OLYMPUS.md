@@ -1,6 +1,6 @@
 # Olympus — VPS Dashboard
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-07-27
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -107,7 +107,6 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/memory` | Agent memory browser |
 | `/crons` | Scheduled cron jobs — auto-discovered from the host gateway and every running agent container (Docker containers with `AGENT_ID` label), on/off toggle, run history per job |
 | `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase) — JSON vault with audit trail, sync to agent containers via CLI auth (gh, vercel, supabase) or env files (trello) |
-| `/providers` | LLM provider configuration |
 | `/plugins` | Plugin manager |
 | `/plugins-skills` | Plugin skills |
 | `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. |
@@ -488,7 +487,6 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 │   ├── login/
 │   ├── memory/
 │   ├── plugins-skills/
-│   ├── providers/
 │   ├── skills/
 │   ├── tools/
 │   ├── vault/
