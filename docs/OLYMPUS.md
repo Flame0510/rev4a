@@ -6,7 +6,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 **URL:** `http://<vps-ip>:3740` (or behind a reverse proxy of your choice)
 **Port:** 3740
-**Process manager:** `olympus serve` (single command). Production deploy: `sudo bash scripts/setup.sh` (systemd).
+**Process manager:** `olympus serve` (single command). Production: systemd service (`olympus.service`).
 **Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
 
 ---

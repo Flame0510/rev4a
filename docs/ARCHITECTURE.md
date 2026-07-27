@@ -291,7 +291,7 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
-- The setup script (`scripts/setup/olympus.sh`) creates `/docker/shared-skills` with correct permissions on first install.
+- On first install, create `/docker/shared-skills` with `mkdir -p /docker/shared-skills && chmod 2775 /docker/shared-skills`.
 - The Olympus wizard (`app/api/agents/create`) mounts shared volumes on every new agent and guarantees `extraDirs` + provider proxy in the container config.
 
 ### Shared Repositories (`/docker/shared-repos`)

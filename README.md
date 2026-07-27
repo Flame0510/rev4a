@@ -43,7 +43,8 @@ and starts all services. Open `http://localhost:3740` and follow the setup wizar
 olympus serve --port 8080
 ```
 
-> **Production install:** `sudo bash scripts/setup.sh` — deploys with systemd for auto-restart on boot.
+> **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
+> **Container deploy:** `docker run -d --name olympus -v olympus-data:/olympus/data -v /var/run/docker.sock:/var/run/docker.sock -p 3740:3740 ghcr.io/flame0510/olympus:latest`
 
 ---
 

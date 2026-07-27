@@ -2,24 +2,26 @@
 
 > A monitoring dashboard for AI agent systems — tracks sessions, costs, agent hierarchy, workspace files, and event streams.
 
-## One-Command Install
-
-> **Note:** The repository is currently private. The one-command installer works
-> only when the repo is public or when you have authenticated GitHub access.
-> As an alternative, clone the repo manually and run `sudo bash scripts/setup.sh`.
+## Deploy on a VPS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Flame0510/olympus/main/scripts/setup.sh | bash
+git clone https://github.com/Flame0510/olympus.git
+cd olympus
+npm install
+
+# Start everything:
+olympus serve
 ```
 
-This single command:
-- Installs Docker + Node.js (if missing)
-- Deploys Traefik reverse proxy
-- Clones, builds, and starts Olympus
-- Creates systemd services that auto-start on boot
-- Prints your credentials and dashboard URL
+For production (systemd auto-start on boot):
 
-**That's it.** Open the URL in your browser and follow the setup wizard.
+```bash
+# Create systemd service file for olympus.service
+# See Production section below
+sudo systemctl enable --now olympus
+```
+
+**That's it.** Open `http://your-vps:3740` in your browser and follow the setup wizard.
 
 ## Prerequisites
 
@@ -59,26 +61,18 @@ PORT=8080 olympus serve
 
 ## Production (systemd)
 
-For production deployments on bare-metal Linux, the setup script creates three
-systemd services managed by a target. This is optional — `olympus serve` works
-everywhere.
+For production deployments on bare-metal Linux, create a single systemd service
+that runs `olympus serve`. This is optional — `olympus serve` works everywhere.
 
 ```bash
-# One-command production install:
-sudo bash scripts/setup.sh
-
-# Or manage manually:
-sudo systemctl start olympus.target
-sudo systemctl enable olympus.target   # auto-start on boot
-sudo systemctl status olympus.target
-sudo journalctl -u olympus-next -f     # logs
+# Manage manually:
+sudo systemctl start olympus
+sudo systemctl enable olympus   # auto-start on boot
+sudo systemctl status olympus
+sudo journalctl -u olympus -f   # logs
 ```
 
-Services:
-- `olympus-next.service` — Next.js dashboard on port 3740
-- `olympus-daemon.service` — Session poller + metrics collector
-- `olympus-terminal-ws.service` — WebSocket PTY server on port 3741
-- `olympus.target` — Master target that starts/stops all three
+`olympus serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process managed by systemd.
 
 ## Configuration
 
