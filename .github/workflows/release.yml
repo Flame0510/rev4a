@@ -1,7 +1,13 @@
 name: Release npm Package
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: true
 
 jobs:
   publish:
