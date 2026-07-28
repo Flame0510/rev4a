@@ -28,3 +28,4 @@ test-results/
 .env.removed
 ecosystem.config.js
 data/
+.npmrc
