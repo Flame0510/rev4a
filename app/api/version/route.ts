@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 
-let pkg;
+interface PackageInfo {
+  version: string;
+  name: string;
+}
+let pkg: PackageInfo;
 try {
-  pkg = require('../../../package.json');
+  pkg = require('../../../package.json') as PackageInfo;
 } catch {
   pkg = { version: '0.0.0', name: '@flame0510/olympus' };
 }
