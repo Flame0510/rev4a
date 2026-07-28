@@ -30,7 +30,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     try {
       const { execSync } = await import('child_process');
       latest = execSync(
-        'npm view @flame0510/olympus version --registry https://npm.pkg.github.com 2>/dev/null',
+        'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
         { stdio: 'pipe', timeout: 10_000 },
       )
         .toString()

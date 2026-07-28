@@ -328,7 +328,7 @@ function checkVersion() {
   try {
     const current = pkg.version || '0.0.0';
     const latest = execSync(
-      'npm view @flame0510/olympus version --registry https://npm.pkg.github.com 2>/dev/null',
+      'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
       { stdio: 'pipe', timeout: 10_000 },
     ).toString().trim();
 

@@ -28,6 +28,7 @@ If you are an AI agent arriving on this repo for the first time:
 > **Additional resources:**
 > - `docs/rag/` — LLM-facing knowledge base for RAG-powered responses
 > - `agent-templates/` — reusable agent protocols for Atlas, Argus, Prometheus, Custom
+> - `skills/` — agent skills for this workspace (see §2.2a below)
 >
 > **Rule:** After reading, if a file is stale (wrong dates, missing info), update it.
 > Do not assume docs are authoritative — verify against code.
@@ -56,7 +57,20 @@ No Italian, no other languages in code or docs.
 - **Systemd** — production process management via `olympus.target`
 - **Python NOT allowed** — no Python scripts, no Jupyter, no notebooks in this repo
 
-### 2.2a Design System (UI)
+### 2.2a Workspace Skills
+
+This repository includes agent skills in `skills/` (workspace-level, per
+[OpenClaw Skills docs](https://docs.openclaw.ai/tools/skills)).
+Skills are committed to the repo so any agent working on this project has
+access to them.
+
+| Skill | Description |
+|---|---|
+| `olympus-deep-review` | Deep code review via 4 parallel sub-agents (regressions, edge-cases, security, docs&lang) |
+
+---
+
+### 2.2b Design System (UI)
 
 Olympus has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FRONTEND-ARCHITECTURE.md` before writing any UI code.**
 
