@@ -14,16 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Write .npmrc
-        run: |
-          cat > ~/.npmrc << 'NPMEOF'
-          @flame0510:registry=https://npm.pkg.github.com
-          //npm.pkg.github.com/:_authToken=TOKENVALUE
-          NPMEOF
-          sed -i "s|TOKENVALUE|$TOKEN|g" ~/.npmrc
-          npm whoami --registry https://npm.pkg.github.com 2>&1
-        env:
-          TOKEN: *** secrets.GITHUB_TOKEN }}
       - run: npm ci
       - run: npm run build
       - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: *** secrets.GITHUB_TOKEN }}
