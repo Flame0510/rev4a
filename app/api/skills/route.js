@@ -4,7 +4,7 @@ import path from 'path';
 import { execSync, execFileSync } from 'child_process';
 
 const SHARED_SKILLS_DIR = '/docker/shared-skills';
-const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
+const CONTAINER_BUNDLED_SKILLS_DIR = '/usr/local/lib/node_modules/openclaw/skills';
 
 function readSkillMeta(skillDir, name, type, agentId) {
   const skillMdPath = path.join(skillDir, name, 'SKILL.md');
@@ -157,17 +157,43 @@ export async function GET(_request) {
     }
   }
 
-  // 3. Bundled skills (read-only)
+  // 3. Bundled skills (read-only) — discover from any agent container
   try {
-    if (fs.existsSync(BUNDLED_SKILLS_DIR)) {
-      const entries = fs.readdirSync(BUNDLED_SKILLS_DIR, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const skillMd = path.join(BUNDLED_SKILLS_DIR, entry.name, 'SKILL.md');
-        if (fs.existsSync(skillMd)) {
-          skills.push(readSkillMeta(BUNDLED_SKILLS_DIR, entry.name, 'bundled', null));
-        }
+    let bundledDirNames = [];
+    let bundledSourceContainer = null;
+
+    if (agents.length > 0) {
+      for (const agent of agents) {
+        try {
+          const raw = execFileSync('docker', [
+            'exec', agent.containerName, 'ls', '-1', CONTAINER_BUNDLED_SKILLS_DIR
+          ], { encoding: 'utf8', timeout: 5000 }).trim();
+          if (raw) {
+            bundledDirNames = raw.split('\n').map(l => l.trim()).filter(Boolean);
+            bundledSourceContainer = agent.containerName;
+            break;
+          }
+        } catch { /* try next container */ }
       }
+    }
+
+    for (const name of bundledDirNames) {
+      try {
+        const skillMdPath = `${CONTAINER_BUNDLED_SKILLS_DIR}/${name}/SKILL.md`;
+        const content = execFileSync('docker', [
+          'exec', bundledSourceContainer, 'cat', skillMdPath
+        ], { encoding: 'utf8', timeout: 5000 });
+        const { description, version } = parseSkillContent(content);
+        skills.push({
+          name,
+          type: 'bundled',
+          path: `${CONTAINER_BUNDLED_SKILLS_DIR}/${name}`,
+          skillMdPath,
+          hasSkillMd: true,
+          description,
+          version,
+        });
+      } catch { /* skip this skill */ }
     }
   } catch {}
 
