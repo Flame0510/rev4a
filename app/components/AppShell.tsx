@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import AuthGuard from './AuthGuard';
 import Sidebar from './Sidebar';
 import FloatingActions from './FloatingActions';
+import UpdateBanner from './UpdateBanner';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -17,6 +18,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGuard>
+      <UpdateBanner />
       <div className="app-shell">
         <Sidebar />
         <main className="app-shell__content">{children}</main>

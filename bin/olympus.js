@@ -322,7 +322,37 @@ function preflight() {
 
 // ── Serve (start all 3 processes) ───────────────────────────────────────────
 
+// ── Version check ──────────────────────────────────────────────────────────
+
+function checkVersion() {
+  try {
+    const current = pkg.version || '0.0.0';
+    const latest = execSync(
+      'npm view @flame0510/olympus version --registry https://npm.pkg.github.com 2>/dev/null',
+      { stdio: 'pipe', timeout: 10_000 },
+    ).toString().trim();
+
+    if (latest && latest !== current) {
+      console.log('');
+      console.log('  ╔═══════════════════════════════════════════════╗');
+      console.log('  ║  🆕 Olympus update available!                 ║');
+      console.log(`  ║  Installed: v${current.padEnd(33)}║`);
+      console.log(`  ║  Latest:    v${latest.padEnd(33)}║`);
+      console.log('  ║                                               ║');
+      console.log('  ║  Run: npm install -g @flame0510/olympus          ║');
+      console.log('  ║  Then: restart olympus                          ║');
+      console.log('  ╚═══════════════════════════════════════════════╝');
+      console.log('');
+    }
+  } catch {
+    // No internet or npm not configured — skip silently
+  }
+}
+
+// ── Serve (start all 3 processes) ───────────────────────────────────────────
+
 function serve(port) {
+  checkVersion();
   preflight();
 
   // Load .env vars so child processes (especially Next.js) can read OLYMPUS_*

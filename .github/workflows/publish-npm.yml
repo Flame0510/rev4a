@@ -1,0 +1,55 @@
+name: Publish npm Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'bin/**'
+      - 'app/**'
+      - 'lib/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'agent-templates/**'
+      - 'daemon.js'
+      - 'lineage.js'
+      - 'proxy.ts'
+      - 'next.config.mjs'
+      - 'tsconfig.json'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@flame0510'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Check if version already published
+        id: check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view @flame0510/olympus@$VERSION version 2>/dev/null; then
+            echo "Version $VERSION already published, skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: npm publish --access public
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
