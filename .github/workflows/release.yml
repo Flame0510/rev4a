@@ -25,7 +25,7 @@ jobs:
           sed -i "s|TOKENVALUE|$TOKEN|g" ~/.npmrc
           npm whoami --registry https://npm.pkg.github.com 2>&1
         env:
-          TOKEN: ${{ secrets.GH_ACTIONS_TOKEN }}
+          TOKEN: *** secrets.GITHUB_TOKEN }}
       - run: npm ci
       - run: npm run build
       - run: npm publish --access public
