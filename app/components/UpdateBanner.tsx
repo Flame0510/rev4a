@@ -13,7 +13,7 @@ export default function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    fetch('/api/version?check=1')
+    fetch('/api/update-check?check=1')
       .then((r) => r.json())
       .then((d: VersionInfo) => {
         if (d.updateAvailable) {

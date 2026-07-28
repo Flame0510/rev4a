@@ -352,8 +352,9 @@ function checkVersion() {
 // ── Serve (start all 3 processes) ───────────────────────────────────────────
 
 function serve(port) {
-  checkVersion();
   preflight();
+  // Version check is non-blocking — runs after startup
+  setTimeout(checkVersion, 2000);
 
   // Load .env vars so child processes (especially Next.js) can read OLYMPUS_*
   // at runtime. process.env may not have them if olympus serve was started
