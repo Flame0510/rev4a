@@ -61,7 +61,7 @@ export const maxDuration = 180; // docker run (60s) + health check (60s) + seedi
 const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
 const MODELS_CONFIG = path.join(process.cwd(), 'models.config.json');
 const AGENTS_TOKEN_PATH = path.join(process.cwd(), 'data', 'agents-token.json');
-const DEFAULT_NETWORK = 'openclaw-core_default';
+const DEFAULT_NETWORK = 'olympus-network';
 const SHARED_SKILLS = '/docker/shared-skills';
 const SHARED_REPOS = '/docker/shared-repos';
 

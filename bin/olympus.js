@@ -34,6 +34,7 @@ const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_IMAGE = 'openclaw-agent-base:latest';
 const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
+const DOCKER_NETWORK = 'olympus-network';
 
 let pkg;
 try { pkg = require(PKG_JSON); } catch { pkg = { version: '0.0.0' }; }
@@ -274,12 +275,43 @@ function build() {
   log('BUILD', 'Build complete.');
 }
 
+// ── Docker network ─────────────────────────────────────────────────────────
+
+function ensureNetwork() {
+  if (!hasCmd('docker')) return;
+
+  try {
+    const exists = execSync(
+      `docker network ls --format '{{.Name}}'`,
+      { stdio: 'pipe', timeout: 5_000 },
+    ).toString().split('\n').includes(DOCKER_NETWORK);
+
+    if (exists) {
+      log('NETWORK', `Docker network '${DOCKER_NETWORK}' exists`);
+      return;
+    }
+  } catch { /* fall through to create */ }
+
+  log('NETWORK', `Creating Docker network '${DOCKER_NETWORK}'…`);
+
+  try {
+    execSync(`docker network create ${DOCKER_NETWORK}`, {
+      stdio: 'inherit',
+      timeout: 15_000,
+    });
+    log('NETWORK', `Docker network '${DOCKER_NETWORK}' created`);
+  } catch {
+    log('NETWORK', `⚠ Failed to create Docker network '${DOCKER_NETWORK}'`);
+  }
+}
+
 // ── Pre-flight checks ──────────────────────────────────────────────────────
 
 function preflight() {
   log('PREFLIGHT', 'Running pre-flight checks…');
   ensureEnv();
   ensureDocker();
+  ensureNetwork();
   ensureAgentImage();
 
   if (!existsSync(NEXT_DIR)) {
