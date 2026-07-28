@@ -37,6 +37,7 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - run: npm publish --access public
+      - name: Publish package
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: *** secrets.GH_ACTIONS_TOKEN }}
