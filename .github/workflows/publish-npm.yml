@@ -1,21 +1,6 @@
 name: Publish npm Package
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'package.json'
-      - 'bin/**'
-      - 'app/**'
-      - 'lib/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'agent-templates/**'
-      - 'daemon.js'
-      - 'lineage.js'
-      - 'proxy.ts'
-      - 'next.config.mjs'
-      - 'tsconfig.json'
   workflow_dispatch:
 
 jobs:
@@ -28,16 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://npm.pkg.github.com
           scope: '@flame0510'
 
       - run: npm ci
+
       - run: npm run build
 
-      - name: Publish package
+      - name: Publish
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: *** secrets.GH_ACTIONS_TOKEN }}
