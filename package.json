@@ -1,6 +1,6 @@
 {
   "name": "@flame0510/olympus",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
