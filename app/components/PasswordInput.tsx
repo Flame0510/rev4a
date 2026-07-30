@@ -4,12 +4,19 @@ import { useState } from 'react';
 import { Input } from './ui';
 import { EyeIcon, EyeOffIcon } from './Icons';
 
+function generateKey(): string {
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 interface PasswordInputProps {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
+  showGenerate?: boolean;
 }
 
 export default function PasswordInput({
@@ -18,8 +25,12 @@ export default function PasswordInput({
   placeholder = '',
   disabled = false,
   style,
+  showGenerate = false,
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
+
+  const hasRightButton = showGenerate;
+  const paddingRight = hasRightButton ? 100 : 36;
 
   return (
     <div style={{ position: 'relative', ...style }}>
@@ -29,30 +40,53 @@ export default function PasswordInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        style={{ paddingRight: 36 }}
+        style={{ paddingRight }}
       />
-      <button
-        onClick={() => setVisible((v) => !v)}
-        disabled={disabled}
-        type="button"
-        tabIndex={-1}
+      <div
         style={{
           position: 'absolute',
-          right: 6,
+          right: 4,
           top: '50%',
           transform: 'translateY(-50%)',
-          background: 'none',
-          border: 'none',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          color: 'var(--text-dim)',
-          padding: '4px 6px',
           display: 'flex',
           alignItems: 'center',
+          gap: 4,
         }}
-        title={visible ? 'Hide' : 'Show'}
       >
-        {visible ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
-      </button>
+        {showGenerate && (
+          <button
+            onClick={() => {
+              onChange(generateKey());
+              setVisible(true);
+            }}
+            disabled={disabled}
+            type="button"
+            tabIndex={-1}
+            className="ui-btn ui-btn--ghost ui-btn--sm"
+            title="Generate secure key"
+          >
+            Generate
+          </button>
+        )}
+        <button
+          onClick={() => setVisible((v) => !v)}
+          disabled={disabled}
+          type="button"
+          tabIndex={-1}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            color: 'var(--text-dim)',
+            padding: '2px 4px',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          title={visible ? 'Hide' : 'Show'}
+        >
+          {visible ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
+        </button>
+      </div>
     </div>
   );
 }

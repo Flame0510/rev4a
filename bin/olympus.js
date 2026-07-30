@@ -223,6 +223,7 @@ function ensureEnv() {
 
   const jwtSecret = randomString(48);
   const token = randomString(32);
+  const apiKey = randomString(32);
 
   // Write to persistent location first, then copy to root
   const content = [
@@ -232,9 +233,11 @@ function ensureEnv() {
     '# Dashboard login password (set via setup wizard on first visit)',
     'OLYMPUS_PASSWORD=',
     '',
-    '# API token (programmatic access + Control UI bootstrap + Gateway master key)',
+    '# Internal auth token (API access + Control UI bootstrap)',
     `OLYMPUS_TOKEN=${token}`,
-    `OLYMPUS_API_KEY=${token}`,
+    '',
+    '# External provider API key (Gateway master key for agent auth)',
+    `OLYMPUS_API_KEY=${apiKey}`,
     '',
     '# JWT signing secret (session cookies)',
     `OLYMPUS_JWT_SECRET=${jwtSecret}`,
@@ -274,6 +277,15 @@ function ensureEnv() {
       try { require('fs').copyFileSync(srcPath, destPath, require('fs').constants.COPYFILE_EXCL); } catch {}
     }
   }
+
+  // Write olympus API key to provider-keys.json so Gateway sees it
+  const providerKeysPath = join(DATA_DIR, 'provider-keys.json');
+  let providerKeys = {};
+  try {
+    providerKeys = JSON.parse(readFileSync(providerKeysPath, 'utf-8'));
+  } catch {}
+  providerKeys['olympus'] = apiKey;
+  writeFileSync(providerKeysPath, JSON.stringify(providerKeys, null, 2), { mode: 0o600 });
 
   log('ENV', '.env auto-generated with JWT secret and API token');
   log('ENV', 'Set your admin password via the web setup wizard on first visit.');

@@ -18,16 +18,22 @@ const ENV_METADATA: Record<
     placeholder: 'Dashboard password',
     sensitive: true,
   },
+  OLYMPUS_TOKEN: {
+    label: 'Olympus Token',
+    description: 'Token used to authenticate internal API requests',
+    placeholder: 'Internal auth token',
+    sensitive: true,
+  },
+  OLYMPUS_API_KEY: {
+    label: 'Olympus API Key',
+    description: 'Master key for provider gateway — agents use this to authenticate when calling Olympus as an LLM provider',
+    placeholder: 'Gateway master key',
+    sensitive: true,
+  },
   OLYMPUS_JWT_SECRET: {
     label: 'JWT Secret',
     description: 'Secret used to sign session JWT tokens',
     placeholder: 'At least 32 characters',
-    sensitive: true,
-  },
-  OLYMPUS_TOKEN: {
-    label: 'Olympus Token',
-    description: 'Token used to authenticate internal requests',
-    placeholder: 'Internal token',
     sensitive: true,
   },
   OLYMPUS_WORKSPACE_ROOT: {
@@ -182,6 +188,7 @@ export default function ConfigPageClient() {
                           onChange={(v) => handleChange(key, v)}
                           placeholder={meta.placeholder}
                           style={{ flex: 1 }}
+                          showGenerate
                         />
                       ) : (
                         <div style={{ flex: 1 }}>
