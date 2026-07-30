@@ -471,7 +471,12 @@ CONFIGURATION:
   Set your admin password via the web setup wizard at first visit.
 `;
 
-if (!cmd || cmd === 'serve') {
+if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
+  console.log(HELP_TEXT);
+  process.exit(0);
+}
+
+if (cmd === 'serve') {
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
   serve(port);
