@@ -2,15 +2,27 @@
  * GET /api/wizard/status
  *
  * Returns whether the wizard is complete.
- * Used by client components instead of reading the httpOnly cookie directly.
+ * Checks a persistent file so it survives browser changes and cache clears.
  */
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import * as fs from 'fs';
+import { OLYMPUS_DATA } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(): Promise<NextResponse> {
-  const cookieStore = await cookies();
-  const done = cookieStore.get('wizard_done')?.value === '1';
+const WIZARD_FILE = OLYMPUS_DATA + '/data/wizard.json';
+
+function readWizardFile(): boolean {
+  try {
+    const raw = fs.readFileSync(WIZARD_FILE, 'utf-8');
+    const data = JSON.parse(raw);
+    return data.done === true;
+  } catch {
+    return false;
+  }
+}
+
+export function GET(): NextResponse {
+  const done = readWizardFile();
   return NextResponse.json({ done });
 }
