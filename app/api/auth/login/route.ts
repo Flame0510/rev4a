@@ -1,28 +1,22 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
 import * as fs from 'fs';
-import * as path from 'path';
+import { ENV_FILE } from '@/lib/olympus-paths';
 
 // ---------------------------------------------------------------------------
-// Resolve credentials at runtime.
-// Next.js inlines process.env at build time, so a freshly-created .env
-// (written by the setup wizard) won't be visible until restart.
-// As a fallback, read the .env file directly.
+// Resolve credentials at runtime from the persistent .env file.
 // ---------------------------------------------------------------------------
 function getEnvPassword(): string {
   const fromEnv = process.env.OLYMPUS_PASSWORD;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
   try {
-    const envPath = path.join(process.cwd(), '.env');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
+    if (fs.existsSync(ENV_FILE)) {
+      const content = fs.readFileSync(ENV_FILE, 'utf-8');
       const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
       if (match && match[1].trim()) return match[1].trim();
     }
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
   return '';
 }
 
@@ -31,15 +25,12 @@ function getEnvJwtSecret(): string {
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
   try {
-    const envPath = path.join(process.cwd(), '.env');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
+    if (fs.existsSync(ENV_FILE)) {
+      const content = fs.readFileSync(ENV_FILE, 'utf-8');
       const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
       if (match && match[1].trim()) return match[1].trim();
     }
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
   return '';
 }
 

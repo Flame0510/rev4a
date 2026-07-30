@@ -9,6 +9,7 @@
  *   syncAgent('container')   — sync a single container
  */
 import { execSync } from 'child_process';
+import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys } from './provider/keys';
@@ -25,7 +26,7 @@ interface ModelConfigEntry {
 
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 
-const MODELS_CONFIG_PATH = path.resolve(process.cwd(), 'models.config.json');
+const MODELS_CONFIG_PATH = MODELS_CONFIG_FILE;
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
 /* ------------------------------------------------------------------ */

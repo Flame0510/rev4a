@@ -1,11 +1,9 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
 import { NextResponse, type NextRequest } from 'next/server';
+import { AGENTS_TOKEN_FILE } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
-
-const TOKEN_PATH = path.join(process.cwd(), 'data', 'agents-token.json');
 
 interface TokenData {
   token: string;
@@ -14,7 +12,7 @@ interface TokenData {
 
 function readTokenFile(): TokenData {
   try {
-    const raw = fs.readFileSync(TOKEN_PATH, 'utf-8');
+    const raw = fs.readFileSync(AGENTS_TOKEN_FILE, 'utf-8');
     const data = JSON.parse(raw);
     return {
       token: typeof data.token === 'string' ? data.token : '',
@@ -50,8 +48,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updated_at: Date.now(),
     };
 
-    fs.mkdirSync(path.dirname(TOKEN_PATH), { recursive: true });
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(payload, null, 2));
+    fs.mkdirSync(require('path').dirname(AGENTS_TOKEN_FILE), { recursive: true });
+    fs.writeFileSync(AGENTS_TOKEN_FILE, JSON.stringify(payload, null, 2));
 
     let containersUpdated = 0;
     let containerNames: string[] = [];

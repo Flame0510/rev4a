@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { detectPublicHost } from '@/lib/docker-utils';
+import { AGENTS_TOKEN_FILE } from '@/lib/olympus-paths';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
@@ -92,7 +93,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           const cName = (c.Names?.[0] || '').replace(/^\//, '');
           try {
             const tokenRaw = fs.readFileSync(
-              path.join(process.cwd(), 'data', 'agents-token.json'),
+              AGENTS_TOKEN_FILE,
               'utf-8'
             );
             const tokenData = JSON.parse(tokenRaw);

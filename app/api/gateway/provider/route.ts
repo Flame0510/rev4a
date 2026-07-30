@@ -6,6 +6,7 @@
  * PUT  /api/gateway/provider   — toggle individual model on/off + sync
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -34,7 +35,7 @@ interface ProviderEnvConfig {
   docsUrl: string;
 }
 
-const MODELS_CONFIG_PATH = path.resolve(process.cwd(), 'models.config.json');
+const MODELS_CONFIG_PATH = MODELS_CONFIG_FILE;
 
 const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
   deepseek: {

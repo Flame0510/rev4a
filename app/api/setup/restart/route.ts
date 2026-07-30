@@ -14,21 +14,19 @@
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
-import * as path from 'path';
 import { execSync } from 'child_process';
+import { ENV_FILE } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(): Promise<NextResponse> {
   try {
-    const envFile = path.join(process.cwd(), '.env');
-
-    if (!fs.existsSync(envFile)) {
+    if (!fs.existsSync(ENV_FILE)) {
       return NextResponse.json({ error: '.env file not found' }, { status: 500 });
     }
 
-    const envContent = fs.readFileSync(envFile, 'utf-8');
+    const envContent = fs.readFileSync(ENV_FILE, 'utf-8');
     const match = envContent.match(/^OLYMPUS_PASSWORD=(.*)$/m);
     if (!match || !match[1].trim()) {
       return NextResponse.json(

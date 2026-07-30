@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { ENV_FILE } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,9 +28,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   let currentPassword = process.env.OLYMPUS_PASSWORD;
   if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
     try {
-      const envPath = path.join(process.cwd(), '.env');
-      if (fs.existsSync(envPath)) {
-        const content = fs.readFileSync(envPath, 'utf-8');
+      if (fs.existsSync(ENV_FILE)) {
+        const content = fs.readFileSync(ENV_FILE, 'utf-8');
         const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
         if (match && match[1].trim()) {
           currentPassword = match[1].trim();
@@ -63,16 +63,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const homedir = require('os').homedir();
-    const configDir = path.join(homedir, '.config', 'olympus');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-    const envFile = path.join(configDir, '.env');
-    let content = '';
+    // Ensure parent directory exists
+    const dir = path.dirname(ENV_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-    if (fs.existsSync(envFile)) {
-      content = fs.readFileSync(envFile, 'utf-8');
+    let content = '';
+    if (fs.existsSync(ENV_FILE)) {
+      content = fs.readFileSync(ENV_FILE, 'utf-8');
     }
 
     // Ensure password line
@@ -81,27 +78,27 @@ export async function POST(request: Request): Promise<NextResponse> {
         .split('\n')
         .map((line) =>
           line.startsWith('OLYMPUS_PASSWORD=')
-            ? `OLYMPUS_PASSWORD=${body.password}`
+            ? 'OLYMPUS_PASSWORD=' + body.password
             : line,
         )
         .join('\n');
     } else {
-      content += `\nOLYMPUS_PASSWORD=${body.password}\n`;
+      content += '\nOLYMPUS_PASSWORD=' + body.password + '\n';
     }
 
     // Generate JWT secret if missing
     if (!content.includes('OLYMPUS_JWT_SECRET=')) {
       const secret = generateSecret(64);
-      content += `\nOLYMPUS_JWT_SECRET=${secret}\n`;
+      content += '\nOLYMPUS_JWT_SECRET=' + secret + '\n';
     }
 
     // Generate API token if missing
     if (!content.includes('OLYMPUS_TOKEN=')) {
       const token = generateSecret(32);
-      content += `\nOLYMPUS_TOKEN=${token}\n`;
+      content += '\nOLYMPUS_TOKEN=' + token + '\n';
     }
 
-    fs.writeFileSync(envFile, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
+    fs.writeFileSync(ENV_FILE, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
 
     // Update in-memory so proxy redirects work before restart
     process.env.OLYMPUS_PASSWORD = body.password;

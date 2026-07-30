@@ -1,7 +1,8 @@
 import * as fs from 'fs';
+import { PROVIDER_KEYS_FILE } from '@/lib/olympus-paths';
 import * as path from 'path';
 
-const KEYS_PATH = path.resolve(process.cwd(), 'data', 'provider-keys.json');
+const KEYS_PATH = PROVIDER_KEYS_FILE;
 
 interface ProviderKeys {
   [provider: string]: string;

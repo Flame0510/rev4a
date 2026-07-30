@@ -2,26 +2,23 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { jwtVerify } from 'jose';
 import * as fs from 'fs';
-import * as path from 'path';
+import { ENV_FILE } from './olympus-paths';
 
 function getJwtSecret(): Uint8Array {
   const fromEnv = process.env.OLYMPUS_JWT_SECRET;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) {
     return new TextEncoder().encode(fromEnv);
   }
-  // Fallback: try root .env, then data/.env (persistent volume)
-  for (const relPath of ['.env', path.join('data', '.env')]) {
-    try {
-      const envPath = path.join(process.cwd(), relPath);
-      if (fs.existsSync(envPath)) {
-        const content = fs.readFileSync(envPath, 'utf-8');
-        const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
-        if (match && match[1].trim()) {
-          return new TextEncoder().encode(match[1].trim());
-        }
+  // Fallback: read from persistent .env
+  try {
+    if (fs.existsSync(ENV_FILE)) {
+      const content = fs.readFileSync(ENV_FILE, 'utf-8');
+      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+      if (match && match[1].trim()) {
+        return new TextEncoder().encode(match[1].trim());
       }
-    } catch { /* try next */ }
-  }
+    }
+  } catch { /* ignore */ }
   return new TextEncoder().encode('');
 }
 

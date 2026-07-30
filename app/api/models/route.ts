@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
@@ -12,7 +13,7 @@ interface ModelsConfigEntry {
   enabled: boolean;
 }
 
-const CONFIG_PATH = path.resolve(process.cwd(), 'models.config.json');
+const CONFIG_PATH = MODELS_CONFIG_FILE;
 
 const PROVIDER_EMOJI: Record<string, string> = {
   deepseek: '🧠',

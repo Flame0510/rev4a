@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildOlympusProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
+import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -58,9 +59,9 @@ function findAvailablePort(): number {
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + health check (60s) + seeding (60s)
 
-const TEMPLATES_DIR = path.join(process.cwd(), 'agent-templates');
-const MODELS_CONFIG = path.join(process.cwd(), 'models.config.json');
-const AGENTS_TOKEN_PATH = path.join(process.cwd(), 'data', 'agents-token.json');
+const TEMPLATES_DIR = templatesDir(process.cwd());
+const MODELS_CONFIG = MODELS_CONFIG_FILE;
+const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
 const DEFAULT_NETWORK = 'olympus-network';
 const SHARED_SKILLS = '/docker/shared-skills';
 const SHARED_REPOS = '/docker/shared-repos';
@@ -252,7 +253,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Log event to events.db if it exists
     try {
       const Database = require('better-sqlite3');
-      const dbPath = path.join(process.cwd(), 'data', 'events.db');
+      const dbPath = DB_FILE;
       if (fs.existsSync(dbPath)) {
         const db = new Database(dbPath, { readonly: false });
         db.pragma('journal_mode = WAL');

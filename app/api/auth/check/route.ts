@@ -1,25 +1,25 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import * as fs from 'fs';
-import * as path from 'path';
+import { ENV_FILE } from '@/lib/olympus-paths';
 
 function getJwtSecret(): Uint8Array {
-  // Primary: process.env (inlined at build time from .env)
   const fromEnv = process.env.OLYMPUS_JWT_SECRET;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) {
     return new TextEncoder().encode(fromEnv);
   }
-  // Fallback: read .env file at runtime
-  try {
-    const envPath = path.join(process.cwd(), '.env');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
-      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m)
-      if (match && match[1].trim()) {
-        return new TextEncoder().encode(match[1].trim());
+  // Fallback: read from persistent .env
+  for (const file of [ENV_FILE]) {
+    try {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf-8');
+        const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+        if (match && match[1].trim()) {
+          return new TextEncoder().encode(match[1].trim());
+        }
       }
-    }
-  } catch { /* ignore */ }
+    } catch { /* ignore */ }
+  }
   return new TextEncoder().encode('');
 }
 

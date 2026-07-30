@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { NextResponse, type NextRequest } from 'next/server';
+import { templatesDir } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
 
@@ -375,7 +376,7 @@ interface CreateAgentPayload {
   templateId?: string;
 }
 
-const AGENT_TEMPLATES_DIR = path.resolve(process.cwd(), 'agent-templates');
+const AGENT_TEMPLATES_DIR = templatesDir(process.cwd());
 
 function copyTemplateFiles(templateId: string, workspace: string): string[] {
   const src = path.join(AGENT_TEMPLATES_DIR, templateId);

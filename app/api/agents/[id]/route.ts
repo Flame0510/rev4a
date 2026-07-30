@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+import { DB_FILE } from '@/lib/olympus-paths';
 
 const BACKUP_VOLUME = 'olympus-backups';
 
@@ -56,7 +57,7 @@ export async function DELETE(
     // Log event to events.db if it exists
     try {
       const Database = require('better-sqlite3');
-      const dbPath = path.join(process.cwd(), 'data', 'events.db');
+      const dbPath = DB_FILE;
       if (fs.existsSync(dbPath)) {
         const db = new Database(dbPath, { readonly: false });
         db.pragma('journal_mode = WAL');

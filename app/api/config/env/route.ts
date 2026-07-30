@@ -9,13 +9,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
-import * as path from 'path';
 import { execSync } from 'child_process';
+import { ENV_FILE } from '@/lib/olympus-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-const ENV_PATH = path.resolve(process.cwd(), '.env');
 
 const ALLOWED_PREFIXES = ['OLYMPUS_', 'PROVIDER_'];
 
@@ -58,7 +56,7 @@ export async function GET() {
   try {
     let content = '';
     try {
-      content = fs.readFileSync(ENV_PATH, 'utf-8');
+      content = fs.readFileSync(ENV_FILE, 'utf-8');
     } catch {
       content = '';
     }
@@ -97,7 +95,7 @@ export async function PUT(request: NextRequest) {
     // Read current, merge, write back
     let current: Record<string, string> = {};
     try {
-      current = parseEnvFile(fs.readFileSync(ENV_PATH, 'utf-8'));
+      current = parseEnvFile(fs.readFileSync(ENV_FILE, 'utf-8'));
     } catch {
       // File doesn't exist — start fresh
     }
@@ -110,7 +108,7 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    fs.writeFileSync(ENV_PATH, serializeEnvFile(current), 'utf-8');
+    fs.writeFileSync(ENV_FILE, serializeEnvFile(current), 'utf-8');
 
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
