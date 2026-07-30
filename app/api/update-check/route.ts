@@ -98,6 +98,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const update = execSync(`${npmPath} install -g @flame0510/olympus@latest 2>&1`, {
       stdio: 'pipe',
       timeout: 60_000,
+      cwd: '/root',  // avoid getcwd() failure when npm removes the package directory
     }).toString();
 
     const newPkg = execSync(`${npmPath} ls @flame0510/olympus --global --json --depth=0 2>/dev/null`, {

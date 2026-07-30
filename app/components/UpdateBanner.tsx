@@ -66,10 +66,10 @@ export default function UpdateBanner() {
 
         {!updating && !updatingStatus && (
           <div className="update-banner__actions">
-            <button className="update-banner__btn" onClick={handleUpdate}>
+            <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={handleUpdate}>
               Update
             </button>
-            <button className="update-banner__dismiss" onClick={() => setDismissed(true)}>
+            <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setDismissed(true)}>
               Dismiss
             </button>
           </div>
