@@ -733,7 +733,6 @@ export default function GatewayPageClient() {
                       onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, [p.provider]: v }))}
                       placeholder={`API Key ${p.label}`}
                       style={{ flex: 1, minWidth: 200 }}
-                      showGenerate
                     />
                     <Button variant="primary" size="sm"
                       loading={overlay.active}
