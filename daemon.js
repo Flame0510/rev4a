@@ -473,7 +473,7 @@ function pollSessions() {
       }
     );
     if (result.error || result.status !== 0) {
-      log(`ERROR: openclaw sessions failed: ${result.error?.message || 'exit ' + result.status}`);
+      log(`WARN: openclaw sessions failed: ${result.error?.message || '(exit ' + result.status + ')'}`);
       return;
     }
     output = result.stdout;
