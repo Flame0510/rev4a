@@ -29,3 +29,5 @@ test-results/
 ecosystem.config.js
 data/
 .npmrc
+globals.css.bak
+globals.css.pre-cleanup
