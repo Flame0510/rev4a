@@ -18,9 +18,7 @@ export default function UpdateBanner() {
     fetch('/api/update-check?check=1')
       .then((r) => r.json())
       .then((d: VersionInfo) => {
-        if (d.updateAvailable) {
-          setInfo(d);
-        }
+        if (d.updateAvailable) setInfo(d);
       })
       .catch(() => {});
   }, []);
@@ -42,17 +40,11 @@ export default function UpdateBanner() {
         setTimeout(() => window.location.reload(), 3000);
       } else {
         setUpdatingStatus(`Failed: ${data.error}`);
-        setTimeout(() => {
-          setUpdating(false);
-          setUpdatingStatus(null);
-        }, 5000);
+        setTimeout(() => { setUpdating(false); setUpdatingStatus(null); }, 5000);
       }
     } catch (err: any) {
       setUpdatingStatus(`Error: ${err.message}`);
-      setTimeout(() => {
-        setUpdating(false);
-        setUpdatingStatus(null);
-      }, 5000);
+      setTimeout(() => { setUpdating(false); setUpdatingStatus(null); }, 5000);
     }
   }
 
@@ -60,25 +52,29 @@ export default function UpdateBanner() {
 
   return (
     <div className="update-banner">
-      <span className="update-banner-text">
-        {updatingStatus || (
-          <>
-            Olympus <strong>v{info.latest}</strong> available (v{info.installed} installed)
-          </>
-        )}
-      </span>
-      <span className="update-banner-actions">
+      <div className="update-banner__inner">
+        <span className="update-banner__text">
+          {updatingStatus || (
+            <>
+              <span className="update-banner__label">Update available</span>
+              <span className="update-banner__sep">&mdash;</span>
+              v{info.latest}
+              <span className="update-banner__sep">(installed: v{info.installed})</span>
+            </>
+          )}
+        </span>
+
         {!updating && !updatingStatus && (
-          <>
-            <button className="update-banner-btn-primary" onClick={handleUpdate}>
+          <div className="update-banner__actions">
+            <button className="update-banner__btn" onClick={handleUpdate}>
               Update
             </button>
-            <button className="update-banner-btn-secondary" onClick={() => setDismissed(true)}>
+            <button className="update-banner__dismiss" onClick={() => setDismissed(true)}>
               Dismiss
             </button>
-          </>
+          </div>
         )}
-      </span>
+      </div>
     </div>
   );
 }

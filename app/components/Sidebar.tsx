@@ -235,7 +235,7 @@ export default function Sidebar() {
             <span className="sidebar__label">Logout</span>
           </button>
           <div className="sidebar__footer">
-            {ocVersion || 'OLYMPUS v1'}
+            {ocVersion || ''}
           </div>
         </div>
       </aside>
