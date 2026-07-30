@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
 import { Button, ListItem, Badge, ConfirmModal, type Tone } from '../components/ui';
+import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import {
@@ -117,6 +118,10 @@ export default function AgentsPageClient() {
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   const [imageReady, setImageReady] = useState(true);
   const [providersConfigured, setProvidersConfigured] = useState(false);
+  const [gatewayToken, setGatewayToken] = useState('');
+  const [tokenLoading, setTokenLoading] = useState(true);
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -164,9 +169,51 @@ export default function AgentsPageClient() {
       .catch(() => setProvidersConfigured(false));
   }, []);
 
+  // Load gateway token
+  const loadToken = useCallback(async () => {
+    try {
+      const res = await fetch('/api/agents/token');
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      setGatewayToken(typeof data.token === 'string' ? data.token : '');
+    } catch {
+      // token not available
+    } finally {
+      setTokenLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadToken(); }, [loadToken]);
+
+  // Auto-clear token status after 4 seconds
+  useEffect(() => {
+    if (!tokenStatus) return;
+    const t = setTimeout(() => setTokenStatus(null), 4000);
+    return () => clearTimeout(t);
+  }, [tokenStatus]);
+
   const handleImageReady = useCallback(() => {
     setImageReady(true);
   }, []);
+
+  async function saveToken() {
+    setTokenSaving(true);
+    setTokenStatus(null);
+    try {
+      const res = await fetch('/api/agents/token', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: gatewayToken }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+      setTokenStatus({ type: 'success', message: `Saved and synced to ${data.containersUpdated} container(s)` });
+    } catch (e: any) {
+      setTokenStatus({ type: 'error', message: e.message || 'Save failed' });
+    } finally {
+      setTokenSaving(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     let list = [...agents];
@@ -183,6 +230,35 @@ export default function AgentsPageClient() {
   function backToList() {
     setShowList(true);
   }
+
+  const tokenSection = (
+    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', flexShrink: 0 }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.06em', color: 'var(--copper)', marginBottom: 6, textTransform: 'uppercase' }}>
+        Gateway Token
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.4 }}>
+        Shared token injected into all agent containers as OPENCLAW_GATEWAY_TOKEN. Agents use it to protect their OpenClaw Gateway.
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <PasswordInput
+          value={gatewayToken}
+          onChange={setGatewayToken}
+          placeholder="Gateway Token"
+          disabled={tokenSaving || tokenLoading}
+          showGenerate
+          style={{ flex: '1 1 280px', minWidth: 180 }}
+        />
+        <Button variant="primary" size="sm" loading={tokenSaving} disabled={tokenLoading || !gatewayToken.trim()} onClick={saveToken}>
+          {tokenSaving ? 'Saving...' : 'Save & Sync'}
+        </Button>
+      </div>
+      {tokenStatus && (
+        <div style={{ marginTop: 8, fontSize: 11, color: tokenStatus.type === 'success' ? 'var(--green)' : 'var(--red)' }}>
+          {tokenStatus.message}
+        </div>
+      )}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -249,6 +325,7 @@ export default function AgentsPageClient() {
         </div>
         <ImageDownloadBanner onImageReady={handleImageReady} />
         {!providersConfigured && <NoProviderBanner />}
+        {tokenSection}
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
@@ -302,6 +379,7 @@ export default function AgentsPageClient() {
       </div>
       <ImageDownloadBanner onImageReady={handleImageReady} />
       {!providersConfigured && <NoProviderBanner />}
+      {tokenSection}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: '38%', minWidth: 300, borderRight: '1px solid var(--border)', overflow: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}

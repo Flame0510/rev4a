@@ -224,6 +224,7 @@ function ensureEnv() {
   const jwtSecret = randomString(48);
   const token = randomString(32);
   const apiKey = randomString(32);
+  const gatewayToken = randomString(32);
 
   // Write to persistent location first, then copy to root
   const content = [
@@ -258,12 +259,12 @@ function ensureEnv() {
   writeFileSync(ENV_SOURCE, content, { mode: 0o600 });
   require('fs').copyFileSync(ENV_SOURCE, ENV_LINK);
 
-  // Sync token to agents-token.json so Gateway auth and agent bootstrap use the same key
+  // Generate gateway token for agent containers (separate from OLYMPUS_TOKEN)
   const agentsTokenPath = join(DATA_DIR, 'agents-token.json');
   if (!existsSync(agentsTokenPath)) {
-    const agentsToken = { token, updated_at: Date.now() };
+    const agentsToken = { token: gatewayToken, updated_at: Date.now() };
     writeFileSync(agentsTokenPath, JSON.stringify(agentsToken, null, 2), { mode: 0o600 });
-    log('ENV', 'agents-token.json synced with OLYMPUS_TOKEN');
+    log('ENV', 'agents-token.json generated (separate from OLYMPUS_TOKEN)');
   }
 
   // Seed default files from the package to the config dir (first install only)
