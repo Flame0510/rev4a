@@ -122,7 +122,6 @@ export default function SystemCockpit({
         </Surface>
         <Metric title="Active sessions" value={metrics.active} subtitle={`${sessions.length} total`} loading={loading} />
         <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
-        <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
       </div>
 
       <div className="cockpit__main">
