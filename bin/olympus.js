@@ -432,6 +432,16 @@ function serve(port) {
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
 
+  // Watch for restart flag (written by update-check POST)
+  const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
+  const restartWatcher = setInterval(() => {
+    if (existsSync(RESTART_FLAG)) {
+      try { require('fs').unlinkSync(RESTART_FLAG); } catch {}
+      cleanup('UPDATE');
+    }
+  }, 2000);
+  restartWatcher.unref();
+
   // Wait for all children to exit
   let exited = 0;
   for (const child of children) {

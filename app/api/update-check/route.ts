@@ -115,6 +115,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Bust cache
     cache = null;
 
+    // Signal the parent process to restart so the new version takes effect
+    const { writeFileSync } = require('fs');
+    const { join } = require('path');
+    try {
+      writeFileSync(join(require('os').homedir(), '.config', 'olympus', '.restart-flag'), '');
+    } catch {}
+
     return NextResponse.json({
       success: true,
       oldVersion: pkg.version,
