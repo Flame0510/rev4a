@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = process.env.OLYMPUS_DB || path.join(__dirname, 'data', 'events.db');
+const DB_PATH = process.env.OLYMPUS_DB || path.join(os.homedir(), '.config', 'olympus', 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_ACTIVE_MS = 15_000; // 15s when working sessions detected
 

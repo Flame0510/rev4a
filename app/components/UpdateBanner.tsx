@@ -28,20 +28,19 @@ export default function UpdateBanner() {
   return (
     <div className="update-banner">
       <span className="update-banner-text">
-        🆕 Olympus v{info.latest} available (installed: v{info.installed})
+        Olympus v{info.latest} available (v{info.installed} installed)
       </span>
       <span className="update-banner-actions">
         <button
           onClick={() => {
-            navigator.clipboard.writeText(
-              'npm install -g @flame0510/olympus@latest',
-            );
-            alert('Copied! Run this command + restart olympus serve');
+            navigator.clipboard.writeText('npm install -g @flame0510/olympus');
           }}
         >
-          📋 Copy command
+          Copy install command
         </button>
-        <button onClick={() => setDismissed(true)}>✕</button>
+        <button onClick={() => setDismissed(true)}>
+          Dismiss
+        </button>
       </span>
     </div>
   );

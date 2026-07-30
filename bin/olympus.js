@@ -26,10 +26,10 @@ const os = require('os');
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
 const PKG_JSON = join(ROOT, 'package.json');
-const DATA_DIR = join(ROOT, 'data');
-// .env lives in data/ for persistence across container recreates,
-// then copied to ROOT/.env on startup for Next.js (reads from cwd root)
-const ENV_SOURCE = join(DATA_DIR, '.env');
+// Config lives outside the npm package so it survives npm update / reinstall
+const CONFIG_DIR = join(os.homedir(), '.config', 'olympus');
+const DATA_DIR = join(CONFIG_DIR, 'data');
+const ENV_SOURCE = join(CONFIG_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_IMAGE = 'openclaw-agent-base:latest';
