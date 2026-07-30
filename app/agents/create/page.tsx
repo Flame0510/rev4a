@@ -2,6 +2,7 @@ import { requireAuth } from '@/lib/requireAuth';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
 import CreatePageClient from './PageClient';
 
 export const dynamic = 'force-dynamic';
@@ -18,14 +19,14 @@ interface ModelInfo {
 }
 
 async function getTemplates(): Promise<TemplateInfo[]> {
-  const templatesDir = path.join(process.cwd(), 'agent-templates');
+  const dir = templatesDir(process.cwd());
   try {
-    const entries = fs.readdirSync(templatesDir, { withFileTypes: true });
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
     return entries
       .filter((e) => e.isDirectory() && e.name !== 'base-image')
       .map((e) => ({
         id: e.name,
-        files: fs.readdirSync(path.join(templatesDir, e.name)),
+        files: fs.readdirSync(path.join(dir, e.name)),
       }));
   } catch {
     return [];
@@ -33,21 +34,16 @@ async function getTemplates(): Promise<TemplateInfo[]> {
 }
 
 async function getModels(): Promise<ModelInfo[]> {
-  const configPath = path.join(process.cwd(), 'models.config.json');
-  const keysPath = path.join(process.cwd(), 'data', 'provider-keys.json');
   try {
-    const raw = fs.readFileSync(configPath, 'utf-8');
+    const raw = fs.readFileSync(MODELS_CONFIG_FILE, 'utf-8');
     const config = JSON.parse(raw);
     const allModels: ModelInfo[] = (config.models || []).filter((m: { enabled: boolean }) => m.enabled !== false);
 
-    // Read configured provider keys from Olympus
     let configuredProviders: string[] = [];
     try {
-      const keysRaw = fs.readFileSync(keysPath, 'utf-8');
+      const keysRaw = fs.readFileSync(PROVIDER_KEYS_FILE, 'utf-8');
       configuredProviders = Object.keys(JSON.parse(keysRaw));
-    } catch {
-      // no keys configured yet
-    }
+    } catch { /* no keys configured yet */ }
 
     if (configuredProviders.length > 0) {
       return allModels.filter((m) => configuredProviders.includes(m.provider));

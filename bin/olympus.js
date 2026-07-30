@@ -263,6 +263,18 @@ function ensureEnv() {
     log('ENV', 'agents-token.json synced with OLYMPUS_TOKEN');
   }
 
+  // Seed default files from the package to the config dir (first install only)
+  const seedFiles = [
+    ['models.config.json', join(ROOT, 'models.config.json')],
+    ['provider-keys.json', join(DATA_DIR, 'provider-keys.json')],
+  ];
+  for (const [destName, srcPath] of seedFiles) {
+    const destPath = join(DATA_DIR, destName);
+    if (!existsSync(destPath) && existsSync(srcPath)) {
+      try { require('fs').copyFileSync(srcPath, destPath, require('fs').constants.COPYFILE_EXCL); } catch {}
+    }
+  }
+
   log('ENV', '.env auto-generated with JWT secret and API token');
   log('ENV', 'Set your admin password via the web setup wizard on first visit.');
 }
