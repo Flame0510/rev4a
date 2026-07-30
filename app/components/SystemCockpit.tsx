@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { Costs, Session, SessionEvent } from '@/lib/types';
+import type { Costs, FilterConfig, Session, SessionEvent } from '@/lib/types';
 import { isSessionActive } from '@/lib/patterns/sessionPresentation';
 import { SkeletonLines, SkeletonMetric } from './Skeleton';
 import { Metric, StatusCard, Surface, toneFromHealth } from './ui';
 import { apiFetch } from '@/lib/apiFetch';
+import LiveFeed from './LiveFeed';
+import CostBreakdown from './CostBreakdown';
 
 interface SystemCheck {
   id: string;
@@ -40,6 +42,8 @@ interface SystemCockpitProps {
   sessions: Session[];
   events: SessionEvent[];
   costs: Costs;
+  filter: FilterConfig;
+  visibleEvents: SessionEvent[];
   loading?: boolean;
 }
 
@@ -48,12 +52,12 @@ function fmtMoney(value?: number | null): string {
 }
 
 function fmtAge(ts?: number | null): string {
-  if (!ts) return 'n/d';
+  if (!ts) return 'n/a';
   const ms = Date.now() - (ts > 10_000_000_000 ? ts : ts * 1000);
-  if (ms < 60_000) return 'ora';
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m fa`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h fa`;
-  return `${Math.floor(ms / 86_400_000)}g fa`;
+  if (ms < 60_000) return 'now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
 function severityHealth(severity: Recommendation['severity']): 'ok' | 'warning' | 'error' | 'info' {
@@ -66,7 +70,10 @@ function findCheck(checks: SystemCheck[], id: string): SystemCheck | undefined {
   return checks.find((check) => check.id === id);
 }
 
-export default function SystemCockpit({ sessions, events, costs, loading = false }: SystemCockpitProps) {
+export default function SystemCockpit({
+  sessions, events, costs, filter, visibleEvents,
+  loading = false,
+}: SystemCockpitProps) {
   const [systemHealth, setSystemHealth] = useState<SystemHealthPayload | null>(null);
 
   useEffect(() => {
@@ -95,7 +102,6 @@ export default function SystemCockpit({ sessions, events, costs, loading = false
 
   const systemLoading = loading || !systemHealth;
   const checks = systemHealth?.checks ?? [];
-  const memoryCheck = findCheck(checks, 'memory.shared-context');
   const cronCheck = findCheck(checks, 'cron.jobs') ?? findCheck(checks, 'cron.api');
   const runtimeCheck = findCheck(checks, 'runtime.sessions');
   const costCheck = findCheck(checks, 'cost.usageBasedToday');
@@ -115,20 +121,19 @@ export default function SystemCockpit({ sessions, events, costs, loading = false
           <div className="ui-muted" style={{ marginTop: 10, fontSize: 11 }}>Server-side monitor from `/api/system-health`.</div>
         </Surface>
         <Metric title="Active sessions" value={metrics.active} subtitle={`${sessions.length} total`} loading={loading} />
-        <Metric title="Costo a consumo" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
-        <Metric title="Memory health" value={(memoryCheck?.health ?? 'warning').toUpperCase()} subtitle={String(memoryCheck?.value ?? 'n/d')} tone={toneFromHealth(memoryCheck?.health ?? 'warning')} loading={systemLoading} />
+        <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
+        <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
       </div>
 
       <div className="cockpit__main">
         <div className="cockpit__checks">
-          <StatusCard loading={systemLoading} title="Runtime Olympus" health={runtimeCheck?.health ?? 'warning'} rows={[[runtimeCheck?.label ?? 'Sessioni totali', runtimeCheck?.value ?? sessions.length], ['Ultimo aggiornamento', runtimeFreshness], ['Errori feed recente', metrics.errors]]} />
-          <StatusCard loading={systemLoading} title="Cron / Watchdog" health={cronCheck?.health ?? 'warning'} rows={[[cronCheck?.label ?? 'Cron', cronCheck?.value ?? 'n/d'], ['Dettaglio', cronCheck?.details ?? 'n/d'], ['Sorgente', '/api/system-health']]} />
-          <StatusCard loading={systemLoading} title="Shared Context" health={memoryCheck?.health ?? 'warning'} rows={[[memoryCheck?.label ?? 'Shared context', memoryCheck?.value ?? 'n/d'], ['Dettaglio', memoryCheck?.details ?? 'n/d'], ['Pagina', <Link key="memory" href="/memory" className="ui-link">Apri memory →</Link>]]} />
-          <StatusCard loading={loading} title="Lineage" health={sessions.length ? 'ok' : 'warning'} rows={[[ 'Sessioni totali', sessions.length], ['Eventi live', events.length], ['Vista completa', <Link key="lineage" href="/lineage" className="ui-link">Apri grafo →</Link>]]} />
+          <StatusCard loading={systemLoading} title="Runtime Olympus" health={runtimeCheck?.health ?? 'warning'} rows={[[runtimeCheck?.label ?? 'Total sessions', runtimeCheck?.value ?? sessions.length], ['Last update', runtimeFreshness], ['Recent feed errors', metrics.errors]]} />
+          <StatusCard loading={systemLoading} title="Cron / Watchdog" health={cronCheck?.health ?? 'warning'} rows={[[cronCheck?.label ?? 'Cron', cronCheck?.value ?? 'n/a'], ['Detail', cronCheck?.details ?? 'n/a'], ['Source', '/api/system-health']]} />
+          <StatusCard loading={loading} title="Lineage" health={sessions.length ? 'ok' : 'warning'} rows={[[ 'Total sessions', sessions.length], ['Live events', events.length], ['Full view', <Link key="lineage" href="/lineage" className="ui-link">Open graph →</Link>]]} />
         </div>
 
         <Surface as="aside">
-          <div className="ui-kicker ui-kicker--accent" style={{ marginBottom: 14 }}>Azioni consigliate</div>
+          <div className="ui-kicker ui-kicker--accent" style={{ marginBottom: 14 }}>Recommended actions</div>
           {systemLoading ? (
             <SkeletonLines count={5} />
           ) : recommendations.length ? (
@@ -154,6 +159,11 @@ export default function SystemCockpit({ sessions, events, costs, loading = false
             <Link className="agent-btn" href="/lineage">Lineage</Link>
           </div>
         </Surface>
+      </div>
+
+      <div className="cockpit__feed-section">
+        <LiveFeed events={visibleEvents.slice(0, 10)} loading={loading} />
+        <CostBreakdown byModel={costs.byModel} loading={loading} />
       </div>
     </section>
   );

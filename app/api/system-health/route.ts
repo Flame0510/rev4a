@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { maybeSendAlert } from '@/lib/alerts';
-import { getMemoryContextSnapshot } from '@/lib/memory-context';
 import { summarizeBilling } from '@/lib/billing';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
 import type { ModelCost } from '@/lib/types';
@@ -17,7 +16,7 @@ interface SystemCheck {
   health: Health;
   value: string | number;
   details?: string;
-  source: 'runtime' | 'memory' | 'cron' | 'cost' | 'trello';
+  source: 'runtime' | 'cron' | 'cost' | 'trello';
 }
 
 interface Recommendation {
@@ -211,32 +210,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     checks.push({ id: 'runtime.db', label: 'Olympus DB', health: 'error', value: 'error', details: (error as Error).message, source: 'runtime' });
     recommendations.push({ id: 'runtime.db-error', severity: 'critical', source: 'runtime', title: 'Olympus DB unreadable', details: (error as Error).message, dismissible: false, createdAt });
-  }
-
-  try {
-    const memory = getMemoryContextSnapshot();
-    checks.push({
-      id: 'memory.shared-context',
-      label: 'Shared context',
-      health: memory.strategy.health,
-      value: `${memory.summary.userLinked}/${memory.summary.totalAgents}`,
-      details: `${memory.summary.warnings} warning, ${memory.summary.globalFiles} file globali`,
-      source: 'memory',
-    });
-    if (memory.strategy.health !== 'ok') {
-      recommendations.push({
-        id: 'memory.fix-context',
-        severity: memory.strategy.health === 'error' ? 'critical' : 'warning',
-        source: 'memory',
-        title: 'Align shared context',
-        details: memory.strategy.warnings[0] ?? 'Memory/context has warnings.',
-        actionHref: '/memory',
-        dismissible: false,
-        createdAt,
-      });
-    }
-  } catch (error) {
-    checks.push({ id: 'memory.snapshot', label: 'Memory snapshot', health: 'error', value: 'error', details: (error as Error).message, source: 'memory' });
   }
 
   try {

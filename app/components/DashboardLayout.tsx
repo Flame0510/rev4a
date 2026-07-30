@@ -17,6 +17,8 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
     sessions,
     events,
     costs,
+    filter,
+    visibleEvents,
     selectedSessionId,
     selectSession,
     hasSessionsLoaded,
@@ -55,7 +57,14 @@ export default function DashboardLayout({ initialCosts }: DashboardLayoutProps) 
       )}
 
       <section className="layout layout--cockpit">
-        <SystemCockpit sessions={sessions} events={events} costs={costs} loading={!hasSessionsLoaded} />
+        <SystemCockpit
+          sessions={sessions}
+          events={events}
+          costs={costs}
+          filter={filter}
+          visibleEvents={visibleEvents}
+          loading={!hasSessionsLoaded}
+        />
       </section>
 
       <SessionDrawer
