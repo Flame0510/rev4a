@@ -446,9 +446,15 @@ function serve(port) {
 const args = process.argv.slice(2);
 const cmd = args[0];
 
-const HELP_TEXT = `
-Olympus v${pkg.version} — Agency Monitor Dashboard
+const BANNER = `
+  ╔══════════════════════════════════════╗
+  ║           O L Y M P U S              ║
+  ║     Agency Monitor Dashboard         ║
+  ╚══════════════════════════════════════╝
+  v${pkg.version}
+`;
 
+const HELP_TEXT = `
 USAGE:
   olympus serve [--port <port>]   Start all services (default)
   olympus build                   Build the Next.js app
@@ -472,11 +478,14 @@ CONFIGURATION:
 `;
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
+  console.log(BANNER);
+  console.log(`Olympus v${pkg.version} — Agency Monitor Dashboard`);
   console.log(HELP_TEXT);
   process.exit(0);
 }
 
 if (cmd === 'serve') {
+  console.log(BANNER);
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
   serve(port);
