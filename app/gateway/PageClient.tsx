@@ -356,11 +356,18 @@ export default function GatewayPageClient() {
       if (provRes.ok) {
         const provJson: ProviderApiResponse = await provRes.json();
         setProviders(provJson.providers);
-        // Load existing keys for each provider
+        // Load existing keys for each configured provider
         const configuredProviders = provJson.providers.filter((p) => p.configured);
         const keyEntries: Record<string, string> = {};
         const origEntries: Record<string, string> = {};
-        await Promise.all(configuredProviders.map(async (p) => {
+        // olympus key is stored in provider-keys.json (not vault).
+        // Show masked placeholder — the real key is never sent to the browser.
+        const olympusProv = provJson.providers.find((p: any) => p.provider === 'olympus');
+        if (olympusProv?.configured) {
+          keyEntries['olympus'] = '••••••••••••••••';
+          origEntries['olympus'] = '••••••••••••••••';
+        }
+        await Promise.all(configuredProviders.filter((p) => p.provider !== 'olympus').map(async (p) => {
           try {
             const kr = await fetch(`/api/vault/provider/key?provider=${p.provider}`);
             if (kr.ok) {
