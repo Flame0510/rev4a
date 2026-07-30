@@ -13,10 +13,11 @@ import * as path from 'path';
 export function GET(): NextResponse {
   let password = process.env.OLYMPUS_PASSWORD;
 
-  // Fallback: read .env file if env var is empty (Next.js inlines at build)
+  // Fallback: read .env from config dir if env var is empty (Next.js inlines at build)
   if (typeof password !== 'string' || password.length === 0) {
     try {
-      const envPath = path.join(process.cwd(), '.env');
+      const homedir = require('os').homedir();
+      const envPath = path.join(homedir, '.config', 'olympus', '.env');
       if (fs.existsSync(envPath)) {
         const content = fs.readFileSync(envPath, 'utf-8');
         const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);

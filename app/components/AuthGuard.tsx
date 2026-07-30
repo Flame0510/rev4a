@@ -17,13 +17,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // /login is public
     if (pathname === '/login') {
-      // But if no password is configured, redirect to /setup
       fetch('/api/auth/status')
         .then((r) => r.json())
         .then((d: { configured: boolean }) => {
-          if (!d.configured) {
-            router.replace('/setup');
-          }
+          if (!d.configured) router.replace('/setup');
           setChecking(false);
         })
         .catch(() => setChecking(false));
@@ -32,29 +29,28 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // Protected routes — check auth
     fetch('/api/auth/check')
-      .then((r) => {
+      .then(async (r) => {
         if (!r.ok) {
-          // Not authenticated — check if setup is needed
-          return fetch('/api/auth/status').then((r2) => r2.json()).then((d: { configured: boolean }) => {
-            if (!d.configured) {
-              router.replace('/setup');
-            } else {
-              router.replace('/login');
-            }
-          });
+          const status = await fetch('/api/auth/status').then((r2) => r2.json());
+          router.replace(status.configured ? '/login' : '/setup');
+          return;
         }
-        // Authenticated — only redirect to wizard if not already on /wizard
-        // AND password is not configured (fresh install)
-        if (pathname !== '/wizard') {
-          fetch('/api/auth/status')
-            .then((r3) => r3.json())
-            .then((d3: { configured: boolean }) => {
-              if (!d3.configured) {
-                router.replace('/wizard');
-              }
-              setChecking(false);
-            })
-            .catch(() => setChecking(false));
+
+        // Authenticated — redirect to wizard only if both conditions met
+        if (pathname === '/wizard') {
+          setChecking(false);
+          return;
+        }
+
+        const [statusRes, wizardRes] = await Promise.all([
+          fetch('/api/auth/status'),
+          fetch('/api/wizard/status'),
+        ]);
+        const { configured } = await statusRes.json();
+        const { done: wizardDone } = await wizardRes.json();
+
+        if (!configured && !wizardDone) {
+          router.replace('/wizard');
           return;
         }
         setChecking(false);

@@ -63,7 +63,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const envFile = path.join(process.cwd(), '.env');
+    const homedir = require('os').homedir();
+    const configDir = path.join(homedir, '.config', 'olympus');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    const envFile = path.join(configDir, '.env');
     let content = '';
 
     if (fs.existsSync(envFile)) {
