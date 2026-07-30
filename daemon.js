@@ -8,7 +8,7 @@
 
 const os = require('os');
 const fs = require('fs');
-const { spawnSync } = require('child_process');
+const { spawnSync, execSync } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
@@ -456,7 +456,22 @@ function orphanEventType(status) {
 
 // ── Main Poll Loop ───────────────────────────────────────────────────────────
 
+let openclawMissing = false;
+
 function pollSessions() {
+  // If openclaw is not installed, skip polling entirely
+  if (!openclawMissing) {
+    try {
+      execSync('which openclaw', { stdio: 'ignore', timeout: 3000 });
+    } catch {
+      openclawMissing = true;
+      log('OpenClaw not found — daemon idle (no sessions to poll)');
+      return;
+    }
+  } else {
+    return;
+  }
+
   log('Polling OpenClaw sessions...');
 
   let output;
@@ -684,8 +699,11 @@ function pollSessions() {
     });
     log(`[TIMEOUT] ${session_id} missing da ${Math.round(missingFor / 60000)}min`);
 
-    // Notify the maintainer via openclaw message
+    // Notify the maintainer via openclaw message (only if openclaw is available)
     try {
+      if (!openclawMissing) {
+        execSync('which openclaw', { stdio: 'ignore', timeout: 3000 });
+      }
       spawnSync('openclaw', [
         'message', 'send',
         '--account', 'ops',
