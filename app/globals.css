@@ -1385,7 +1385,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 /* Update banner */
 .update-banner {
   position: fixed;
-  top: 0;
+  bottom: 0;
   left: 0;
   right: 0;
   z-index: 2000;
@@ -1394,27 +1394,40 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   justify-content: center;
   gap: 1rem;
   padding: 0.5rem 1rem;
-  background: var(--color-gold-800, #a67c00);
-  color: #fff;
+  background: var(--color-surface, #1a1a2e);
+  border-top: 1px solid var(--color-gold, #a67c00);
+  color: var(--color-text, #e0e0e0);
   font-family: var(--font-mono);
   font-size: 0.82rem;
   flex-wrap: wrap;
 }
 .update-banner-text { flex: 1; text-align: center; }
-.update-banner-actions { display: flex; gap: 0.5rem; }
-.update-banner-actions button {
+.update-banner-actions { display: flex; gap: 0.5rem; align-items: center; }
+.update-banner-btn-primary {
+  background: var(--color-gold, #a67c00);
+  border: none;
+  color: #000;
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.update-banner-btn-secondary {
   background: transparent;
-  border: 1px solid rgba(255,255,255,0.35);
-  color: #fff;
-  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--color-muted, #555);
+  color: var(--color-muted, #999);
+  padding: 0.3rem 0.6rem;
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.78rem;
 }
-.update-banner-actions button:last-child {
-  opacity: 0.7;
+.update-banner-btn-primary:hover {
+  filter: brightness(1.15);
 }
-.update-banner-actions button:hover {
-  background: rgba(255,255,255,0.12);
+.update-banner-btn-secondary:hover {
+  border-color: var(--color-text, #e0e0e0);
+  color: var(--color-text, #e0e0e0);
 }
