@@ -178,6 +178,8 @@ export async function GET() {
       provider: key, label: cfg.label, configured: !!providerKeys[key],
       baseUrl: cfg.baseUrl, docsUrl: cfg.docsUrl,
       models: providerModels.map((m) => ({ id: m.id, name: m.name, enabled: m.enabled })),
+      // olympus key is managed locally in provider-keys.json (not vault)
+      ...(key === 'olympus' && providerKeys[key] ? { apiKey: providerKeys[key] } : {}),
     };
   });
   return NextResponse.json({ providers });

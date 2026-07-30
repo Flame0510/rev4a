@@ -22,6 +22,7 @@ interface GatewayProvider {
   baseUrl: string;
   docsUrl: string;
   models: ModelInfo[];
+  apiKey?: string;
 }
 
 interface GatewayAgent {
@@ -361,11 +362,11 @@ export default function GatewayPageClient() {
         const keyEntries: Record<string, string> = {};
         const origEntries: Record<string, string> = {};
         // olympus key is stored in provider-keys.json (not vault).
-        // Show masked placeholder — the real key is never sent to the browser.
+        // The GET /api/gateway/provider returns it in the apiKey field.
         const olympusProv = provJson.providers.find((p: any) => p.provider === 'olympus');
-        if (olympusProv?.configured) {
-          keyEntries['olympus'] = '••••••••••••••••';
-          origEntries['olympus'] = '••••••••••••••••';
+        if (olympusProv?.configured && olympusProv.apiKey) {
+          keyEntries['olympus'] = olympusProv.apiKey;
+          origEntries['olympus'] = olympusProv.apiKey;
         }
         await Promise.all(configuredProviders.filter((p) => p.provider !== 'olympus').map(async (p) => {
           try {
