@@ -18,11 +18,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGuard>
-      <UpdateBanner />
       <div className="app-shell">
         <Sidebar />
         <main className="app-shell__content">{children}</main>
         <FloatingActions />
+        <UpdateBanner />
       </div>
     </AuthGuard>
   );
