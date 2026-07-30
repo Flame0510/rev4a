@@ -84,12 +84,6 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Browse the full tool catalog', 'See tool name, source package, and description', 'View audio/voice configuration settings', 'Check which MCP servers are connected'],
     hints: 'Each tool has a source (built-in, plugin, or MCP server). If a tool is missing, check the relevant plugin or MCP connection.',
   },
-  '/plugins-skills': {
-    title: 'Plugins & Skills',
-    description: 'Combined view of OpenClaw plugins and skills installed in the workspace. Shows both categories in one interface.',
-    actions: ['Browse installed plugins and skills together', 'See which plugins extend agent capabilities', 'View available skills that agents can use'],
-    hints: 'Plugins add new tools to agents, while skills are reusable prompt/tool bundles that agents can invoke.',
-  },
   '/plugins': {
     title: 'Plugins',
     description: 'Installed OpenClaw plugins that extend agent capabilities with new tools and integrations.',
@@ -118,7 +112,6 @@ Navigation links inside Olympus:
 - Memory / Context → /memory
 - Workspace → /workspace
 - Tools → /tools
-- Plugins & Skills → /plugins-skills
 - Plugins → /plugins
 - Skills → /skills
 `.trim();
