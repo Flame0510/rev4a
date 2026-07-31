@@ -14,10 +14,13 @@
  *   4. Ensures agent base image is built (builds if missing)
  *   5. Starts Next.js + daemon + terminal WS as a single process group
  *
+ * olympus serve auto-restarts when olympus update triggers exit code 42.
+ * No systemd required.
+ *
  * Graceful shutdown on Ctrl+C / SIGTERM stops all children cleanly.
  */
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, spawnSync } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
 const { join, dirname } = require('path');
 const crypto = require('crypto');
@@ -175,162 +178,167 @@ function ensureAgentImage() {
         stdio: 'inherit',
         timeout: 600_000, // 10 min timeout
       });
-      log('IMAGE', `Agent base image ${AGENT_IMAGE} built successfully`);
+      log('IMAGE', `Agent base image built successfully`);
     } catch {
-      log('IMAGE', '⚠ Agent base image build failed. Check the logs above.');
-      log('IMAGE', '  You can rebuild later via the Olympus UI or:');
-      log('IMAGE', `  docker build -t ${AGENT_IMAGE} -f "${DOCKERFILE}" "${join(DOCKERFILE, '..')}"`);
+      log('IMAGE', '⚠ Agent base image build failed. Agent creation will be unavailable.');
+      log('IMAGE', '  Pull the image manually: docker pull ' + AGENT_IMAGE_REGISTRY);
     }
   }
 }
 
-// ── .env loading ───────────────────────────────────────────────────────────
+// ── Docker network ──────────────────────────────────────────────────────────
 
-/** Load OLYMPUS_* vars from the persistent .env file into an object. */
-function loadEnv() {
-  const vars = {};
-  // Try persistent source first (data/.env), fallback to root .env
-  const envPath = existsSync(ENV_SOURCE) ? ENV_SOURCE : (existsSync(ENV_LINK) ? ENV_LINK : null);
-  if (!envPath) return vars;
+function ensureNetwork() {
+  if (!hasCmd('docker')) return;
   try {
-    const content = readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const m = line.match(/^(OLYMPUS_\w+)=(.*)$/);
-      if (m) vars[m[1]] = m[2].trim();
+    execSync(`docker network inspect ${DOCKER_NETWORK} > /dev/null 2>&1`);
+    log('NETWORK', `Docker network ${DOCKER_NETWORK} exists`);
+  } catch {
+    log('NETWORK', `Creating Docker network ${DOCKER_NETWORK}…`);
+    try {
+      execSync(`docker network create ${DOCKER_NETWORK}`);
+      log('NETWORK', `Network ${DOCKER_NETWORK} created`);
+    } catch (err) {
+      log('NETWORK', `⚠ Failed to create network: ${err.message}`);
     }
-  } catch { /* ignore */ }
-  return vars;
+  }
 }
 
-// ── .env auto-generation ────────────────────────────────────────────────────
+// ── .env setup ──────────────────────────────────────────────────────────────
+
+function loadEnv() {
+  const envFile = existsSync(ENV_SOURCE) ? ENV_SOURCE : null;
+  if (!envFile) return {};
+
+  const result = {};
+  try {
+    const content = readFileSync(envFile, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      const key = trimmed.slice(0, eqIdx).trim();
+      let val = trimmed.slice(eqIdx + 1).trim();
+
+      // Strip surrounding quotes (single or double)
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+
+      if (key) result[key] = val;
+    }
+  } catch (err) {
+    log('ENV', `Warning: failed to read ${envFile} — ${err.message}`);
+  }
+  return result;
+}
 
 function ensureEnv() {
-  // If root .env exists (dev mode / local), just ensure data/.env also exists
-  if (existsSync(ENV_LINK) && !existsSync(ENV_SOURCE)) {
-    try { require('fs').copyFileSync(ENV_LINK, ENV_SOURCE); } catch {}
-  }
-
-  // If persistent .env already exists, copy it to root for Next.js
   if (existsSync(ENV_SOURCE)) {
+    log('ENV', 'Configuration found');
+    // Ensure symlink so the app can find .env at the root
     if (!existsSync(ENV_LINK)) {
-      try { require('fs').copyFileSync(ENV_SOURCE, ENV_LINK); } catch {}
+      try { require('fs').symlinkSync(ENV_SOURCE, ENV_LINK); } catch {}
     }
+    // Seed agent token file if missing
+    seedAgentToken();
     return;
   }
 
-  // No .env at all — generate fresh
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  log('ENV', 'Generating default configuration…');
 
-  const jwtSecret = randomString(48);
+  mkdirSync(CONFIG_DIR, { recursive: true });
+
+  const jwt = randomString(48);
   const token = randomString(32);
-  const apiKey = randomString(32);
-  const gatewayToken = randomString(32);
+  const apiKey = 'oly_' + randomString(48);
+  const gatewayToken = randomString(48);
 
-  // Write to persistent location first, then copy to root
-  const content = [
+  const env = [
     '# Olympus environment — auto-generated on first run',
     `# Generated: ${new Date().toISOString()}`,
-    '#',
+    '',
     '# Dashboard login password (set via setup wizard on first visit)',
     'OLYMPUS_PASSWORD=',
     '',
-    '# Internal auth token (API access + Control UI bootstrap)',
+    '# JWT secret for session tokens (auto-generated)',
+    `OLYMPUS_JWT_SECRET=${jwt}`,
+    '',
+    '# API token for Olympus → agents communication (auto-generated)',
     `OLYMPUS_TOKEN=${token}`,
     '',
-    '# External provider API key (Gateway master key for agent auth)',
+    '# API key for Gateway provider endpoint (auto-generated)',
     `OLYMPUS_API_KEY=${apiKey}`,
     '',
-    '# JWT signing secret (session cookies)',
-    `OLYMPUS_JWT_SECRET=${jwtSecret}`,
-    '',
-    '# Path to the events database',
-    `# OLYMPUS_DB=${join(ROOT, 'data', 'events.db')}`,
-    '',
-    '# Provider API keys (add via the Gateway UI)',
-    '# PROVIDER_OPENAI_KEY=',
-    '# PROVIDER_ANTHROPIC_KEY=',
-    '# PROVIDER_DEEPSEEK_KEY=',
-    '# PROVIDER_OPENROUTER_KEY=',
-    '# PROVIDER_GROQ_KEY=',
-    '# PROVIDER_CODEX_KEY=',
+    '# Gateway token shared with agent containers (auto-generated)',
+    `GATEWAY_TOKEN=${gatewayToken}`,
     '',
   ].join('\n') + '\n';
 
-  writeFileSync(ENV_SOURCE, content, { mode: 0o600 });
-  require('fs').copyFileSync(ENV_SOURCE, ENV_LINK);
+  writeFileSync(ENV_SOURCE, env, { mode: 0o600 });
+  log('ENV', `Written ${ENV_SOURCE}`);
 
-  // Generate gateway token for agent containers (separate from OLYMPUS_TOKEN)
+  // Symlink in package root so Next.js server finds it
+  try { require('fs').symlinkSync(ENV_SOURCE, ENV_LINK); } catch {}
+
+  seedAgentToken();
+}
+
+function seedAgentToken() {
   const agentsTokenPath = join(DATA_DIR, 'agents-token.json');
-  if (!existsSync(agentsTokenPath)) {
-    const agentsToken = { token: gatewayToken, updated_at: Date.now() };
-    writeFileSync(agentsTokenPath, JSON.stringify(agentsToken, null, 2), { mode: 0o600 });
-    log('ENV', 'agents-token.json generated (separate from OLYMPUS_TOKEN)');
-  }
+  mkdirSync(DATA_DIR, { recursive: true });
+  if (existsSync(agentsTokenPath)) return;
 
-  // Seed default files from the package to the config dir (first install only)
-  const seedFiles = [
-    ['models.config.json', join(ROOT, 'models.config.json')],
-    ['provider-keys.json', join(DATA_DIR, 'provider-keys.json')],
-  ];
-  for (const [destName, srcPath] of seedFiles) {
-    const destPath = join(DATA_DIR, destName);
-    if (!existsSync(destPath) && existsSync(srcPath)) {
-      try { require('fs').copyFileSync(srcPath, destPath, require('fs').constants.COPYFILE_EXCL); } catch {}
-    }
-  }
-
-  // Write olympus API key to provider-keys.json so Gateway sees it
-  const providerKeysPath = join(DATA_DIR, 'provider-keys.json');
-  let providerKeys = {};
-  try {
-    providerKeys = JSON.parse(readFileSync(providerKeysPath, 'utf-8'));
-  } catch {}
-  providerKeys['olympus'] = apiKey;
-  writeFileSync(providerKeysPath, JSON.stringify(providerKeys, null, 2), { mode: 0o600 });
-
-  log('ENV', '.env auto-generated with JWT secret and API token');
-  log('ENV', 'Set your admin password via the web setup wizard on first visit.');
+  const envVars = loadEnv();
+  const gatewayToken = envVars.GATEWAY_TOKEN || randomString(48);
+  const agentsToken = { token: gatewayToken, updated_at: Date.now() };
+  writeFileSync(agentsTokenPath, JSON.stringify(agentsToken, null, 2), { mode: 0o600 });
+  log('ENV', 'Agent token file seeded');
 }
 
 // ── Build ───────────────────────────────────────────────────────────────────
 
 function build() {
-  log('BUILD', 'Building Olympus…');
-  execSync('npx next build', { cwd: ROOT, stdio: 'inherit' });
-  log('BUILD', 'Build complete.');
-}
-
-// ── Docker network ─────────────────────────────────────────────────────────
-
-function ensureNetwork() {
-  if (!hasCmd('docker')) return;
-
+  log('BUILD', 'Building Next.js app…');
   try {
-    const exists = execSync(
-      `docker network ls --format '{{.Name}}'`,
-      { stdio: 'pipe', timeout: 5_000 },
-    ).toString().split('\n').includes(DOCKER_NETWORK);
-
-    if (exists) {
-      log('NETWORK', `Docker network '${DOCKER_NETWORK}' exists`);
-      return;
-    }
-  } catch { /* fall through to create */ }
-
-  log('NETWORK', `Creating Docker network '${DOCKER_NETWORK}'…`);
-
-  try {
-    execSync(`docker network create ${DOCKER_NETWORK}`, {
-      stdio: 'inherit',
-      timeout: 15_000,
-    });
-    log('NETWORK', `Docker network '${DOCKER_NETWORK}' created`);
-  } catch {
-    log('NETWORK', `⚠ Failed to create Docker network '${DOCKER_NETWORK}'`);
+    execSync('npx next build', { stdio: 'inherit', cwd: ROOT, timeout: 120_000 });
+    log('BUILD', 'Build complete');
+  } catch (err) {
+    log('BUILD', `Build failed: ${err.message}`);
+    process.exit(1);
   }
 }
 
-// ── Pre-flight checks ──────────────────────────────────────────────────────
+// ── Version check ───────────────────────────────────────────────────────────
+
+function checkVersion() {
+  const pkgName = '@flame0510/olympus';
+  try {
+    const latest = execSync(
+      `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
+      { stdio: 'pipe', timeout: 8000 },
+    ).toString().trim();
+    if (!latest || latest === pkg.version) return;
+
+    console.log('');
+    console.log('  ╔══════════════════════════════════════════╗');
+    console.log('  ║  🆕 Olympus update available!            ║');
+    console.log('  ║  Latest: ' + `v${latest}`.padEnd(31) + ' ║');
+    console.log('  ║  Installed: ' + `v${pkg.version}`.padEnd(28) + ' ║');
+    console.log('  ║                                           ║');
+    console.log('  ║  Run: npm install -g @flame0510/olympus   ║');
+    console.log('  ║  Then: restart olympus                    ║');
+    console.log('  ╚══════════════════════════════════════════╝');
+    console.log('');
+  } catch {
+    // No internet or npm not configured — skip silently
+  }
+}
+
+// ── Preflight ───────────────────────────────────────────────────────────────
 
 function preflight() {
   log('PREFLIGHT', 'Running pre-flight checks…');
@@ -347,38 +355,7 @@ function preflight() {
 
 // ── Serve (start all 3 processes) ───────────────────────────────────────────
 
-// ── Version check ──────────────────────────────────────────────────────────
-
-function checkVersion() {
-  try {
-    const current = pkg.version || '0.0.0';
-    const latest = execSync(
-      'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
-      { stdio: 'pipe', timeout: 10_000 },
-    ).toString().trim();
-
-    if (latest && latest !== current) {
-      console.log('');
-      console.log('  ╔═══════════════════════════════════════════════╗');
-      console.log('  ║  🆕 Olympus update available!                 ║');
-      console.log(`  ║  Installed: v${current.padEnd(33)}║`);
-      console.log(`  ║  Latest:    v${latest.padEnd(33)}║`);
-      console.log('  ║                                               ║');
-      console.log('  ║  Run: npm install -g @flame0510/olympus          ║');
-      console.log('  ║  Then: restart olympus                          ║');
-      console.log('  ╚═══════════════════════════════════════════════╝');
-      console.log('');
-    }
-  } catch {
-    // No internet or npm not configured — skip silently
-  }
-}
-
-// ── Serve (start all 3 processes) ───────────────────────────────────────────
-
 function serve(port) {
-  // Auto-restart loop: when UPDATE signal triggers exit with code 42,
-  // we restart ourselves. This makes bare node installs self-healing.
   preflight();
   // Version check is non-blocking — runs after startup
   setTimeout(checkVersion, 2000);
@@ -426,7 +403,6 @@ function serve(port) {
   children.push(ws);
   log('SERVE', `Terminal WS PID ${ws.pid}`);
 
-  // Graceful shutdown — kill all children on SIGTERM/SIGINT
   let shutdownSignal = null;
   let shuttingDown = false;
   const cleanup = (signal) => {
@@ -449,7 +425,7 @@ function serve(port) {
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
 
-  // Watch for restart flag (written by olympus restart command)
+  // Watch for restart flag (written by olympus update command)
   const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
   const restartWatcher = setInterval(() => {
     if (existsSync(RESTART_FLAG)) {
@@ -468,6 +444,7 @@ function serve(port) {
       if (exited >= children.length) process.exit(shutdownSignal === 'UPDATE' ? 42 : 0);
     });
   }
+
   // Print URL after a short delay (give Next.js time to bind)
   setTimeout(() => {
     console.log('');
@@ -476,25 +453,28 @@ function serve(port) {
     console.log(`  ║        http://localhost:${String(port).padEnd(5)}     ║`);
     console.log('  ╚══════════════════════════════════════╝');
     console.log('');
-  }, 3000);
+  }, 2000);
 }
 
-// ── CLI entrypoint ──────────────────────────────────────────────────────────
+// ── CLI entry point ─────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 const cmd = args[0];
 
 const BANNER = `
-  ╔══════════════════════════════════════╗
-  ║           O L Y M P U S              ║
-  ║     Agency Monitor Dashboard         ║
-  ╚══════════════════════════════════════╝
-  v${pkg.version}
+                                ██
+   ███████╗  ██╗      █████╗   ██╗
+  ██╔═══██╗ ██║     ██╔══██╗  ██║
+  ██║   ██║ ██║     ████████║  ██║
+  ██║   ██║ ██║     ██╔════╝  ██║
+  ███████╔╝ ██████╗ ██║       ██║
+  ╚══════╝  ╚═════╝ ╚═╝       ╚═╝
+                               
 `;
 
 const HELP_TEXT = `
 USAGE:
-  olympus serve [--port <port>]   Start all services (default)
+  olympus serve [--port <port>]   Start the dashboard + daemon + terminal WS
   olympus build                   Build the Next.js app
   olympus update                  Check for updates and install latest
   olympus restart                 Signal a running olympus to restart
@@ -528,17 +508,17 @@ if (cmd === 'serve') {
   console.log(BANNER);
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
-  // Auto-restart loop: when olympus restart triggers exit code 42,
+  // Auto-restart loop: when olympus update triggers exit code 42,
   // re-exec olympus serve so the new binary is loaded. Works with
   // or without systemd (systemd Restart=always also handles it).
   let exitCode = 42;
   while (exitCode === 42) {
-    const { status, signal } = require('child_process').spawnSync(
+    const result = spawnSync(
       process.execPath,
       [process.argv[1] || join(__dirname, 'olympus.js'), '_run', String(port)],
       { stdio: 'inherit', env: process.env }
     );
-    exitCode = signal ? 0 : (status ?? 0);
+    exitCode = result.signal ? 0 : (result.status ?? 0);
     if (exitCode === 42) {
       console.log('[OLYMPUS] Restarting with updated binary…');
     }
@@ -604,7 +584,12 @@ if (cmd === 'update') {
         timeout: 120_000,
       });
     }
-    console.log('Update complete. Run olympus serve to start.');
+    console.log('Update complete. Triggering restart…');
+    try {
+      writeFileSync(join(DATA_DIR, '.restart-flag'), '');
+    } catch {
+      // If olympus serve is not running, the flag is harmless
+    }
   } catch (err) {
     console.error('Update failed:', err.message);
     process.exit(1);

@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
-import { spawn } from 'child_process';
 import { execSync } from 'child_process';
-import { join } from 'path';
-import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 interface PackageInfo {
   version: string;
@@ -85,27 +82,20 @@ async function verifyAuth(request: Request): Promise<boolean> {
 /**
  * POST /api/update-check
  *
- * Spawns olympus update in background (non-blocking). The update writes
- * its output to ~/.config/olympus/data/update.log, then olympus restart
- * signals olympus serve to exit so systemd/Docker/pm2 restarts it.
+ * Spawns olympus update as a detached background process.
+ * olympus update installs the latest version and writes .restart-flag,
+ * which olympus serve detects and exits with code 42, then auto-restarts
+ * with the newly installed binary. No systemd required.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await verifyAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dataDir = process.env.OLYMPUS_DATA_DIR || join(process.env.HOME || '/root', '.config', 'olympus', 'data');
-  if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-  const logPath = join(dataDir, 'update.log');
-  appendFileSync(logPath, `=== Update started at ${new Date().toISOString()} ===\n`);
-
-  // Spawn olympus update in background, then restart when done
-  const out = require('fs').openSync(logPath, 'a');
-  const child = spawn('/bin/bash', [
-    '-c',
-    'npm install -g @flame0510/olympus@latest && sleep 2 && olympus restart'
-  ], {
-    stdio: ['ignore', out, out],
+  // Spawn olympus update in background — it handles install + restart flag
+  const { spawn } = require('child_process');
+  const child = spawn('olympus', ['update'], {
+    stdio: 'ignore',
     detached: true,
   });
   child.unref();
