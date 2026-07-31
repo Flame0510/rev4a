@@ -47,8 +47,11 @@ function getDefaultUpdateCommand(): string {
   if (isGitRepo) {
     return `cd ${root} && git pull && npm install && npm run build`;
   }
-  // npm global install path
-  return `npm install -g ${pkgName}@latest`;
+  // npm global install path — install, then trigger restart
+  // The olympus process watches .restart-flag and does cleanup()+exit.
+  // For bare node processes we include a restart wrapper in the command.
+  const dataDir = process.env.OLYMPUS_DATA_DIR || join(root, 'data');
+  return `npm install -g ${pkgName}@latest && touch ${join(dataDir, '.restart-flag')} && sleep 2 && olympus serve`;
 }
 
 /**
