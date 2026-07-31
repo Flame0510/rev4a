@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
-import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { execSync } from 'child_process';
+import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 interface PackageInfo {
@@ -35,10 +36,6 @@ function getUpdateCommand(): string | null {
   return process.env.OLYMPUS_UPDATE_COMMAND || null;
 }
 
-/**
- * Builds the default update command chain.
- * Uses env vars so it's never tied to a specific user or service name.
- */
 function getDefaultUpdateCommand(): string {
   const root = getRoot();
   const pkgName = pkg.name || '@flame0510/olympus';
@@ -47,17 +44,11 @@ function getDefaultUpdateCommand(): string {
   if (isGitRepo) {
     return `cd ${root} && git pull && npm install && npm run build`;
   }
-  // npm global install path — install, then trigger restart
-  // The olympus process watches .restart-flag and does cleanup()+exit.
-  // For bare node processes we include a restart wrapper in the command.
-  const dataDir = process.env.OLYMPUS_DATA_DIR || join(root, 'data');
-  return `npm install -g ${pkgName}@latest && touch ${join(dataDir, '.restart-flag')} && sleep 2 && olympus serve`;
+  return `npm install -g ${pkgName}@latest`;
 }
 
 /**
  * GET /api/update-check
- *
- * Returns installed version. With ?check=1 it queries npm registry (cached 15 min).
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
@@ -74,19 +65,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       updateAvailable = cache.updateAvailable;
     } else {
       try {
-        const { execSync } = await import('child_process');
         const pkgName = pkg.name || '@flame0510/olympus';
         latest = execSync(
           `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
           { stdio: 'pipe', timeout: 10_000 },
-        )
-          .toString()
-          .trim();
+        ).toString().trim();
 
         if (latest && latest !== installed) {
           updateAvailable = true;
         }
-
         cache = { latest, updateAvailable, checkedAt: now };
       } catch {
         if (cache) {
@@ -120,12 +107,10 @@ async function verifyAuth(request: Request): Promise<boolean> {
 /**
  * POST /api/update-check
  *
- * Runs the update command (configurable via OLYMPUS_UPDATE_COMMAND),
- * then signals the olympus process to restart via .restart-flag.
- *
- * Protected by JWT cookie (olympus_token).
- * The update runs in a detached background process so the response
- * is sent before the restart kills the server.
+ * Runs the update synchronously (blocking), then writes .restart-flag.
+ * The olympus serve process watches for this flag and does cleanup() + exit().
+ * With systemd Restart=always (or Docker/pm2), it restarts automatically.
+ * For bare node installs, we also attempt a direct restart via spawn.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await verifyAuth(request))) {
@@ -133,37 +118,33 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const root = getRoot();
-  const dataDir = getDataDir();
   const updateCmd = getUpdateCommand() || getDefaultUpdateCommand();
 
+  // Run the update synchronously then restart
+  const restartFlag = join(getDataDir(), '.restart-flag');
+
+  let updateOutput = '';
   try {
-    const { spawn } = await import('child_process');
-
-    // The restart flag is watched by olympus serve (bin/olympus.js).
-    // When present, the parent process does cleanup() + process.exit(0).
-    // systemd (Restart=always) or Docker/podman/pm2 then restarts the service.
-    const restartFlag = join(dataDir, '.restart-flag');
-
-    // Chain: run update command, then touch restart flag.
-    // The restart flag must be written AFTER the build completes,
-    // otherwise the server restarts before the new code is built.
-    const cmd = `${updateCmd} && touch ${restartFlag}`;
-
-    spawn('bash', ['-c', cmd], {
-      detached: true,
-      stdio: 'ignore',
+    updateOutput = execSync(updateCmd, {
+      stdio: 'pipe',
+      timeout: 120_000,
       cwd: root,
-    }).unref();
-
-    return NextResponse.json({
-      success: true,
-      oldVersion: pkg.version,
-      message: 'Update started. The dashboard will restart in a few seconds.',
+      encoding: 'utf-8',
     });
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: err.stderr?.toString() || err.message || 'Unknown error' },
+      { success: false, error: err.stderr?.toString() || err.message || 'Update command failed' },
       { status: 500 },
     );
   }
+
+  // Signal restart via flag — olympus serve watches for this
+  try { writeFileSync(restartFlag, ''); } catch {}
+
+  return NextResponse.json({
+    success: true,
+    oldVersion: pkg.version,
+    message: 'Update complete. The dashboard will restart.',
+    output: updateOutput.trim().split('\n').slice(-3).join('\n'),
+  });
 }

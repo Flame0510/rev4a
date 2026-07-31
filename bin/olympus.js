@@ -493,6 +493,8 @@ const HELP_TEXT = `
 USAGE:
   olympus serve [--port <port>]   Start all services (default)
   olympus build                   Build the Next.js app
+  olympus update                  Check for updates and install latest
+  olympus restart                 Signal a running olympus to restart
   olympus --help / --version      Show help or version
 
 EXAMPLES:
@@ -540,6 +542,48 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
 if (cmd === 'build') {
   ensureEnv();
   build();
+  process.exit(0);
+}
+
+if (cmd === 'restart') {
+  const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
+  writeFileSync(RESTART_FLAG, '');
+  console.log('Restart signal sent. The running olympus serve process will restart.');
+  process.exit(0);
+}
+
+if (cmd === 'update') {
+  console.log(`Checking for updates…`);
+  try {
+    const latest = execSync(
+      'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
+      { stdio: 'pipe', timeout: 10_000 },
+    ).toString().trim();
+    if (latest === pkg.version) {
+      console.log(`Already up to date (v${pkg.version}).`);
+      process.exit(0);
+    }
+    console.log(`Updating from v${pkg.version} to v${latest}…`);
+    const root = process.env.OLYMPUS_ROOT || ROOT;
+    const isGitRepo = existsSync(join(root, '.git'));
+    if (isGitRepo) {
+      console.log('Detected git repo — pulling and building…');
+      execSync(`cd ${root} && git pull && npm install && npm run build`, {
+        stdio: 'inherit',
+        timeout: 120_000,
+      });
+    } else {
+      console.log('Using npm global install…');
+      execSync('npm install -g @flame0510/olympus@latest', {
+        stdio: 'inherit',
+        timeout: 120_000,
+      });
+    }
+    console.log('Update complete. Run olympus serve to start.');
+  } catch (err) {
+    console.error('Update failed:', err.message);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
