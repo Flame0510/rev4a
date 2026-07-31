@@ -92,12 +92,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Spawn olympus update in background — it handles install + restart flag
+  // Spawn olympus update in background, then write restart flag directly
+  // from this process so olympus serve detects it and restarts.
   const { spawn } = require('child_process');
+  const { join } = require('path');
+  const { writeFileSync } = require('fs');
+
+  const dataDir = process.env.OLYMPUS_DATA_DIR ||
+    join(process.env.HOME || '/root', '.config', 'olympus', 'data');
+
   const child = spawn('olympus', ['update'], {
     stdio: 'ignore',
     detached: true,
   });
+
+  // When olympus update finishes, write the restart flag so olympus serve
+  // picks it up and exits with code 42, triggering the auto-restart loop.
+  child.on('exit', () => {
+    try { writeFileSync(join(dataDir, '.restart-flag'), ''); } catch {}
+  });
+
   child.unref();
 
   return NextResponse.json({
