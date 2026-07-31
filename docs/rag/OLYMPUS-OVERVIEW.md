@@ -48,7 +48,7 @@ The build writes logs to `/tmp/olympus-build-<timestamp>.log` so they survive
 page refreshes and modal closes.
 
 ### Create Agent (`/agents/create`)
-Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional host port. The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.
+Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional port range (default: auto-assigned 10-port block, e.g. 3700-3709). The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.
 
 ### Lineage (`/lineage?period=7d`)
 Interactive graph showing session family trees — which agent spawned which child agent, across configurable time periods (1d, 7d, 30d). Click any node to inspect. Includes a live feed side panel.

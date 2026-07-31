@@ -125,19 +125,21 @@ copies the entrypoint script, and applies baseline gateway config patches.
 
 **Volume mounts (per agent):**
 ```
-/docker/shared-skills  → /data/.openclaw/shared-skills  (ro)
-/docker/shared-repos   → /data/repos                      (rw)
-/docker/agent-{id}-data → /root                           (rw, per-agent persistent state)
+/docker/shared-skills         → /data/.openclaw/shared-skills  (ro)
+/docker/shared-repos          → /data/repos                      (rw)
+agent-{name}-data (named vol) → /root                            (rw, per-agent persistent state)
 ```
 
-**Injected environment variables (from Olympus vault):**
+**Injected environment variables:**
 ```
-OPENAI_API_KEY=*** vault>
-ANTHROPIC_API_KEY=*** vault>
-GITHUB_TOKEN=*** vault>
-OLYMPUS_GATEWAY_URL=http://olympus-control:3721
-OLYMPUS_GATEWAY_TOKEN=*** internal>
+AGENT_NAME=<agent-name>
+AGENT_TEMPLATE=<template>
+OPENCLAW_GATEWAY_TOKEN=<shared agent token>
+AGENT_HOSTNAME=<host-ip>:<portStart>
+TZ=Europe/Rome
 ```
+
+> **Note:** Provider API keys are never injected into agent containers. Agents use the Olympus provider gateway at `http://host.docker.internal:3740/api/provider/v1` (resolved via `detectProviderGatewayUrl()`).
 
 ### 3.3 AI Provider Gateway (implemented)
 

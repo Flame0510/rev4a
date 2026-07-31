@@ -33,7 +33,7 @@ function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
 
 
 /**
- * Find an available host port starting from 3000.
+ * Find an available host port block starting from 3700.
  */
 const OLYMPUS_PORT = 3740;
 const DEFAULT_BLOCK_SIZE = 10;

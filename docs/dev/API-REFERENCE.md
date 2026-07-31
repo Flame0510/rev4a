@@ -567,7 +567,7 @@ Create a new agent container from a template.
 {
   "name": "my-agent",
   "template": "prometheus",
-  "port": 3033,
+  "portRange": "3700-3709",
   "model": "deepseek/deepseek-v4-flash",
   "fallbacks": []
 }
@@ -577,13 +577,15 @@ Create a new agent container from a template.
 |---|---|---|
 | `name` | yes | Container name, also becomes `AGENT_ID` and subdomain |
 | `template` | yes | Template name (directory in `agent-templates/`) |
-| `port` | no | Optional host port (auto-assigned if empty) |
+| `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block |
 | `model` | no | Primary model ID from `models.config.json` |
 | `fallbacks` | no | Array of fallback model IDs |
 
 **Every agent is created with a host port mapping:**
-- `-p <port>:3000` — the container's port 3000 is mapped to an auto-assigned (or user-specified) host port
-- URL format: `http://<host-ip>:<port>#token=...`
+- Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
+- Single port: `-p <port>:3000` — maps a single host port to container port 3000
+- URL format: `http://<host-ip>:<portStart>#token=...`
+- Port 3740 is reserved for Olympus
 
 **Response:**
 ```json
@@ -592,8 +594,12 @@ Create a new agent container from a template.
   "containerId": "00f5de1eb08d...",
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
-  "network": "openclaw-core_default",
-  "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
+  "network": "olympus-network",
+  "traefikUrl": "http://203.0.113.10:3700#token=asdfghjkl",
+  "port": 3700,
+  "portEnd": 3709,
+  "isBlock": true,
+  "portDisplay": "3700-3709"
 }
 ```
 
@@ -601,7 +607,7 @@ Create a new agent container from a template.
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
 2. The route waits for the gateway to be fully up (health check poll, up to 60 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
-4. Calls `syncAgent(name)` to write `models.providers.olympus` into the container
+4. Writes `models.providers.olympus` + extraDirs + update config → single `openclaw.json` write → single `gateway restart`
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
