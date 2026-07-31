@@ -8,41 +8,28 @@ interface VersionInfo {
   updateAvailable: boolean;
 }
 
-const MOCK = false;
 const DISMISS_KEY = 'olympus-update-dismissed';
 
 export default function VersionBanner() {
-  const [info, setInfo] = useState<VersionInfo | null>(
-    MOCK ? { installed: '0.7.30', latest: '0.8.0', updateAvailable: true } : null,
-  );
+  const [info, setInfo] = useState<VersionInfo | null>(null);
   const [dismissed, setDismissed] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateOk, setUpdateOk] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if this version was previously dismissed
-    const saved = localStorage.getItem(DISMISS_KEY);
-    if (saved && info && saved === info.latest) {
-      setDismissed(true);
-    } else {
-      setDismissed(false);
-    }
-
-    if (MOCK) return;
     fetch('/api/update-check?check=1')
       .then((r) => r.json())
       .then((d: VersionInfo) => {
         if (d.updateAvailable) {
           setInfo(d);
-          // Check dismiss persistence
           const saved = localStorage.getItem(DISMISS_KEY);
           if (saved === d.latest) setDismissed(true);
           else setDismissed(false);
         }
       })
       .catch(() => {});
-  }, [info]);
+  }, []);
 
   function handleDismiss() {
     if (info?.latest) {
