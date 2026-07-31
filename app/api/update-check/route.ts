@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
 import { execSync } from 'child_process';
-import { existsSync, writeFileSync } from 'fs';
-import { join } from 'path';
 
 interface PackageInfo {
   version: string;
@@ -23,18 +21,6 @@ interface CachedResult {
 
 let cache: CachedResult | null = null;
 const CACHE_TTL_MS = 15 * 60 * 1000;
-
-function getRoot(): string {
-  return process.env.OLYMPUS_ROOT || process.cwd();
-}
-
-function getDataDir(): string {
-  return process.env.OLYMPUS_DATA_DIR || join(getRoot(), 'data');
-}
-
-function getUpdateCommand(): string {
-  return process.env.OLYMPUS_UPDATE_COMMAND || 'olympus update';
-}
 
 /**
  * GET /api/update-check
@@ -96,37 +82,36 @@ async function verifyAuth(request: Request): Promise<boolean> {
 /**
  * POST /api/update-check
  *
- * Runs the update synchronously (blocking), then writes .restart-flag.
- * The olympus serve process watches for this flag and does cleanup() + exit().
- * With systemd Restart=always (or Docker/pm2), it restarts automatically.
- * For bare node installs, we also attempt a direct restart via spawn.
+ * Calls olympus update (handles git pull+build or npm install -g automatically),
+ * then olympus restart to restart the running serve process.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await verifyAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const root = getRoot();
-  const restartFlag = join(getDataDir(), '.restart-flag');
-
-  // 1. Update (git pull + build or npm install -g)
-  const updateCmd = getUpdateCommand() || getDefaultUpdateCommand();
+  // 1. olympus update — handles git pull+build or npm install -g
   try {
-    execSync(updateCmd, { stdio: 'pipe', timeout: 120_000, cwd: root, encoding: 'utf-8' });
+    execSync('olympus update', { stdio: 'pipe', timeout: 120_000 });
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: err.stderr?.toString() || err.message || 'Update command failed' },
+      { success: false, error: err.stderr?.toString() || err.message || 'Update failed' },
       { status: 500 },
     );
   }
 
-  // 2. Restart via flag — olympus serve picks it up and exits,
-  //    then systemd/Docker/pm2 restarts it.
-  try { writeFileSync(restartFlag, ''); } catch {}
+  // 2. olympus restart — writes .restart-flag, olympus serve picks it up
+  try {
+    execSync('olympus restart', { stdio: 'pipe', timeout: 10_000 });
+  } catch (err: any) {
+    return NextResponse.json(
+      { success: false, error: err.stderr?.toString() || err.message || 'Restart failed' },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     success: true,
-    oldVersion: pkg.version,
     message: 'Update complete. The dashboard will restart.',
   });
 }
