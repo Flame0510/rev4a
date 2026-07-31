@@ -1,8 +1,8 @@
 /**
  * Gateway Status API
  *
- * Aggregates live model/provider state from Docker containers.
- * Returns structured data for the Gateway UI.
+ * Aggregates live model/provider state from Olympus agent containers.
+ * Only queries containers with AGENT_ID label — no hardcoded container names.
  *
  * GET /api/gateway
  */
@@ -43,7 +43,7 @@ interface ApiKeyStatus {
   configured: boolean;
 }
 
-/** Run a command inside the Docker container */
+/** Run a command inside a Docker container */
 function dockerExec(container: string, cmd: string, timeout = 15000): string {
   try {
     return execSync(
@@ -55,7 +55,7 @@ function dockerExec(container: string, cmd: string, timeout = 15000): string {
   }
 }
 
-/** Get Docker containers with AGENT_ID label */
+/** Get Docker containers with AGENT_ID label — only Olympus-managed agents */
 function getAgents(): { agentId: string; containerName: string; state: string }[] {
   try {
     const raw = execSync(
@@ -72,9 +72,9 @@ function getAgents(): { agentId: string; containerName: string; state: string }[
   }
 }
 
-/** Parse agent models status */
-function getAgentStatus(container: string): GatewayAgentStatus | null {
-  const raw = dockerExec(container, 'openclaw models status --json', 20000);
+/** Query an agent container for model status */
+function getAgentStatus(agent: { agentId: string; containerName: string; state: string }): GatewayAgentStatus | null {
+  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 20000);
   if (!raw) return null;
   try {
     const data = JSON.parse(raw);
@@ -94,9 +94,9 @@ function getAgentStatus(container: string): GatewayAgentStatus | null {
     }
 
     return {
-      agentId: container,
-      containerName: container,
-      state: 'running',
+      agentId: agent.agentId,
+      containerName: agent.containerName,
+      state: agent.state,
       defaultModel: String(data.defaultModel ?? ''),
       fallbacks: (data.fallbacks ?? []).map(String),
       allowed: (data.allowed ?? []).map(String),
@@ -108,9 +108,9 @@ function getAgentStatus(container: string): GatewayAgentStatus | null {
   }
 }
 
-/** Get all available models from core */
-function getCoreModels(): GatewayModel[] {
-  const raw = dockerExec('openclaw-core', 'openclaw models list --json', 20000);
+/** Get available models from an agent */
+function getAgentModels(container: string): GatewayModel[] {
+  const raw = dockerExec(container, 'openclaw models list --json', 20000);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -128,41 +128,27 @@ function getCoreModels(): GatewayModel[] {
   }
 }
 
-/** Check API keys configured in models.json */
-function getApiKeyStatus(): ApiKeyStatus[] {
-  const raw = dockerExec('openclaw-core', 'cat /data/.openclaw/agents/main/agent/models.json 2>/dev/null || echo "{}"', 5000);
-  try {
-    const models = JSON.parse(raw);
-    const providers = models.providers ?? {};
-    return Object.entries(providers).map(([provider, config]) => {
-      const cfg = config as Record<string, unknown>;
-      return {
-        provider,
-        configured: !!cfg.apiKey && String(cfg.apiKey).length > 0,
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
 export async function GET(): Promise<NextResponse> {
   try {
     const timestamp = Date.now();
 
-    // Core models (all available)
-    const coreModels = getCoreModels();
+    // Only Olympus-managed agents (AGENT_ID label)
+    const agentsRaw = getAgents();
+    const agents = agentsRaw
+      .map((a) => getAgentStatus(a))
+      .filter(Boolean) as GatewayAgentStatus[];
 
-    // Agents with labels
-    const agents = getAgents().map((a) => getAgentStatus(a.containerName)).filter(Boolean) as GatewayAgentStatus[];
+    // Aggregate models from all agents (deduplicated by key)
+    const modelMap = new Map<string, GatewayModel>();
+    for (const agent of agents) {
+      for (const m of getAgentModels(agent.containerName)) {
+        if (!modelMap.has(m.key)) modelMap.set(m.key, m);
+      }
+    }
+    const allModels = Array.from(modelMap.values());
+    const availableModels = allModels.filter((m) => m.available);
 
-    // Core provider status
-    const coreStatus = getAgentStatus('openclaw-core');
-
-    // API keys configured
-    const apiKeys = getApiKeyStatus();
-
-    // Build logical aliases from all agents' aliases
+    // Aggregate aliases from all agents
     const combinedAliases: Record<string, string[]> = {};
     for (const agent of agents) {
       for (const [alias, model] of Object.entries(agent.aliases)) {
@@ -172,50 +158,56 @@ export async function GET(): Promise<NextResponse> {
         }
       }
     }
-    if (coreStatus) {
-      for (const [alias, model] of Object.entries(coreStatus.aliases)) {
-        if (!combinedAliases[alias]) combinedAliases[alias] = [];
-        if (!combinedAliases[alias].includes(model)) {
-          combinedAliases[alias].push(model);
-        }
+
+    // First agent is the "primary" for core model settings
+    const primaryAgent = agents[0] ?? null;
+
+    // API keys from the first agent's providers
+    const apiKeys: ApiKeyStatus[] = [];
+    if (primaryAgent) {
+      for (const p of primaryAgent.providers) {
+        // We can't query apiKey presence from openclaw models status (it's redacted).
+        // Mark as configured if the provider appears in the auth list.
+        apiKeys.push({
+          provider: p.provider,
+          configured: p.profiles > 0,
+        });
       }
     }
 
-    // Build agent model routes
-    const agentRoutes = agents.map((a) => ({
-      agentId: a.agentId,
-      containerName: a.containerName,
-      state: a.state,
-      defaultModel: a.defaultModel,
-      fallbacks: a.fallbacks,
-      aliases: a.aliases,
-      providers: a.providers,
-    }));
+    // Models by provider
+    const byProvider = allModels.reduce<Record<string, number>>((acc, m) => {
+      acc[m.provider] = (acc[m.provider] ?? 0) + 1;
+      return acc;
+    }, {});
 
     return NextResponse.json({
       timestamp,
       gateway: 'Olympus Model Gateway',
       status: 'online',
       models: {
-        total: coreModels.length,
-        available: coreModels.filter((m) => m.available).length,
-        byProvider: Object.entries(
-          coreModels.reduce<Record<string, number>>((acc, m) => {
-            acc[m.provider] = (acc[m.provider] ?? 0) + 1;
-            return acc;
-          }, {}),
-        ).map(([provider, count]) => ({ provider, count })),
-        list: coreModels,
+        total: allModels.length,
+        available: availableModels.length,
+        byProvider: Object.entries(byProvider).map(([provider, count]) => ({ provider, count })),
+        list: allModels,
       },
       agents: {
-        total: agentRoutes.length,
-        list: agentRoutes,
+        total: agents.length,
+        list: agents.map((a) => ({
+          agentId: a.agentId,
+          containerName: a.containerName,
+          state: a.state,
+          defaultModel: a.defaultModel,
+          fallbacks: a.fallbacks,
+          aliases: a.aliases,
+          providers: a.providers,
+        })),
       },
       aliases: combinedAliases,
-      coreModel: coreStatus
+      coreModel: primaryAgent
         ? {
-            defaultModel: coreStatus.defaultModel,
-            fallbacks: coreStatus.fallbacks,
+            defaultModel: primaryAgent.defaultModel,
+            fallbacks: primaryAgent.fallbacks,
           }
         : null,
       apiKeys: {

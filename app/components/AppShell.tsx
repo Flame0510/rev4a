@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import AuthGuard from './AuthGuard';
 import Sidebar from './Sidebar';
 import FloatingActions from './FloatingActions';
-import UpdateBanner from './UpdateBanner';
+import VersionBanner from './VersionBanner';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -19,10 +19,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <div className="app-shell">
-        <Sidebar />
-        <main className="app-shell__content">{children}</main>
+        <VersionBanner />
+        <div className="app-shell__body">
+          <Sidebar />
+          <main className="app-shell__content">
+            {children}
+          </main>
+        </div>
         <FloatingActions />
-        <UpdateBanner />
       </div>
     </AuthGuard>
   );

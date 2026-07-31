@@ -8,13 +8,19 @@ interface VersionInfo {
   updateAvailable: boolean;
 }
 
-export default function UpdateBanner() {
-  const [info, setInfo] = useState<VersionInfo | null>(null);
+const MOCK = true;
+
+function UpdateBanner() {
+  const [info, setInfo] = useState<VersionInfo | null>(
+    MOCK ? { installed: '0.7.30', latest: '0.8.0', updateAvailable: true } : null,
+  );
   const [dismissed, setDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
-  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateOk, setUpdateOk] = useState<string | null>(null);
 
   useEffect(() => {
+    if (MOCK) return;
     fetch('/api/update-check?check=1')
       .then((r) => r.json())
       .then((d: VersionInfo) => {
@@ -25,7 +31,8 @@ export default function UpdateBanner() {
 
   async function handleUpdate() {
     setUpdating(true);
-    setUpdatingStatus('Updating...');
+    setUpdateError(null);
+    setUpdateOk(null);
 
     try {
       const res = await fetch('/api/update-check', {
@@ -33,42 +40,51 @@ export default function UpdateBanner() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-
       const data = await res.json();
       if (data.success) {
-        setUpdatingStatus(`Updated to v${data.newVersion}. Restarting...`);
+        setUpdateOk(`Updated to v${data.newVersion}. Restarting…`);
         setTimeout(() => window.location.reload(), 3000);
       } else {
-        setUpdatingStatus(`Failed: ${data.error}`);
-        setTimeout(() => { setUpdating(false); setUpdatingStatus(null); }, 5000);
+        setUpdateError(data.error || 'Update failed');
+        setUpdating(false);
       }
     } catch (err: any) {
-      setUpdatingStatus(`Error: ${err.message}`);
-      setTimeout(() => { setUpdating(false); setUpdatingStatus(null); }, 5000);
+      setUpdateError(err.message || 'Network error');
+      setUpdating(false);
     }
   }
 
-  if (!info || (dismissed && !updatingStatus)) return null;
+  if (!info || dismissed) return null;
 
   return (
     <div className="update-banner">
       <div className="update-banner__inner">
         <span className="update-banner__text">
-          {updatingStatus || (
+          {updateOk ? (
+            <span className="update-banner__ok">{updateOk}</span>
+          ) : updateError ? (
+            <span className="update-banner__err">{updateError}</span>
+          ) : (
             <>
               <span className="update-banner__label">Update available</span>
               <span className="update-banner__sep">&mdash;</span>
-              v{info.latest}
+              <span className="update-banner__version">v{info.latest}</span>
               <span className="update-banner__sep">(installed: v{info.installed})</span>
             </>
           )}
         </span>
 
-        {!updating && !updatingStatus && (
+        {!updateOk && (
           <div className="update-banner__actions">
-            <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={handleUpdate}>
-              Update
-            </button>
+            {updateError ? (
+              <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={handleUpdate} disabled={updating}>
+                {updating ? 'Updating…' : 'Retry'}
+              </button>
+            ) : (
+              <button className="ui-btn ui-btn--primary ui-btn--sm" onClick={handleUpdate} disabled={updating}>
+                {updating ? 'Updating…' : 'Update now'}
+              </button>
+            )}
             <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setDismissed(true)}>
               Dismiss
             </button>
@@ -78,3 +94,6 @@ export default function UpdateBanner() {
     </div>
   );
 }
+
+export { UpdateBanner };
+export default UpdateBanner;

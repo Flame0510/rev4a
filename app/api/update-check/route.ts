@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
+import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
 interface PackageInfo {
   version: string;
@@ -20,6 +22,34 @@ interface CachedResult {
 
 let cache: CachedResult | null = null;
 const CACHE_TTL_MS = 15 * 60 * 1000;
+
+function getRoot(): string {
+  return process.env.OLYMPUS_ROOT || process.cwd();
+}
+
+function getDataDir(): string {
+  return process.env.OLYMPUS_DATA_DIR || join(getRoot(), 'data');
+}
+
+function getUpdateCommand(): string | null {
+  return process.env.OLYMPUS_UPDATE_COMMAND || null;
+}
+
+/**
+ * Builds the default update command chain.
+ * Uses env vars so it's never tied to a specific user or service name.
+ */
+function getDefaultUpdateCommand(): string {
+  const root = getRoot();
+  const pkgName = pkg.name || '@flame0510/olympus';
+  const isGitRepo = existsSync(join(root, '.git'));
+
+  if (isGitRepo) {
+    return `cd ${root} && git pull && npm install && npm run build`;
+  }
+  // npm global install path
+  return `npm install -g ${pkgName}@latest`;
+}
 
 /**
  * GET /api/update-check
@@ -42,8 +72,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     } else {
       try {
         const { execSync } = await import('child_process');
+        const pkgName = pkg.name || '@flame0510/olympus';
         latest = execSync(
-          'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
+          `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
           { stdio: 'pipe', timeout: 10_000 },
         )
           .toString()
@@ -66,19 +97,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   return NextResponse.json({ installed, latest, updateAvailable, package: pkg.name });
 }
 
-/**
- * POST /api/update-check
- *
- * Runs npm install -g @flame0510/olympus@latest.
- * Protected by JWT cookie (olympus_token).
- */
-export async function POST(request: Request): Promise<NextResponse> {
-  // Auth: verify JWT cookie
+async function verifyAuth(request: Request): Promise<boolean> {
   const raw = request.headers.get('cookie') || '';
   const match = raw.split(';').map(c => c.trim()).find(c => c.startsWith('olympus_token='));
-  if (!match) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!match) return false;
 
   const cookieToken = decodeURIComponent(match.split('=')[1]);
   try {
@@ -86,47 +108,54 @@ export async function POST(request: Request): Promise<NextResponse> {
       process.env.OLYMPUS_JWT_SECRET || 'olympus-jwt-secret-change-in-prod',
     );
     await jwtVerify(cookieToken, secret);
+    return true;
   } catch {
+    return false;
+  }
+}
+
+/**
+ * POST /api/update-check
+ *
+ * Runs the update command (configurable via OLYMPUS_UPDATE_COMMAND),
+ * then signals the olympus process to restart via .restart-flag.
+ *
+ * Protected by JWT cookie (olympus_token).
+ * The update runs in a detached background process so the response
+ * is sent before the restart kills the server.
+ */
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!(await verifyAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Run update
+  const root = getRoot();
+  const dataDir = getDataDir();
+  const updateCmd = getUpdateCommand() || getDefaultUpdateCommand();
+
   try {
-    const { execSync } = await import('child_process');
-    const npmPath = process.env.NPM_PATH || 'npm';
+    const { spawn } = await import('child_process');
 
-    const update = execSync(`${npmPath} install -g @flame0510/olympus@latest 2>&1`, {
-      stdio: 'pipe',
-      timeout: 60_000,
-      cwd: '/root',  // avoid getcwd() failure when npm removes the package directory
-    }).toString();
+    // The restart flag is watched by olympus serve (bin/olympus.js).
+    // When present, the parent process does cleanup() + process.exit(0).
+    // systemd (Restart=always) or Docker/podman/pm2 then restarts the service.
+    const restartFlag = join(dataDir, '.restart-flag');
 
-    const newPkg = execSync(`${npmPath} ls @flame0510/olympus --global --json --depth=0 2>/dev/null`, {
-      stdio: 'pipe',
-      timeout: 10_000,
-    }).toString();
+    // Chain: run update command, then touch restart flag.
+    // The restart flag must be written AFTER the build completes,
+    // otherwise the server restarts before the new code is built.
+    const cmd = `${updateCmd} && touch ${restartFlag}`;
 
-    let newVersion = '0.0.0';
-    try {
-      const parsed = JSON.parse(newPkg);
-      newVersion = parsed.dependencies?.['@flame0510/olympus']?.version || '0.0.0';
-    } catch {}
-
-    // Bust cache
-    cache = null;
-
-    // Signal the parent process to restart so the new version takes effect
-    const { writeFileSync } = require('fs');
-    const { join } = require('path');
-    try {
-      writeFileSync(join(require('os').homedir(), '.config', 'olympus', '.restart-flag'), '');
-    } catch {}
+    spawn('bash', ['-c', cmd], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: root,
+    }).unref();
 
     return NextResponse.json({
       success: true,
       oldVersion: pkg.version,
-      newVersion,
-      output: update.trim().split('\n').slice(-3).join('\n'),
+      message: 'Update started. The dashboard will restart in a few seconds.',
     });
   } catch (err: any) {
     return NextResponse.json(
