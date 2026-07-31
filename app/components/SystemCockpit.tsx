@@ -113,7 +113,7 @@ export default function SystemCockpit({
     <section className="cockpit">
       <div className="cockpit__metrics">
         <Surface as="article" tone={toneFromHealth(health)}>
-          <div className="ui-kicker">Argus System Health</div>
+          <div className="ui-kicker">Olympus System Health</div>
           <div className="cockpit__health-row">
             {systemLoading ? <SkeletonMetric width={120} /> : <span className={`cockpit__health cockpit__health--${health}`}>{health}</span>}
             <span className="ui-muted" style={{ fontSize: 11 }}>{runtimeFreshness}</span>

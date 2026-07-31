@@ -86,9 +86,11 @@ async function getUsedPorts(): Promise<number[]> {
         }
       }
     }
+    // Add Olympus port as reserved so the client won't suggest it
+    ports.push(3740);
     return [...new Set(ports)];
   } catch {
-    return [];
+    return [3740];
   }
 }
 

@@ -30,7 +30,7 @@ export default function PasswordInput({
   const [visible, setVisible] = useState(false);
 
   const hasRightButton = showGenerate;
-  const paddingRight = hasRightButton ? 100 : 36;
+  const paddingRight = hasRightButton ? 150 : 44;
 
   return (
     <div style={{ position: 'relative', ...style }}>
@@ -64,6 +64,7 @@ export default function PasswordInput({
             tabIndex={-1}
             className="ui-btn ui-btn--ghost ui-btn--sm"
             title="Generate secure key"
+            style={{ marginRight: 2 }}
           >
             Generate
           </button>
@@ -73,16 +74,9 @@ export default function PasswordInput({
           disabled={disabled}
           type="button"
           tabIndex={-1}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            color: 'var(--text-dim)',
-            padding: '2px 4px',
-            display: 'flex',
-            alignItems: 'center',
-          }}
+          className="ui-btn ui-btn--ghost ui-btn--sm"
           title={visible ? 'Hide' : 'Show'}
+          style={{ minWidth: 32, justifyContent: 'center' }}
         >
           {visible ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
         </button>

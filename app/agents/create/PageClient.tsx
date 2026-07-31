@@ -24,12 +24,21 @@ interface Props {
 
 type Step = 'template' | 'config' | 'creating' | 'done' | 'error';
 
-const TEMPLATE_DEFAULT_PORTS: Record<string, number> = {
-  atlas: 3030,
-  argus: 3031,
-  prometheus: 3032,
-};
-const DEFAULT_PORT = 3000;
+const OLYMPUS_PORT = 3740;
+
+function findFirstFreeBlock(usedPorts: number[]): number | null {
+  const used = new Set(usedPorts);
+  for (let base = 3700; base + 9 <= 3799; base += 10) {
+    if (base <= OLYMPUS_PORT && OLYMPUS_PORT <= base + 9) continue;
+    const block = Array.from({ length: 10 }, (_, i) => base + i);
+    if (block.every((p) => !used.has(p))) return base;
+  }
+  // Fallback beyond range
+  for (let base = 3800; ; base += 10) {
+    const block = Array.from({ length: 10 }, (_, i) => base + i);
+    if (block.every((p) => !used.has(p))) return base;
+  }
+}
 
 // ─── Toast ───
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
@@ -61,7 +70,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [step, setStep] = useState<Step>('template');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [agentName, setAgentName] = useState('');
-  const [port, setPort] = useState<string>('');
+  const [portRange, setPortRange] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>(
     models.length > 0 ? models[0].id : ''
   );
@@ -74,15 +83,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const handleSelectTemplate = (id: string) => {
     setSelectedTemplate(id);
     setAgentName('');
-    // Auto-assign port: template default or first available
-    const defaultPort = TEMPLATE_DEFAULT_PORTS[id];
-    if (defaultPort && !initialUsedPorts.includes(defaultPort)) {
-      setPort(String(defaultPort));
+    // Auto-assign port block: find first free 10-port block
+    if (initialUsedPorts.length === 0) {
+      setPortRange('3700-3709');
     } else {
-      // Find first free port starting from 3000 (template default) or 3000 (custom)
-      let candidate = defaultPort || 3000;
-      while (initialUsedPorts.includes(candidate)) candidate++;
-      setPort(String(candidate));
+      // Simple client-side block finder
+      let block = findFirstFreeBlock(initialUsedPorts);
+      setPortRange(block ? `${block}-${block + 9}` : '');
     }
   };
 
@@ -95,12 +102,27 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   }, [agentName, usedNames]);
 
   const portError = useMemo(() => {
-    if (!port) return '';
-    const p = parseInt(port, 10);
+    const v = portRange.trim();
+    if (!v) return '';
+    if (v.includes('-')) {
+      const m = v.match(/^(\d{1,5})-(\d{1,5})$/);
+      if (!m) return 'Use format: 3700-3709';
+      const start = parseInt(m[1], 10);
+      const end = parseInt(m[2], 10);
+      if (start < 1 || end > 65535) return 'Ports 1-65535';
+      if (end <= start) return 'End port must be greater than start';
+      for (let p = start; p <= end; p++) {
+        if (initialUsedPorts.includes(p)) return `Port ${p} is already in use`;
+        if (p === 3740) return 'Port 3740 is reserved';
+      }
+      return '';
+    }
+    const p = parseInt(v, 10);
     if (isNaN(p) || p < 1 || p > 65535) return 'Port must be between 1 and 65535';
+    if (p === 3740) return 'Port 3740 is reserved';
     if (initialUsedPorts.includes(p)) return 'Port is already in use';
     return '';
-  }, [port, initialUsedPorts]);
+  }, [portRange, initialUsedPorts]);
 
   const canProceed = (): boolean => {
     if (step === 'template') return selectedTemplate !== '';
@@ -118,7 +140,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
         name: agentName,
         template: selectedTemplate,
       };
-      if (port) body.port = parseInt(port, 10);
+      if (portRange.trim()) body.portRange = portRange.trim();
       if (selectedModel) body.model = selectedModel;
       if (fallbacks.length > 0) body.fallbacks = fallbacks;
 
@@ -240,11 +262,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                 selected={selectedTemplate === t.id}
                 description={templateDescription(t.id)}
                 onClick={() => handleSelectTemplate(t.id)}
-                badge={TEMPLATE_DEFAULT_PORTS[t.id] ? (
-                  <span style={{ fontSize: 10, color: '#888', border: '1px solid var(--border)', borderRadius: 0, padding: '2px 6px' }}>
-                    port {TEMPLATE_DEFAULT_PORTS[t.id]}
-                  </span>
-                ) : undefined}
+                badge={undefined}
               />
             ))}
           </div>
@@ -295,12 +313,15 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           {/* Port */}
           <div style={{ marginBottom: 16 }}>
             <Input
-              label="Port"
-              value={port}
-              onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
-              placeholder={`${TEMPLATE_DEFAULT_PORTS[selectedTemplate] || DEFAULT_PORT}`}
+              label="Host Port"
+              value={portRange}
+              onChange={(e) => setPortRange(e.target.value.replace(/[^0-9-]/g, '').slice(0, 11))}
+              placeholder="3700-3709"
               error={portError}
             />
+            <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
+              Port range (e.g. 3700-3709) or single port (e.g. 3700). Default: 10-port block. Port 3740 is reserved.
+            </div>
           </div>
 
           {/* Model */}
@@ -385,7 +406,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               setStep('template');
               setSelectedTemplate('');
               setAgentName('');
-              setPort('');
+              setPortRange('');
               setSelectedModel('');
               setResult(null);
             }} style={{ flex: 1 }}>
