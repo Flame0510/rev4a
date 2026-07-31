@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-07-27
+> **Last updated:** 2026-07-31
 
 This document covers the Olympus Provider Gateway (proxy),
 the vault key endpoint, and how agent containers authenticate against the
@@ -84,7 +84,7 @@ not by auto-discovery.
 
 | Auth state | Response |
 |---|---|
-| Valid `olympus` token | All enabled models (9 models) |
+| Valid `olympus` token | All enabled models |
 | Invalid token | `total: 0`, empty `data` array |
 | No token | `total: 0`, empty `data` array |
 
@@ -101,12 +101,19 @@ name is parsed to extract the provider and model ID.
 |---|---|---|
 | `olympus/deepseek-v4-flash` | `deepseek` | `deepseek-v4-flash` |
 | `olympus/deepseek-v4-pro` | `deepseek` | `deepseek-v4-pro` |
+| `olympus/kimi-k3` | `kimi` | `kimi-k3` |
+| `olympus/glm-5.2` | `glm` | `glm-5.2` |
+| `olympus/qwen3.7-plus` | `qwen` | `qwen3.7-plus` |
 
 **Model parsing fallback:**
 1. Check `request.provider` field
 2. Check `MODEL_ALIASES` map (for `olympus/` prefixed aliases)
-3. Parse `provider/model` from the model string
+3. Parse `provider/model` from the model string (e.g. `olympus/kimi/kimi-k3` → provider `kimi`, model `kimi-k3`)
 4. Fall back to `deepseek`
+
+**Provider API paths:** Most providers use the standard `/v1/chat/completions` endpoint.
+GLM uses `/api/paas/v4/chat/completions` and Qwen uses `/compatible-mode/v1/chat/completions`.
+The upstream module (`app/api/provider/upstream.ts`) handles this via a per-provider `basePath` field.
 
 **Request body** (OpenAI-compatible):
 ```json

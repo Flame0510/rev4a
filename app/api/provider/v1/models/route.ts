@@ -39,23 +39,21 @@ const CONFIG_PATH = MODELS_CONFIG_FILE;
 
 /** Default model catalogue (known models for each provider) */
 const DEFAULT_CATALOGUE: ModelsConfigEntry[] = [
+  // OpenAI
+  { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'openai', enabled: true },
+  { id: 'openai/gpt-5.6-terra', name: 'GPT-5.6 Terra', provider: 'openai', enabled: true },
+  { id: 'openai/gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'openai', enabled: true },
+  { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'openai', enabled: true },
+  { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'openai', enabled: true },
+  { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', enabled: true },
+  // Anthropic
+  { id: 'anthropic/claude-fable-5', name: 'Claude Fable 5', provider: 'anthropic', enabled: false },
+  { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5', provider: 'anthropic', enabled: false },
+  { id: 'anthropic/claude-sonnet-5', name: 'Claude Sonnet 5', provider: 'anthropic', enabled: false },
+  { id: 'anthropic/claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', enabled: false },
   // DeepSeek
   { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', enabled: true },
   { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', enabled: true },
-  { id: 'deepseek/deepseek-r1-0528', name: 'DeepSeek R1 0528', provider: 'deepseek', enabled: false },
-  { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2', provider: 'deepseek', enabled: false },
-  // OpenAI Codex
-  { id: 'openai-codex/gpt-5.4', name: 'GPT 5.4 Codex', provider: 'openai-codex', enabled: true },
-  { id: 'openai-codex/gpt-5.4-mini', name: 'GPT 5.4 Mini Codex', provider: 'openai-codex', enabled: true },
-  { id: 'openai-codex/gpt-5.4-pro', name: 'GPT 5.4 Pro Codex', provider: 'openai-codex', enabled: true },
-  { id: 'openai-codex/gpt-5.2', name: 'GPT 5.2 Codex', provider: 'openai-codex', enabled: false },
-  { id: 'openai-codex/gpt-5.3-codex', name: 'GPT 5.3 Codex', provider: 'openai-codex', enabled: false },
-  // OpenAI
-  { id: 'openai/gpt-5.5-pro', name: 'GPT 5.5 Pro', provider: 'openai', enabled: false },
-  // Anthropic
-  { id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7', provider: 'anthropic', enabled: false },
-  { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', provider: 'anthropic', enabled: false },
-  { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'anthropic', enabled: false },
   // OpenRouter
   { id: 'openrouter/auto', name: 'OpenRouter Auto', provider: 'openrouter', enabled: true },
   { id: 'openrouter/deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash (OR)', provider: 'openrouter', enabled: true },
@@ -66,7 +64,27 @@ const DEFAULT_CATALOGUE: ModelsConfigEntry[] = [
   // Groq
   { id: 'groq/llama-3.1-8b-instant', name: 'Llama 3.1 8B (Groq)', provider: 'groq', enabled: false },
   { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Groq)', provider: 'groq', enabled: false },
-  // Olympus models (always available if any provider is configured)
+  // Kimi
+  { id: 'kimi/kimi-k3', name: 'Kimi K3', provider: 'kimi', enabled: true },
+  { id: 'kimi/kimi-k2.7-code', name: 'Kimi K2.7 Code', provider: 'kimi', enabled: false },
+  { id: 'kimi/kimi-k2.7-code-highspeed', name: 'Kimi K2.7 Code HighSpeed', provider: 'kimi', enabled: false },
+  { id: 'kimi/kimi-k2.6', name: 'Kimi K2.6', provider: 'kimi', enabled: false },
+  // GLM
+  { id: 'glm/glm-5.2', name: 'GLM-5.2', provider: 'glm', enabled: false },
+  { id: 'glm/glm-5.1', name: 'GLM-5.1', provider: 'glm', enabled: false },
+  { id: 'glm/glm-5', name: 'GLM-5', provider: 'glm', enabled: false },
+  { id: 'glm/glm-4.7', name: 'GLM-4.7', provider: 'glm', enabled: false },
+  { id: 'glm/glm-4.7-flash', name: 'GLM-4.7 Flash', provider: 'glm', enabled: false },
+  { id: 'glm/glm-4.7-flashx', name: 'GLM-4.7 FlashX', provider: 'glm', enabled: false },
+  { id: 'glm/glm-5v-turbo', name: 'GLM-5V Turbo', provider: 'glm', enabled: false },
+  { id: 'glm/glm-4.6v-flash', name: 'GLM-4.6V Flash', provider: 'glm', enabled: false },
+  // Qwen
+  { id: 'qwen/qwen3.7-max', name: 'Qwen 3.7 Max', provider: 'qwen', enabled: false },
+  { id: 'qwen/qwen3.7-plus', name: 'Qwen 3.7 Plus', provider: 'qwen', enabled: true },
+  { id: 'qwen/qwen3.7-flash', name: 'Qwen 3.7 Flash', provider: 'qwen', enabled: false },
+  { id: 'qwen/qwen3-coder-plus', name: 'Qwen 3 Coder Plus', provider: 'qwen', enabled: false },
+  { id: 'qwen/qwen-long', name: 'Qwen Long', provider: 'qwen', enabled: false },
+  // Olympus aliases (convenience models for the Olympus proxy)
   { id: 'olympus/deepseek-v4-flash', name: 'DeepSeek V4 Flash (Olympus)', provider: 'olympus', enabled: true },
   { id: 'olympus/deepseek-v4-pro', name: 'DeepSeek V4 Pro (Olympus)', provider: 'olympus', enabled: true },
   { id: 'olympus/fast', name: 'Olympus Fast', provider: 'olympus', enabled: false },

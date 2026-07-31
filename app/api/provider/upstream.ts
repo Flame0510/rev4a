@@ -9,15 +9,14 @@ import { detectPublicHost } from '@/lib/docker-utils';
 
 export const dynamic = 'force-dynamic';
 
-export const PROVIDER_ENVS: Record<string, { baseUrl: string; authHeader: string }> = {
-  deepseek: {
-    baseUrl: 'https://api.deepseek.com',
-    authHeader: 'Authorization',
-  },
-  'openai-codex': {
-    baseUrl: 'https://api.openai.com',
-    authHeader: 'Authorization',
-  },
+export interface ProviderEnvConfig {
+  baseUrl: string;
+  authHeader: string;
+  /** Path prefix for chat completions (defaults to "/v1" if omitted). */
+  basePath?: string;
+}
+
+export const PROVIDER_ENVS: Record<string, ProviderEnvConfig> = {
   openai: {
     baseUrl: 'https://api.openai.com',
     authHeader: 'Authorization',
@@ -26,12 +25,30 @@ export const PROVIDER_ENVS: Record<string, { baseUrl: string; authHeader: string
     baseUrl: 'https://api.anthropic.com',
     authHeader: 'x-api-key',
   },
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com',
+    authHeader: 'Authorization',
+  },
   openrouter: {
     baseUrl: 'https://openrouter.ai/api',
     authHeader: 'Authorization',
   },
   groq: {
     baseUrl: 'https://api.groq.com/openai',
+    authHeader: 'Authorization',
+  },
+  kimi: {
+    baseUrl: 'https://api.moonshot.cn',
+    authHeader: 'Authorization',
+  },
+  glm: {
+    baseUrl: 'https://api.z.ai',
+    basePath: '/api/paas/v4',
+    authHeader: 'Authorization',
+  },
+  qwen: {
+    baseUrl: 'https://dashscope.aliyuncs.com',
+    basePath: '/compatible-mode/v1',
     authHeader: 'Authorization',
   },
 };
@@ -90,7 +107,8 @@ export async function callUpstream(
     );
   }
 
-  const targetUrl = `${envConfig.baseUrl}/v1/chat/completions`;
+  const basePath = envConfig.basePath || '/v1';
+  const targetUrl = `${envConfig.baseUrl}${basePath}/chat/completions`;
 
   const upstreamBody: Record<string, unknown> = { ...body, model: model || undefined };
   delete upstreamBody.provider;

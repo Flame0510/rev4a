@@ -1,9 +1,14 @@
 # Gateway Page
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-07-31
 
 The Gateway page (`/gateway`) is the central control panel for managing provider
 configurations and agent model assignments across all Docker containers.
+
+The Gateway aggregates multiple upstream AI providers (DeepSeek, OpenAI, Anthropic,
+Kimi, GLM, Qwen, and others) behind a single Olympus provider. Agent containers see
+only `olympus` as their provider and route all LLM traffic through the Olympus proxy
+at `/api/provider/v1/`.
 
 ---
 
@@ -97,9 +102,19 @@ for anyone cloning the project. It defines all known models across all providers
 ```json
 {
   "models": [
-    { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "provider": "deepseek", "enabled": true },
-    { "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "provider": "deepseek", "enabled": true },
-    { "id": "openrouter/auto", "name": "OpenRouter Auto", "provider": "openrouter", "enabled": true }
+    { "id": "openai/gpt-5.6-sol", "name": "GPT-5.6 Sol", "provider": "openai", "enabled": true },
+    { "id": "openai/gpt-5.6-terra", "name": "GPT-5.6 Terra", "provider": "openai", "enabled": true },
+    { "id": "openai/gpt-5.6-luna", "name": "GPT-5.6 Luna", "provider": "openai", "enabled": true },
+    { "id": "openai/gpt-5.5", "name": "GPT-5.5", "provider": "openai", "enabled": true },
+    { "id": "openai/gpt-5.4", "name": "GPT-5.4", "provider": "openai", "enabled": true },
+    { "id": "openai/gpt-5.4-mini", "name": "GPT-5.4 Mini", "provider": "openai", "enabled": true },
+    { "id": "anthropic/claude-fable-5", "name": "Claude Fable 5", "provider": "anthropic", "enabled": false },
+    { "id": "anthropic/claude-opus-5", "name": "Claude Opus 5", "provider": "anthropic", "enabled": false },
+    { "id": "anthropic/claude-sonnet-5", "name": "Claude Sonnet 5", "provider": "anthropic", "enabled": false },
+    { "id": "groq/llama-3.3-70b-versatile", "name": "Llama 3.3 70B (Groq)", "provider": "groq", "enabled": false },
+    { "id": "kimi/kimi-k3", "name": "Kimi K3", "provider": "kimi", "enabled": true },
+    { "id": "glm/glm-5.2", "name": "GLM-5.2", "provider": "glm", "enabled": false },
+    { "id": "qwen/qwen3.7-plus", "name": "Qwen 3.7 Plus", "provider": "qwen", "enabled": true }
   ]
 }
 ```

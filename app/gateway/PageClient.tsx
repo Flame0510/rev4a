@@ -346,6 +346,10 @@ export default function GatewayPageClient() {
   const [agentModelInput, setAgentModelInput] = useState('');
   const [agentFallbackInput, setAgentFallbackInput] = useState('');
 
+  // Balance fetch state (per provider)
+  const [balances, setBalances] = useState<Record<string, { balance: string; label?: string; loading?: boolean; error?: string } | null>>({});
+  const [fetchingBalance, setFetchingBalance] = useState<Record<string, boolean>>({});
+
   /* ---- Data loading ---- */
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -357,29 +361,35 @@ export default function GatewayPageClient() {
       if (provRes.ok) {
         const provJson: ProviderApiResponse = await provRes.json();
         setProviders(provJson.providers);
-        // Load existing keys for each configured provider
-        const configuredProviders = provJson.providers.filter((p) => p.configured);
+        // Load keys from provider response (all configured providers now return apiKey)
         const keyEntries: Record<string, string> = {};
         const origEntries: Record<string, string> = {};
-        // olympus key is stored in provider-keys.json (not vault).
-        // The GET /api/gateway/provider returns it in the apiKey field.
-        const olympusProv = provJson.providers.find((p: any) => p.provider === 'olympus');
-        if (olympusProv?.configured && olympusProv.apiKey) {
-          keyEntries['olympus'] = olympusProv.apiKey;
-          origEntries['olympus'] = olympusProv.apiKey;
-        }
-        await Promise.all(configuredProviders.filter((p) => p.provider !== 'olympus').map(async (p) => {
-          try {
-            const kr = await fetch(`/api/vault/provider/key?provider=${p.provider}`);
-            if (kr.ok) {
-              const kd = await kr.json();
-              keyEntries[p.provider] = kd.apiKey;
-              origEntries[p.provider] = kd.apiKey;
-            }
-          } catch { /* skip */ }
-        }));
+        provJson.providers.forEach((p: any) => {
+          if (p.configured && p.apiKey) {
+            keyEntries[p.provider] = p.apiKey;
+            origEntries[p.provider] = p.apiKey;
+          }
+        });
         setApiKeyInputs((prev) => ({ ...prev, ...keyEntries }));
         setOriginalKeys((prev) => ({ ...prev, ...origEntries }));
+
+        // Auto-fetch balances for supported providers that have keys configured
+        const balanceProvs = provJson.providers
+          .filter((p: any) => p.configured && ['deepseek','openrouter','glm'].includes(p.provider))
+          .map((p: any) => p.provider);
+        for (const bp of balanceProvs) {
+          try {
+            const bRes = await fetch(`/api/gateway/provider/balance?provider=${bp}`);
+            const bJson = await bRes.json();
+            if (bRes.ok && bJson.balance) {
+              setBalances((prev) => ({ ...prev, [bp]: { balance: bJson.balance, label: bJson.label } }));
+            } else {
+              setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: bJson.error || 'Failed' } }));
+            }
+          } catch (e: unknown) {
+            setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: e instanceof Error ? e.message : String(e) } }));
+          }
+        }
       }
       if (gwRes.ok) {
         const gwJson: GatewayData = await gwRes.json();
@@ -394,6 +404,15 @@ export default function GatewayPageClient() {
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
+  /** Format pricing for display: "$0.44 / $0.87" or "Free" or "Dynamic" or "—" */
+  function fmtPrice(p: { input: number; output: number } | null | undefined): string {
+    if (!p) return '—';
+    if (p.input === -1 && p.output === -1) return 'Dynamic';
+    if (p.input === 0 && p.output === 0) return 'Free';
+    const f = (n: number) => n < 0.01 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`;
+    return `${f(p.input)} / ${f(p.output)}`;
+  }
+
   /* ---- Overlay helper ---- */
   async function withOverlay<T>(message: string, fn: () => Promise<T>): Promise<T> {
     setOverlay({ active: true, message });
@@ -401,6 +420,25 @@ export default function GatewayPageClient() {
       return await fn();
     } finally {
       setOverlay({ active: false, message: '' });
+    }
+  }
+
+  /* ---- Balance fetch ---- */
+  async function fetchBalance(provider: string) {
+    setFetchingBalance((prev) => ({ ...prev, [provider]: true }));
+    setBalances((prev) => ({ ...prev, [provider]: null }));
+    try {
+      const res = await fetch(`/api/gateway/provider/balance?provider=${provider}`);
+      const json = await res.json();
+      if (res.ok && json.balance) {
+        setBalances((prev) => ({ ...prev, [provider]: { balance: json.balance, label: json.label } }));
+      } else {
+        setBalances((prev) => ({ ...prev, [provider]: { balance: '—', error: json.error || 'Failed' } }));
+      }
+    } catch (e: unknown) {
+      setBalances((prev) => ({ ...prev, [provider]: { balance: '—', error: e instanceof Error ? e.message : String(e) } }));
+    } finally {
+      setFetchingBalance((prev) => ({ ...prev, [provider]: false }));
     }
   }
 
@@ -732,6 +770,35 @@ export default function GatewayPageClient() {
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
                     {p.configured ? <Pill tone="success">Connected</Pill> : <Pill tone="warning">Not configured</Pill>}
                     {enabledCount > 0 ? <Pill tone="accent">{enabledCount} active models</Pill> : <Pill>{enabledCount} active models</Pill>}
+                    {/* Balance badge — auto-loaded for supported providers with configured key */}
+                    {p.configured && ['deepseek','openrouter','glm'].includes(p.provider) && (
+                      balances[p.provider] && !balances[p.provider]?.error ? (
+                        <span
+                          title={balances[p.provider]?.label || ''}
+                          style={{
+                            fontSize: 11, fontWeight: 600,
+                            color: 'var(--green)',
+                            background: 'rgba(var(--green-rgb,34,197,94),0.1)',
+                            padding: '2px 8px', borderRadius: 0,
+                            border: '1px solid rgba(var(--green-rgb,34,197,94),0.2)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => fetchBalance(p.provider)}
+                        >
+                          {balances[p.provider]!.balance}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--text-dim)',
+                            opacity: 0.5,
+                          }}
+                        >
+                          {fetchingBalance[p.provider] ? '…' : '…'}
+                        </span>
+                      )
+                    )}
                   </div>
 
                   {/* API Key input con show/hide integrato */}
@@ -765,7 +832,12 @@ export default function GatewayPageClient() {
                   {/* Models with checkboxes */}
                   {p.models.length > 0 && (
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Models</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        Models
+                        <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--copper)', opacity: 0.7, fontSize: 10 }}>
+                          in / out per 1M tokens
+                        </span>
+                      </div>
                       <div style={{ display: 'grid', gap: 4 }}>
                         {p.models.map((m) => {
                           const modelMsg = messages[`model-${m.id}`];
@@ -780,7 +852,12 @@ export default function GatewayPageClient() {
                                 style={{ accentColor: 'var(--green)', cursor: 'pointer' }} />
                               <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
-                                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>{m.id}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                                  {m.id}
+                                  <span style={{ marginLeft: 8, color: 'var(--copper)', fontWeight: 500 }}>
+                                    {fmtPrice((m as any).pricing)}
+                                  </span>
+                                </div>
                               </div>
                               {modelMsg && (
                                 <span style={{ fontSize: 11, color: modelMsg.type === 'success' ? 'var(--green)' : 'var(--red)' }}>
