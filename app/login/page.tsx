@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
+import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from 'react';
 import { isWizardComplete } from '../wizard/storage';
 import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
@@ -10,6 +10,21 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  // Redirect to /setup if no password is configured
+  useEffect(() => {
+    fetch('/api/auth/status')
+      .then((r) => r.json())
+      .then((d: { configured: boolean }) => {
+        if (!d.configured) {
+          window.location.replace('/setup');
+          return;
+        }
+        setChecking(false);
+      })
+      .catch(() => setChecking(false));
+  }, []);
 
   // Enter key handler for the password input
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
@@ -51,6 +66,8 @@ export default function LoginPage() {
       setLoading(false);
     }
   }
+
+  if (checking) return null;
 
   return (
     <div

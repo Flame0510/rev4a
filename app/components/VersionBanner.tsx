@@ -8,7 +8,7 @@ interface VersionInfo {
   updateAvailable: boolean;
 }
 
-const MOCK = true;
+const MOCK = false;
 const DISMISS_KEY = 'olympus-update-dismissed';
 
 export default function VersionBanner() {
@@ -63,9 +63,9 @@ export default function VersionBanner() {
       });
       const data = await res.json();
       if (data.success) {
-        setUpdateOk('Updated to v' + data.newVersion + '. Restarting\u2026');
+        setUpdateOk('Update started. Restarting\u2026');
         localStorage.removeItem(DISMISS_KEY);
-        setTimeout(function() { window.location.reload(); }, 3000);
+        setTimeout(function() { window.location.reload(); }, 5000);
       } else {
         setUpdateError(data.error || 'Update failed');
         setUpdating(false);

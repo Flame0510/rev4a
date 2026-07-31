@@ -55,8 +55,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         }
         setChecking(false);
       })
-      .catch(() => {
-        router.replace('/login');
+      .catch(async () => {
+        // Check if password is configured before redirecting to login
+        try {
+          const status = await fetch('/api/auth/status').then((r) => r.json());
+          router.replace(status.configured ? '/login' : '/setup');
+        } catch {
+          router.replace('/login');
+        }
         setChecking(false);
       });
   }, [pathname, router]);
