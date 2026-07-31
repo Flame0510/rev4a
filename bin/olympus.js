@@ -550,10 +550,18 @@ if (cmd === 'build') {
   process.exit(0);
 }
 
+// Shared helper: writes restart flag for olympus serve to pick up
+function writeRestartFlag() {
+  try {
+    writeFileSync(join(DATA_DIR, '.restart-flag'), '');
+    console.log('Restart signal sent. The running olympus serve process will restart.');
+  } catch (err) {
+    console.error('Failed to write restart flag:', err.message);
+  }
+}
+
 if (cmd === 'restart') {
-  const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
-  writeFileSync(RESTART_FLAG, '');
-  console.log('Restart signal sent. The running olympus serve process will restart.');
+  writeRestartFlag();
   process.exit(0);
 }
 
@@ -584,12 +592,8 @@ if (cmd === 'update') {
         timeout: 120_000,
       });
     }
-    console.log('Update complete. Triggering restart…');
-    try {
-      writeFileSync(join(DATA_DIR, '.restart-flag'), '');
-    } catch {
-      // If olympus serve is not running, the flag is harmless
-    }
+    console.log('Update complete. Restarting…');
+    writeRestartFlag();
   } catch (err) {
     console.error('Update failed:', err.message);
     process.exit(1);
