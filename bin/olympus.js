@@ -528,8 +528,30 @@ if (cmd === 'serve') {
   console.log(BANNER);
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
+  // Auto-restart loop: when olympus restart triggers exit code 42,
+  // re-exec olympus serve so the new binary is loaded. Works with
+  // or without systemd (systemd Restart=always also handles it).
+  let exitCode = 42;
+  while (exitCode === 42) {
+    const { status, signal } = require('child_process').spawnSync(
+      process.execPath,
+      [process.argv[1] || join(__dirname, 'olympus.js'), '_run', String(port)],
+      { stdio: 'inherit', env: process.env }
+    );
+    exitCode = signal ? 0 : (status ?? 0);
+    if (exitCode === 42) {
+      console.log('[OLYMPUS] Restarting with updated binary…');
+    }
+  }
+  process.exit(exitCode);
+}
+
+// Internal entry point: called by the auto-restart spawn above
+if (cmd === '_run') {
+  console.log(BANNER);
+  const port = parseInt(args[args.indexOf('_run') + 1], 10) || DEFAULT_PORT;
   serve(port);
-  return; // keep event loop alive (children keep it open)
+  return;
 }
 
 if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
