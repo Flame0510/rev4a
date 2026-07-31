@@ -32,19 +32,8 @@ function getDataDir(): string {
   return process.env.OLYMPUS_DATA_DIR || join(getRoot(), 'data');
 }
 
-function getUpdateCommand(): string | null {
-  return process.env.OLYMPUS_UPDATE_COMMAND || null;
-}
-
-function getDefaultUpdateCommand(): string {
-  const root = getRoot();
-  const pkgName = pkg.name || '@flame0510/olympus';
-  const isGitRepo = existsSync(join(root, '.git'));
-
-  if (isGitRepo) {
-    return `cd ${root} && git pull && npm install && npm run build`;
-  }
-  return `npm install -g ${pkgName}@latest`;
+function getUpdateCommand(): string {
+  return process.env.OLYMPUS_UPDATE_COMMAND || 'olympus update';
 }
 
 /**
@@ -118,19 +107,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const root = getRoot();
-  const updateCmd = getUpdateCommand() || getDefaultUpdateCommand();
-
-  // Run the update synchronously then restart
   const restartFlag = join(getDataDir(), '.restart-flag');
 
-  let updateOutput = '';
+  // 1. Update (git pull + build or npm install -g)
+  const updateCmd = getUpdateCommand() || getDefaultUpdateCommand();
   try {
-    updateOutput = execSync(updateCmd, {
-      stdio: 'pipe',
-      timeout: 120_000,
-      cwd: root,
-      encoding: 'utf-8',
-    });
+    execSync(updateCmd, { stdio: 'pipe', timeout: 120_000, cwd: root, encoding: 'utf-8' });
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err.stderr?.toString() || err.message || 'Update command failed' },
@@ -138,13 +120,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Signal restart via flag — olympus serve watches for this
+  // 2. Restart via flag — olympus serve picks it up and exits,
+  //    then systemd/Docker/pm2 restarts it.
   try { writeFileSync(restartFlag, ''); } catch {}
 
   return NextResponse.json({
     success: true,
     oldVersion: pkg.version,
     message: 'Update complete. The dashboard will restart.',
-    output: updateOutput.trim().split('\n').slice(-3).join('\n'),
   });
 }

@@ -377,6 +377,8 @@ function checkVersion() {
 // ── Serve (start all 3 processes) ───────────────────────────────────────────
 
 function serve(port) {
+  // Auto-restart loop: when UPDATE signal triggers exit with code 42,
+  // we restart ourselves. This makes bare node installs self-healing.
   preflight();
   // Version check is non-blocking — runs after startup
   setTimeout(checkVersion, 2000);
@@ -461,7 +463,7 @@ function serve(port) {
     child.on('exit', (code) => {
       exited++;
       log(child.spawnfile, `Exited (code ${code})`);
-      if (exited >= children.length) process.exit(0);
+      if (exited >= children.length) process.exit(signal === 'UPDATE' ? 42 : 0);
     });
   }
 
