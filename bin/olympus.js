@@ -427,10 +427,12 @@ function serve(port) {
   log('SERVE', `Terminal WS PID ${ws.pid}`);
 
   // Graceful shutdown — kill all children on SIGTERM/SIGINT
+  let shutdownSignal = null;
   let shuttingDown = false;
   const cleanup = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    shutdownSignal = signal;
     log('SERVE', `${signal} — stopping all services…`);
     for (const child of children) {
       try { child.kill('SIGTERM'); } catch {}
@@ -447,7 +449,7 @@ function serve(port) {
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
 
-  // Watch for restart flag (written by update-check POST)
+  // Watch for restart flag (written by olympus restart command)
   const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
   const restartWatcher = setInterval(() => {
     if (existsSync(RESTART_FLAG)) {
@@ -463,10 +465,9 @@ function serve(port) {
     child.on('exit', (code) => {
       exited++;
       log(child.spawnfile, `Exited (code ${code})`);
-      if (exited >= children.length) process.exit(signal === 'UPDATE' ? 42 : 0);
+      if (exited >= children.length) process.exit(shutdownSignal === 'UPDATE' ? 42 : 0);
     });
   }
-
   // Print URL after a short delay (give Next.js time to bind)
   setTimeout(() => {
     console.log('');
