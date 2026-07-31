@@ -82,17 +82,20 @@ async function verifyAuth(request: Request): Promise<boolean> {
 /**
  * POST /api/update-check
  *
- * Calls olympus update (handles git pull+build or npm install -g automatically),
- * then olympus restart to restart the running serve process.
+ * Installs the latest version via npm (fastest path, no git/build),
+ * then signals olympus serve to restart.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await verifyAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 1. olympus update — handles git pull+build or npm install -g
+  // 1. npm install -g @latest (fast, predictable, no git/build overhead)
   try {
-    execSync('olympus update', { stdio: 'pipe', timeout: 120_000 });
+    execSync('npm install -g @flame0510/olympus@latest', {
+      stdio: 'pipe',
+      timeout: 120_000,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err.stderr?.toString() || err.message || 'Update failed' },
