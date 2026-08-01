@@ -593,6 +593,11 @@ if (cmd === 'update') {
         stdio: 'inherit',
         timeout: 120_000,
       });
+      // Wipe old build so olympus serve rebuilds with the new version
+      const nextDir = join(ROOT, '.next');
+      if (existsSync(nextDir)) {
+        try { execSync(`rm -rf "${nextDir}"`, { stdio: 'inherit' }); } catch {}
+      }
     }
     console.log('Update complete. Restarting…');
     try {
