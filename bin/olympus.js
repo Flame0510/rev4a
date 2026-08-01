@@ -435,13 +435,20 @@ function serve(port) {
   }, 2000);
   restartWatcher.unref();
 
-  // Wait for all children to exit
+  // Wait for all children to exit, then restart if it was an update
   let exited = 0;
   for (const child of children) {
     child.on('exit', (code) => {
       exited++;
       log(child.spawnfile, `Exited (code ${code})`);
-      if (exited >= children.length) process.exit(shutdownSignal === 'UPDATE' ? 42 : 0);
+      if (exited >= children.length) {
+        if (shutdownSignal === 'UPDATE') {
+          // Small delay so the OS releases the TCP port before restart
+          setTimeout(() => process.exit(42), 1500);
+        } else {
+          process.exit(0);
+        }
+      }
     });
   }
 
