@@ -443,8 +443,8 @@ function serve(port) {
       log(child.spawnfile, `Exited (code ${code})`);
       if (exited >= children.length) {
         if (shutdownSignal === 'UPDATE') {
-          // Small delay so the OS releases the TCP port before restart
-          setTimeout(() => process.exit(42), 1500);
+          // Delay so the OS fully releases TCP ports before restart
+          setTimeout(() => process.exit(42), 3000);
         } else {
           process.exit(0);
         }
@@ -528,6 +528,9 @@ if (cmd === 'serve') {
     exitCode = result.signal ? 0 : (result.status ?? 0);
     if (exitCode === 42) {
       console.log('[OLYMPUS] Restarting with updated binary…');
+      // Give the OS a moment to fully release TCP ports
+      const { execSync } = require('child_process');
+      try { execSync('sleep 2', { stdio: 'ignore' }); } catch {}
     }
   }
   process.exit(exitCode);
