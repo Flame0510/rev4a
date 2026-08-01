@@ -1,16 +1,18 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
-interface PackageInfo {
-  version: string;
-  name: string;
-}
-let pkg: PackageInfo;
-try {
-  pkg = require('../../../package.json') as PackageInfo;
-} catch {
-  pkg = { version: '0.0.0', name: '@flame0510/olympus' };
+function getPackageInfo() {
+  try {
+    // Resolve relative to the project root (two levels above .next)
+    const pkgPath = join(process.cwd(), 'package.json');
+    const raw = readFileSync(pkgPath, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return { version: '0.0.0', name: '@flame0510/olympus' };
+  }
 }
 
 interface CachedResult {
@@ -29,6 +31,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const check = url.searchParams.get('check') === '1';
 
+  const pkg = getPackageInfo();
   const installed = pkg.version || '0.0.0';
   let latest: string | null = null;
   let updateAvailable = false;
@@ -59,7 +62,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ installed, latest, updateAvailable, package: pkg.name });
+  return NextResponse.json({ installed, latest, updateAvailable, package: getPackageInfo().name });
 }
 
 async function verifyAuth(request: Request): Promise<boolean> {
