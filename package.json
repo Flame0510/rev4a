@@ -1,6 +1,6 @@
 {
   "name": "@flame0510/olympus",
-  "version": "0.8.31",
+  "version": "0.8.32",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -36,6 +36,7 @@
     "scripts/",
     "docs/",
     "agent-templates/",
+    "olympus-rules/",
     "daemon.js",
     "lineage.js",
     "terminal-ws-server.js",
