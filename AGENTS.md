@@ -118,6 +118,7 @@ documentation is incomplete.
 - **Commit only when work is validated** — trunk-based development: commit at the end
 - **Descriptive commit messages** — explain the *why*, not just the *what*
 - **Single logical commit per change** — squash if needed
+- **Tag every version** — when a new version is released (bump in `package.json`), create and push the corresponding git tag: `git tag -a vX.Y.Z -m "vX.Y.Z: <brief>" && git push origin vX.Y.Z`. Never skip tagging — the version in code and the git tag must always stay in sync.
 
 ### 2.5 Secrets & Safety
 
