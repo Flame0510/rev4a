@@ -80,12 +80,14 @@ export async function GET(): Promise<NextResponse> {
     });
   }
 
-  // Check if a newer version is available on the registry
+  // Compare local image digest with remote registry digest.
+  // If they differ, a newer image is available.
   let needsUpdate = false;
   const remoteDigest = getRemoteDigest();
 
-  if (remoteDigest) {
-    // Compare local image's repo digest with remote
+  if (remoteDigest && localId) {
+    // localId is the image ID (e.g. sha256:abc123...).
+    // Extract it from any RepoDigest that references the registry.
     try {
       const inspect = JSON.parse(
         execSync(
@@ -94,15 +96,16 @@ export async function GET(): Promise<NextResponse> {
         ),
       );
       const localRepoDigests: string[] = inspect?.RepoDigests || [];
-      const hasRemote = localRepoDigests.some((d: string) =>
+      const registryDigest = localRepoDigests.find((d: string) =>
         d.startsWith('ghcr.io/flame0510/olympus/openclaw-agent-base@'),
       );
-      const hasRegistryTag = localRepoDigests.some((d: string) =>
-        d.startsWith('ghcr.io/flame0510/olympus/openclaw-agent-base:'),
-      );
 
-      // If image was built locally (not pulled), it won't have the registry digest
-      if (!hasRemote && !hasRegistryTag) {
+      if (registryDigest) {
+        // Extract sha256:... from "ghcr.io/...@sha256:xxx"
+        const localDigest = registryDigest.split('@')[1] || '';
+        needsUpdate = localDigest !== remoteDigest;
+      } else {
+        // Image was built locally, never pulled — needs update
         needsUpdate = true;
       }
     } catch {
