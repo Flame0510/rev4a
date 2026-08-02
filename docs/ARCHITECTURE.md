@@ -107,11 +107,18 @@ The central container, running the Next.js dashboard + orchestration API.
 
 **Volume mounts (target):**
 ```
-/path/to/olympus/data  → /data (persistent)
-/var/run/docker.sock          → /var/run/docker.sock
-/docker/shared-skills          → /data/.openclaw/shared-skills (ro)
-/docker/shared-repos           → /data/repos (rw)
+/path/to/olympus/data          → /data (persistent)
+/var/run/docker.sock            → /var/run/docker.sock
+/docker/shared-skills           → /data/.openclaw/shared-skills (ro)
+/docker/shared-repos            → /data/repos (rw)
 ```
+
+**Olympus System Rules** (`olympus-rules/AGENTS.md`):
+- Versioned in the repo, deployed to `/docker/olympus-rules/` on every `olympus serve` start
+- Mounted read-only into every agent at `/root/.openclaw/workspace/.olympus/AGENTS.md`
+- Injected into every session via the `bootstrap-extra-files` hook (glob `.olympus/*.md`)
+- Immutable by agents — enforced by the `:ro` mount
+- See `lib/agent-setup.ts` for the centralized volume + config guarantee logic
 
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
 
@@ -126,9 +133,14 @@ copies the entrypoint script, and applies baseline gateway config patches.
 **Volume mounts (per agent):**
 ```
 /docker/shared-skills         → /data/.openclaw/shared-skills  (ro)
-/docker/shared-repos          → /data/repos                      (rw)
+/docker/olympus-rules         → /root/.openclaw/workspace/.olympus (ro)
 agent-{name}-data (named vol) → /root                            (rw, per-agent persistent state)
 ```
+
+All shared volumes are defined centrally in `lib/agent-setup.ts`
+(`OLYMPUS_VOLUMES`) and used by both the create and recreate API routes.
+The `bootstrap-extra-files` hook is pre-wired in the base image Dockerfile
+and guaranteed at runtime by `applyRuntimeConfig()`.
 
 **Injected environment variables:**
 ```
@@ -293,8 +305,19 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
+- Both create and recreate routes guarantee this via `applyRuntimeConfig()` from `lib/agent-setup.ts`.
 - On first install, create `/docker/shared-skills` with `mkdir -p /docker/shared-skills && chmod 2775 /docker/shared-skills`.
-- The Olympus wizard (`app/api/agents/create`) mounts shared volumes on every new agent and guarantees `extraDirs` + provider proxy in the container config.
+
+### Olympus System Rules (`olympus-rules/`)
+
+Versioned in the repo at `olympus-rules/AGENTS.md`. Deployed to
+`/docker/olympus-rules/` on every `olympus serve` startup via
+`ensureOlympusRules()` in `bin/olympus.js`. Mounted read-only into every
+agent container and injected into sessions through the
+`bootstrap-extra-files` hook (glob `.olympus/*.md`).
+
+All shared volumes are defined in `lib/agent-setup.ts` — a single source
+of truth used by both create and recreate API routes.
 
 ### Shared Repositories (`/docker/shared-repos`)
 ```

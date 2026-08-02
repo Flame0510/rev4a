@@ -5,6 +5,7 @@ import * as path from 'path';
 import { buildOlympusProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
 import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
+import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -98,8 +99,6 @@ const TEMPLATES_DIR = templatesDir(process.cwd());
 const MODELS_CONFIG = MODELS_CONFIG_FILE;
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
 const DEFAULT_NETWORK = 'olympus-network';
-const SHARED_SKILLS = '/docker/shared-skills';
-const SHARED_REPOS = '/docker/shared-repos';
 
 function isDockerCompatibleName(name: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
@@ -221,14 +220,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       isBlock = true;
     }
 
-    // Ensure shared volumes exist (created by setup script on first install)
-    for (const vol of [SHARED_SKILLS, SHARED_REPOS]) {
-      if (!fs.existsSync(vol)) {
-        fs.mkdirSync(vol, { recursive: true });
-        try { execSync(`chown 1000:1000 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
-        try { execSync(`chmod 2775 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
-      }
-    }
+    // Ensure shared volumes exist (created by olympus serve preflight, defensive guard here)
+    const mountFlags = getMountFlags();
 
     // Build docker run command
     const image = 'openclaw-agent-base:latest';
@@ -274,8 +267,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
       -v agent-${name}-data:/root \
-      -v ${SHARED_SKILLS}:/data/.openclaw/shared-skills:ro \
-      -v ${SHARED_REPOS}:/data/repos:rw \
+      ${mountFlags.join(' \
+      ')} \
       ${labelOpts} \
       ${envOpts} \
       ${portOpt} \
@@ -398,20 +391,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         auto: { enabled: false },
       };
 
-      // Guarantee shared-skills discovery (merge with existing, dedupe)
-      const skills = (config.skills || {}) as Record<string, unknown>;
-      const load = (skills.load || {}) as Record<string, unknown>;
-      const existing: string[] = Array.isArray(load.extraDirs) ? load.extraDirs as string[] : [];
-      load.extraDirs = [...new Set([...existing, '/data/.openclaw/shared-skills'])];
-      skills.load = load;
-      config.skills = skills;
-
-      // Provider proxy (models.providers.olympus)
-      const providerConfig = buildOlympusProviderConfig();
-      const models = (config.models || {}) as Record<string, unknown>;
-      if (!models.providers) models.providers = {};
-      (models.providers as Record<string, unknown>)['olympus'] = providerConfig;
-      config.models = models;
+      // Merge model + update + gateway settings (create-specific, not in applyRuntimeConfig)
 
       // Single write
       execSync(
@@ -427,6 +407,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     } catch {
       // post-creation config is non-fatal; can be synced manually
+    }
+
+    // Guarantee Olympus runtime config (hooks, shared-skills, provider).
+    // These patches are idempotent deep-merges — applied AFTER the
+    // create-specific config so they're always present regardless of
+    // what was in the persistent volume.
+    try {
+      applyRuntimeConfig(name);
+      try {
+        execSync(`docker exec ${name} openclaw gateway restart`, { timeout: 15000 });
+      } catch { /* restart is best-effort */ }
+    } catch {
+      // runtime config patch is best-effort
     }
 
     return NextResponse.json({

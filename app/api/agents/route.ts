@@ -166,10 +166,9 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           env,
           traefikUrl,
           authToken,
-          // Only flag as outdated if the container actually uses the agent base image
-          imageOutdated: currentImageId && (image.startsWith('openclaw-agent-base') || image.startsWith('nexus-agent-base'))
-            ? c.ImageID !== currentImageId
-            : false,
+          // Flag as outdated when the container's image differs from the current base image.
+          // We compare raw ImageID digests — no fragile name-based filtering.
+          imageOutdated: currentImageId ? c.ImageID !== currentImageId : false,
         };
       }),
     );

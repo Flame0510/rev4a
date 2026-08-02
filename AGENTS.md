@@ -32,6 +32,10 @@ If you are an AI agent arriving on this repo for the first time:
 >
 > **Rule:** After reading, if a file is stale (wrong dates, missing info), update it.
 > Do not assume docs are authoritative — verify against code.
+>
+> **Key source files (centralized logic):**
+> - `lib/agent-setup.ts` — single source of truth for Olympus volumes + runtime config
+> - `olympus-rules/AGENTS.md` — system rules injected into every agent session via hook
 
 ---
 

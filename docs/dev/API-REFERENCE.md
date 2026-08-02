@@ -735,6 +735,12 @@ Flow:
 2. The old container is removed (`docker rm -f`) and a new one is created with the
    same image tag, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
    labels, port mappings, and network — reattaching the same volume.
+3. After startup, `applyRuntimeConfig()` (from `lib/agent-setup.ts`) guarantees:
+   - `hooks.bootstrap-extra-files` (Olympus system rules injection)
+   - `skills.load.extraDirs` (shared skills discovery)
+   - `models.providers.olympus` (provider proxy, host-dependent)
+   All patches use `config patch --stdin` (deep-merge) — existing user
+   customizations are never overwritten.
 
 On the next boot, the image entrypoint runs `openclaw doctor --non-interactive`
 **only if the OpenClaw version changed** (safe migrations, no service restart),

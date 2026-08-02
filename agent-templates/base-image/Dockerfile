@@ -56,7 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Agent containers route model requests through Olympus provider proxy
-RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
+RUN npm install -g openclaw@2026.7.1-2 vercel trello-cli \
 # Supabase CLI — installed via official GitHub release (npm global no longer supported on Linux)
 # Pinned to v2.109.1. Bump the version here to update.
     && curl -fsSL https://github.com/supabase/cli/releases/download/v2.109.1/supabase_linux_amd64.tar.gz -o /tmp/supabase.tar.gz \
@@ -67,10 +67,15 @@ RUN npm install -g openclaw@2026.7.1 vercel trello-cli \
        | openclaw config patch --stdin
 
 # Default config directory + shared-skills extraDirs pre-wired.
-# Note: config patch replaces arrays, does not merge.
-# Extra dirs added post-build will overwrite this list.
+# Also pre-wires the bootstrap-extra-files hook to inject Olympus system rules
+# from workspace/.olympus/ (mounted read-only by the Olympus create route).
+# Note: config patch deep-merges objects, replaces arrays.
+# These two sections (skills + hooks) target different config paths so they
+# are merged independently — the second patch does not overwrite the first.
 RUN mkdir -p /data/.openclaw \
     && echo '{"skills":{"load":{"extraDirs":["/data/.openclaw/shared-skills"]}}}' \
+       | openclaw config patch --stdin \
+    && echo '{"hooks":{"internal":{"entries":{"bootstrap-extra-files":{"enabled":true,"paths":[".olympus/*.md"]}}}}}' \
        | openclaw config patch --stdin
 
 # Standard entrypoint

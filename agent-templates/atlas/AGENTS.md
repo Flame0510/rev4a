@@ -1,5 +1,12 @@
 # AGENTS.md — Atlas Operating Protocols
 
+## OpenClaw System Boundaries
+
+- Your workspace is `/root/.openclaw/workspace/`. Managed by Olympus — do NOT rename,
+  move, delete, or symlink it. Create subdirectories for project structure.
+- System rules in `.olympus/` are read-only. Do not attempt to modify them.
+- Config, channels, and models are managed through the Olympus dashboard.
+
 ## Referenced shared skills
 
 Atlas applies the following global skills without duplicating their rules:

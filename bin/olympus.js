@@ -204,6 +204,50 @@ function ensureNetwork() {
   }
 }
 
+// ── Olympus system rules ───────────────────────────────────────────────────
+
+function ensureOlympusRules() {
+  // Ensure all Olympus host directories exist (shared-skills, olympus-rules, …).
+  // Defined centrally in lib/agent-setup so create & recreate routes stay in sync.
+  try {
+    const { ensureHostDirs } = require(join(ROOT, '.next', 'server', 'lib', 'agent-setup.js'));
+    if (typeof ensureHostDirs === 'function') ensureHostDirs();
+  } catch { /* .next not built yet — dirs may already exist */ }
+
+  const olympusRulesDir = '/docker/olympus-rules';
+  const ruleFile = join(olympusRulesDir, 'AGENTS.md');
+  const source = join(ROOT, 'olympus-rules', 'AGENTS.md');
+
+  if (!existsSync(source)) {
+    log('RULES', 'No olympus-rules source found, skipping');
+    return;
+  }
+
+  const sourceContent = readFileSync(source, 'utf-8');
+  let deployedContent = '';
+  try {
+    deployedContent = existsSync(ruleFile) ? readFileSync(ruleFile, 'utf-8') : '';
+  } catch { /* file doesn't exist yet */ }
+
+  if (sourceContent === deployedContent) {
+    log('RULES', 'Olympus system rules up to date');
+    return;
+  }
+
+  try {
+    const sudo = isRoot() ? '' : 'sudo ';
+    if (!existsSync(olympusRulesDir)) {
+      execSync(`${sudo}mkdir -p ${olympusRulesDir}`);
+    }
+    const tmpFile = `/tmp/olympus-rules-${Date.now()}.md`;
+    writeFileSync(tmpFile, sourceContent, 'utf-8');
+    execSync(`${sudo}cp ${tmpFile} ${ruleFile} && ${sudo}rm ${tmpFile}`);
+    log('RULES', 'Deployed olympus system rules to /docker/olympus-rules/');
+  } catch (err) {
+    log('RULES', `⚠ Failed to deploy olympus rules: ${err.message}`);
+  }
+}
+
 // ── .env setup ──────────────────────────────────────────────────────────────
 
 function loadEnv() {
@@ -346,6 +390,7 @@ function preflight() {
   ensureDocker();
   ensureNetwork();
   ensureAgentImage();
+  ensureOlympusRules();
 
   if (!existsSync(NEXT_DIR)) {
     log('PREFLIGHT', 'No build found — running build first…');

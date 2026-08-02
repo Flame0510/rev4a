@@ -4,13 +4,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 import { buildOlympusProviderConfig } from '@/app/api/gateway/sync';
+import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + health check (60s) + config patch (60s)
 
 const BACKUP_VOLUME = 'olympus-backups';
-const SHARED_SKILLS = '/docker/shared-skills';
-const SHARED_REPOS = '/docker/shared-repos';
 
 /** Timestamp YYYY-MM-DD_HHmmssSSS (ms precision avoids same-second collisions). */
 function ts(): string {
@@ -113,15 +112,6 @@ export async function POST(
 
     const volumeName = `agent-${id}-data`;
 
-    // Ensure shared volumes exist
-    for (const vol of [SHARED_SKILLS, SHARED_REPOS]) {
-      if (!fs.existsSync(vol)) {
-        fs.mkdirSync(vol, { recursive: true });
-        try { execSync(`chown 1000:1000 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
-        try { execSync(`chmod 2775 ${shellQuote(vol)}`, { timeout: 3000 }); } catch { /* non-fatal */ }
-      }
-    }
-
     // Auto-backup the volume BEFORE destroying the container
     const backupFile = `agent-${id}-prerecreate-${ts()}.tar.gz`;
     try {
@@ -151,7 +141,7 @@ export async function POST(
       );
     }
 
-    // Run the new container with all mounts (persistent volume + shared skills + shared repos)
+    // Run the new container with all mounts (persistent volume + shared skills + shared repos + olympus rules)
     const cmd = [
       `docker run -d`,
       `--name "${id}"`,
@@ -159,8 +149,7 @@ export async function POST(
       `--restart unless-stopped`,
       `--add-host host.docker.internal:host-gateway`,
       `-v ${volumeName}:/root`,
-      `-v ${SHARED_SKILLS}:/data/.openclaw/shared-skills:ro`,
-      `-v ${SHARED_REPOS}:/data/repos:rw`,
+      ...getMountFlags(),
       labelOpts,
       envOpts,
       portOpts,
@@ -178,34 +167,17 @@ export async function POST(
       );
     }
 
-    // Lightweight config patch: guarantee extraDirs + provider proxy.
-    // Read current config → merge only the keys we own → write back.
-    // Everything else (model, workspace, user customizations) is left untouched.
+    // Guarantee Olympus runtime config (hooks, shared-skills, provider).
+    // Uses config patch (deep-merge) — idempotent, preserves user customizations.
     try {
-      const raw = execSync(
-        `docker exec ${id} cat /root/.openclaw/openclaw.json`,
-        { timeout: 8000, encoding: 'utf-8' },
-      ).trim();
-      const config = JSON.parse(raw);
+      applyRuntimeConfig(id);
 
-      // Guarantee skills.load.extraDirs (merge with existing, dedupe)
-      const skills = (config.skills || {}) as Record<string, unknown>;
-      const load = (skills.load || {}) as Record<string, unknown>;
-      const existing: string[] = Array.isArray(load.extraDirs) ? load.extraDirs as string[] : [];
-      load.extraDirs = [...new Set([...existing, '/data/.openclaw/shared-skills'])];
-      skills.load = load;
-      config.skills = skills;
-
-      // Guarantee models.providers.olympus
+      // Also guarantee models.providers.olympus (host-dependent, not in base image)
       const providerConfig = buildOlympusProviderConfig();
-      const models = (config.models || {}) as Record<string, unknown>;
-      if (!models.providers) models.providers = {};
-      (models.providers as Record<string, unknown>)['olympus'] = providerConfig;
-      config.models = models;
-
+      const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
       execSync(
-        `docker exec -i ${id} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-        { timeout: 15000, input: JSON.stringify(config, null, 2) },
+        `docker exec -i ${id} sh -c 'openclaw config patch --stdin'`,
+        { timeout: 15000, stdio: 'pipe', input: providerJson },
       );
 
       try {
