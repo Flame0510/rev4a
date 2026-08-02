@@ -51,16 +51,18 @@ function getLocalImageId(): string | null {
   }
 }
 
-/** Fetch the remote image digest from ghcr.io (public, no auth). */
+/** Fetch the remote manifest digest from ghcr.io (public, no auth). */
 function getRemoteDigest(): string | null {
   if (!dockerOk()) return null;
   try {
     const out = execSync(
-      `docker manifest inspect ${REGISTRY_IMAGE} 2>/dev/null`,
+      `docker manifest inspect ${REGISTRY_IMAGE} --verbose 2>/dev/null`,
       { encoding: 'utf-8', timeout: 15000 },
     );
     const manifest = JSON.parse(out);
-    return manifest?.config?.digest || null;
+    // Use the manifest descriptor digest (comparable with RepoDigests),
+    // not config.digest (which is a different hash).
+    return manifest?.Descriptor?.digest || null;
   } catch {
     return null;
   }
