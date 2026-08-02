@@ -997,7 +997,7 @@ Check the status of the `openclaw-agent-base` Docker image.
 | Field | Description |
 |---|---|
 | `exists` | Whether `openclaw-agent-base:latest` exists locally |
-| `needsUpdate` | `true` if local image has no matching registry digest |
+| `needsUpdate` | `true` if local manifest digest differs from remote registry |
 | `downloading` | Whether a download is currently running |
 | `localId` | SHA256 ID of the local image, or null |
 
