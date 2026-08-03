@@ -104,13 +104,9 @@ function isDockerCompatibleName(name: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
 }
 
-function validateName(name: string): string | null {
-  if (!name || name.length < 1) return 'Name is required';
-  if (name.length > 64) return 'Name must be 64 characters or fewer';
-  if (!isDockerCompatibleName(name)) {
-    return 'Name must start with a letter or number and contain only letters, numbers, dots, hyphens, and underscores';
-  }
-  return null;
+function generateContainerName(): string {
+  const hex = require('crypto').randomBytes(4).toString('hex');
+  return `agent_${hex}`;
 }
 
 interface CreateBody {
@@ -147,16 +143,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { name, template, portRange: portInput, model, fallbacks } = body;
+    const { name: displayName, template, portRange: portInput, model, fallbacks } = body;
 
-    // Validate name
-    const nameError = validateName(name);
-    if (nameError) {
+    // Validate display name
+    if (!displayName || displayName.trim().length < 1) {
       return NextResponse.json(
-        { success: false, error: nameError },
+        { success: false, error: 'Agent name is required' },
         { status: 400 },
       );
     }
+
+    // Generate a unique container name (stable, never changes)
+    const containerName = generateContainerName();
 
     // Validate template — must be a valid identifier (no path traversal).
     if (!isDockerCompatibleName(template)) {
@@ -188,12 +186,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Check if name is already in use by a running container
     const existing = execSync(
-      `docker ps --filter "label=AGENT_ID=${name}" --format '{{.Names}}'`,
+      `docker ps --filter "label=AGENT_ID=${containerName}" --format '{{.Names}}'`,
       { encoding: 'utf-8', timeout: 5000 },
     ).trim();
     if (existing) {
       return NextResponse.json(
-        { success: false, error: `Agent '${name}' is already running (container: ${existing})` },
+        { success: false, error: `Agent '${displayName}' is already running (container: ${existing})` },
         { status: 409 },
       );
     }
@@ -240,10 +238,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const agentHostname = `${detectPublicHost()}:${portStart}`;
     const traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
 
-    const labels: string[] = [`AGENT_ID=${name}`];
+    const labels: string[] = [`AGENT_ID=${containerName}`];
     const envVars: string[] = [
-      `AGENT_ID=${name}`,
-      `AGENT_NAME=${name}`,
+      `AGENT_ID=${containerName}`,
+      `AGENT_NAME=${displayName.trim()}`,
       `AGENT_TEMPLATE=${template}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
       `AGENT_HOSTNAME=${agentHostname}`,
@@ -262,11 +260,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md', 'BOOTSTRAP.md'];
 
     const cmd = `docker run -d \
-      --name "${name}" \
+      --name "${containerName}" \
       --network "${network}" \
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
-      -v agent-${name}-data:/root \
+      -v agent-${containerName}-data:/root \
       ${mountFlags.join(' \
       ')} \
       ${labelOpts} \
@@ -287,7 +285,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         db.prepare(
           `INSERT INTO events (ts, session_id, type, data) VALUES (?, ?, ?, ?)`,
         ).run(Date.now(), `system:agents`, 'agent_created', JSON.stringify({
-          name,
+          name: displayName,
           template,
           port: portStart,
           portEnd,
@@ -295,7 +293,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           model: model || 'olympus/deepseek-v4-flash',
           fallbacks,
           containerId,
-          containerName: name,
+          containerName,
         }));
         db.close();
       }
@@ -306,9 +304,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Wait for container to be ready (HTTP health check, up to 60s).
     // If it doesn't come up, remove the container and return an error —
     // a zombie agent with no config is worse than an explicit failure.
-    const ready = waitForContainerReady(name);
+    const ready = waitForContainerReady(containerName);
     if (!ready) {
-      try { execSync(`docker rm -f ${name}`, { timeout: 10000 }); } catch { /* best-effort */ }
+      try { execSync(`docker rm -f ${containerName}`, { timeout: 10000 }); } catch { /* best-effort */ }
       return NextResponse.json(
         { success: false, error: `Container started but gateway did not become healthy within 60s. Container removed — try again.` },
         { status: 500 },
@@ -319,7 +317,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       // Create workspace dir
       execSync(
-        `docker exec ${name} mkdir -p /root/.openclaw/workspace`,
+        `docker exec ${containerName} mkdir -p /root/.openclaw/workspace`,
         { timeout: 10000, stdio: 'pipe' },
       );
 
@@ -332,7 +330,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Check if the file already exists in the container workspace
         try {
           execSync(
-            `docker exec ${name} test -f /root/.openclaw/workspace/${tf}`,
+            `docker exec ${containerName} test -f /root/.openclaw/workspace/${tf}`,
             { timeout: 5000, stdio: 'pipe' },
           );
           // File exists — skip to preserve user edits
@@ -342,17 +340,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         try {
           execSync(
-            `docker cp ${shellQuote(src)} ${name}:/root/.openclaw/workspace/`,
+            `docker cp ${shellQuote(src)} ${containerName}:/root/.openclaw/workspace/`,
             { timeout: 10000, stdio: 'pipe' },
           );
         } catch (cpErr) {
-          console.warn(`[create] Failed to copy ${tf} to ${name}:`, (cpErr as Error).message);
+          console.warn(`[create] Failed to copy ${tf} to ${containerName}:`, (cpErr as Error).message);
         }
       }
 
       // Read the config OpenClaw generated on first boot
       const raw = execSync(
-        `docker exec ${name} cat /root/.openclaw/openclaw.json`,
+        `docker exec ${containerName} cat /root/.openclaw/openclaw.json`,
         { timeout: 8000, encoding: 'utf-8' },
       ).trim();
       const config = JSON.parse(raw);
@@ -395,13 +393,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Single write
       execSync(
-        `docker exec -i ${name} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+        `docker exec -i ${containerName} sh -c 'cat > /root/.openclaw/openclaw.json'`,
         { timeout: 15000, input: JSON.stringify(config, null, 2) },
       );
 
       // Single restart to pick up the merged config
       try {
-        execSync(`docker exec ${name} openclaw gateway restart`, { timeout: 15000 });
+        execSync(`docker exec ${containerName} openclaw gateway restart`, { timeout: 15000 });
       } catch {
         // restart failure is non-fatal; config is on disk, picked up on next boot
       }
@@ -414,18 +412,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // create-specific config so they're always present regardless of
     // what was in the persistent volume.
     try {
-      applyRuntimeConfig(name);
+      applyRuntimeConfig(containerName);
 
       // Also guarantee models.providers.olympus (host-dependent, not in base image)
       const providerConfig = buildOlympusProviderConfig();
       const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
       execSync(
-        `docker exec -i ${name} sh -c 'openclaw config patch --stdin'`,
+        `docker exec -i ${containerName} sh -c 'openclaw config patch --stdin'`,
         { timeout: 15000, stdio: 'pipe', input: providerJson },
       );
 
       try {
-        execSync(`docker exec ${name} openclaw gateway restart`, { timeout: 15000 });
+        execSync(`docker exec ${containerName} openclaw gateway restart`, { timeout: 15000 });
       } catch { /* restart is best-effort */ }
     } catch {
       // runtime config patch is best-effort
@@ -434,7 +432,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       success: true,
       containerId,
-      name,
+      containerName,
+      displayName: displayName.trim(),
       image,
       network,
       traefikUrl,

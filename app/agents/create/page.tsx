@@ -59,10 +59,23 @@ async function getModels(): Promise<ModelInfo[]> {
 async function getUsedNames(): Promise<string[]> {
   try {
     const raw = execSync(
-      `docker ps --filter "label=AGENT_ID" --format '{{.Label "AGENT_ID"}}'`,
+      `docker ps --filter "label=AGENT_ID" --format '{{.Names}}'`,
       { encoding: 'utf-8', timeout: 5000 },
     ).trim();
-    return raw ? raw.split('\n').filter(Boolean) : [];
+    if (!raw) return [];
+
+    // Read AGENT_NAME env from each container (display name)
+    const names: string[] = [];
+    for (const name of raw.split('\n').filter(Boolean)) {
+      try {
+        const displayName = execSync(
+          `docker exec ${name} sh -c 'echo $AGENT_NAME'`,
+          { encoding: 'utf-8', timeout: 3000 },
+        ).trim();
+        if (displayName) names.push(displayName);
+      } catch { /* skip */ }
+    }
+    return names;
   } catch {
     return [];
   }

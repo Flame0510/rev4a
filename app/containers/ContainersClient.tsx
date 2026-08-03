@@ -12,6 +12,7 @@ interface ContainerInfo {
   ports: string;
   ip: string | null;
   agentId: string | null;
+  displayName?: string | null;
 }
 
 export default function ContainersClient() {
@@ -36,45 +37,85 @@ export default function ContainersClient() {
   useEffect(() => { const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
 
   return (
-    <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 400, color: 'var(--copper)', letterSpacing: 2, marginBottom: 4 }}>CONTAINERS</h1>
-      <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 20 }}>
-        {containers.length} container · {new Date().toLocaleTimeString('it-IT')}
-        <Button variant="ghost" size="sm" onClick={load}>↻</Button>
-      </p>
+    <div style={{ padding: '16px', maxWidth: 1080, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 400, color: 'var(--copper)', letterSpacing: 2, margin: 0 }}>CONTAINERS</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+            {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{new Date().toLocaleTimeString('it-IT')}</span>
+          </span>
+          <Button variant="ghost" size="sm" onClick={load}>↻</Button>
+        </div>
+      </div>
 
-      {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
-      {error && <p style={{ color: '#ef4444', fontSize: 13 }}>{error}</p>}
+      {loading && <p style={{ color: 'var(--text-dim)', fontSize: 12, padding: '20px 0' }}>Loading...</p>}
+      {error && <p style={{ color: '#ef4444', fontSize: 12 }}>{error}</p>}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Container cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {containers.map(c => (
-          <div key={c.id} style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-              background: c.state === 'running' ? 'var(--green)' : (c.state === 'restarting' ? 'var(--yellow)' : 'var(--red)')
-            }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</span>
-                {c.agentId && <Pill tone="accent">{c.agentId}</Pill>}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <span>{c.image}</span>
-                {c.ip && <span>{c.ip}</span>}
-                {c.ports && <span>{c.ports}</span>}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div
+            key={c.id}
+            style={{
+              padding: '12px 14px',
+              border: '1px solid var(--border)',
+              borderRadius: 0,
+              background: 'var(--bg)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            {/* Top row: name + status bullet + actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                background: c.state === 'running' ? 'var(--green)' : (c.state === 'restarting' ? 'var(--yellow)' : 'var(--red)')
+              }} />
+              <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-mono-stack)', wordBreak: 'break-all', flex: '1 1 auto', minWidth: 0 }}>
+                {c.name}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0, fontFamily: 'var(--font-mono-stack)' }}>
+                {c.state === 'running' ? c.status.replace(/^Up\s+/, '') : c.status}
+              </span>
               {c.state === 'running' && (
                 <a
                   href={`/containers/terminal/${encodeURIComponent(c.name)}`}
-                  className="container-terminal-link"
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--copper)',
+                    textDecoration: 'none',
+                    border: '1px solid var(--copper)',
+                    padding: '2px 8px',
+                    borderRadius: 0,
+                    flexShrink: 0,
+                    fontFamily: 'var(--font-mono-stack)',
+                    letterSpacing: '0.05em',
+                  }}
                 >
                   TERMINAL
                 </a>
               )}
-              <span style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{c.status}</span>
             </div>
+
+            {/* Second row: image + ports + ip + agent info */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-dim)' }}>
+              <span style={{ fontFamily: 'var(--font-mono-stack)', wordBreak: 'break-all' }}>{c.image}</span>
+              {c.ip && <span style={{ fontFamily: 'var(--font-mono-stack)', color: '#888' }}>{c.ip}</span>}
+              {c.ports && <span style={{ fontFamily: 'var(--font-mono-stack)', color: '#888' }}>{c.ports}</span>}
+            </div>
+
+            {/* Agent badge — only for Olympus-managed agents */}
+            {(c.displayName || c.agentId) && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {c.displayName ? (
+                  <Pill tone="accent">{c.displayName}</Pill>
+                ) : c.agentId ? (
+                  <Pill tone="neutral">{c.agentId}</Pill>
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
       </div>

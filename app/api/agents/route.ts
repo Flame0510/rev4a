@@ -155,6 +155,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
           id: (c.Id || '').slice(0, 12),
           agentId,
           name: (c.Names?.[0] || '').replace(/^\//, ''),
+          displayName: (env.find((e: string) => e.startsWith('AGENT_NAME=')) || '').split('=').slice(1).join('=') || (c.Names?.[0] || '').replace(/^\//, ''),
           image,
           imageTag: image.includes(':') ? image.split(':')[1] || 'latest' : (image.includes('@') ? 'digest' : 'latest'),
           template,

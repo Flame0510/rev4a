@@ -95,8 +95,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
   const nameError = useMemo(() => {
     if (!agentName) return '';
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(agentName)) return 'Invalid name: use only letters, numbers, dots, hyphens, underscores';
-    if (agentName.length > 64) return 'Name too long (max 64 chars)';
+    if (agentName.length > 128) return 'Name too long (max 128 chars)';
     if (usedNames.includes(agentName)) return 'Name is already in use by another agent';
     return '';
   }, [agentName, usedNames]);
@@ -290,8 +289,8 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             <Input
               label="Agent Name"
               value={agentName}
-              onChange={(e) => setAgentName(e.target.value.toLowerCase().replace(/[^a-zA-Z0-9._-]/g, ''))}
-              placeholder="e.g. my-agent"
+              onChange={(e) => setAgentName(e.target.value)}
+              placeholder="My Agent 🤖"
               error={nameError}
             />
           </div>

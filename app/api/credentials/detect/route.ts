@@ -15,6 +15,7 @@ export const dynamic = 'force-dynamic';
 interface DetectedStatus {
   container: string;
   agentId: string;
+  displayName?: string;
   githubLoggedIn: boolean;
   githubUser: string;
   githubCliInstalled: boolean;
@@ -189,6 +190,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const trelloCliInstalled = cliInstalled(name, 'trello');
         const toolsMdHasMarkers = detectToolsMd(name);
 
+        // Read AGENT_NAME env for display name (may differ from container name)
+        const displayName = execInContainer(
+          name,
+          'echo $AGENT_NAME',
+          (r) => r.trim(),
+          '',
+        ) || undefined;
+
         // Precise profile matching by token hash — one source of truth for all providers.
         const matchedProfiles = matchProfiles({
           'github-pat': providerTokenHash(name, 'github-pat'),
@@ -201,6 +210,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         results.push({
           container: name,
           agentId,
+          displayName,
           githubLoggedIn,
           githubUser,
           githubCliInstalled,

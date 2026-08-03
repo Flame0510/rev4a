@@ -32,6 +32,7 @@ interface Agent {
   id: string;
   agentId: string;
   name: string;
+  displayName?: string;
   image: string;
   imageTag: string;
   template: string | null;
@@ -332,7 +333,7 @@ export default function AgentsPageClient() {
             <ListItem key={agent.id} onClick={() => selectAgent(agent)} style={{ padding: '12px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.name}</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                 {agent.template && (
                   <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                 )}
@@ -402,7 +403,7 @@ export default function AgentsPageClient() {
               <ListItem key={agent.id} onClick={() => setSelected(agent)} active={isSelected} style={{ padding: '12px 14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
-                  <span style={{ color: isSelected ? 'var(--copper)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.name}</span>
+                  <span style={{ color: isSelected ? 'var(--copper)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                   {agent.template && (
                     <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                   )}
@@ -550,7 +551,8 @@ function DetailPanel({ agent }: { agent: Agent }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
           <span style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
           <div>
-            <div style={{ fontSize: 16, fontWeight: 500 }}>{agent.name}</div>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>{agent.displayName || agent.name}</div>
+            <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{agent.name}</div>
             <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{agent.status}</div>
           </div>
           {agent.template && (
@@ -565,8 +567,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<InfoIcon size={12} />} label="PROPERTIES" />
         {([
+          ['Display Name', agent.displayName || agent.name],
           ['Agent ID', agent.agentId],
-          ['Container ID', agent.id],
+          ['Container', agent.name],
           ['Image', agent.image],
           ['Tag', agent.imageTag],
           ['Template', agent.template || '-'],

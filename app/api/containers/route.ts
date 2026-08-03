@@ -58,6 +58,7 @@ export async function GET() {
           ports: c.Ports?.map((p: any) => `${p.PublicPort || '?'}:${p.PrivatePort || '?'}`).join(', ') || '',
           ip,
           agentId: c.Labels?.AGENT_ID || null,
+          displayName: (inspect.Config?.Env || []).find((e: string) => e.startsWith('AGENT_NAME='))?.split('=').slice(1).join('=') || null,
           created: c.Labels?.created || null,
         };
       } catch {
