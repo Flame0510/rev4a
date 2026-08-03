@@ -572,6 +572,13 @@ if (cmd === 'serve') {
   console.log(BANNER);
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
+
+  // Kill any stale olympus processes on this port before starting.
+  // Prevents zombie process accumulation on systems without systemd.
+  try {
+    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
+  } catch { /* best-effort */ }
+
   // Auto-restart loop: when olympus update triggers exit code 42,
   // re-exec olympus serve so the new binary is loaded. Works with
   // or without systemd (systemd Restart=always also handles it).
@@ -622,9 +629,20 @@ if (cmd === 'build') {
 }
 
 if (cmd === 'restart') {
+  // Find and kill the running olympus serve process, then restart it.
+  // Uses the restart flag file as the primary mechanism (works with
+  // the watcher inside _run), but also does a direct kill + respawn
+  // as a fallback for environments where the watcher might miss the flag
+  // (e.g. multiple zombie processes, nohup edge cases).
   const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
   writeFileSync(RESTART_FLAG, '');
   console.log('Restart signal sent. The running olympus serve process will restart.');
+
+  // Also kill the port directly — ensures restart even if watcher misses the flag
+  const port = parseInt(process.env.PORT, 10) || DEFAULT_PORT;
+  try {
+    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
+  } catch { /* best-effort */ }
   process.exit(0);
 }
 
