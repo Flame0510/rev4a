@@ -336,6 +336,18 @@ export default function AgentsPageClient() {
                 {agent.template && (
                   <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                 )}
+                <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                  {agent.state === 'running' && agent.traefikUrl && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
+                      title="Open agent Control UI"
+                    >
+                      Open ↗
+                    </Button>
+                  )}
+                </div>
               </div>
               <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
                 {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
@@ -385,6 +397,7 @@ export default function AgentsPageClient() {
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => {
             const isSelected = selected?.id === agent.id;
+
             return (
               <ListItem key={agent.id} onClick={() => setSelected(agent)} active={isSelected} style={{ padding: '12px 14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -393,6 +406,18 @@ export default function AgentsPageClient() {
                   {agent.template && (
                     <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
                   )}
+                  <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                    {agent.state === 'running' && agent.traefikUrl && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
+                        title="Open agent Control UI"
+                      >
+                        Open ↗
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontSize: 11, color: '#666', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   <span>{agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}</span>
