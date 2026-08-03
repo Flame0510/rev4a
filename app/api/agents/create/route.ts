@@ -415,6 +415,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // what was in the persistent volume.
     try {
       applyRuntimeConfig(name);
+
+      // Also guarantee models.providers.olympus (host-dependent, not in base image)
+      const providerConfig = buildOlympusProviderConfig();
+      const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
+      execSync(
+        `docker exec -i ${name} sh -c 'openclaw config patch --stdin'`,
+        { timeout: 15000, stdio: 'pipe', input: providerJson },
+      );
+
       try {
         execSync(`docker exec ${name} openclaw gateway restart`, { timeout: 15000 });
       } catch { /* restart is best-effort */ }

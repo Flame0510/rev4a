@@ -160,10 +160,13 @@ export function setTelegramConfig(
       );
     }
 
+    // Merge channel config: preserve ALL existing keys (provider, etc.)
+    // and only overwrite the specific fields we're setting.
     channels.telegram = {
+      ...existing,
       enabled: true,
       botToken: params.botToken,
-      dmPolicy: params.dmPolicy ?? 'pairing',
+      dmPolicy: params.dmPolicy ?? existing.dmPolicy ?? 'pairing',
     };
 
     if (existingAllowFrom && existingAllowFrom.length > 0) {
@@ -217,29 +220,37 @@ export function removeTelegram(agentId: string): { success: boolean; error?: str
 // ── Internal helpers ─────────────────────────
 
 /**
- * Ensure a binding exists for agentId → channel.
+ * Ensure a binding exists for channel → "main" agent.
+ *
+ * The agentId in the binding MUST be "main" (OpenClaw's default agent)
+ * so that sessions are created as `agent:main:main`.
+ * Using the container name as agentId would create sessions like
+ * `agent:NOMEAGENTE:main` which breaks model bindings that target
+ * `agent:main:*`.
+ *
  * Per multi-agent.md: bindings route (channel, accountId) to agentId.
  * For mono-account, accountId defaults to "default".
  */
 function ensureBinding(
   config: Record<string, unknown>,
-  agentId: string,
+  _agentId: string, // kept for API compatibility, ignored — we always bind to "main"
   channel: string,
   accountId: string | undefined,
 ): void {
+  const bindingAgentId = 'main'; // always bind to the default agent
   const effectiveAccountId = accountId ?? 'default';
   const bindings = (Array.isArray(config.bindings) ? config.bindings : []) as Record<string, unknown>[];
 
   const exists = bindings.some(
     (b) =>
-      b.agentId === agentId &&
+      b.agentId === bindingAgentId &&
       (b.match as Record<string, unknown>)?.channel === channel &&
       ((b.match as Record<string, unknown>)?.accountId ?? 'default') === effectiveAccountId,
   );
 
   if (!exists) {
     bindings.push({
-      agentId,
+      agentId: bindingAgentId,
       match: {
         channel,
         accountId: effectiveAccountId,
@@ -249,10 +260,11 @@ function ensureBinding(
   }
 }
 
-function removeBindings(config: Record<string, unknown>, agentId: string, channel: string): void {
+function removeBindings(config: Record<string, unknown>, _agentId: string, channel: string): void {
+  const bindingAgentId = 'main';
   const bindings = (Array.isArray(config.bindings) ? config.bindings : []) as Record<string, unknown>[];
   config.bindings = bindings.filter(
-    (b) => !(b.agentId === agentId && (b.match as Record<string, unknown>)?.channel === channel),
+    (b) => !(b.agentId === bindingAgentId && (b.match as Record<string, unknown>)?.channel === channel),
   );
 }
 
