@@ -6,6 +6,8 @@ import {
   cliInstalled,
   providerTokenHash,
   profileTokenHash,
+  detectTrello,
+  detectNotion,
 } from '@/lib/credentials/detect';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +28,7 @@ interface DetectedStatus {
   supabaseCliInstalled: boolean;
   trelloLoggedIn: boolean;
   trelloCliInstalled: boolean;
+  notionLoggedIn: boolean;
   toolsMdHasMarkers: boolean;
   matchedProfiles: { profileId: string; providerId: string; label: string }[];
 }
@@ -97,17 +100,6 @@ function detectToolsMd(container: string): boolean {
     '0',
   );
   return raw === '1' || parseInt(raw, 10) > 0;
-}
-
-function detectTrello(container: string): { loggedIn: boolean } {
-  // Presence of the trello-cli config file marks the CLI as authenticated.
-  const hasConfig = execInContainer(
-    container,
-    'test -f /root/.trello-cli/default/config.json && echo yes || echo no',
-    (r) => r.trim(),
-    'no',
-  );
-  return { loggedIn: hasConfig === 'yes' };
 }
 
 function detectVercel(container: string): { loggedIn: boolean; user: string; team: string } {
@@ -187,6 +179,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       try {
         const { loggedIn: githubLoggedIn, user: githubUser } = detectGithub(name);
         const { loggedIn: trelloLoggedIn } = detectTrello(name);
+        const { loggedIn: notionLoggedIn } = detectNotion(name);
         const { loggedIn: vercelLoggedIn, user: vercelUser, team: vercelTeam } = detectVercel(name);
         const { loggedIn: supabaseLoggedIn, linked: supabaseLinked, projectRef: supabaseProjectRef } = detectSupabase(name);
 
@@ -202,6 +195,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           vercel: providerTokenHash(name, 'vercel'),
           supabase: providerTokenHash(name, 'supabase'),
           trello: providerTokenHash(name, 'trello'),
+          notion: providerTokenHash(name, 'notion'),
         });
 
         results.push({
@@ -220,6 +214,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           supabaseCliInstalled,
           trelloLoggedIn,
           trelloCliInstalled,
+          notionLoggedIn,
           toolsMdHasMarkers,
           matchedProfiles,
         });

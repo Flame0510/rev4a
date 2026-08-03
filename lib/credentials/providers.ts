@@ -85,6 +85,24 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
     deliveryMethod: 'supabase login --token *** --no-browser',
     docsUrl: 'https://supabase.com/dashboard/account/tokens',
   },
+  {
+    id: 'notion',
+    label: 'Notion',
+    category: 'pm',
+    description: 'API Token for Notion integration — enables the agent to read/write pages, databases, and blocks',
+    authType: 'static-token',
+    fields: [
+      {
+        key: 'token',
+        label: 'API Token (Internal Integration)',
+        placeholder: 'ntn_... or secret_...',
+        type: 'password',
+        hint: 'Create at notion.so/my-integrations. Grant Read + Insert + Update capabilities.',
+      },
+    ],
+    deliveryMethod: 'writes ~/.config/notion/config.json',
+    docsUrl: 'https://www.notion.so/my-integrations',
+  },
 ];
 
 export function getProvider(id: string): CredentialProviderDef | undefined {

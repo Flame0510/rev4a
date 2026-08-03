@@ -34,7 +34,7 @@ The estimated cost of an agent session in USD, calculated from tokens used and p
 A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice, you can set an override value for that month with an optional note.
 
 ## Credential
-A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key) stored in the Olympus vault. Credentials can be scoped to specific agent containers and synced via CLI auth or environment variables. Every reveal is logged in the audit trail.
+A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Olympus vault. Credentials can be scoped to specific agent containers and synced via CLI auth or config files. Every reveal is logged in the audit trail.
 
 ## Cron / Cron Job
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.

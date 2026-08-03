@@ -45,7 +45,27 @@ export function execInContainer<T>(
   }
 }
 
-/** True if a CLI binary is on PATH inside the container. */
+/** Trello: presence of the config file marks the CLI as authenticated. */
+export function detectTrello(container: string): { loggedIn: boolean } {
+  const hasConfig = execInContainer(
+    container,
+    'test -f /root/.trello-cli/default/config.json && echo yes || echo no',
+    (r) => r.trim(),
+    'no',
+  );
+  return { loggedIn: hasConfig === 'yes' };
+}
+
+/** Notion: no CLI — just check if the config file exists (same pattern as Trello). */
+export function detectNotion(container: string): { loggedIn: boolean } {
+  const hasConfig = execInContainer(
+    container,
+    'test -f /root/.config/notion/config.json && echo yes || echo no',
+    (r) => r.trim(),
+    'no',
+  );
+  return { loggedIn: hasConfig === 'yes' };
+}
 export function cliInstalled(container: string, name: string): boolean {
   const raw = execInContainer(
     container,
@@ -65,6 +85,7 @@ export const TOKEN_FIELD: Record<string, string> = {
   vercel: 'token',
   supabase: 'accessToken',
   trello: 'token',
+  notion: 'token',
 };
 
 /** Hash of a stored profile secret's token (empty when unavailable). */
@@ -110,6 +131,14 @@ export function providerTokenHash(container: string, providerId: string): string
       raw = execInContainer(
         container,
         "cat /root/.trello-cli/default/config.json 2>/dev/null | grep -oE '\"token\"[^,}]*' | head -1 | grep -oE '\"[^\"]*\"$' | tr -d '\"'",
+        (r) => r.trim(),
+        '',
+      );
+      break;
+    case 'notion':
+      raw = execInContainer(
+        container,
+        "cat /root/.config/notion/config.json 2>/dev/null | grep -oE '\"token\"[^,}]*' | head -1 | grep -oE '\"[^\"]*\"$' | tr -d '\"'",
         (r) => r.trim(),
         '',
       );

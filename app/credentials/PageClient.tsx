@@ -24,6 +24,7 @@ const PROVIDER_COLOR: Record<string, string> = {
   trello: '#0052cc',
   vercel: '#000000',
   supabase: '#3ecf8e',
+  notion: '#050505',
 };
 
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
@@ -65,6 +66,7 @@ export default function CredentialsPageClient() {
     supabaseCliInstalled: boolean;
     trelloLoggedIn: boolean;
     trelloCliInstalled: boolean;
+    notionLoggedIn: boolean;
     matchedProfiles?: { profileId: string; providerId: string; label: string }[];
   }[]>([]);
 
@@ -97,6 +99,7 @@ export default function CredentialsPageClient() {
         supabaseCliInstalled: boolean;
         trelloLoggedIn: boolean;
         trelloCliInstalled: boolean;
+        notionLoggedIn: boolean;
         matchedProfiles?: { profileId: string; providerId: string; label: string }[];
       }[] };
       setData(json);
@@ -276,6 +279,7 @@ export default function CredentialsPageClient() {
                     const isVercel = providerType === 'vercel';
                     const isSupabase = providerType === 'supabase';
                     const isTrello = providerType === 'trello';
+                    const isNotion = providerType === 'notion';
 
                     return (
                     <div key={p.id} style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -308,7 +312,9 @@ export default function CredentialsPageClient() {
                                   ? d.vercelCliInstalled
                                   : isSupabase
                                     ? d.supabaseCliInstalled
-                                    : d.trelloCliInstalled;
+                                    : isTrello
+                                      ? d.trelloCliInstalled
+                                      : true; // notion has no CLI — always available
 
                               let extraInfo = '';
                               if (matchByProfile) {

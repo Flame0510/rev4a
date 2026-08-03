@@ -175,6 +175,18 @@ function deliverTrello(container: string, secret: Record<string, string>): void 
   );
 }
 
+/** Notion: no CLI, just write a config file (same pattern as Trello). */
+function deliverNotion(container: string, secret: Record<string, string>): void {
+  const { token } = secret;
+  if (!token) throw new Error('Missing Notion API token');
+
+  const config = JSON.stringify({ token });
+  containerExec(
+    container,
+    `mkdir -p /root/.config/notion && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.config/notion/config.json && chmod 600 /root/.config/notion/config.json`,
+  );
+}
+
 // ── TOOLS.md managed section (per-container) ──────────────────────────────
 
 const MARKER_START = '<!-- OLYMPUS:INTEGRATIONS:START -->';
@@ -207,6 +219,11 @@ const PROVIDER_ENTRIES: Record<string, IntegrationEntry> = {
     tool: 'trello',
     status: '✓ ready',
     note: 'Trello CLI — `trello card:list`, `trello card:create`, `trello interactive`',
+  },
+  notion: {
+    tool: 'notion',
+    status: '✓ ready',
+    note: 'Notion API — read/write pages, databases, and blocks via REST API',
   },
 };
 
@@ -347,6 +364,9 @@ function cleanProvider(container: string, providerId: string): void {
     case 'trello':
       try { containerExec(safe, 'rm -rf /root/.trello-cli', 10000); } catch {}
       break;
+    case 'notion':
+      try { containerExec(safe, 'rm -rf /root/.config/notion', 10000); } catch {}
+      break;
   }
 }
 
@@ -363,6 +383,7 @@ async function deliverToAgent(
     case 'vercel':     await deliverVercel(container, secret); break;
     case 'supabase':   deliverSupabase(container, secret); break;
     case 'trello':     deliverTrello(container, secret); break;
+    case 'notion':     deliverNotion(container, secret); break;
     default: throw new Error(`No delivery adapter for: ${providerId}`);
   }
 }

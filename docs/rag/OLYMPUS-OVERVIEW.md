@@ -68,7 +68,7 @@ Live web terminal into a Docker container. Run commands, inspect files, debug is
 File explorer for the OpenClaw workspace. Browse, view, and edit files across workspaces: the VPS host workspace and every agent container workspace. Switch between workspaces via a dropdown. Supports binary file preview (images) and text editing with syntax awareness.
 
 ### Credentials (`/credentials`)
-Manage third-party service credentials: GitHub, Trello, Vercel, Supabase. Each credential can be scoped to specific agent containers. Sync pushes credentials into containers via CLI auth (gh, vercel, supabase) or env files (trello). Live detection shows which credentials are actually installed in each container. Audit trail for every reveal action.
+Manage third-party service credentials: GitHub, Trello, Vercel, Supabase, Notion. Each credential can be scoped to specific agent containers. Sync pushes credentials into containers via CLI auth (gh, vercel, supabase) or config files (trello, notion). Live detection shows which credentials are actually installed in each container. Audit trail for every reveal action.
 
 ### Crons (`/crons`)
 Scheduled tasks auto-discovered from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`). Filter jobs by agent using the toolbar tabs. Each job shows name, description, cron expression, next run, last run, and last status. Toggle on/off per job. The run history panel shows recent cron run executions for the selected job, loaded on demand from the container's gateway.
