@@ -312,7 +312,7 @@ export default function AgentsPageClient() {
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
-          <Button variant="ghost" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
+          <Button variant="primary" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
             + NEW
           </Button>
         </div>
@@ -365,7 +365,7 @@ export default function AgentsPageClient() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
-          <Button variant="ghost" size="sm" disabled={!imageReady || !providersConfigured} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : !providersConfigured ? 'No providers configured' : undefined}>
+          <Button variant="primary" size="sm" disabled={!imageReady || !providersConfigured} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : !providersConfigured ? 'No providers configured' : undefined}>
             + NEW
           </Button>
         </div>
