@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { execSync } from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildOlympusProviderConfig } from '../../gateway/sync';
@@ -105,7 +106,7 @@ function isDockerCompatibleName(name: string): boolean {
 }
 
 function generateContainerName(): string {
-  const hex = require('crypto').randomBytes(4).toString('hex');
+  const hex = crypto.randomBytes(4).toString('hex');
   return `agent_${hex}`;
 }
 

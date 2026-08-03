@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, ListItem, Badge, ConfirmModal, type Tone } from '../components/ui';
+import { Button, ListItem, Badge, ConfirmModal, Input, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
@@ -451,6 +451,87 @@ export default function AgentsPageClient() {
   );
 }
 
+// ─── Edit Agent modal ───
+function EditAgentModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const [displayName, setDisplayName] = useState(agent.displayName || agent.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    const trimmed = displayName.trim();
+    if (!trimmed) {
+      setError('Display name must not be empty');
+      return;
+    }
+    if (trimmed === (agent.displayName || agent.name)) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update');
+      // Reload to pick up the new display name
+      window.location.reload();
+    } catch (e: unknown) {
+      setError((e as Error).message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        }}
+        onClick={saving ? undefined : onClose}
+      >
+        <div
+          style={{
+            background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 0,
+            maxWidth: 400, width: '100%', maxHeight: '90vh', overflow: 'auto',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 500, color: 'var(--copper)', letterSpacing: '0.05em' }}>
+            <span>EDIT AGENT</span>
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>✕</Button>
+          </div>
+          <div style={{ padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <Input
+                label="Display Name"
+                value={displayName}
+                onChange={(e) => { setDisplayName(e.target.value); setError(''); }}
+                placeholder="My Agent 🚀"
+                error={error}
+                disabled={saving}
+              />
+              <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
+                Container: {agent.name} · This will recreate the container. Sessions and workspace are preserved.
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save & Recreate'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Config modal ───
 function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const [raw, setRaw] = useState<string | null>(null);
@@ -525,6 +606,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
   const [deleteError, setDeleteError] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -551,7 +633,12 @@ function DetailPanel({ agent }: { agent: Agent }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
           <span style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
           <div>
-            <div style={{ fontSize: 16, fontWeight: 500 }}>{agent.displayName || agent.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
+              <Button variant="primary" size="sm" onClick={() => setShowEdit(true)} title="Edit agent settings">
+                ✎
+              </Button>
+            </div>
             <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{agent.name}</div>
             <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{agent.status}</div>
           </div>
@@ -626,6 +713,9 @@ function DetailPanel({ agent }: { agent: Agent }) {
 
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
+
+      {/* Edit agent modal */}
+      {showEdit && <EditAgentModal agent={agent} onClose={() => setShowEdit(false)} />}
 
       {/* Delete confirmation */}
       <ConfirmModal
