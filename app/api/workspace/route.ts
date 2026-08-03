@@ -65,9 +65,18 @@ function listWorkspaces(): Workspace[] {
       for (const line of output.split('\n')) {
         const [name, agentId] = line.split('|');
         if (name && agentId) {
+          // Read AGENT_NAME env for display name (fallback to agentId)
+          let displayName = '';
+          try {
+            displayName = execFileSync(
+              'docker',
+              ['exec', name, 'sh', '-c', 'printenv AGENT_NAME'],
+              { timeout: 3000, encoding: 'utf-8' },
+            ).trim();
+          } catch { /* use fallback */ }
           workspaces.push({
             id: `container-${name}`,
-            label: `${agentId} (${name})`,
+            label: displayName || `${agentId} (${name})`,
             type: 'container',
             path: '/root/.openclaw/workspace/',
             containerName: name,

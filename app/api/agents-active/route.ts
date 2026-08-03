@@ -149,9 +149,18 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
     // Add any Docker-only agents not in config
     for (const d of dockerAgents) {
       if (!configuredAgents.find((c) => c.id === d.agentId)) {
+        // Read AGENT_NAME env for display name
+        let label = d.agentId;
+        try {
+          const displayName = execSync(
+            `docker exec ${d.name} sh -c 'printenv AGENT_NAME'`,
+            { timeout: 3000, encoding: 'utf-8' },
+          ).trim();
+          if (displayName) label = displayName;
+        } catch { /* use fallback */ }
         agents.push({
           agent_id: d.agentId,
-          label: d.agentId,
+          label,
           config_model: null,
           workspace_path: '',
           files: [],

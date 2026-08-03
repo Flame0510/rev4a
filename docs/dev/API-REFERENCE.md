@@ -1049,6 +1049,7 @@ and workspace files.
   {
     "agent_id": "ops",
     "label": "Argus",
+    "displayName": "Argus",
     "config_model": "openai-codex/gpt-5.4",
     "workspace_path": "/data/.openclaw/workspace-ops/",
     "files": [ { "name": "MEMORY.md", "path": "...", "rel_path": "MEMORY.md", "type": "markdown" } ],
@@ -1316,7 +1317,7 @@ List available workspaces (VPS host + Docker containers with `AGENT_ID` label).
 {
   "workspaces": [
     { "id": "vps", "label": "VPS Host (Nexus)", "type": "host" },
-    { "id": "container-openclaw-atlas", "label": "atlas (openclaw-atlas)", "type": "container" }
+    { "id": "container-agent_8ba21f83", "label": "Giuanmuzzziins", "type": "container" }
   ]
 }
 ```
@@ -1782,6 +1783,7 @@ Live-detect which credentials are actually present inside agent containers.
     {
       "container": "prometheus",
       "agentId": "prometheus",
+      "displayName": "Prometheus",
       "githubLoggedIn": true,
       "githubUser": "Flame0510",
       "githubCliInstalled": true,

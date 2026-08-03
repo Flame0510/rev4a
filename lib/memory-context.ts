@@ -32,6 +32,7 @@ export interface FileSummary {
 export interface AgentMemorySummary {
   agentId: string;
   name: string;
+  displayName?: string;
   workspace: string;
   source: string[];
   files: Record<BootstrapFileName, FileSummary>;
@@ -81,6 +82,7 @@ interface OpenClawConfig {
 interface AgentSeed {
   agentId: string;
   name: string;
+  displayName?: string;
   workspace: string;
   source: Set<string>;
 }
@@ -195,7 +197,7 @@ function discoverAgents(globalWarnings: string[]): AgentSeed[] {
 
   const seeds = new Map<string, AgentSeed>();
 
-  const upsert = (agentId: string, name: string, workspace: string, source: string) => {
+  const upsert = (agentId: string, name: string, workspace: string, source: string, displayName?: string) => {
     const cleanWorkspace = workspace.trim();
     if (!cleanWorkspace) return;
     const key = `${agentId}@@${cleanWorkspace}`;
@@ -203,11 +205,13 @@ function discoverAgents(globalWarnings: string[]): AgentSeed[] {
     if (existing) {
       existing.source.add(source);
       if (existing.name === existing.agentId && name) existing.name = name;
+      if (displayName && !existing.displayName) existing.displayName = displayName;
       return;
     }
     seeds.set(key, {
       agentId,
       name: name || agentId,
+      displayName,
       workspace: cleanWorkspace,
       source: new Set([source]),
     });
@@ -231,6 +235,33 @@ function discoverAgents(globalWarnings: string[]): AgentSeed[] {
     }
   } catch (error) {
     globalWarnings.push(`Unable to scan workspaces: ${(error as Error).message}`);
+  }
+
+  // Discover Docker agents with AGENT_ID label (Olympus-managed containers)
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync(
+      `docker ps --filter "label=AGENT_ID" --format '{{.Names}}|{{.Label "AGENT_ID"}}'`,
+      { timeout: 5000, encoding: 'utf-8' },
+    ).trim();
+    if (out) {
+      for (const line of out.split('\n')) {
+        const [containerName, agentId] = line.split('|');
+        if (!containerName || !agentId) continue;
+        // Read AGENT_NAME from container env
+        let displayName = '';
+        try {
+          displayName = execSync(
+            `docker exec ${containerName} sh -c 'printenv AGENT_NAME'`,
+            { timeout: 3000, encoding: 'utf-8' },
+          ).trim();
+        } catch { /* env read failed — use fallback */ }
+        const workspace = '/root/.openclaw/workspace/';
+        upsert(agentId, displayName || containerName, workspace, 'docker', displayName || undefined);
+      }
+    }
+  } catch {
+    // Docker not available — not a fatal error for memory context
   }
 
   if (!seeds.size) {
@@ -287,6 +318,7 @@ function inspectAgent(seed: AgentSeed): AgentMemorySummary {
   const summary: AgentMemorySummary = {
     agentId: seed.agentId,
     name: seed.name,
+    displayName: seed.displayName,
     workspace: seed.workspace,
     source: [...seed.source].sort(),
     files,

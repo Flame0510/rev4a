@@ -74,7 +74,7 @@ List all available workspaces.
 {
   "workspaces": [
     { "id": "vps", "label": "VPS Host (Nexus)", "type": "host" },
-    { "id": "container-openclaw-atlas", "label": "atlas (openclaw-atlas)", "type": "container" }
+    { "id": "container-agent_8ba21f83", "label": "Giuanmuzzziins", "type": "container" }
   ]
 }
 ```

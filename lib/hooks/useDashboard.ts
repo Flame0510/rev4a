@@ -191,8 +191,11 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     const load = () =>
       apiFetch('/api/agents')
         .then((r) => r.json())
-        .then((ids: string[]) => {
-          if (Array.isArray(ids)) setAvailableAgents(['all', ...ids]);
+        .then((agents: Array<{ agentId: string; displayName?: string; name: string }>) => {
+          if (Array.isArray(agents)) {
+            const names = agents.map((a) => a.displayName || a.name || a.agentId).filter(Boolean);
+            setAvailableAgents(['all', ...names]);
+          }
         })
         .catch(() => {});
     load();

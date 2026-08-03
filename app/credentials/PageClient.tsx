@@ -53,6 +53,7 @@ export default function CredentialsPageClient() {
   const [detectData, setDetectData] = useState<{
     container: string;
     agentId: string;
+    displayName?: string;
     githubLoggedIn: boolean;
     githubUser: string;
     githubCliInstalled: boolean;
@@ -86,6 +87,7 @@ export default function CredentialsPageClient() {
       const detectJson = await detectRes.json() as { agents?: {
         container: string;
         agentId: string;
+        displayName?: string;
         githubLoggedIn: boolean;
         githubUser: string;
         githubCliInstalled: boolean;
@@ -129,7 +131,7 @@ export default function CredentialsPageClient() {
 
   const [syncingContainer, setSyncingContainer] = useState<string | null>(null);
 
-  const handleSyncOne = async (profileId: string, container: string) => {
+  const handleSyncOne = async (profileId: string, container: string, label?: string) => {
     setSyncingContainer(container);
     try {
       const res = await fetch(`/api/credentials/${profileId}/sync`, {
@@ -139,7 +141,7 @@ export default function CredentialsPageClient() {
       });
       const json = await res.json() as { results?: { container: string; status: string }[]; error?: string };
       if (json.error) throw new Error(json.error);
-      showToast(json.results?.[0]?.status === 'ok' ? `Synced to ${container}` : 'Sync error');
+      showToast(json.results?.[0]?.status === 'ok' ? `Synced to ${label || container}` : 'Sync error');
       await refreshDetectOnly();
     } catch (e: unknown) {
       showToast((e as Error).message);
@@ -148,7 +150,7 @@ export default function CredentialsPageClient() {
     }
   };
 
-  const handleDeSyncOne = async (profileId: string, container: string) => {
+  const handleDeSyncOne = async (profileId: string, container: string, label?: string) => {
     setSyncingContainer(container);
     try {
       const res = await fetch(`/api/credentials/${profileId}/sync`, {
@@ -158,7 +160,7 @@ export default function CredentialsPageClient() {
       });
       const json = await res.json() as { ok?: boolean; error?: string };
       if (json.error) throw new Error(json.error);
-      showToast(`Removed from ${container}`);
+      showToast(`Removed from ${label || container}`);
       await refreshDetectOnly();
     } catch (e: unknown) {
       showToast((e as Error).message);
@@ -339,12 +341,12 @@ export default function CredentialsPageClient() {
                               const showCliMissing = !matchByProfile && !cliOk;
 
                               return (
-                                <div key={d.container} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                                <div key={d.container || d.agentId} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
                                   <span style={{ color: matchByProfile ? 'var(--green)' : 'var(--text-dim)', fontSize: 12, fontWeight: 700 }}>
                                     {matchByProfile ? '✓' : '○'}
                                   </span>
                                   <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                                    {d.agentId}
+                                    {d.displayName || d.agentId}
                                     {extraInfo && (
                                       <span style={{ marginLeft: 6, color: 'var(--green)', fontSize: 10 }}>{extraInfo}</span>
                                     )}
@@ -363,7 +365,7 @@ export default function CredentialsPageClient() {
                                         size='sm'
                                         loading={syncingContainer === d.container}
                                         disabled={syncingContainer === d.container}
-                                        onClick={() => handleDeSyncOne(p.id, d.container)}
+                                        onClick={() => handleDeSyncOne(p.id, d.container, d.displayName || d.agentId)}
                                       >
                                         De-sync
                                       </Button>
@@ -373,7 +375,7 @@ export default function CredentialsPageClient() {
                                         size='sm'
                                         loading={syncingContainer === d.container}
                                         disabled={syncingContainer === d.container}
-                                        onClick={() => handleSyncOne(p.id, d.container)}
+                                        onClick={() => handleSyncOne(p.id, d.container, d.displayName || d.agentId)}
                                       >
                                         Sync
                                       </Button>

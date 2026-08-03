@@ -193,7 +193,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // Read AGENT_NAME env for display name (may differ from container name)
         const displayName = execInContainer(
           name,
-          'echo $AGENT_NAME',
+          'printenv AGENT_NAME',
           (r) => r.trim(),
           '',
         ) || undefined;

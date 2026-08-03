@@ -107,7 +107,7 @@ export default function MemoryContextPageClient() {
                     {data.agents.map((agent) => (
                       <tr key={`${agent.agentId}:${agent.workspace}`} style={{ verticalAlign: 'top' }}>
                         <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 13 }}>{agent.name}</div>
+                          <div style={{ fontSize: 13 }}>{agent.displayName || agent.name}</div>
                           <div style={{ color: '#8a8a92', fontSize: 11, marginTop: 4 }}>{agent.agentId} · {agent.source.join(', ')}</div>
                         </td>
                         <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, color: '#c7c7d0', maxWidth: 220, wordBreak: 'break-word' }}>
