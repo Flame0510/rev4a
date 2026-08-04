@@ -60,9 +60,8 @@ async function fetchDeepSeekBalance(apiKey: string): Promise<BalanceResult> {
 
 interface OpenRouterCredits {
   data: {
-    credits: number;
-    total_spent: number;
-    total_used: number;
+    total_credits: number;
+    total_usage: number;
   };
 }
 
@@ -74,8 +73,8 @@ async function fetchOpenRouterBalance(apiKey: string): Promise<BalanceResult> {
     throw new Error(`OpenRouter credits API returned ${resp.status}`);
   }
   const json = (await resp.json()) as OpenRouterCredits;
-  const value = json.data.credits;
-  return { balance: `$${value.toFixed(2)}`, currency: 'USD', value, label: 'Credits' };
+  const value = Math.max(0, Math.round((json.data.total_credits - json.data.total_usage) * 100) / 100);
+  return { balance: `$${value.toFixed(2)}`, currency: 'USD', value, label: 'Available' };
 }
 
 /* ------------------------------------------------------------------ */

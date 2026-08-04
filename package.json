@@ -45,7 +45,9 @@
     "tsconfig.json",
     "next-env.d.ts",
     "*.css",
-    "*.png"
+    "*.png",
+    "model-pricing.json",
+    "models.config.json"
   ],
   "scripts": {
     "dev": "next dev -p 3720",

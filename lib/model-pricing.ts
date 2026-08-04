@@ -15,7 +15,15 @@ export interface ModelPricing {
 let _cache: Record<string, ModelPricing> | null = null;
 let _cacheMtime = 0;
 
-const PRICING_PATH = path.resolve(process.cwd(), 'model-pricing.json');
+function resolvePricingPath(): string {
+  // Try cwd first (works with systemd WorkingDirectory)
+  const cwdPath = path.resolve(process.cwd(), 'model-pricing.json');
+  if (fs.existsSync(cwdPath)) return cwdPath;
+  // Fallback: relative to this module (works for npm global installs)
+  return path.resolve(__dirname, '..', 'model-pricing.json');
+}
+
+const PRICING_PATH = resolvePricingPath();
 
 function load(): Record<string, ModelPricing> {
   try {
