@@ -3,7 +3,7 @@ export type SurfaceVariant = 'panel' | 'card' | 'subtle';
 
 export const toneVars: Record<Tone, { text: string; border: string; bg: string }> = {
   neutral: { text: 'var(--text)', border: 'var(--border)', bg: 'var(--bg2)' },
-  accent: { text: 'var(--copper)', border: 'var(--copper-dim)', bg: 'rgba(184, 115, 51, 0.08)' },
+  accent: { text: 'var(--violet)', border: 'var(--violet-dim)', bg: 'rgba(167, 139, 250, 0.08)' },
   success: { text: 'var(--green)', border: '#255b3f', bg: 'rgba(34, 197, 94, 0.08)' },
   warning: { text: 'var(--yellow)', border: '#7c5a1a', bg: 'rgba(245, 158, 11, 0.08)' },
   danger: { text: 'var(--red)', border: '#7f1d1d', bg: 'rgba(239, 68, 68, 0.08)' },

@@ -11,7 +11,7 @@ function getPackageInfo() {
     const raw = readFileSync(pkgPath, 'utf-8');
     return JSON.parse(raw);
   } catch {
-    return { version: '0.0.0', name: '@flame0510/olympus' };
+    return { version: '0.0.0', name: '@flame0510/rev4a' };
   }
 }
 
@@ -43,7 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       updateAvailable = cache.updateAvailable;
     } else {
       try {
-        const pkgName = pkg.name || '@flame0510/olympus';
+        const pkgName = pkg.name || '@flame0510/rev4a';
         latest = execSync(
           `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
           { stdio: 'pipe', timeout: 10_000 },
@@ -67,13 +67,13 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 async function verifyAuth(request: Request): Promise<boolean> {
   const raw = request.headers.get('cookie') || '';
-  const match = raw.split(';').map(c => c.trim()).find(c => c.startsWith('olympus_token='));
+  const match = raw.split(';').map(c => c.trim()).find(c => c.startsWith('rev4a_token='));
   if (!match) return false;
 
   const cookieToken = decodeURIComponent(match.split('=')[1]);
   try {
     const secret = new TextEncoder().encode(
-      process.env.OLYMPUS_JWT_SECRET || 'olympus-jwt-secret-change-in-prod',
+      process.env.REV4A_JWT_SECRET || 'rev4a-jwt-secret-change-in-prod',
     );
     await jwtVerify(cookieToken, secret);
     return true;
@@ -85,9 +85,9 @@ async function verifyAuth(request: Request): Promise<boolean> {
 /**
  * POST /api/update-check
  *
- * Spawns olympus update as a detached background process.
- * olympus update installs the latest version and writes .restart-flag,
- * which olympus serve detects and exits with code 42, then auto-restarts
+ * Spawns rev4a update as a detached background process.
+ * rev4a update installs the latest version and writes .restart-flag,
+ * which rev4a serve detects and exits with code 42, then auto-restarts
  * with the newly installed binary. No systemd required.
  */
 export async function POST(request: Request): Promise<NextResponse> {
@@ -95,21 +95,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Spawn olympus update in background, then write restart flag directly
-  // from this process so olympus serve detects it and restarts.
+  // Spawn rev4a update in background, then write restart flag directly
+  // from this process so rev4a serve detects it and restarts.
   const { spawn } = require('child_process');
   const { join } = require('path');
   const { writeFileSync } = require('fs');
 
-  const dataDir = process.env.OLYMPUS_DATA_DIR ||
-    join(process.env.HOME || '/root', '.config', 'olympus', 'data');
+  const dataDir = process.env.REV4A_DATA_DIR ||
+    join(process.env.HOME || '/root', '.config', 'rev4a', 'data');
 
-  const child = spawn('olympus', ['update'], {
+  const child = spawn('rev4a', ['update'], {
     stdio: 'ignore',
     detached: true,
   });
 
-  // When olympus update finishes, write the restart flag so olympus serve
+  // When rev4a update finishes, write the restart flag so rev4a serve
   // picks it up and exits with code 42, triggering the auto-restart loop.
   child.on('exit', () => {
     try { writeFileSync(join(dataDir, '.restart-flag'), ''); } catch {}

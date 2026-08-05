@@ -96,7 +96,7 @@ function detectGithub(container: string): { loggedIn: boolean; user: string } {
 function detectToolsMd(container: string): boolean {
   const raw = execInContainer(
     container,
-    `grep -c 'OLYMPUS:INTEGRATIONS:START' /root/.openclaw/workspace/TOOLS.md 2>/dev/null || echo 0`,
+    `grep -c 'REV4A:INTEGRATIONS:START' /root/.openclaw/workspace/TOOLS.md 2>/dev/null || echo 0`,
     (r) => r.trim(),
     '0',
   );

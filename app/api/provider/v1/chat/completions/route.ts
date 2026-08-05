@@ -1,12 +1,12 @@
 /**
- * Olympus Provider Gateway — v1
+ * Rev4a Provider Gateway — v1
  *
  * OpenAI-compatible chat completions endpoint.
  * POST /api/provider/v1/chat/completions
  *
  * Authentication uses provider keys stored in data/provider-keys.json.
  * The Authorization Bearer token must match a configured provider key.
- * The olympus master key (OLYMPUS_API_KEY env var) unlocks all providers.
+ * The rev4a master key (REV4A_API_KEY env var) unlocks all providers.
  */
 import { NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
@@ -58,13 +58,13 @@ export async function POST(request: NextRequest) {
     // Check if token matches any stored key
     const isAuthenticated = Object.values(providerKeys).some((key) => token === key);
 
-    // Also accept the olympus master API key env var
-    const olympusMasterKey = process.env.OLYMPUS_API_KEY;
-    const isMasterAuth = !!olympusMasterKey && token === olympusMasterKey;
+    // Also accept the rev4a master API key env var
+    const rev4aMasterKey = process.env.REV4A_API_KEY;
+    const isMasterAuth = !!rev4aMasterKey && token === rev4aMasterKey;
 
     if (!isAuthenticated && !isMasterAuth) {
       return errorResponse(
-        'Invalid API key. Use your Olympus API key from the Gateway page via Authorization: Bearer <key>.',
+        'Invalid API key. Use your Rev4a API key from the Gateway page via Authorization: Bearer <key>.',
         'authentication_error',
         401,
       );
@@ -94,9 +94,9 @@ export async function POST(request: NextRequest) {
           responseHeaders.set(key, value);
         }
       });
-      responseHeaders.set('x-olympus-gateway', 'true');
-      responseHeaders.set('x-olympus-provider', provider);
-      responseHeaders.set('x-olympus-latency-ms', String(latency));
+      responseHeaders.set('x-rev4a-gateway', 'true');
+      responseHeaders.set('x-rev4a-provider', provider);
+      responseHeaders.set('x-rev4a-latency-ms', String(latency));
       return new Response(upstreamResp.body, {
         status: upstreamResp.status,
         statusText: upstreamResp.statusText,
@@ -130,9 +130,9 @@ export async function POST(request: NextRequest) {
         responseHeaders.set(key, value);
       }
     });
-    responseHeaders.set('x-olympus-gateway', 'true');
-    responseHeaders.set('x-olympus-provider', provider);
-    responseHeaders.set('x-olympus-latency-ms', String(latency));
+    responseHeaders.set('x-rev4a-gateway', 'true');
+    responseHeaders.set('x-rev4a-provider', provider);
+    responseHeaders.set('x-rev4a-latency-ms', String(latency));
 
     return new Response(finalBodyStr, {
       status: upstreamResp.status,

@@ -52,7 +52,7 @@ function fmtDate(ms: number) {
 }
 
 // ─── File type icon SVGs ──────────────────────────────────────────────────────
-const COPPER = 'var(--copper)'; // #b8860b-ish
+const COPPER = 'var(--violet)'; // #b8860b-ish
 
 function FolderIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -193,10 +193,10 @@ function TreeNodeRow({
       style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: `3px 8px 3px ${8 + indent}px`,
         cursor: 'pointer', userSelect: 'none', outline: 'none',
-        background: isSelected ? '#1a1208' : 'transparent',
-        color: isSelected ? 'var(--copper)' : isDir ? '#aaa' : '#ccc',
+        background: isSelected ? '#1a1030' : 'transparent',
+        color: isSelected ? 'var(--violet)' : isDir ? '#aaa' : '#ccc',
         fontSize: 11, fontFamily: 'var(--font-mono-stack)',
-        borderLeft: isSelected ? '2px solid var(--copper)' : focused ? '2px solid #555' : '2px solid transparent',
+        borderLeft: isSelected ? '2px solid var(--violet)' : focused ? '2px solid #555' : '2px solid transparent',
         transition: 'background 0.1s',
       }}
       onMouseEnter={(e) => { if (!isSelected && !focused) (e.currentTarget as HTMLElement).style.background = '#111'; }}
@@ -450,7 +450,7 @@ export default function WorkspaceClient() {
           </Button>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--copper)' }}>WORKSPACE</span>
+            <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--violet)' }}>WORKSPACE</span>
             <select
               value={selectedWorkspace}
               onChange={(e) => {
@@ -468,7 +468,7 @@ export default function WorkspaceClient() {
               className="ui-select-workspace"
               style={{
                 background: 'var(--bg3)',
-                color: 'var(--copper)',
+                color: 'var(--violet)',
                 border: '1px solid var(--border)',
                 borderRadius: 0,
                 fontSize: 11,
@@ -558,7 +558,7 @@ export default function WorkspaceClient() {
         {isMobile === 'desktop' && (
         <div
           onMouseDown={onMouseDown}
-          style={{ width: 4, cursor: 'col-resize', background: isDragging ? 'var(--copper)' : 'transparent', transition: isDragging ? 'none' : 'background 0.15s', flexShrink: 0 }}
+          style={{ width: 4, cursor: 'col-resize', background: isDragging ? 'var(--violet)' : 'transparent', transition: isDragging ? 'none' : 'background 0.15s', flexShrink: 0 }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#333'; }}
           onMouseLeave={(e) => { if (!isDragging) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
         />
@@ -576,7 +576,7 @@ export default function WorkspaceClient() {
             <>
               {/* File meta bar */}
               <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
-                <span style={{ fontSize: 11, color: 'var(--copper)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{selectedPath?.replace('/data/.openclaw/', '')}</span>
+                <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{selectedPath?.replace('/data/.openclaw/', '')}</span>
                 <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{lang}</span>
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtSize(selectedNode.size)}</span>}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtDate(selectedNode.mtimeMs)}</span>}

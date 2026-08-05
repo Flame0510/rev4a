@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { NextResponse, type NextRequest } from 'next/server';
-import { templatesDir } from '@/lib/olympus-paths';
+import { templatesDir } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 

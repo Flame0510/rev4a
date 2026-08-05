@@ -1,4 +1,4 @@
-# Olympus — VPS Dashboard
+# Rev4a — VPS Dashboard
 
 > **Last updated:** 2026-07-27
 
@@ -6,8 +6,8 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 **URL:** `http://<vps-ip>:3740` (or behind a reverse proxy of your choice)
 **Port:** 3740
-**Process manager:** `olympus serve` (single command). Production: systemd service (`olympus.service`).
-**Repository:** `github.com/Flame0510/olympus.git` (branch: `main`)
+**Process manager:** `rev4a serve` (single command). Production: systemd service (`rev4a.service`).
+**Repository:** `github.com/Flame0510/rev4a.git` (branch: `main`)
 
 ---
 
@@ -33,8 +33,8 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
                     └────┬────┘
                          │
               ┌──────────┴──────────┐
-              │  olympus             │
-              │  systemd (olympus.target)    │
+              │  rev4a             │
+              │  systemd (rev4a.service)    │
               │  :3740              │
               │  Next.js 16         │
               └─────────────────────┘
@@ -52,15 +52,15 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ### Environment
 
-Olympus reads the following environment variables. Set them in `/config` (UI) or directly in `.env`.
+Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`.
 
 | Variable | Required | Description |
 |---|---|---|
-| `OLYMPUS_PASSWORD` | Yes | Login password for the dashboard |
-| `OLYMPUS_TOKEN` | Yes | Token used for programmatic API access |
-| `OLYMPUS_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
-| `OLYMPUS_DB` | No | Path to the events database (default: `data/events.db`) |
-| `OLYMPUS_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
+| `REV4A_PASSWORD` | Yes | Login password for the dashboard |
+| `REV4A_TOKEN` | Yes | Token used for programmatic API access |
+| `REV4A_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
+| `REV4A_DB` | No | Path to the events database (default: `data/events.db`) |
+| `REV4A_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
 
 ## Agent creation
 
@@ -74,7 +74,7 @@ Every agent is created with:
 The port is auto-assigned starting from 3000 (or user-specified).
 
 Domain and HTTPS routing (Traefik) is an external concern — operators can
-configure it on top of the base setup if needed, but Olympus does not couple
+configure it on top of the base setup if needed, but Rev4a does not couple
 to any specific reverse proxy.
 
 ## Config persistence
@@ -82,15 +82,15 @@ to any specific reverse proxy.
 When environment variables are saved via the Config page (Save & Restart):
 
 1. Values are written to `.env` in the project root
-2. Secrets are loaded via `EnvironmentFile=` pointing to `.env` (chmod 600). Only non-secret vars (`NODE_ENV`, `PATH`, `OLYMPUS_DB`) are in the unit file. Other vars (passwords, non-Olympus keys) stay in `.env` for the application to read at runtime.
+2. Secrets are loaded via `EnvironmentFile=` pointing to `.env` (chmod 600). Only non-secret vars (`NODE_ENV`, `PATH`, `REV4A_DB`) are in the unit file. Other vars (passwords, non-Rev4a keys) stay in `.env` for the application to read at runtime.
 3. `systemctl daemon-reload` is run
 4. The server restarts with the new environment
 
 ## Components
 
-- **Olympus:** Next.js app serving the dashboard UI and REST API. Reads Docker state, container configs, and agent workspaces via `docker exec` and `fs` calls.
-- **Traefik:** External reverse proxy (optional). Olympus does not depend on it — operators can use any reverse proxy or none at all.
-- **OpenClaw agents:** Docker containers with `AGENT_ID` label. Olympus discovers them dynamically via `docker ps`.
+- **Rev4a:** Next.js app serving the dashboard UI and REST API. Reads Docker state, container configs, and agent workspaces via `docker exec` and `fs` calls.
+- **Traefik:** External reverse proxy (optional). Rev4a does not depend on it — operators can use any reverse proxy or none at all.
+- **OpenClaw agents:** Docker containers with `AGENT_ID` label. Rev4a discovers them dynamically via `docker ps`.
 
 ---
 
@@ -120,18 +120,18 @@ When environment variables are saved via the Config page (Save & Restart):
 
 ## Authentication
 
-Olympus uses password-based login with JWT cookies.
+Rev4a uses password-based login with JWT cookies.
 
 **Env vars:**
 ```
-OLYMPUS_PASSWORD=***    # Login password
-OLYMPUS_TOKEN=***       # API token (Bearer / query param / x-agent-token)
-OLYMPUS_JWT_SECRET=***  # Secret for signing JWTs
+REV4A_PASSWORD=***    # Login password
+REV4A_TOKEN=***       # API token (Bearer / query param / x-agent-token)
+REV4A_JWT_SECRET=***  # Secret for signing JWTs
 ```
 
 **Auth flow:**
 1. User visits `/login`, enters password
-2. POST `/api/auth/login` validates password, returns a `olympus_token` cookie (JWT, 7-day expiry)
+2. POST `/api/auth/login` validates password, returns a `rev4a_token` cookie (JWT, 7-day expiry)
 3. All subsequent API calls use the cookie (`credentials: 'same-origin'`)
 4. API-only auth fallbacks: `Authorization: Bearer <token>`, `?token=<token>`, or `x-agent-token` header
 5. Control UI bootstrap links should use `#token=<token>` so the browser client can import the shared secret before opening the socket
@@ -142,31 +142,31 @@ OLYMPUS_JWT_SECRET=***  # Secret for signing JWTs
 
 ```bash
 # Start
-sudo systemctl start olympus.target
+sudo systemctl start rev4a.service
 
 # Stop
-sudo systemctl stop olympus.target
+sudo systemctl stop rev4a.service
 
 # Restart
-sudo systemctl restart olympus.target
+sudo systemctl restart rev4a.service
 
 # Status
-sudo systemctl status olympus.target
+sudo systemctl status rev4a.service
 
 # Logs (follow)
-sudo journalctl -u olympus -f
+sudo journalctl -u rev4a -f
 ```
 
 ### Systemd environment override
 
-File: `/etc/systemd/system/olympus-next.service` (EnvironmentFile)
+File: `/etc/systemd/system/rev4a-next.service` (EnvironmentFile)
 
 ```ini
 [Service]
-Environment=OLYMPUS_PASSWORD=***
-Environment=OLYMPUS_TOKEN=***
-Environment=OLYMPUS_JWT_SECRET=***
-Environment=OLYMPUS_DB=/path/to/olympus/data/events.db
+Environment=REV4A_PASSWORD=***
+Environment=REV4A_TOKEN=***
+Environment=REV4A_JWT_SECRET=***
+Environment=REV4A_DB=/path/to/rev4a/data/events.db
 Environment=OPENCLAW_CONFIG_PATH=/path/to/openclaw-core.json
 Environment=SHARED_CONTEXT_DIR=/path/to/shared-context
 Environment=NODE_ENV=production
@@ -178,10 +178,10 @@ Environment=NEXT_TELEMETRY_DISABLED=1
 ## Build & Deploy
 
 ```bash
-cd /path/to/olympus
+cd /path/to/'rev4a'
 
 # One command (builds + starts):
-olympus serve
+rev4a serve
 
 # Manual build:
 npm run build
@@ -190,7 +190,7 @@ npm run build
 rm -rf .next && npm run build
 
 # Production systemd (after setup script):
-sudo systemctl start olympus.target
+sudo systemctl start rev4a.service
 ```
 
 > **Important:** API routes (`route.ts`) are compiled at build time by Next.js. After editing any API route, a full `npm run build` is required. Restarting the server alone is not enough.
@@ -274,9 +274,9 @@ Available templates:
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
 3. The route waits for the gateway to be fully ready (health check poll, up to 60 s).
 4. Once ready, the route writes:
-   - `gateway.controlUi.allowedOrigins` — Olympus dashboard URL + Traefik hostname (required for browser Control UI access)
+   - `gateway.controlUi.allowedOrigins` — Rev4a dashboard URL + Traefik hostname (required for browser Control UI access)
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
-5. `syncAgent(name)` writes `models.providers.olympus` into the container.
+5. `syncAgent(name)` writes `models.providers.rev4a` into the container.
 6. The agent's control UI is immediately accessible at `https://<name>.<your-domain>.com#token=<gateway-token>`.
 
 **Key difference from the old pipeline:** the entrypoint no longer generates `openclaw.json`. The bootstrap config (including `controlUi.allowedOrigins`) is written by the create route after the gateway has already started. This eliminates the race condition where the entrypoint would overwrite synced provider config on boot.
@@ -302,7 +302,7 @@ a re-created agent keeps the workspace the user edited.
 
 | Action | What it does |
 |---|---|
-| **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `olympus-backups` volume |
+| **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `rev4a-backups` volume |
 | **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
 | **Recreate** | auto-backup first (aborts if it fails) → rebuild from `openclaw-agent-base:latest` keeping the volume → picks up image/OpenClaw/CLI updates |
 | **Restart** | `docker restart`, nothing else |
@@ -338,7 +338,7 @@ Located in `agent-templates/`. Each subdirectory (e.g. `atlas/`, `custom/`) cont
 - `BOOTSTRAP.md` (optional) — first-run ritual, deleted by the agent when complete
 
 At container creation these files are **copied** into `/root/.openclaw/workspace/`
-via `docker cp` (not bind-mounted), so agent edits never spill back to the Olympus
+via `docker cp` (not bind-mounted), so agent edits never spill back to the Rev4a
 repo. The copy is skipped when the workspace is already populated (see
 [Agent persistence](#agent-persistence--lifecycle)).
 
@@ -351,7 +351,7 @@ Two panels:
 ### Provider Sync
 - Reads active models from `models.config.json` (file-based model catalogue)
 - Scans providers with keys in `data/provider-keys.json`
-- `PUT /api/gateway/provider` runs `syncAllAgents()` which writes `models.providers.olympus` to every agent container
+- `PUT /api/gateway/provider` runs `syncAllAgents()` which writes `models.providers.rev4a` to every agent container
 - **Does NOT touch** `agents.defaults.model` or `agents.list[].model` — model references are managed per-container from the Agents Tab
 
 ### Agent Model Config
@@ -383,7 +383,7 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 | Auth mode | `token` |
 
 **Control UI:** `http://<vps-ip>:3731` — enter the gateway token to log in.
-Olympus-generated direct links should use `#token=<gateway-token>` for automatic Control UI sign-in.
+Rev4a-generated direct links should use `#token=<gateway-token>` for automatic Control UI sign-in.
 
 ### openclaw-core
 
@@ -441,7 +441,7 @@ Olympus-generated direct links should use `#token=<gateway-token>` for automatic
 ### Old version persists after rebuild
 1. Kill process: `fuser -k 3740/tcp`
 2. Wait 2 seconds
-3. Restart: `sudo systemctl restart olympus.target`
+3. Restart: `sudo systemctl restart rev4a.service`
 4. Check `public/sw.js` exists (delete if so)
 
 ---
@@ -477,7 +477,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ## Repository Structure
 
 ```
-/path/to/olympus/
+/path/to/rev4a/
 ├── app/                     # Next.js app router pages & API routes
 │   ├── agents/
 │   ├── api/                 # API routes (workspace, agents, vault, auth, …)
@@ -492,7 +492,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 │   ├── vault/
 │   └── workspace/
 ├── docs/                    # Project documentation
-│   ├── OLYMPUS.md           # This file — operational docs
+│   ├── REV4A.md           # This file — operational docs
 │   └── ARCHITECTURE.md      # Design & future vision
 ├── lib/                     # Shared utilities (apiFetch, vault, memory-context)
 ├── public/                  # Static assets

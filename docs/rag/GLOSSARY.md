@@ -1,8 +1,8 @@
-# Olympus Glossary
+# Rev4a Glossary
 
 > **Last updated:** 2026-07-15
 
-Terms you'll encounter while using the Olympus dashboard.
+Terms you'll encounter while using the Rev4a dashboard.
 
 ---
 
@@ -16,7 +16,7 @@ A pre-built configuration used when creating a new agent. Templates include defa
 A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
 
 ## Backup (Agent)
-A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `olympus-backups` Docker volume. Used for restore operations and auto-created before each recreate.
+A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `rev4a-backups` Docker volume. Used for restore operations and auto-created before each recreate.
 
 ## Container
 A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.), with CPU/memory metrics, logs, and a web terminal.
@@ -28,19 +28,19 @@ A communication channel (Telegram) configured on an agent. Channels allow users 
 Modal in the agent detail panel for configuring Telegram channels. Connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
 
 ## Cost
-The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Olympus shows cost by today, 7 days, 30 days, all-time, and by model.
+The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Rev4a shows cost by today, 7 days, 30 days, all-time, and by model.
 
 ## Cost Override
 A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice, you can set an override value for that month with an optional note.
 
 ## Credential
-A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Olympus vault. Credentials can be scoped to specific agent containers and synced via CLI auth or config files. Every reveal is logged in the audit trail.
+A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. Credentials can be scoped to specific agent containers and synced via CLI auth or config files. Every reveal is logged in the audit trail.
 
 ## Cron / Cron Job
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.
 
 ## Dashboard
-The main page of Olympus (`/`). Shows live sessions, cost summary, system health metrics (CPU, RAM, disk, load average), and a real-time event feed. A setup banner appears if the onboarding wizard is incomplete.
+The main page of Rev4a (`/`). Shows live sessions, cost summary, system health metrics (CPU, RAM, disk, load average), and a real-time event feed. A setup banner appears if the onboarding wizard is incomplete.
 
 ## Event
 A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard and are pushed via SSE every ~3 seconds.
@@ -67,10 +67,10 @@ An extension that adds new tools and capabilities to agents. Plugins are install
 An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway page or via the onboarding wizard.
 
 ## Provider Gateway
-Olympus's built-in proxy that gives all agents unified access to configured LLM providers. Agents point to `http://host.docker.internal:3740/api/provider/v1` and Olympus routes requests to the correct upstream using the stored API keys.
+Rev4a's built-in proxy that gives all agents unified access to configured LLM providers. Agents point to `http://host.docker.internal:3740/api/provider/v1` and Rev4a routes requests to the correct upstream using the stored API keys.
 
-## Pythia
-The AI concierge embedded in Olympus. Click the floating chat button (bottom-right) on any page to ask questions about the dashboard features and navigation.
+## Pulse
+The AI concierge embedded in Rev4a. Click the floating chat button (bottom-right) on any page to ask questions about the dashboard features and navigation.
 
 ## Recreate (Agent)
 Rebuild an agent container from the latest `openclaw-agent-base:latest` image while preserving the persistent volume. Auto-backups the volume first — if the backup fails, the recreate is aborted. This is how agents pick up OpenClaw image updates.
@@ -113,10 +113,10 @@ A capability available to agents: running shell commands, reading files, searchi
 A record of an agent using a tool during a session. Useful for auditing what an agent actually did. Shown in the Session Drawer.
 
 ## Traefik
-Optional reverse proxy for routing web traffic to agent containers. If configured, an agent gets a public URL. Olympus itself runs on port 3740 and does not require Traefik.
+Optional reverse proxy for routing web traffic to agent containers. If configured, an agent gets a public URL. Rev4a itself runs on port 3740 and does not require Traefik.
 
 ## Vault
-Olympus's credential storage system. Stores provider API keys and third-party service tokens with per-agent permission scoping. Supports reveal (with audit trail), sync to containers, and live detection of installed credentials.
+Rev4a's credential storage system. Stores provider API keys and third-party service tokens with per-agent permission scoping. Supports reveal (with audit trail), sync to containers, and live detection of installed credentials.
 
 ## Workspace
 The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the VPS host and all agent containers.

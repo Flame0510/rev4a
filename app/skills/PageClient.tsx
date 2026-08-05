@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill, LoadingSpinner, ListContainer, ListItem, ConfirmModal } from '../components/ui';
 
-type BadgeColor = 'green' | 'red' | 'gray' | 'copper' | 'blue';
+type BadgeColor = 'green' | 'red' | 'gray' | 'violet' | 'blue';
 
 function Badge({ children, color }: { children: React.ReactNode; color: BadgeColor }) {
   const toneMap: Record<BadgeColor, 'success' | 'danger' | 'neutral' | 'accent' | 'info'> = {
-    green: 'success', red: 'danger', gray: 'neutral', copper: 'accent', blue: 'info',
+    green: 'success', red: 'danger', gray: 'neutral', violet: 'accent', blue: 'info',
   };
   return <Pill tone={toneMap[color]}>{children}</Pill>;
 }
@@ -19,7 +19,7 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
       padding: '10px 20px',
       fontSize: 10,
       letterSpacing: 2,
-      color: 'var(--copper)',
+      color: 'var(--violet)',
       borderBottom: '1px solid var(--border)',
       background: 'var(--bg2)',
       textTransform: 'uppercase',
@@ -227,7 +227,7 @@ export default function SkillsPage() {
     }
   };
 
-  const typeColor: Record<string, BadgeColor> = { shared: 'copper', workspace: 'green', bundled: 'blue' };
+  const typeColor: Record<string, BadgeColor> = { shared: 'violet', workspace: 'green', bundled: 'blue' };
 
   const typeLabel = (s: Skill) => {
     if (s.agentId) return `agent:${s.agentId}`;
@@ -262,7 +262,7 @@ export default function SkillsPage() {
         flexShrink: 0,
         boxSizing: 'border-box',
       }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>SKILLS</span>
+        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>SKILLS</span>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {isMobile && (
@@ -480,7 +480,7 @@ export default function SkillsPage() {
         {toastMsg && (
           <div style={{
             position: 'fixed', bottom: 24, right: 24,
-            background: 'var(--bg2)', border: '1px solid var(--copper)',
+            background: 'var(--bg2)', border: '1px solid var(--violet)',
             color: 'var(--text)', fontFamily: 'var(--font-mono-stack)',
             fontSize: 12, padding: '10px 18px', borderRadius: 0,
             zIndex: 1000,

@@ -113,7 +113,7 @@ export default function SystemCockpit({
     <section className="cockpit">
       <div className="cockpit__metrics">
         <Surface as="article" tone={toneFromHealth(health)}>
-          <div className="ui-kicker">Olympus System Health</div>
+          <div className="ui-kicker">Rev4a System Health</div>
           <div className="cockpit__health-row">
             {systemLoading ? <SkeletonMetric width={120} /> : <span className={`cockpit__health cockpit__health--${health}`}>{health}</span>}
             <span className="ui-muted" style={{ fontSize: 11 }}>{runtimeFreshness}</span>
@@ -126,7 +126,7 @@ export default function SystemCockpit({
 
       <div className="cockpit__main">
         <div className="cockpit__checks">
-          <StatusCard loading={systemLoading} title="Runtime Olympus" health={runtimeCheck?.health ?? 'warning'} rows={[[runtimeCheck?.label ?? 'Total sessions', runtimeCheck?.value ?? sessions.length], ['Last update', runtimeFreshness], ['Recent feed errors', metrics.errors]]} />
+          <StatusCard loading={systemLoading} title="Runtime Rev4a" health={runtimeCheck?.health ?? 'warning'} rows={[[runtimeCheck?.label ?? 'Total sessions', runtimeCheck?.value ?? sessions.length], ['Last update', runtimeFreshness], ['Recent feed errors', metrics.errors]]} />
           <StatusCard loading={systemLoading} title="Cron / Watchdog" health={cronCheck?.health ?? 'warning'} rows={[[cronCheck?.label ?? 'Cron', cronCheck?.value ?? 'n/a'], ['Detail', cronCheck?.details ?? 'n/a'], ['Source', '/api/system-health']]} />
           <StatusCard loading={loading} title="Lineage" health={sessions.length ? 'ok' : 'warning'} rows={[[ 'Total sessions', sessions.length], ['Live events', events.length], ['Full view', <Link key="lineage" href="/lineage" className="ui-link">Open graph →</Link>]]} />
         </div>

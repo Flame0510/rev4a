@@ -12,33 +12,33 @@ const ENV_METADATA: Record<
   string,
   { label: string; description: string; placeholder: string; sensitive?: boolean }
 > = {
-  OLYMPUS_PASSWORD: {
+  REV4A_PASSWORD: {
     label: 'Login password',
-    description: 'Password used to access the Olympus dashboard',
+    description: 'Password used to access the Rev4a dashboard',
     placeholder: 'Dashboard password',
     sensitive: true,
   },
-  OLYMPUS_TOKEN: {
+  REV4A_TOKEN: {
     label: 'Internal Auth Token',
     description: 'Token for internal API authentication (skills API, cost-override, JWT fallback)',
     placeholder: 'Internal auth token',
     sensitive: true,
   },
-  OLYMPUS_API_KEY: {
-    label: 'Olympus API Key',
-    description: 'Master key for provider gateway — agents use this to authenticate when calling Olympus as an LLM provider. Synced to Gateway.',
+  REV4A_API_KEY: {
+    label: 'Rev4a API Key',
+    description: 'Master key for provider gateway — agents use this to authenticate when calling Rev4a as an LLM provider. Synced to Gateway.',
     placeholder: 'Gateway master key',
     sensitive: true,
   },
-  OLYMPUS_JWT_SECRET: {
+  REV4A_JWT_SECRET: {
     label: 'JWT Secret',
     description: 'Secret used to sign session JWT cookies for dashboard authentication',
     placeholder: 'At least 32 characters',
     sensitive: true,
   },
-  OLYMPUS_WORKSPACE_ROOT: {
+  REV4A_WORKSPACE_ROOT: {
     label: 'Workspace root',
-    description: 'Filesystem path for the local file explorer (e.g. /home/user/projects/olympus). Leave empty to disable the Local workspace.',
+    description: 'Filesystem path for the local file explorer (e.g. /home/user/projects/rev4a). Leave empty to disable the Local workspace.',
     placeholder: '/path/to/workspace',
     sensitive: false,
   },
@@ -87,7 +87,7 @@ export default function ConfigPageClient() {
       const data = await res.json();
       if (data.status === 'ok') {
         setStatus('ok');
-        setStatusMsg('Environment variables saved. Restart Olympus to apply them.');
+        setStatusMsg('Environment variables saved. Restart Rev4a to apply them.');
       } else {
         setStatus('error');
         setStatusMsg(data.error || 'Error');
@@ -110,7 +110,7 @@ export default function ConfigPageClient() {
   return (
     <Page maxWidth={900}>
       <PageHeader
-        eyebrow="Olympus"
+        eyebrow="Rev4a"
         title="Configuration"
         description="Environment variables. Values are visible only to you."
       />
@@ -228,12 +228,12 @@ export default function ConfigPageClient() {
           <Modal
             open={confirmAction !== null}
             onClose={() => setConfirmAction(null)}
-            title={confirmAction === 'restart' ? 'Restart Olympus' : 'Save configuration'}
+            title={confirmAction === 'restart' ? 'Restart Rev4a' : 'Save configuration'}
           >
             <div style={{ display: 'grid', gap: 14 }}>
               <p style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.5, margin: 0 }}>
                 {confirmAction === 'restart'
-                  ? 'This will save the current environment variables and restart the Olympus server immediately. The dashboard will be unavailable for a few seconds.'
+                  ? 'This will save the current environment variables and restart the Rev4a server immediately. The dashboard will be unavailable for a few seconds.'
                   : 'Save the current environment variables. Changes will take effect after a restart.'}
               </p>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>

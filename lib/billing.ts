@@ -55,7 +55,7 @@ export function classifyBillingModel(model?: string | null): BillingMode {
   if (m.startsWith('anthropic/') || m.includes('claude-cli')) return 'fixed';
   if (m.startsWith('github-copilot/')) return 'credits';
 
-  // Olympus DB often stores model aliases without provider prefix.
+  // Rev4a DB often stores model aliases without provider prefix.
   if (/^gpt-5\.(2|3|4|5)(-codex|-mini|-pro)?$/.test(m)) return 'fixed';
   if (/^claude-(haiku|sonnet|opus)-/.test(m)) return 'fixed';
   if (/^gemini-.*(flash|pro)/.test(m)) return 'credits';

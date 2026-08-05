@@ -5,7 +5,7 @@ import { useResponsive } from '../design-system';
 import { Button, Pill } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
-import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
+import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
 
 
@@ -154,7 +154,7 @@ export default function CronsPage() {
   const [runsError, setRunsError] = useState<string | null>(null);
   const isMobile = useResponsive('lg');
   const [tab, setTab] = useState<'jobs' | 'runs'>('jobs');
-  const timezone = useOlympusTimezone();
+  const timezone = useRev4aTimezone();
 
   const agentFilters = buildAgentFilters(jobs);
   const filteredJobs = filterJobs(jobs, agentFilter);
@@ -332,14 +332,14 @@ export default function CronsPage() {
                   padding: '12px 14px', borderBottom: '1px solid var(--border)',
                   opacity: isEnabled ? 1 : 0.6,
                   cursor: 'pointer',
-                  background: isSelected ? 'var(--copper-bg)' : 'transparent',
-                  borderLeft: isSelected ? '2px solid var(--copper)' : '2px solid transparent',
+                  background: isSelected ? 'var(--violet-bg)' : 'transparent',
+                  borderLeft: isSelected ? '2px solid var(--violet)' : '2px solid transparent',
                   transition: 'background 0.15s, border-color 0.15s',
                 }}>
                   {/* Header row */}
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ color: 'var(--copper)', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ color: 'var(--violet)', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {job.name ?? job.id ?? `job-${i}`}
                       </div>
                       {job.description && (
@@ -500,7 +500,7 @@ export default function CronsPage() {
                         background: status === 'ok' ? 'var(--green)' : status === 'error' ? 'var(--red)' : 'var(--yellow)',
                         display: 'inline-block', flexShrink: 0,
                       }} />
-                      <span style={{ fontSize: 10, color: 'var(--copper)', letterSpacing: '0.06em' }}>
+                      <span style={{ fontSize: 10, color: 'var(--violet)', letterSpacing: '0.06em' }}>
                         {action.toUpperCase()}
                       </span>
                       <Pill tone={status === 'ok' ? 'success' : status === 'error' ? 'danger' : 'neutral'}>

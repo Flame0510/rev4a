@@ -92,9 +92,9 @@ const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
     authHeader: 'Authorization',
     docsUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key',
   },
-  olympus: {
-    envKey: 'OLYMPUS_API_KEY',
-    label: 'OLYMPUS API KEY',
+  rev4a: {
+    envKey: 'REV4A_API_KEY',
+    label: 'REV4A API KEY',
     baseUrl: detectProviderGatewayUrl(),
     authHeader: 'Authorization',
     docsUrl: '',
@@ -122,7 +122,7 @@ function setProviderApiKey(providerName: string, value: string | null): void {
 
 function restartService(): { stdout: string; stderr: string } {
   try {
-    const stdout = execSync('sudo systemctl restart olympus.target 2>&1', { timeout: 15000, maxBuffer: 64 * 1024 }).toString();
+    const stdout = execSync('sudo systemctl restart rev4a.service 2>&1', { timeout: 15000, maxBuffer: 64 * 1024 }).toString();
     return { stdout, stderr: '' };
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };

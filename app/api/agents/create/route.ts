@@ -3,9 +3,9 @@ import { execSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { buildOlympusProviderConfig } from '../../gateway/sync';
+import { buildRev4aProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
-import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
+import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { loadModelsConfig } from '@/lib/model-catalogue';
 
@@ -38,7 +38,7 @@ function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
 /**
  * Find an available host port block starting from 3700.
  */
-const OLYMPUS_PORT = 3740;
+const REV4A_PORT = 3740;
 const DEFAULT_BLOCK_SIZE = 10;
 
 function getUsedHostPorts(): Set<number> {
@@ -56,7 +56,7 @@ function getUsedHostPorts(): Set<number> {
 function findAvailablePortBlock(blockSize = DEFAULT_BLOCK_SIZE): number {
   const usedPorts = getUsedHostPorts();
   for (let base = 3700; base + blockSize - 1 <= 3799; base += DEFAULT_BLOCK_SIZE) {
-    if (base <= OLYMPUS_PORT && OLYMPUS_PORT <= base + blockSize - 1) continue;
+    if (base <= REV4A_PORT && REV4A_PORT <= base + blockSize - 1) continue;
     const block = Array.from({ length: blockSize }, (_, i) => base + i);
     if (block.every((p) => !usedPorts.has(p))) return base;
   }
@@ -77,7 +77,7 @@ function validatePortInput(input: string): { valid: true; isBlock: boolean; star
     const end = parseInt(m[2], 10);
     if (start < 1 || end > 65535) return { valid: false, error: 'Ports must be between 1 and 65535' };
     if (end <= start) return { valid: false, error: 'End port must be greater than start port' };
-    if (start <= OLYMPUS_PORT && OLYMPUS_PORT <= end) return { valid: false, error: `Port ${OLYMPUS_PORT} is reserved for Olympus` };
+    if (start <= REV4A_PORT && REV4A_PORT <= end) return { valid: false, error: `Port ${REV4A_PORT} is reserved for Rev4a` };
     const usedPorts = getUsedHostPorts();
     const conflicts: number[] = [];
     for (let p = start; p <= end; p++) { if (usedPorts.has(p)) conflicts.push(p); }
@@ -88,7 +88,7 @@ function validatePortInput(input: string): { valid: true; isBlock: boolean; star
   if (!m) return { valid: false, error: 'Use a number (e.g. 3700) or a range (e.g. 3700-3709)' };
   const port = parseInt(m[1], 10);
   if (port < 1 || port > 65535) return { valid: false, error: 'Port must be between 1 and 65535' };
-  if (port === OLYMPUS_PORT) return { valid: false, error: `Port ${OLYMPUS_PORT} is reserved for Olympus` };
+  if (port === REV4A_PORT) return { valid: false, error: `Port ${REV4A_PORT} is reserved for Rev4a` };
   const usedPorts = getUsedHostPorts();
   if (usedPorts.has(port)) return { valid: false, error: `Port ${port} is already in use` };
   return { valid: true, isBlock: false, start: port, end: port };
@@ -99,7 +99,7 @@ export const maxDuration = 180; // docker run (60s) + health check (60s) + seedi
 
 const TEMPLATES_DIR = templatesDir(process.cwd());
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
-const DEFAULT_NETWORK = 'olympus-network';
+const DEFAULT_NETWORK = 'rev4a-network';
 
 function isDockerCompatibleName(name: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
@@ -219,7 +219,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       isBlock = true;
     }
 
-    // Ensure shared volumes exist (created by olympus serve preflight, defensive guard here)
+    // Ensure shared volumes exist (created by rev4a serve preflight, defensive guard here)
     const mountFlags = getMountFlags();
 
     // Build docker run command
@@ -291,7 +291,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           port: portStart,
           portEnd,
           isBlock,
-          model: model || 'olympus/deepseek-v4-flash',
+          model: model || 'rev4a/deepseek-v4-flash',
           fallbacks,
           containerId,
           containerName,
@@ -370,9 +370,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Model reference (primary + fallbacks)
       if (model) {
-        const modelRef = model.startsWith('olympus/') ? model : `olympus/${model}`;
+        const modelRef = model.startsWith('rev4a/') ? model : `rev4a/${model}`;
         const fallbackRefs = (fallbacks || []).map((fb: string) =>
-          fb.startsWith('olympus/') ? fb : `olympus/${fb}`,
+          fb.startsWith('rev4a/') ? fb : `rev4a/${fb}`,
         );
         const agents = (config.agents || {}) as Record<string, unknown>;
         const defaults = (agents.defaults || {}) as Record<string, unknown>;
@@ -384,7 +384,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         config.agents = agents;
       }
 
-      // Disable update check (agents are managed through Olympus)
+      // Disable update check (agents are managed through Rev4a)
       config.update = {
         checkOnStart: false,
         auto: { enabled: false },
@@ -408,16 +408,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // post-creation config is non-fatal; can be synced manually
     }
 
-    // Guarantee Olympus runtime config (hooks, shared-skills, provider).
+    // Guarantee Rev4a runtime config (hooks, shared-skills, provider).
     // These patches are idempotent deep-merges — applied AFTER the
     // create-specific config so they're always present regardless of
     // what was in the persistent volume.
     try {
       applyRuntimeConfig(containerName);
 
-      // Also guarantee models.providers.olympus (host-dependent, not in base image)
-      const providerConfig = buildOlympusProviderConfig();
-      const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
+      // Also guarantee models.providers.rev4a (host-dependent, not in base image)
+      const providerConfig = buildRev4aProviderConfig();
+      const providerJson = JSON.stringify({ models: { providers: { rev4a: providerConfig } } });
       execSync(
         `docker exec -i ${containerName} sh -c 'openclaw config patch --stdin'`,
         { timeout: 15000, stdio: 'pipe', input: providerJson },

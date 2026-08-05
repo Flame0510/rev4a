@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { detectPublicHost } from '@/lib/docker-utils';
-import { AGENTS_TOKEN_FILE } from '@/lib/olympus-paths';
+import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
 

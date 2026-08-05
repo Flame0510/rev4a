@@ -2,9 +2,9 @@
 
 > **Last updated:** 2026-07-31
 
-This document covers the Olympus Provider Gateway (proxy),
+This document covers the Rev4a Provider Gateway (proxy),
 the vault key endpoint, and how agent containers authenticate against the
-Olympus proxy.
+Rev4a proxy.
 
 > **Note:** The old `/providers` UI page and its API routes (`/api/providers/*`,
 > `/api/agent-providers`) have been removed (2026-07-27). Provider/API-key
@@ -12,18 +12,18 @@ Olympus proxy.
 
 ---
 
-## Olympus Provider Gateway
+## Rev4a Provider Gateway
 
-The Olympus server at `/api/provider/v1/` acts as an OpenAI-compatible proxy.
-Agent containers point their `olympus` provider to this gateway instead of
+The Rev4a server at `/api/provider/v1/` acts as an OpenAI-compatible proxy.
+Agent containers point their `rev4a` provider to this gateway instead of
 connecting directly to upstream APIs.
 
 ```
-Agent Container          Olympus Gateway              Upstream API
+Agent Container          Rev4a Gateway              Upstream API
      │                         │                         │
-     │ Authorization: Bearer <olympus-key>               │
+     │ Authorization: Bearer <rev4a-key>               │
      │ POST /api/provider/v1/chat/completions            │
-     │ model: olympus/deepseek-deepseek-v4-flash         │
+     │ model: rev4a/deepseek-deepseek-v4-flash         │
      │────────────────────────>│                         │
      │                         │ POST https://api.deepseek.com/v1/chat/completions
      │                         │ Authorization: Bearer <deepseek-key>
@@ -37,21 +37,21 @@ Agent Container          Olympus Gateway              Upstream API
 ### Authentication
 
 The Gateway authenticates requests against `data/provider-keys.json`. The
-`Authorization` Bearer token must match the value of the `olympus` entry:
+`Authorization` Bearer token must match the value of the 'rev4a' entry:
 
 ```json
 {
-  "olympus": "<gateway-token>"
+  "rev4a": "<gateway-token>"
 }
 ```
 
 | Token match | Result |
 |---|---|
-| Matches `olympus` key | Authenticated — returns all enabled models or proxies the chat request |
+| Matches `rev4a` key | Authenticated — returns all enabled models or proxies the chat request |
 | No match | `GET /models` returns empty list, `POST /chat/completions` returns 401 |
 | No token | Same as no match |
 
-Only the `olympus` entry is checked. Other provider keys in the file (e.g.
+Only the 'rev4a' entry is checked. Other provider keys in the file (e.g.
 `deepseek`, `openrouter`) are ignored for authentication — they are used as
 upstream credentials by the proxy, not as client tokens.
 
@@ -84,7 +84,7 @@ not by auto-discovery.
 
 | Auth state | Response |
 |---|---|
-| Valid `olympus` token | All enabled models |
+| Valid `rev4a` token | All enabled models |
 | Invalid token | `total: 0`, empty `data` array |
 | No token | `total: 0`, empty `data` array |
 
@@ -99,16 +99,16 @@ name is parsed to extract the provider and model ID.
 
 | Model alias | Upstream provider | Upstream model |
 |---|---|---|
-| `olympus/deepseek-v4-flash` | `deepseek` | `deepseek-v4-flash` |
-| `olympus/deepseek-v4-pro` | `deepseek` | `deepseek-v4-pro` |
-| `olympus/kimi-k3` | `kimi` | `kimi-k3` |
-| `olympus/glm-5.2` | `glm` | `glm-5.2` |
-| `olympus/qwen3.7-plus` | `qwen` | `qwen3.7-plus` |
+| `rev4a/deepseek-v4-flash` | `deepseek` | `deepseek-v4-flash` |
+| `rev4a/deepseek-v4-pro` | `deepseek` | `deepseek-v4-pro` |
+| `rev4a/kimi-k3` | `kimi` | `kimi-k3` |
+| `rev4a/glm-5.2` | `glm` | `glm-5.2` |
+| `rev4a/qwen3.7-plus` | `qwen` | `qwen3.7-plus` |
 
 **Model parsing fallback:**
 1. Check `request.provider` field
-2. Check `MODEL_ALIASES` map (for `olympus/` prefixed aliases)
-3. Parse `provider/model` from the model string (e.g. `olympus/kimi/kimi-k3` → provider `kimi`, model `kimi-k3`)
+2. Check `MODEL_ALIASES` map (for `rev4a/` prefixed aliases)
+3. Parse `provider/model` from the model string (e.g. `rev4a/kimi/kimi-k3` → provider `kimi`, model `kimi-k3`)
 4. Fall back to `deepseek`
 
 **Provider API paths:** Most providers use the standard `/v1/chat/completions` endpoint.
@@ -118,7 +118,7 @@ The upstream module (`app/api/provider/upstream.ts`) handles this via a per-prov
 **Request body** (OpenAI-compatible):
 ```json
 {
-  "model": "olympus/deepseek-v4-flash",
+  "model": "rev4a/deepseek-v4-flash",
   "messages": [{"role": "user", "content": "Hello"}]
 }
 ```
@@ -179,13 +179,13 @@ Remove a stored provider credential from the vault.
 
 ## Agent Container Gateway Config
 
-Inside each agent container, the `openclaw.json` file has this structure for the Olympus provider:
+Inside each agent container, the `openclaw.json` file has this structure for the Rev4a provider:
 
 ```json
 {
   "models": {
     "providers": {
-      "olympus": {
+      "rev4a": {
         "baseUrl": "http://host.docker.internal:3740/api/provider/v1",
         "api": "openai-completions",
         "apiKey": "<gateway-token>",
@@ -199,7 +199,7 @@ Inside each agent container, the `openclaw.json` file has this structure for the
   "agents": {
     "defaults": {
       "model": {
-        "primary": "olympus/deepseek/deepseek-v4-flash"
+        "primary": "rev4a/deepseek/deepseek-v4-flash"
       }
     }
   }
@@ -208,10 +208,10 @@ Inside each agent container, the `openclaw.json` file has this structure for the
 
 Key points:
 
-- `models.providers.olympus.models` uses model IDs **without** the `olympus/` prefix
-- `agents.defaults.model.primary` uses the model ID **with** the `olympus/` 
+- `models.providers.rev4a.models` uses model IDs **without** the `rev4a/` prefix
+- `agents.defaults.model.primary` uses the model ID **with** the `rev4a/` 
   prefix (as it would appear at runtime). No fallbacks are set by default.
-- The `apiKey` value must match the `olympus` entry in `data/provider-keys.json`
+- The `apiKey` value must match the 'rev4a' entry in `data/provider-keys.json`
   for the container to successfully authenticate against the Gateway
 
 ---

@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import OlympusChat from './OlympusChat';
+import PulseChat from './PulseChat';
 import WizardButton from './WizardButton';
 
 /**
@@ -9,7 +9,7 @@ import WizardButton from './WizardButton';
  *
  * Single container wrapping both floating buttons:
  * - WizardButton (left)
- * - OlympusChat (right)
+ * - PulseChat (right)
  *
  * Hidden on login, setup, and /wizard full-page.
  */
@@ -26,7 +26,7 @@ export default function FloatingActions() {
         <WizardButton />
       </div>
       <div className="floating-actions__right">
-        <OlympusChat />
+        <PulseChat />
       </div>
     </div>
   );

@@ -26,10 +26,10 @@ const ALERTS_TABLE = `
 
 function getConfig() {
   return {
-    enabled: process.env.OLYMPUS_ALERTS_ENABLED === 'true',
-    token: process.env.OLYMPUS_TELEGRAM_BOT_TOKEN?.trim() ?? '',
-    chatId: process.env.OLYMPUS_TELEGRAM_CHAT_ID?.trim() ?? '',
-    cooldownMs: Math.max(0, Number(process.env.OLYMPUS_ALERT_COOLDOWN_MS ?? 10 * 60 * 1000)),
+    enabled: process.env.REV4A_ALERTS_ENABLED === 'true',
+    token: process.env.REV4A_TELEGRAM_BOT_TOKEN?.trim() ?? '',
+    chatId: process.env.REV4A_TELEGRAM_CHAT_ID?.trim() ?? '',
+    cooldownMs: Math.max(0, Number(process.env.REV4A_ALERT_COOLDOWN_MS ?? 10 * 60 * 1000)),
   };
 }
 

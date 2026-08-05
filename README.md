@@ -1,4 +1,4 @@
-# OLYMPUS — Multi-Agent Dashboard for OpenClaw
+# REV4A — Multi-Agent Dashboard for OpenClaw
 
 > **One command to deploy a management dashboard for your OpenClaw agent fleet.**
 > Zero external databases. Only Node.js + Docker.
@@ -27,24 +27,24 @@
 
 ```bash
 # Requirements: Node.js 22+ and Docker
-git clone https://github.com/Flame0510/olympus.git
-cd olympus
+git clone https://github.com/Flame0510/rev4a.git
+cd 'rev4a'
 npm install
 
 # One command to start everything:
-olympus serve
+rev4a serve
 ```
 
-Olympus auto-builds on first run, generates `.env` with credentials,
+Rev4a auto-builds on first run, generates `.env` with credentials,
 and starts all services. Open `http://localhost:3740` and follow the setup wizard.
 
 ```bash
 # Custom port:
-olympus serve --port 8080
+rev4a serve --port 8080
 ```
 
 > **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
-> **Container deploy:** `docker run -d --name olympus -v olympus-data:/olympus/data -v /var/run/docker.sock:/var/run/docker.sock -p 3740:3740 ghcr.io/flame0510/olympus:latest`
+> **Container deploy:** `docker run -d --name rev4a -v rev4a-data:/rev4a/data -v /var/run/docker.sock:/var/run/docker.sock -p 3740:3740 ghcr.io/flame0510/rev4a:latest`
 
 ---
 
@@ -65,9 +65,9 @@ olympus serve --port 8080
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `PORT` | `3740` | No | Dashboard HTTP port |
-| `OLYMPUS_TOKEN` | — | Yes | Bearer token for API routes and login |
-| `OLYMPUS_JWT_SECRET` | auto-generated | No | Secret for auth cookies |
-| `OLYMPUS_DB` | `./events.db` | No | SQLite database path |
+| `REV4A_TOKEN` | — | Yes | Bearer token for API routes and login |
+| `REV4A_JWT_SECRET` | auto-generated | No | Secret for auth cookies |
+| `REV4A_DB` | `./events.db` | No | SQLite database path |
 | `OPENCLAW_BIN` | `/usr/bin/openclaw` | No | OpenClaw CLI path |
 
 ---
@@ -76,7 +76,7 @@ olympus serve --port 8080
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                   OLYMPUS Dashboard              │
+│                   REV4A Dashboard              │
 │  Next.js 16 · SQLite · no external dependencies  │
 └──┬───────┬───────┬───────┬───────┬───────────────┘
    │       │       │       │       │
@@ -105,7 +105,7 @@ olympus serve --port 8080
 | Document | What it covers |
 |---|---|
 | [AGENTS.md](./AGENTS.md) | Repository entry point and contribution rules |
-| [docs/OLYMPUS.md](./docs/OLYMPUS.md) | App pages, navigation, agent management, gateway UI |
+| [docs/REV4A.md](./docs/REV4A.md) | App pages, navigation, agent management, gateway UI |
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System architecture and component layout |
 | [docs/FRONTEND-ARCHITECTURE.md](./docs/FRONTEND-ARCHITECTURE.md) | Frontend structure and design decisions |
 | [docs/CONTAINER-TERMINAL.md](./docs/CONTAINER-TERMINAL.md) | Terminal WebSocket implementation |
@@ -134,7 +134,7 @@ at container creation time.
 
 ## Comparison
 
-| | OLYMPUS | Clawix | NanoClaw | MetaClaw |
+| | REV4A | Clawix | NanoClaw | MetaClaw |
 |---|---|---|---|---|
 | **Dashboard** | ✅ Full web UI | ✅ Full web UI | ❌ Chat only | ❌ Chat only |
 | **Container isolation** | ✅ Docker per-agent | ✅ Docker per-agent | ✅ Docker per-agent | ✅ Docker per-agent |

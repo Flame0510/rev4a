@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/version
  *
- * Returns the installed Olympus version from package.json.
+ * Returns the installed Rev4a version from package.json.
  * No auth required.
  */
 export function GET(): NextResponse {

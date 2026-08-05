@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import { NextResponse, type NextRequest } from 'next/server';
-import { AGENTS_TOKEN_FILE } from '@/lib/olympus-paths';
+import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 

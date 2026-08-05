@@ -1,7 +1,7 @@
 /**
  * Gateway Status API
  *
- * Aggregates live model/provider state from Olympus agent containers.
+ * Aggregates live model/provider state from Rev4a agent containers.
  * Only queries containers with AGENT_ID label — no hardcoded container names.
  *
  * GET /api/gateway
@@ -55,7 +55,7 @@ function dockerExec(container: string, cmd: string, timeout = 15000): string {
   }
 }
 
-/** Get Docker containers with AGENT_ID label — only Olympus-managed agents */
+/** Get Docker containers with AGENT_ID label — only Rev4a-managed agents */
 function getAgents(): { agentId: string; containerName: string; state: string }[] {
   try {
     const raw = execSync(
@@ -132,7 +132,7 @@ export async function GET(): Promise<NextResponse> {
   try {
     const timestamp = Date.now();
 
-    // Only Olympus-managed agents (AGENT_ID label)
+    // Only Rev4a-managed agents (AGENT_ID label)
     const agentsRaw = getAgents();
     const agents = agentsRaw
       .map((a) => getAgentStatus(a))
@@ -183,7 +183,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json({
       timestamp,
-      gateway: 'Olympus Model Gateway',
+      gateway: 'Rev4a Model Gateway',
       status: 'online',
       models: {
         total: allModels.length,

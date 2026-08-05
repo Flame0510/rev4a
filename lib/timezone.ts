@@ -1,13 +1,13 @@
-export const DEFAULT_OLYMPUS_TIMEZONE = 'Europe/Rome';
+export const DEFAULT_REV4A_TIMEZONE = 'Europe/Rome';
 
 let timezoneCache: string | null = null;
 let timezonePromise: Promise<string> | null = null;
 
-export function normalizeOlympusTimezone(value: unknown): string {
-  return typeof value === 'string' && value ? value : DEFAULT_OLYMPUS_TIMEZONE;
+export function normalizeRev4aTimezone(value: unknown): string {
+  return typeof value === 'string' && value ? value : DEFAULT_REV4A_TIMEZONE;
 }
 
-export async function fetchOlympusTimezone(): Promise<string> {
+export async function fetchRev4aTimezone(): Promise<string> {
   if (timezoneCache) return timezoneCache;
   if (!timezonePromise) {
     timezonePromise = fetch('/api/tools-config', {
@@ -17,11 +17,11 @@ export async function fetchOlympusTimezone(): Promise<string> {
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as { timezone?: string };
-        const timezone = normalizeOlympusTimezone(data.timezone);
+        const timezone = normalizeRev4aTimezone(data.timezone);
         timezoneCache = timezone;
         return timezone;
       })
-      .catch(() => DEFAULT_OLYMPUS_TIMEZONE)
+      .catch(() => DEFAULT_REV4A_TIMEZONE)
       .finally(() => {
         timezonePromise = null;
       });
@@ -29,18 +29,18 @@ export async function fetchOlympusTimezone(): Promise<string> {
   return timezonePromise;
 }
 
-export function setCachedOlympusTimezone(timezone: string): void {
-  timezoneCache = normalizeOlympusTimezone(timezone);
+export function setCachedRev4aTimezone(timezone: string): void {
+  timezoneCache = normalizeRev4aTimezone(timezone);
 }
 
 export function formatDateTimeInTimezone(
   value: string | number | Date,
   options: Intl.DateTimeFormatOptions,
-  timezone = DEFAULT_OLYMPUS_TIMEZONE,
+  timezone = DEFAULT_REV4A_TIMEZONE,
   locale = 'it-IT',
 ): string {
   return new Date(value).toLocaleString(locale, {
     ...options,
-    timeZone: normalizeOlympusTimezone(timezone),
+    timeZone: normalizeRev4aTimezone(timezone),
   });
 }

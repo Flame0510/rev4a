@@ -4,18 +4,18 @@
  * GET  /api/config/env  — read all env vars (values unmasked)
  * PUT  /api/config/env  — upsert one or more env vars
  *
- * Only keys prefixed with OLYMPUS_ or PROVIDER_ are exposed.
+ * Only keys prefixed with REV4A_ or PROVIDER_ are exposed.
  * Auth: browser cookie (authenticated session via middleware).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
-import { ENV_FILE } from '@/lib/olympus-paths';
+import { ENV_FILE } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const ALLOWED_PREFIXES = ['OLYMPUS_', 'PROVIDER_'];
+const ALLOWED_PREFIXES = ['REV4A_', 'PROVIDER_'];
 
 function isAllowedKey(key: string): boolean {
   return ALLOWED_PREFIXES.some((p) => key.startsWith(p));
@@ -113,7 +113,7 @@ export async function PUT(request: NextRequest) {
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
     // No need to write individual Environment= lines into unit files —
-    // olympus-next.service already reads .env via EnvironmentFile=.
+    // rev4a-next.service already reads .env via EnvironmentFile=.
     try {
       execSync('sudo systemctl daemon-reload', { timeout: 5000 });
     } catch (syncErr) {

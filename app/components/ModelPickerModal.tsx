@@ -86,7 +86,7 @@ export default function ModelPickerModal({ open, value = '', title = 'Select mod
         .model-picker__models { display: grid; gap: 2px; padding: 2px 0 6px 40px; }
         .model-picker__model { text-align: left; border: 0; border-radius: 0; background: none; color: var(--text); cursor: pointer; padding: 7px 9px; font: inherit; font-size: 11px; }
         .model-picker__model:hover { background: var(--bg3); }
-        .model-picker__model--active { background: rgba(212,155,53,.14); color: var(--copper); }
+        .model-picker__model--active { background: rgba(167,139,250,.14); color: var(--violet); }
         @media (max-width: 600px) { .model-picker { align-items: flex-end; padding: 0; } .model-picker__panel { border-radius: 0; max-height: 82dvh; } }
       `}</style>
     </div>

@@ -1,21 +1,21 @@
-# ── Olympus Docker Image ────────────────────────────────────────────────────
+# ── Rev4a Docker Image ────────────────────────────────────────────────────
 # Public image, pullable without authentication.
-# Olympus self-bootstraps on first run: env, Next.js build, agent image pull.
+# Rev4a self-bootstraps on first run: env, Next.js build, agent image pull.
 #
 # Usage:
-#   docker run -d --name olympus \
-#     -v olympus-data:/olympus/data \
+#   docker run -d --name rev4a \
+#     -v rev4a-data:/rev4a/data \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -p 3740:3740 \
-#     ghcr.io/flame0510/olympus:latest
+#     ghcr.io/flame0510/rev4a:latest
 #
 # Data persistence:
-#   .env is stored in /olympus/data/.env (survives container recreates)
-#   and copied to /olympus/.env on startup for Next.js compatibility.
+#   .env is stored in /rev4a/data/.env (survives container recreates)
+#   and copied to /rev4a/.env on startup for Next.js compatibility.
 #   All databases, credentials, and tokens live in the data/ volume.
 #
-# To update: docker pull ghcr.io/flame0510/olympus:latest && docker rm -f olympus && docker run ... (same flags)
-#     OR use the built-in update banner in the Olympus dashboard.
+# To update: docker pull ghcr.io/flame0510/rev4a:latest && docker rm -f rev4a && docker run ... (same flags)
+#     OR use the built-in update banner in the Rev4a dashboard.
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM node:22-bookworm-slim
@@ -28,9 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /olympus
+WORKDIR /rev4a
 
-# Copy source and install dependencies (skip postinstall — handled by olympus serve)
+# Copy source and install dependencies (skip postinstall — handled by rev4a serve)
 COPY . .
 RUN npm install --omit=dev --ignore-scripts
 
@@ -40,4 +40,4 @@ RUN chmod +x /usr/local/bin/entrypoint
 
 EXPOSE 3740
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
-CMD ["node", "bin/olympus.js", "serve"]
+CMD ["node", "bin/rev4a.js", "serve"]

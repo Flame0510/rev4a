@@ -4,7 +4,7 @@ import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 /**
  * POST /api/agents/[id]/restore?file=agent-xxx-2026-07-11_2115.tar.gz

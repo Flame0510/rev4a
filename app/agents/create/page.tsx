@@ -2,7 +2,7 @@ import { requireAuth } from '@/lib/requireAuth';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
+import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import CreatePageClient from './PageClient';
 
 export const dynamic = 'force-dynamic';
@@ -99,7 +99,7 @@ async function getUsedPorts(): Promise<number[]> {
         }
       }
     }
-    // Add Olympus port as reserved so the client won't suggest it
+    // Add Rev4a port as reserved so the client won't suggest it
     ports.push(3740);
     return [...new Set(ports)];
   } catch {

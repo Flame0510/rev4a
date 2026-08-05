@@ -1,8 +1,8 @@
-# Olympus Architecture — Design & Vision
+# Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
 > **Last updated:** 2026-06-30
-> **Goal:** Transform Olympus from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
+> **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
 
@@ -14,7 +14,7 @@
 ┌─────────────────────────────────────────────┐
 │  openclaw-core (1 container)                │
 │                                             │
-│  Olympus (Next.js + daemon + SQLite)        │
+│  Rev4a (Next.js + daemon + SQLite)        │
 │  OpenClaw runtime + systemd                  │
 │  Subagents via sessions_spawn (same process)│
 │  3+ agent workspaces (ops, prometheus, …)   │
@@ -31,14 +31,14 @@
 - Single SQLite WAL under concurrent load
 - Impossible to use frameworks other than OpenClaw (Hermes, OpenCode)
 
-### Target vision: Olympus as orchestrator
+### Target vision: Rev4a as orchestrator
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │  DOCKER HOST (203.0.113.10, 4 CPU, 15 GB RAM, 193 GB disk)   │
 │                                                                │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
-│  │ olympus-control  │  │ agent-argus      │  │ agent-atlas  │ │
+│  │ rev4a-control  │  │ agent-argus      │  │ agent-atlas  │ │
 │  │ (orchestrator)   │  │ (OpenClaw: Ops)  │  │ (OpenClaw:   │ │
 │  │                  │  │                  │  │  Development)│ │
 │  │ • Dashboard UI   │  │ • Session pool   │  │ • Session    │ │
@@ -68,7 +68,7 @@
 
 ### What's already been implemented
 
-**Container separation:** `openclaw-atlas` already runs as a standalone container with `AGENT_ID=atlas`, discovered dynamically by Olympus. This proves the container-per-agent model works.
+**Container separation:** `openclaw-atlas` already runs as a standalone container with `AGENT_ID=atlas`, discovered dynamically by Rev4a. This proves the container-per-agent model works.
 
 **Vault system:** A credentials vault (`/vault` page) stores API keys and service tokens with per-agent permissions. File-backed vault system (removed - sensitive data is env-only).
 
@@ -83,7 +83,7 @@
 | Vault (UI + API) | 🟢 Implemented | SQLite + JSON, no encryption yet |
 | Container page | 🟢 Functional | Lists all containers, logs, resources |
 | Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
-| Provider proxy | 🟢 Implemented | Agents route through Olympus provider gateway |
+| Provider proxy | 🟢 Implemented | Agents route through Rev4a provider gateway |
 | Shared volumes | 🟢 Implemented | Skills + repos mounted on all agents |
 | Central Oracle DB | 🔴 Not started | Events are per-container |
 | Auto-registration | 🔴 Not started | New containers must be manually added |
@@ -92,7 +92,7 @@
 
 ## 3. Components (Target Architecture)
 
-### 3.1 Olympus Control Plane
+### 3.1 Rev4a Control Plane
 
 The central container, running the Next.js dashboard + orchestration API.
 
@@ -107,16 +107,16 @@ The central container, running the Next.js dashboard + orchestration API.
 
 **Volume mounts (target):**
 ```
-/path/to/olympus/data          → /data (persistent)
+/path/to/rev4a/data          → /data (persistent)
 /var/run/docker.sock            → /var/run/docker.sock
 /docker/shared-skills           → /data/.openclaw/shared-skills (ro)
 /docker/shared-repos            → /data/repos (rw)
 ```
 
-**Olympus System Rules** (`olympus-rules/AGENTS.md`):
-- Versioned in the repo, deployed to `/docker/olympus-rules/` on every `olympus serve` start
-- Mounted read-only into every agent at `/root/.openclaw/workspace/.olympus/AGENTS.md`
-- Injected into every session via the `bootstrap-extra-files` hook (glob `.olympus/*.md`)
+**Rev4a System Rules** (`rev4a-rules/AGENTS.md`):
+- Versioned in the repo, deployed to `/docker/rev4a-rules/` on every `rev4a serve` start
+- Mounted read-only into every agent at `/root/.openclaw/workspace/.rev4a/AGENTS.md`
+- Injected into every session via the `bootstrap-extra-files` hook (glob `.rev4a/*.md`)
 - Immutable by agents — enforced by the `:ro` mount
 - See `lib/agent-setup.ts` for the centralized volume + config guarantee logic
 
@@ -133,12 +133,12 @@ copies the entrypoint script, and applies baseline gateway config patches.
 **Volume mounts (per agent):**
 ```
 /docker/shared-skills         → /data/.openclaw/shared-skills  (ro)
-/docker/olympus-rules         → /root/.openclaw/workspace/.olympus (ro)
+/docker/rev4a-rules         → /root/.openclaw/workspace/.rev4a (ro)
 agent-{name}-data (named vol) → /root                            (rw, per-agent persistent state)
 ```
 
 All shared volumes are defined centrally in `lib/agent-setup.ts`
-(`OLYMPUS_VOLUMES`) and used by both the create and recreate API routes.
+(`REV4A_VOLUMES`) and used by both the create and recreate API routes.
 The `bootstrap-extra-files` hook is pre-wired in the base image Dockerfile
 and guaranteed at runtime by `applyRuntimeConfig()`.
 
@@ -151,21 +151,21 @@ AGENT_HOSTNAME=<host-ip>:<portStart>
 TZ=Europe/Rome
 ```
 
-> **Note:** Provider API keys are never injected into agent containers. Agents use the Olympus provider gateway at `http://host.docker.internal:3740/api/provider/v1` (resolved via `detectProviderGatewayUrl()`).
+> **Note:** Provider API keys are never injected into agent containers. Agents use the Rev4a provider gateway at `http://host.docker.internal:3740/api/provider/v1` (resolved via `detectProviderGatewayUrl()`).
 
 ### 3.3 AI Provider Gateway (implemented)
 
 The Provider Gateway is fully implemented and operational. Agent containers
-point to the Olympus provider proxy instead of using direct API keys.
+point to the Rev4a provider proxy instead of using direct API keys.
 
 **Flow:**
 
 ```
-Agent Container          Olympus Gateway              Provider API
+Agent Container          Rev4a Gateway              Provider API
      │                         │                         │
      │ Authorization: Bearer <gateway-token>             │
      │ POST /api/provider/v1/chat/completions            │
-     │ model: olympus/deepseek-v4-flash                  │
+     │ model: rev4a/deepseek-v4-flash                  │
      │────────────────────────>│                         │
      │                         │ POST /v1/chat/completions│
      │                         │ Authorization: Bearer <real-key>
@@ -178,14 +178,14 @@ Agent Container          Olympus Gateway              Provider API
 
 **Key characteristics:**
 
-- The Olympus server in `app/api/provider/v1/` acts as an OpenAI-compatible proxy
+- The Rev4a server in `app/api/provider/v1/` acts as an OpenAI-compatible proxy
 - Authentication uses `data/provider-keys.json` — the Bearer token must match
-  the `olympus` entry
+  the 'rev4a' entry
 - Model lists (`GET /api/provider/v1/models`) return an empty list on invalid
   or missing token, preventing information leakage
 - Chat requests (`POST /api/provider/v1/chat/completions`) return 401 on
   invalid or missing token
-- API keys live only on the Olympus server (in `data/provider-keys.json`),
+- API keys live only on the Rev4a server (in `data/provider-keys.json`),
   never inside agent containers
 - The Gateway page (`/gateway`) provides a UI to manage provider keys and
   sync them to agent containers via `PUT /api/gateway/provider`
@@ -199,7 +199,7 @@ detailed documentation.
 
 Provider API keys are stored in `data/provider-keys.json`. Third-party service credentials
 (GitHub, Trello, Vercel, Supabase) are stored in `data/credentials.db` (SQLite).
-At agent spawn time, Olympus injects only the credentials the agent is permitted to use.
+At agent spawn time, Rev4a injects only the credentials the agent is permitted to use.
 
 ```json
 {
@@ -229,7 +229,7 @@ At agent spawn time, Olympus injects only the credentials the agent is permitted
 ### Agent spawn flow
 
 ```
-Olympus Dashboard UI
+Rev4a Dashboard UI
        │
        │ Click "New Agent"
        ▼
@@ -241,7 +241,7 @@ Olympus Dashboard UI
                │
                ▼
 ┌──────────────────────────────────────┐
-│ 2. Olympus generates OpenClaw config │
+│ 2. Rev4a generates OpenClaw config │
 │    - Takes template                  │
 │    - Injects providers from vault    │
 │    - Injects service tokens          │
@@ -250,10 +250,10 @@ Olympus Dashboard UI
                │
                ▼
 ┌──────────────────────────────────────┐
-│ 3. Olympus spawns Docker container   │
+│ 3. Rev4a spawns Docker container   │
 │    - docker run openclaw-agent-base     │
 │    - Env vars + volumes              │
-│    - network: olympus-net            │
+│    - network: rev4a-net            │
 │    - CPU/RAM limits                  │
 └──────────────┬───────────────────────┘
                │
@@ -262,7 +262,7 @@ Olympus Dashboard UI
 │ 4. Container self-configures         │
 │    - Reads config from shared-config │
 │    - Runs healthcheck                │
-│    - Registers on Olympus API        │
+│    - Registers on Rev4a API        │
 └──────────────┬───────────────────────┘
                │
                ▼
@@ -299,7 +299,7 @@ GET    /api/agents                 List all agents (Docker containers with AGENT
 Skills are stored in a flat structure (no subcategory folders like `core/`, `ops/`, `dev/`).
 This keeps the layout simple and avoids hierarchy debates at this stage.
 **Permissions:**
-- Olympus host: rw (writes during promote, reads for listing)
+- Rev4a host: rw (writes during promote, reads for listing)
 - Agent containers: ro (mounted at `/data/.openclaw/shared-skills`)
 - Owner: uid 1000 (node), group: 1000, mode: 2775 (setgid)
 
@@ -308,13 +308,13 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 - Both create and recreate routes guarantee this via `applyRuntimeConfig()` from `lib/agent-setup.ts`.
 - On first install, create `/docker/shared-skills` with `mkdir -p /docker/shared-skills && chmod 2775 /docker/shared-skills`.
 
-### Olympus System Rules (`olympus-rules/`)
+### Rev4a System Rules (`rev4a-rules/`)
 
-Versioned in the repo at `olympus-rules/AGENTS.md`. Deployed to
-`/docker/olympus-rules/` on every `olympus serve` startup via
-`ensureOlympusRules()` in `bin/olympus.js`. Mounted read-only into every
+Versioned in the repo at `rev4a-rules/AGENTS.md`. Deployed to
+`/docker/rev4a-rules/` on every `rev4a serve` startup via
+`ensureRev4aRules()` in `bin/rev4a.js`. Mounted read-only into every
 agent container and injected into sessions through the
-`bootstrap-extra-files` hook (glob `.olympus/*.md`).
+`bootstrap-extra-files` hook (glob `.rev4a/*.md`).
 
 All shared volumes are defined in `lib/agent-setup.ts` — a single source
 of truth used by both create and recreate API routes.
@@ -322,10 +322,10 @@ of truth used by both create and recreate API routes.
 ### Shared Repositories (`/docker/shared-repos`)
 ```
 /docker/shared-repos/
-  olympus/     # the Olympus repo
+  rev4a/     # the Rev4a repo
   projects/    # project repos for agents to work on
 ```
-**Permissions:** rw for Olympus and agents that need to write code.
+**Permissions:** rw for Rev4a and agents that need to write code.
 
 ---
 
@@ -335,7 +335,7 @@ All containers on the same Docker bridge network:
 
 ```yaml
 networks:
-  olympus-net:
+  rev4a-net:
     driver: bridge
     ipam:
       config:
@@ -343,16 +343,16 @@ networks:
 ```
 
 **Communication:**
-- Agent → Olympus Gateway: `http://olympus-control:3721`
-- Agent → Olympus Dashboard: `http://olympus-control:3720`
-- Olympus → Agent (healthcheck): `http://agent-{id}:3000`
+- Agent → Rev4a Gateway: `http://rev4a-control:3721`
+- Agent → Rev4a Dashboard: `http://rev4a-control:3720`
+- Rev4a → Agent (healthcheck): `http://agent-{id}:3000`
 - Traefik → Agent (external access): via Docker labels
 
 ---
 
 ## 8. Daemon & Data Pipeline
 
-The Olympus daemon (`daemon.js`) is a standalone Node.js process that bridges the OpenClaw runtime and the SQLite database. It is not part of the Next.js server.
+The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the OpenClaw runtime and the SQLite database. It is not part of the Next.js server.
 
 ### Responsibilities
 
@@ -449,8 +449,8 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 
 ### Phase 0 — Preparation (✅ Done)
 - [x] Architecture document exists
-- [x] Olympus code is in the workspace
-- [x] Git repository on `github.com/Flame0510/olympus.git`
+- [x] Rev4a code is in the workspace
+- [x] Git repository on `github.com/Flame0510/rev4a.git`
 - [x] VPS-specific changes merged into `main` branch
 
 ### Phase 1 — Container separation
@@ -460,18 +460,18 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 - [ ] Test cross-container communication
 
 ### Phase 2 — Provider Gateway
-- [x] Implement proxy API on Olympus (`/api/provider/v1/`)
+- [x] Implement proxy API on Rev4a (`/api/provider/v1/`)
 - [x] Gateway Page (`/gateway`) for provider key management
 - [x] Agent model configuration via Gateway Agents tab
 - [x] Provider sync to agent containers (`PUT /api/gateway/provider`)
-- [x] Auth via olympus token in `data/provider-keys.json`
+- [x] Auth via rev4a token in `data/provider-keys.json`
 - [ ] Rate limiting per agent
 - [ ] Transparent provider switching (change keys in one place)
 
 ### Phase 3 — Full agent extraction
 - [ ] Move Prometheus to its own container
 - [ ] Move Argus to its own container
-- [ ] Olympus becomes pure orchestrator (no agent sessions)
+- [ ] Rev4a becomes pure orchestrator (no agent sessions)
 
 ### Phase 4 — Alternative runtimes
 - [ ] Test Hermes in a dedicated container
@@ -479,7 +479,7 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 - [ ] Unified dashboard for all runtime types
 
 ### Phase 5 — Automation
-- [ ] `olympus agents spawn` CLI command
+- [ ] `rev4a agents spawn` CLI command
 - [ ] Auto-scaling? (spawn more agents under load)
 - [ ] Automated vault + config backups
 
@@ -488,27 +488,27 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 ## 10. Open Questions
 
 1. **Provider Gateway: custom proxy or existing product?**
-   - Option A: Homemade proxy (Node.js, lightweight, integrated in Olympus)
+   - Option A: Homemade proxy (Node.js, lightweight, integrated in Rev4a)
    - Option B: LiteLLM / Portkey (more features, heavier)
-   - Recommendation: start with homemade (A) — Olympus is already Node.js
+   - Recommendation: start with homemade (A) — Rev4a is already Node.js
 
 2. **Memory: centralized or distributed?**
    - Centralized: simpler, single DB, single point of contention
-   - Distributed: per-agent memory, Olympus indexes centrally — more resilient
+   - Distributed: per-agent memory, Rev4a indexes centrally — more resilient
    - Recommendation: distributed with central index
 
 3. **Traefik routing: should agents be externally reachable?**
-   - If yes: per-agent Traefik labels managed by Olympus
+   - If yes: per-agent Traefik labels managed by Rev4a
    - If no: internal Docker network only
    - Recommendation: no by default, yes only for agents serving APIs/UI
 
 4. **Hermes and other frameworks: dashboard integration?**
    - Hermes has its own session format
-   - Olympus daemon should have "adapters" for different runtimes
+   - Rev4a daemon should have "adapters" for different runtimes
    - Or Hermes exposes an API compatible with OpenClaw format
 
 5. **Resource calc: enough for 3-4 agent containers?**
-   - Estimate: 1 Olympus (~500 MB) + 3 agents (~2 GB each) = 6.5 GB RAM
+   - Estimate: 1 Rev4a (~500 MB) + 3 agents (~2 GB each) = 6.5 GB RAM
    - CPU: with limits, 3-4 agents should run fine
    - Monitor: if saturated, consider VPS upgrade
 
@@ -516,7 +516,7 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 
 ## 11. Container Terminal
 
-Olympus provides a real, interactive terminal for any agent container via
+Rev4a provides a real, interactive terminal for any agent container via
 a WebSocket-connected PTY. The implementation is documented in detail in
 [docs/container-terminal.md](container-terminal.md).
 
@@ -524,10 +524,10 @@ a WebSocket-connected PTY. The implementation is documented in detail in
 
 | Process | Port | Role |
 |---|---|---|
-| `olympus-next` (Next.js) | 3740 | Serves the terminal page, auth, API |
-| `olympus-terminal-ws` (standalone) | 3741 | WebSocket PTY server via `node-pty` |
+| `rev4a-next` (Next.js) | 3740 | Serves the terminal page, auth, API |
+| `rev4a-terminal-ws` (standalone) | 3741 | WebSocket PTY server via `node-pty` |
 
-The terminal server runs as a separate systemd service (olympus-terminal-ws) to avoid event-loop
+The terminal server runs as a separate systemd service (rev4a-terminal-ws) to avoid event-loop
 contention with Next.js during high-throughput I/O.
 
 ### Why custom DOM over xterm.js
@@ -546,12 +546,12 @@ for the full rationale.
 | Layer | Technology | Notes |
 |---|---|---|
 | Orchestrator | Docker / Docker Compose | Already in use |
-| Dashboard | Next.js 16 + React 19 | Current Olympus |
-| Provider Gateway | Express/Fastify (Node.js) | To implement in Olympus |
+| Dashboard | Next.js 16 + React 19 | Current Rev4a |
+| Provider Gateway | Express/Fastify (Node.js) | To implement in Rev4a |
 | Database | SQLite (WAL mode) | Current `events.db`, may need to scale |
 | Memory | Per-agent SQLite + central index | New |
 | Config | Generated YAML/JSON | New |
 | Vault | SQLite + JSON | Current: credentials.db + provider-keys.json. Future: encrypted |
 | Reverse proxy | Traefik | Already in use |
-| Monitoring | Olympus daemon (extended) | Evolution of current daemon |
-| Version control | Git + GitHub | `github.com/Flame0510/olympus.git` |
+| Monitoring | Rev4a daemon (extended) | Evolution of current daemon |
+| Version control | Git + GitHub | `github.com/Flame0510/rev4a.git` |

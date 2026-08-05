@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const CONFIG_PATH = '/data/.openclaw/openclaw.json';
-const OLYMPUS_SETTINGS_PATH = '/data/olympus/settings.json';
+const REV4A_SETTINGS_PATH = '/data/rev4a/settings.json';
 
 type JsonObject = Record<string, unknown>;
 
@@ -61,24 +61,24 @@ function getAudio(config: JsonObject): JsonObject {
   return (media.audio ?? {}) as JsonObject;
 }
 
-function readOlympusSettings(): JsonObject {
+function readRev4aSettings(): JsonObject {
   try {
-    return JSON.parse(fs.readFileSync(OLYMPUS_SETTINGS_PATH, 'utf8')) as JsonObject;
+    return JSON.parse(fs.readFileSync(REV4A_SETTINGS_PATH, 'utf8')) as JsonObject;
   } catch {
     return {};
   }
 }
 
-function writeOlympusSettings(settings: JsonObject): void {
-  const dir = path.dirname(OLYMPUS_SETTINGS_PATH);
+function writeRev4aSettings(settings: JsonObject): void {
+  const dir = path.dirname(REV4A_SETTINGS_PATH);
   const tmp = path.join(dir, `.settings.json.tmp-${process.pid}-${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, OLYMPUS_SETTINGS_PATH);
+  fs.renameSync(tmp, REV4A_SETTINGS_PATH);
 }
 
 function getTimezone(): string {
-  const settings = readOlympusSettings();
+  const settings = readRev4aSettings();
   const tz = settings.timezone;
   return typeof tz === 'string' && tz ? tz : 'Europe/Rome';
 }
@@ -123,7 +123,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       if (!VALID_TIMEZONES.includes(body.timezone))
         throw new Error('timezone is not supported');
       timezone = body.timezone;
-      writeOlympusSettings({ ...readOlympusSettings(), timezone });
+      writeRev4aSettings({ ...readRev4aSettings(), timezone });
     }
 
     const input = body?.audio;

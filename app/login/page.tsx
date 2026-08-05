@@ -76,7 +76,7 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(circle at top, rgba(212,155,53,0.12), transparent 32%), var(--bg)',
+        background: 'radial-gradient(circle at top, rgba(167,139,250,0.12), transparent 32%), var(--bg)',
         fontFamily: 'var(--font-mono-stack, monospace)',
         padding: '24px',
       }}
@@ -92,15 +92,15 @@ export default function LoginPage() {
         }}
       >
         <div style={{ padding: '22px 24px 18px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-          <img src="/olympus-logo.png" alt="Olympus" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(212,155,53,0.25))' }} />
-          <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--copper)' }}>OLYMPUS</div>
+          <img src="/rev4a-logo.png" alt="Rev4a" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(167,139,250,0.25))' }} />
+          <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--violet)' }}>REV4A</div>
           <div style={{ marginTop: 8, color: 'var(--text-dim)', fontSize: 11, letterSpacing: '0.12em' }}>
             AGENCY MONITOR — RESTRICTED ACCESS
           </div>
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: '20px 24px 24px' }}>
-          <div style={{ color: 'var(--copper)', fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>
+          <div style={{ color: 'var(--violet)', fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>
             PASSWORD
           </div>
           <div style={{ position: 'relative', marginBottom: 12 }}>
@@ -121,7 +121,7 @@ export default function LoginPage() {
                 right: 10,
                 top: '50%',
                 transform: 'translateY(-50%)',
-                color: 'var(--copper)',
+                color: 'var(--violet)',
                 cursor: 'pointer',
                 padding: '4px',
                 display: 'flex',
@@ -149,7 +149,7 @@ export default function LoginPage() {
             {loading ? 'ACCESSING...' : 'LOGIN'}
           </Button>
           <div style={{ marginTop: 14, fontSize: 10, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: '0.06em' }}>
-            Internal Olympus access
+            Internal Rev4a access
           </div>
         </form>
       </div>

@@ -11,7 +11,7 @@ SOUL.md, MEMORY.md, IDENTITY.md, and USER.md belong. Create project folders
 **inside** this workspace (e.g. `workspace/my-project/`).
 
 Do **NOT** rename the workspace folder itself. The path
-`/root/.openclaw/workspace/` is managed by Olympus and must stay exactly as-is.
+`/root/.openclaw/workspace/` is managed by Rev4a and must stay exactly as-is.
 If you need to organize projects, use subdirectories — never rename or move
 the workspace root.
 

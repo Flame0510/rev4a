@@ -5,7 +5,7 @@ import { DB_PATH } from '@/lib/db';
 
 // credentials.db lives alongside events.db in the same data directory
 export const CREDENTIALS_DB_PATH =
-  process.env.OLYMPUS_CREDENTIALS_DB ??
+  process.env.REV4A_CREDENTIALS_DB ??
   path.join(path.dirname(DB_PATH), 'credentials.db');
 
 function bootstrap(): void {

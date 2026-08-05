@@ -13,14 +13,14 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const viewport: Viewport = {
-  themeColor: '#D49B35',
+  themeColor: '#a78bfa',
 };
 
 export const metadata: Metadata = {
-  title: 'OLYMPUS - Agency Monitor',
+  title: 'REV4A - Agency Monitor',
   description: 'Mobile-ready monitoring dashboard for OpenClaw workspaces.',
   manifest: '/manifest.json',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'OLYMPUS' },
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'REV4A' },
   icons: {
     icon: [
       { url: '/favicon-64.png', sizes: '64x64', type: 'image/png' },

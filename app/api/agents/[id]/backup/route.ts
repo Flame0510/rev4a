@@ -4,7 +4,7 @@ import { isValidAgentId } from '@/lib/container';
 
 export const dynamic = 'force-dynamic';
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 /**
  * Determine the volume name for an agent by checking if it exists.

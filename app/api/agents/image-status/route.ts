@@ -11,7 +11,7 @@ import { getIsDownloading } from '@/lib/buildAgentImage';
 
 export const dynamic = 'force-dynamic';
 
-const REGISTRY_IMAGE = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
+const REGISTRY_IMAGE = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
 const LOCAL_IMAGE = 'openclaw-agent-base:latest';
 
 function dockerOk(): boolean {
@@ -99,7 +99,7 @@ export async function GET(): Promise<NextResponse> {
       );
       const localRepoDigests: string[] = inspect?.RepoDigests || [];
       const registryDigest = localRepoDigests.find((d: string) =>
-        d.startsWith('ghcr.io/flame0510/olympus/openclaw-agent-base@'),
+        d.startsWith('ghcr.io/flame0510/rev4a/openclaw-agent-base@'),
       );
 
       if (registryDigest) {

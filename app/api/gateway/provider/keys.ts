@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { PROVIDER_KEYS_FILE } from '@/lib/olympus-paths';
+import { PROVIDER_KEYS_FILE } from '@/lib/rev4a-paths';
 import * as path from 'path';
 
 const KEYS_PATH = PROVIDER_KEYS_FILE;

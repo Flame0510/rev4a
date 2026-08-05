@@ -1,4 +1,4 @@
-// Core domain types for Olympus
+// Core domain types for Rev4a
 
 export interface Session {
   session_id: string;

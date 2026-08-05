@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# restore.sh — Restore Olympus data from a backup archive
+# restore.sh — Restore Rev4a data from a backup archive
 #
 # Usage:
-#   sudo bash scripts/restore.sh backups/olympus-backup-20260724-120000.tar.gz
+#   sudo bash scripts/restore.sh backups/rev4a-backup-20260724-120000.tar.gz
 #
 # The script restores:
 #   - data/*.db
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLYMPUS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REV4A_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ARCHIVE="${1:-}"
 
@@ -23,8 +23,8 @@ if [[ -z "$ARCHIVE" ]]; then
   echo "Usage: sudo bash scripts/restore.sh <backup-archive.tar.gz>"
   echo ""
   echo "Available backups:"
-  if [[ -d "${OLYMPUS_ROOT}/backups" ]]; then
-    ls -lh "${OLYMPUS_ROOT}/backups/"*.tar.gz 2>/dev/null || echo "  (none)"
+  if [[ -d "${REV4A_ROOT}/backups" ]]; then
+    ls -lh "${REV4A_ROOT}/backups/"*.tar.gz 2>/dev/null || echo "  (none)"
   else
     echo "  (no backups directory)"
   fi
@@ -36,36 +36,36 @@ if [[ ! -f "$ARCHIVE" ]]; then
   exit 1
 fi
 
-echo "Restoring Olympus from: $ARCHIVE"
+echo "Restoring Rev4a from: $ARCHIVE"
 echo ""
 
 # Create pre-restore backup of current state
-PRE_DIR="${OLYMPUS_ROOT}/backups/.pre-restore-$(date -u +%Y%m%d-%H%M%S)"
+PRE_DIR="${REV4A_ROOT}/backups/.pre-restore-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$PRE_DIR"
 
 echo "Saving current state to: $PRE_DIR"
-cd "$OLYMPUS_ROOT"
+cd "$REV4A_ROOT"
 for f in data/*.db data/*.db-shm data/*.db-wal data/provider-keys.json data/agents-token.json models.config.json .env; do
   if [[ -f "$f" ]]; then
     cp --parents "$f" "$PRE_DIR/" 2>/dev/null || true
   fi
 done
 
-# Stop Olympus services before restore
-if systemctl is-active --quiet olympus.target 2>/dev/null; then
-  echo "Stopping Olympus services..."
-  sudo systemctl stop olympus.target
+# Stop Rev4a services before restore
+if systemctl is-active --quiet rev4a.service 2>/dev/null; then
+  echo "Stopping Rev4a services..."
+  sudo systemctl stop rev4a.service
   echo "Services stopped."
 fi
 
 # Extract the archive
 echo "Extracting backup..."
-tar -xzf "$ARCHIVE" -C "$OLYMPUS_ROOT"
+tar -xzf "$ARCHIVE" -C "$REV4A_ROOT"
 
 # Fix permissions
-chmod 600 "${OLYMPUS_ROOT}/.env" 2>/dev/null || true
-chmod 600 "${OLYMPUS_ROOT}/data/provider-keys.json" 2>/dev/null || true
-chmod 600 "${OLYMPUS_ROOT}/data/agents-token.json" 2>/dev/null || true
+chmod 600 "${REV4A_ROOT}/.env" 2>/dev/null || true
+chmod 600 "${REV4A_ROOT}/data/provider-keys.json" 2>/dev/null || true
+chmod 600 "${REV4A_ROOT}/data/agents-token.json" 2>/dev/null || true
 
 echo ""
 echo "=============================================="
@@ -74,8 +74,8 @@ echo "=============================================="
 echo ""
 echo "  Previous state saved to: ${PRE_DIR}"
 echo ""
-echo "  To restart Olympus:"
-echo "    sudo systemctl start olympus.target"
+echo "  To restart Rev4a:"
+echo "    sudo systemctl start rev4a.service"
 echo ""
 echo "  If something went wrong, restore previous state from:"
 echo "    ${PRE_DIR}"

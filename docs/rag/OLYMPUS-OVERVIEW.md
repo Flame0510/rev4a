@@ -1,17 +1,17 @@
-# What is Olympus?
+# What is Rev4a?
 
 > **Last updated:** 2026-07-18
 
-Olympus is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
+Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
-## What can you do in Olympus?
+## What can you do in Rev4a?
 
 ### Dashboard (`/`)
 The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk, load average), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made. If the onboarding wizard is incomplete, a banner appears at the top with a link to continue.
 
 ### Onboarding (`/onboarding`)
 First-run setup wizard that guides new users through configuration. Four steps:
-1. **Welcome** — what Olympus is and what it can do
+1. **Welcome** — what Rev4a is and what it can do
 2. **Providers** — add API keys for DeepSeek, OpenAI, OpenRouter, or Groq (saved via the Provider Gateway)
 3. **First Agent** — understand how agents work and what you need to create one
 4. **Ready** — site map of key sections with quick links
@@ -44,7 +44,7 @@ The build modal shows live Docker build logs (polled every 2s). You can:
 - **Refresh / re-enter** — opening the modal again resumes log streaming
   from the last seen line
 
-The build writes logs to `/tmp/olympus-build-<timestamp>.log` so they survive
+The build writes logs to `/tmp/rev4a-build-<timestamp>.log` so they survive
 page refreshes and modal closes.
 
 ### Create Agent (`/agents/create`)
@@ -77,7 +77,7 @@ Scheduled tasks auto-discovered from the host OpenClaw gateway (via `openclaw cr
 Browse agent memory files — MEMORY.md, SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md, HEARTBEAT.md. These files define how agents behave, what they know, and their personality. Also shows total memory budget vs usage.
 
 ### Config (`/config`)
-Olympus application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered.
+Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered.
 
 ### Tools (`/tools`)
 Catalog of every tool available to agents — built-in commands, MCP server tools, plugin tools, and audio/TTS configuration. Includes timezone settings.
@@ -97,21 +97,21 @@ Filter by source, view and edit SKILL.md content, and **promote** agent-local sk
 Combined view showing both plugins and skills side by side.
 
 ### Login (`/login`)
-Password-protected access to the dashboard. Enter the Olympus password to authenticate. Session persists via a JWT cookie (7-day expiry).
+Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry).
 
 ### Vault (`/vault`)
 Credential storage with per-agent permissions. Store API keys and service tokens, scope them to specific agents, and manage permissions via the UI.
 
-## What about Pythia?
+## What about Pulse?
 
-Pythia is the AI assistant embedded in Olympus. She appears as a floating chat button in the bottom-right corner of every page. She can:
+Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat button in the bottom-right corner of every page. She can:
 
 - Explain what any page does
 - Guide you through features ("how do I create an agent?")
 - Answer questions about agents, providers, costs, sessions, containers, crons, credentials, and onboarding
 - Give practical tips based on the page you're on
 
-Pythia does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
+Pulse does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
 
 ## What is an "agent"?
 

@@ -4,8 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
-const STORAGE_KEY = 'olympus_pythia_chat';
-const MODEL_STORAGE_KEY = 'olympus-pythia-model';
+const STORAGE_KEY = 'rev4a_pulse_chat';
+const MODEL_STORAGE_KEY = 'rev4a-pulse-model';
 
 interface ModelOption {
   id: string;
@@ -54,11 +54,11 @@ function renderContent(text: string) {
       const isInternal = href?.startsWith('/');
       result.push(
         isInternal ? (
-          <Link key={i} href={href!} style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
+          <Link key={i} href={href!} style={{ color: 'var(--violet)', textDecoration: 'underline' }}>
             {label}
           </Link>
         ) : (
-          <a key={i} href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
+          <a key={i} href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--violet)', textDecoration: 'underline' }}>
             {label}
           </a>
         ),
@@ -72,7 +72,7 @@ function renderContent(text: string) {
   return result;
 }
 
-export default function OlympusChat() {
+export default function PulseChat() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(loadMessages);
@@ -242,9 +242,9 @@ export default function OlympusChat() {
       {/* Floating trigger button */}
       <button
         className="ochat__trigger"
-        aria-label="Pythia — Assistente Olympus"
+        aria-label="Pulse — Rev4a Assistant"
         onClick={() => setOpen((v) => !v)}
-        title="Pythia — Assistente Olympus"
+        title="Pulse — Rev4a Assistant"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -256,11 +256,11 @@ export default function OlympusChat() {
         <div className="ochat__panel">
           <div className="ochat__header">
             <span className="ochat__header-title">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--copper)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--violet)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
                 <ellipse cx="12" cy="12" rx="10" ry="6" />
-                <circle cx="12" cy="12" r="3" fill="var(--copper)" stroke="none" />
+                <circle cx="12" cy="12" r="3" fill="var(--violet)" stroke="none" />
               </svg>
-              PYTHIA 🔮
+              PULSE 🔴
             </span>
             <select
               value={selectedModel}
@@ -318,7 +318,7 @@ export default function OlympusChat() {
           <div className="ochat__messages">
             {messages.length === 0 && (
               <p className="ochat__empty">
-                Hello! I'm <strong>Pythia</strong> 🔮, the oracle of Olympus. Ask me about the dashboard, data, or the page you're looking at.
+                Hello! I'm <strong>Pulse</strong> 🔴, the oracle of Rev4a. Ask me about the dashboard, data, or the page you're looking at.
               </p>
             )}
             {messages.map((m, i) => (
@@ -339,7 +339,7 @@ export default function OlympusChat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Ask Pythia…"
+              placeholder="Ask Pulse…"
               rows={1}
               disabled={streaming}
             />

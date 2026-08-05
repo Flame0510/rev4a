@@ -138,7 +138,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
   return (
     <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <header style={{ height: '48px', padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxSizing: 'border-box' }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>TOOLS</span>
+        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>TOOLS</span>
         <div style={heroPillStyle}>{configuredCount}/{CONFIGURABLE_TOOL_COUNT} configurable ready</div>
       </header>
 
@@ -163,7 +163,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
           {!loading && audio && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
               <section>
-                <SectionHeading title="Base tools" description="Editable tool configuration currently exposed in Olympus. Credentials remain hidden." action={<StatusBadge status={audioStatus} />} />
+                <SectionHeading title="Base tools" description="Editable tool configuration currently exposed in Rev4a. Credentials remain hidden." action={<StatusBadge status={audioStatus} />} />
                 <div style={configCardStyle}>
                   <div style={configHeaderStyle}>
                     <div>
@@ -198,7 +198,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
               </section>
 
               <section>
-                <SectionHeading title="System Settings" description="Global runtime preferences for the Olympus dashboard." />
+                <SectionHeading title="System Settings" description="Global runtime preferences for the Rev4a dashboard." />
                 <div style={configCardStyle}>
                   <div style={configHeaderStyle}>
                     <div>

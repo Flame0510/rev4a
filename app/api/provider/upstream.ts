@@ -1,5 +1,5 @@
 /**
- * Olympus Provider Gateway — upstream logic
+ * Rev4a Provider Gateway — upstream logic
  *
  * Shared logic for calling upstream AI providers.
  * Used by both /api/provider/v1/chat/completions and /api/assistant
@@ -57,10 +57,10 @@ export const PROVIDER_ENVS: Record<string, ProviderEnvConfig> = {
   },
 };
 
-/** Map olympus/ model aliases to upstream provider/model pairs. */
+/** Map rev4a/ model aliases to upstream provider/model pairs. */
 export const MODEL_ALIASES: Record<string, { provider: string; model: string }> = {
-  'olympus/deepseek-v4-flash': { provider: 'deepseek', model: 'deepseek-v4-flash' },
-  'olympus/deepseek-v4-pro': { provider: 'deepseek', model: 'deepseek-v4-pro' },
+  'rev4a/deepseek-v4-flash': { provider: 'deepseek', model: 'deepseek-v4-flash' },
+  'rev4a/deepseek-v4-pro': { provider: 'deepseek', model: 'deepseek-v4-pro' },
 };
 
 export interface UpstreamRequest {
@@ -78,7 +78,7 @@ export function extractProviderAndModel(request: UpstreamRequest): { provider: s
   if (request.provider) {
     return { provider: request.provider, model: modelStr };
   }
-  // Check aliases first (olympus/deepseek-v4-flash -> deepseek/deepseek-v4-flash)
+  // Check aliases first (rev4a/deepseek-v4-flash -> deepseek/deepseek-v4-flash)
   if (modelStr && MODEL_ALIASES[modelStr]) {
     return { ...MODEL_ALIASES[modelStr] };
   }
@@ -128,7 +128,7 @@ export async function callUpstream(
 
   if (provider === 'openrouter') {
     headers['HTTP-Referer'] = `http://${detectPublicHost()}:3740`;
-    headers['X-Title'] = 'Olympus Gateway';
+    headers['X-Title'] = 'Rev4a Gateway';
   }
 
   // Force identity encoding to avoid gzip-related HTTP/2 truncation issues via Traefik

@@ -1,4 +1,4 @@
-# Olympus API Reference
+# Rev4a API Reference
 
 > **Last updated:** 2026-07-19
 
@@ -11,12 +11,12 @@ unless otherwise noted.
 
 ### Bearer token (programmatic)
 ```
-Authorization: Bearer <OLYMPUS_TOKEN>
+Authorization: Bearer <REV4A_TOKEN>
 ```
-Set `OLYMPUS_TOKEN` env var. No default — auth is disabled when unset.
+Set `REV4A_TOKEN` env var. No default — auth is disabled when unset.
 
 ### Browser cookie (UI)
-After a successful `POST /api/auth/login`, the server sets an `olympus_token`
+After a successful `POST /api/auth/login`, the server sets an `rev4a_token`
 cookie (signed JWT, 7-day expiry). All subsequent UI requests use this cookie
 automatically.
 
@@ -40,7 +40,7 @@ Login — exchange the static password for a signed JWT cookie.
 ```json
 { "ok": true }
 ```
-Sets `Set-Cookie: olympus_token=<jwt>; HttpOnly; SameSite=Lax`.
+Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; SameSite=Lax`.
 
 **Error:** `401` if password is wrong.
 
@@ -57,7 +57,7 @@ Validate the current browser cookie and report whether the user is authenticated
 **Error:** `401` with `{ "authenticated": false }` if the cookie is missing or invalid.
 
 ### `POST /api/auth/logout`
-Delete the `olympus_token` cookie.
+Delete the `rev4a_token` cookie.
 
 **Auth:** browser cookie
 
@@ -130,7 +130,7 @@ Returns live gateway status from all agent containers.
         "containerName": "openclaw-atlas",
         "agentId": "atlas",
         "agentName": "Atlas",
-        "defaultModel": "olympus/deepseek/deepseek-v4-flash",
+        "defaultModel": "rev4a/deepseek/deepseek-v4-flash",
         "configured": true
       }
     ]
@@ -155,7 +155,7 @@ Trigger a full provider model sync to all agent containers.
 ```
 
 **Side effects:**
-- Writes `models.providers.olympus` to each agent container's `openclaw.json`
+- Writes `models.providers.rev4a` to each agent container's `openclaw.json`
 - Cleans up stale `models.json` and `auth-profiles.json` inside containers
 - **Does NOT touch `agents.defaults.model` or `agents.list[].model`** — model references are managed per-container via the Agents Tab (`PUT /api/gateway/agent`)
 - Does NOT restart the gateway (config is written live to the file)
@@ -181,14 +181,14 @@ If `fallbacks` is omitted or empty, no fallback models are set.
   "status": "ok",
   "agent": "openclaw-atlas",
   "model": {
-    "primary": "olympus/deepseek/deepseek-v4-flash"
+    "primary": "rev4a/deepseek/deepseek-v4-flash"
   },
   "verify": { "ok": true, "bytes": 2058 }
 }
 ```
 
 **Behaviour:**
-- Writes `agents.defaults.model.primary` and `agents.list[0].model.primary` with format `olympus/<provider>/<model>`
+- Writes `agents.defaults.model.primary` and `agents.list[0].model.primary` with format `rev4a/<provider>/<model>`
 - No restart — writes are live via `docker exec node -e`
 - Does NOT set fallbacks unless explicitly provided
 
@@ -218,9 +218,9 @@ Returns current provider configuration state.
 
 ### `GET /api/provider/v1/models`
 
-Olympus Provider Gateway — returns available models filtered by auth token.
+Rev4a Provider Gateway — returns available models filtered by auth token.
 
-**Auth:** Bearer token (must match `olympus` key in `data/provider-keys.json`)
+**Auth:** Bearer token (must match `rev4a` key in `data/provider-keys.json`)
 
 **Response (authenticated):**
 ```json
@@ -240,14 +240,14 @@ Olympus Provider Gateway — returns available models filtered by auth token.
 
 ### `POST /api/provider/v1/chat/completions`
 
-Olympus Provider Gateway — proxy chat completions to the correct upstream.
+Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 
-**Auth:** Bearer token (must match `olympus` key in `data/provider-keys.json`)
+**Auth:** Bearer token (must match `rev4a` key in `data/provider-keys.json`)
 
 **Body:**
 ```json
 {
-  "model": "olympus/deepseek-v4-flash",
+  "model": "rev4a/deepseek-v4-flash",
   "messages": [{"role": "user", "content": "Hello"}]
 }
 ```
@@ -266,20 +266,20 @@ Update environment variables on the VPS host.
 
 **Auth:** browser cookie
 
-**Body:** `{ "OLYMPUS_PASSWORD": "newpass", ... }`
+**Body:** `{ "REV4A_PASSWORD": "newpass", ... }`
 
 **Side effects:**
 - Writes to `.env` in the project root
-- Automatically syncs to `/etc/systemd/system/olympus.service` (removes all `Environment=OLYMPUS_*` and `Environment=PROVIDER_*` lines, appends current vars)
+- Automatically syncs to `/etc/systemd/system/rev4a.service` (removes all `Environment=REV4A_*` and `Environment=PROVIDER_*` lines, appends current vars)
 - Runs `systemctl daemon-reload` so the next restart picks up the new environment
-- Only keys prefixed with `OLYMPUS_` or `PROVIDER_` are accepted
+- Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted
 
-**Response:** `{ "status": "ok", "updated": ["OLYMPUS_PASSWORD", ...] }`
+**Response:** `{ "status": "ok", "updated": ["REV4A_PASSWORD", ...] }`
 
 **Error (400):** `{ "error": "Keys not allowed: ..." }`
 
 ### `POST /api/config/restart`
-Restart the Olympus server (via systemd).
+Restart the Rev4a server (via systemd).
 
 **Auth:** browser cookie
 
@@ -484,8 +484,8 @@ Workspace filesystem change stream for the editor.
   "ts": 1751270003000,
   "changed": [
     {
-      "path": "/path/to/workspace/olympus/README.md",
-      "rel_path": "olympus/README.md",
+      "path": "/path/to/workspace/rev4a/README.md",
+      "rel_path": "rev4a/README.md",
       "type": "file",
       "size": 2048,
       "mtimeMs": 1751270002999,
@@ -585,7 +585,7 @@ Create a new agent container from a template.
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
 - Single port: `-p <port>:3000` — maps a single host port to container port 3000
 - URL format: `http://<host-ip>:<portStart>#token=...`
-- Port 3740 is reserved for Olympus
+- Port 3740 is reserved for Rev4a
 
 **Response:**
 ```json
@@ -594,7 +594,7 @@ Create a new agent container from a template.
   "containerId": "00f5de1eb08d...",
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
-  "network": "olympus-network",
+  "network": "rev4a-network",
   "traefikUrl": "http://203.0.113.10:3700#token=asdfghjkl",
   "port": 3700,
   "portEnd": 3709,
@@ -607,7 +607,7 @@ Create a new agent container from a template.
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
 2. The route waits for the gateway to be fully up (health check poll, up to 60 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
-4. Writes `models.providers.olympus` + extraDirs + update config → single `openclaw.json` write → single `gateway restart`
+4. Writes `models.providers.rev4a` + extraDirs + update config → single `openclaw.json` write → single `gateway restart`
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
@@ -623,7 +623,7 @@ Create a new agent container from a template.
 ### `DELETE /api/agents/[id]`
 **Destructive.** Permanently deletes the agent: the container, its persistent
 volume (`agent-<id>-data`), and **all** its backups (`agent-<id>-*.tar.gz` in the
-`olympus-backups` volume). This cannot be undone. Volume and backup removal are
+`rev4a-backups` volume). This cannot be undone. Volume and backup removal are
 best-effort — a missing volume or absent backups do not fail the delete.
 
 The `id` is validated (`isValidAgentId`) before being interpolated into any
@@ -665,7 +665,7 @@ Create a backup of the agent's persistent volume.
 { "success": true, "file": "agent-prometheus-2026-07-12_043512345.tar.gz" }
 ```
 
-The backup file lives in Docker volume `olympus-backups`. Backups exclude the npm
+The backup file lives in Docker volume `rev4a-backups`. Backups exclude the npm
 package cache (`~/.npm/_cacache/`) to keep them small (~1.5 MB instead of 227 MB).
 
 **Error (404):** `{ "error": "No persistent volume found for agent '...'" }`
@@ -730,15 +730,15 @@ software lives in the image, the data in the volume.
 
 Flow:
 1. **Auto-backup first.** The volume is backed up to `agent-<id>-prerecreate-<ts>.tar.gz`
-   in `olympus-backups`. **If the backup fails, the recreate is aborted** and the
+   in `rev4a-backups`. **If the backup fails, the recreate is aborted** and the
    running container is left untouched.
 2. The old container is removed (`docker rm -f`) and a new one is created with the
    same image tag, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
    labels, port mappings, and network — reattaching the same volume.
 3. After startup, `applyRuntimeConfig()` (from `lib/agent-setup.ts`) guarantees:
-   - `hooks.bootstrap-extra-files` (Olympus system rules injection)
+   - `hooks.bootstrap-extra-files` (Rev4a system rules injection)
    - `skills.load.extraDirs` (shared skills discovery)
-   - `models.providers.olympus` (provider proxy, host-dependent)
+   - `models.providers.rev4a` (provider proxy, host-dependent)
    All patches use `config patch --stdin` (deep-merge) — existing user
    customizations are never overwritten.
 
@@ -930,8 +930,8 @@ Useful for inspecting the container config without SSH or terminal.
   "name": "my-agent",
   "config": {
     "gateway": { "controlUi": { "allowedOrigins": ["..."], "dangerouslyDisableDeviceAuth": true } },
-    "agents": { "defaults": { "model": { "primary": "olympus/deepseek/deepseek-v4-flash", "fallbacks": [] } } },
-    "models": { "providers": { "olympus": { "baseUrl": "...", "apiKey": "***", "models": [...] } } }
+    "agents": { "defaults": { "model": { "primary": "rev4a/deepseek/deepseek-v4-flash", "fallbacks": [] } } },
+    "models": { "providers": { "rev4a": { "baseUrl": "...", "apiKey": "***", "models": [...] } } }
   }
 }
 ```
@@ -1690,10 +1690,10 @@ Delete a skill from shared skills directory or from an agent's workspace.
 
 ---
 
-## Assistant (PYTHIA)
+## Assistant (PULSE)
 
 ### `POST /api/assistant`
-Chat with the built-in AI assistant (PYTHIA).
+Chat with the built-in AI assistant (PULSE).
 
 **Auth:** browser cookie
 
@@ -1716,7 +1716,7 @@ Chat with the built-in AI assistant (PYTHIA).
 
 **Response:** `text/event-stream` (Server-Sent Events)
 
-PYTHIA streams the assistant response as SSE chunks. Each chunk follows the
+PULSE streams the assistant response as SSE chunks. Each chunk follows the
 [OpenAI streaming format](https://platform.openai.com/docs/api-reference/chat/streaming):
 ```text
 data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}
@@ -1729,9 +1729,9 @@ data: [DONE]
 **Errors:** JSON `{ "error": "..." }` with the appropriate HTTP status code.
 
 **Notes:**
-- PYTHIA routes the request **directly to the upstream provider** (not via the local Provider Gateway), using the API key from `data/provider-keys.json`.
+- PULSE routes the request **directly to the upstream provider** (not via the local Provider Gateway), using the API key from `data/provider-keys.json`.
 - The system prompt is built dynamically based on `PAGE_CONTEXT` (hardcoded in the route handler) — no database access.
-- PYTHIA does **not** have access to live data; she only knows page descriptions and navigation links.
+- PULSE does **not** have access to live data; she only knows page descriptions and navigation links.
 
 ---
 

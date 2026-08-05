@@ -211,7 +211,7 @@ export default function Sidebar() {
   );
 
   const EyeLogo = () => (
-    <img src="/olympus-logo.png" alt="Olympus" width="20" height="20" style={{ display: 'block', objectFit: 'contain' }} />
+    <img src="/rev4a-logo.png" alt="Rev4a" width="20" height="20" style={{ display: 'block', objectFit: 'contain' }} />
   );
 
   return (
@@ -219,7 +219,7 @@ export default function Sidebar() {
       <aside className="sidebar sidebar--desktop">
         <div className="sidebar__logo">
           <EyeLogo />
-          <span className="sidebar__title">OLYMPUS</span>
+          <span className="sidebar__title">REV4A</span>
         </div>
         {navItems}
         <div className="sidebar__bottom">
@@ -261,7 +261,7 @@ export default function Sidebar() {
             <div className="sidebar__mobile-header">
               <div className="sidebar__logo">
                 <EyeLogo />
-                <span className="sidebar__title">OLYMPUS</span>
+                <span className="sidebar__title">REV4A</span>
               </div>
               <button
                 className="sidebar__close"

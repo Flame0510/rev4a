@@ -1,9 +1,9 @@
 /**
- * Olympus Provider Gateway — v1 Models List
+ * Rev4a Provider Gateway — v1 Models List
  *
  * GET /api/provider/v1/models
  *
- * Returns models available through the Olympus Gateway
+ * Returns models available through the Rev4a Gateway
  * in OpenAI-compatible format, filtered by the provider
  * identified from the Authorization token.
  *
@@ -11,7 +11,7 @@
  * If the file doesn't exist, falls back to provider env config + static defaults.
  */
 import { NextResponse, NextRequest } from 'next/server';
-import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
+import { MODELS_CONFIG_FILE } from '@/lib/rev4a-paths';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
@@ -84,13 +84,13 @@ const DEFAULT_CATALOGUE: ModelsConfigEntry[] = [
   { id: 'qwen/qwen3.7-flash', name: 'Qwen 3.7 Flash', provider: 'qwen', enabled: false },
   { id: 'qwen/qwen3-coder-plus', name: 'Qwen 3 Coder Plus', provider: 'qwen', enabled: false },
   { id: 'qwen/qwen-long', name: 'Qwen Long', provider: 'qwen', enabled: false },
-  // Olympus aliases (convenience models for the Olympus proxy)
-  { id: 'olympus/deepseek-v4-flash', name: 'DeepSeek V4 Flash (Olympus)', provider: 'olympus', enabled: true },
-  { id: 'olympus/deepseek-v4-pro', name: 'DeepSeek V4 Pro (Olympus)', provider: 'olympus', enabled: true },
-  { id: 'olympus/fast', name: 'Olympus Fast', provider: 'olympus', enabled: false },
-  { id: 'olympus/code', name: 'Olympus Code', provider: 'olympus', enabled: false },
-  { id: 'olympus/reason', name: 'Olympus Reason', provider: 'olympus', enabled: false },
-  { id: 'olympus/fallback-general', name: 'Olympus Fallback General', provider: 'olympus', enabled: false },
+  // Rev4a aliases (convenience models for the Rev4a proxy)
+  { id: 'rev4a/deepseek-v4-flash', name: 'DeepSeek V4 Flash (Rev4a)', provider: 'rev4a', enabled: true },
+  { id: 'rev4a/deepseek-v4-pro', name: 'DeepSeek V4 Pro (Rev4a)', provider: 'rev4a', enabled: true },
+  { id: 'rev4a/fast', name: 'Rev4a Fast', provider: 'rev4a', enabled: false },
+  { id: 'rev4a/code', name: 'Rev4a Code', provider: 'rev4a', enabled: false },
+  { id: 'rev4a/reason', name: 'Rev4a Reason', provider: 'rev4a', enabled: false },
+  { id: 'rev4a/fallback-general', name: 'Rev4a Fallback General', provider: 'rev4a', enabled: false },
 ];
 
 /** Load the models config from file, or create from defaults */
@@ -125,8 +125,8 @@ function resolveProviderFromToken(authHeader: string): string | null {
     if (token === key) return 'authenticated';
   }
 
-  // Also try matching the olympus API key env var (legacy compat)
-  if (token === process.env.OLYMPUS_API_KEY) return 'all';
+  // Also try matching the rev4a API key env var (legacy compat)
+  if (token === process.env.REV4A_API_KEY) return 'all';
 
   return null;
 }

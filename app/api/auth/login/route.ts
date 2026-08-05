@@ -1,19 +1,19 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
 import * as fs from 'fs';
-import { ENV_FILE } from '@/lib/olympus-paths';
+import { ENV_FILE } from '@/lib/rev4a-paths';
 
 // ---------------------------------------------------------------------------
 // Resolve credentials at runtime from the persistent .env file.
 // ---------------------------------------------------------------------------
 function getEnvPassword(): string {
-  const fromEnv = process.env.OLYMPUS_PASSWORD;
+  const fromEnv = process.env.REV4A_PASSWORD;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
   try {
     if (fs.existsSync(ENV_FILE)) {
       const content = fs.readFileSync(ENV_FILE, 'utf-8');
-      const match = content.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+      const match = content.match(/^REV4A_PASSWORD=(.*)$/m);
       if (match && match[1].trim()) return match[1].trim();
     }
   } catch { /* ignore */ }
@@ -21,13 +21,13 @@ function getEnvPassword(): string {
 }
 
 function getEnvJwtSecret(): string {
-  const fromEnv = process.env.OLYMPUS_JWT_SECRET;
+  const fromEnv = process.env.REV4A_JWT_SECRET;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
 
   try {
     if (fs.existsSync(ENV_FILE)) {
       const content = fs.readFileSync(ENV_FILE, 'utf-8');
-      const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+      const match = content.match(/^REV4A_JWT_SECRET=(.*)$/m);
       if (match && match[1].trim()) return match[1].trim();
     }
   } catch { /* ignore */ }
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .sign(secretKey);
 
     const response = NextResponse.json({ ok: true });
-    response.cookies.set('olympus_token', token, {
+    response.cookies.set('rev4a_token', token, {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 7,

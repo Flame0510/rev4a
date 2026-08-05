@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Olympus Daemon — SQLite event logger
+ * Rev4a Daemon — SQLite event logger
  * Polls OpenClaw sessions every 30s, writes events to SQLite.
  */
 
@@ -12,7 +12,7 @@ const { spawnSync, execSync } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = process.env.OLYMPUS_DB || path.join(os.homedir(), '.config', 'olympus', 'data', 'events.db');
+const DB_PATH = process.env.REV4A_DB || path.join(os.homedir(), '.config', 'rev4a', 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_ACTIVE_MS = 15_000; // 15s when working sessions detected
 
@@ -708,7 +708,7 @@ function pollSessions() {
         'message', 'send',
         '--account', 'ops',
         '--target', '100000000',
-        '--text', `⚠️ Olympus: agent timeout\n\`${session_id.slice(-36)}\`\nMissing for ${Math.round(missingFor / 60000)} min senza completare.`,
+        '--text', `⚠️ Rev4a: agent timeout\n\`${session_id.slice(-36)}\`\nMissing for ${Math.round(missingFor / 60000)} min senza completare.`,
       ], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
     } catch (e) {
       log(`[TIMEOUT] Telegram notification failed: ${e.message}`);
@@ -759,7 +759,7 @@ function pollSessions() {
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-log('Olympus Daemon starting...');
+log('Rev4a Daemon starting...');
 log(`DB: ${DB_PATH}`);
 log(`Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
 

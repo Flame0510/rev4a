@@ -9,7 +9,7 @@
 
 The Workspace feature provides a unified file explorer for OpenClaw agent workspaces across
 the VPS host and any Docker containers. Users can browse directories, read files, write
-content, and navigate a recursive tree — all from the Olympus dashboard.
+content, and navigate a recursive tree — all from the Rev4a dashboard.
 
 **Purpose:** Give operators direct access to agent workspace files (MEMORY.md, logs,
 configurations, project files) without needing to SSH into the host or exec into containers.
@@ -115,8 +115,8 @@ List files in a workspace, read a file, or return a recursive tree.
   "root": "/path/to/workspace",
   "type": "host",
   "entries": [
-    { "name": "olympus", "path": "/path/to/workspace/olympus",
-      "relPath": "olympus", "type": "directory", "size": 0,
+    { "name": "rev4a", "path": "/path/to/workspace/rev4a",
+      "relPath": "rev4a", "type": "directory", "size": 0,
       "mtimeMs": 1750000000000, "isDirectory": true, "isFile": false },
     ...
   ],

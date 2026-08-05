@@ -30,7 +30,7 @@ const PROVIDER_COLOR: Record<string, string> = {
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, padding: '4px 0' }}>
-      <input type="checkbox" checked={checked} onChange={onChange} style={{ accentColor: 'var(--copper)' }} />
+      <input type="checkbox" checked={checked} onChange={onChange} style={{ accentColor: 'var(--violet)' }} />
       <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)' }}>{label}</span>
     </label>
   );
@@ -183,7 +183,7 @@ export default function CredentialsPageClient() {
   if (loading) {
     return (
       <Page>
-        <PageHeader eyebrow="OLYMPUS" title="Credentials" />
+        <PageHeader eyebrow="REV4A" title="Credentials" />
         <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading…</p>
       </Page>
     );
@@ -201,7 +201,7 @@ export default function CredentialsPageClient() {
   return (
     <Page>
       <PageHeader
-        eyebrow="OLYMPUS"
+        eyebrow="REV4A"
         title="Credentials"
         description="Store third-party credentials once, sync to all agent containers."
       />
@@ -216,7 +216,7 @@ export default function CredentialsPageClient() {
         {providers.map((provider) => {
           const provProfiles = profilesByProvider[provider.id] ?? [];
           const isConfigured = provProfiles.length > 0;
-          const accentColor = PROVIDER_COLOR[provider.id] ?? 'var(--copper)';
+          const accentColor = PROVIDER_COLOR[provider.id] ?? 'var(--violet)';
 
           return (
             <div
@@ -259,7 +259,7 @@ export default function CredentialsPageClient() {
               <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
                 {provider.description}
                 {provider.docsUrl && (
-                  <a href={provider.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)', marginLeft: 6, fontSize: 11 }}>
+                  <a href={provider.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--violet)', marginLeft: 6, fontSize: 11 }}>
                     docs ↗
                   </a>
                 )}
@@ -554,7 +554,7 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
               <button
                 onClick={() =>
                   window.open(
-                    `https://trello.com/1/authorize?key=${encodeURIComponent(fields['apiKey'])}&response_type=token&scope=read,write&expiration=never&name=Olympus`,
+                    `https://trello.com/1/authorize?key=${encodeURIComponent(fields['apiKey'])}&response_type=token&scope=read,write&expiration=never&name=Rev4a`,
                     '_blank',
                   )
                 }

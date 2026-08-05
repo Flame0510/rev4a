@@ -1,21 +1,21 @@
 /**
  * POST /api/setup/restart
  *
- * No auth required. Restarts the Olympus server so that changes to
- * .env (especially OLYMPUS_PASSWORD) take effect.
+ * No auth required. Restarts the Rev4a server so that changes to
+ * .env (especially REV4A_PASSWORD) take effect.
  *
  * Next.js inlines env vars at build time, so a runtime process.env
  * mutation is not enough — the process must restart to reload .env.
  *
  * Strategy:
- *   1. If running under systemd (olympus.target), restart via systemctl.
+ *   1. If running under systemd (rev4a.service), restart via systemctl.
  *   2. Otherwise send SIGTERM to the current process. The parent process
- *      manager (npx olympus all or a shell wrapper) should restart it.
+ *      manager (npx rev4a all or a shell wrapper) should restart it.
  */
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
-import { ENV_FILE } from '@/lib/olympus-paths';
+import { ENV_FILE } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,10 +27,10 @@ export async function POST(): Promise<NextResponse> {
     }
 
     const envContent = fs.readFileSync(ENV_FILE, 'utf-8');
-    const match = envContent.match(/^OLYMPUS_PASSWORD=(.*)$/m);
+    const match = envContent.match(/^REV4A_PASSWORD=(.*)$/m);
     if (!match || !match[1].trim()) {
       return NextResponse.json(
-        { error: 'OLYMPUS_PASSWORD is empty or missing in .env' },
+        { error: 'REV4A_PASSWORD is empty or missing in .env' },
         { status: 400 },
       );
     }
@@ -54,14 +54,14 @@ export async function POST(): Promise<NextResponse> {
     if (usedSystemd) {
       setTimeout(() => {
         try {
-          execSync('sudo systemctl restart olympus.target', { timeout: 15000 });
+          execSync('sudo systemctl restart rev4a.service', { timeout: 15000 });
         } catch (err) {
           console.error('[setup/restart] systemd restart failed:', err);
         }
       }, 2000);
     } else {
       // Dev mode / container: send SIGTERM after flushing response.
-      // The parent (npx olympus all or shell) will restart the process,
+      // The parent (npx rev4a all or shell) will restart the process,
       // which will re-read .env at startup.
       setTimeout(() => {
         process.kill(process.pid, 'SIGTERM');

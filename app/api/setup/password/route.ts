@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { ENV_FILE } from '@/lib/olympus-paths';
+import { ENV_FILE } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -25,12 +25,12 @@ function generateSecret(len: number): string {
 
 export async function POST(request: Request): Promise<NextResponse> {
   // Check both env and .env file (same fallback pattern as login/status routes)
-  let currentPassword = process.env.OLYMPUS_PASSWORD;
+  let currentPassword = process.env.REV4A_PASSWORD;
   if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
     try {
       if (fs.existsSync(ENV_FILE)) {
         const content = fs.readFileSync(ENV_FILE, 'utf-8');
-        const match = content.match(/^OLYMPUS_PASSWORD=(.+)$/m);
+        const match = content.match(/^REV4A_PASSWORD=(.+)$/m);
         if (match && match[1].trim()) {
           currentPassword = match[1].trim();
         }
@@ -73,35 +73,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // Ensure password line
-    if (content.includes('OLYMPUS_PASSWORD=')) {
+    if (content.includes('REV4A_PASSWORD=')) {
       content = content
         .split('\n')
         .map((line) =>
-          line.startsWith('OLYMPUS_PASSWORD=')
-            ? 'OLYMPUS_PASSWORD=' + body.password
+          line.startsWith('REV4A_PASSWORD=')
+            ? 'REV4A_PASSWORD=' + body.password
             : line,
         )
         .join('\n');
     } else {
-      content += '\nOLYMPUS_PASSWORD=' + body.password + '\n';
+      content += '\nREV4A_PASSWORD=' + body.password + '\n';
     }
 
     // Generate JWT secret if missing
-    if (!content.includes('OLYMPUS_JWT_SECRET=')) {
+    if (!content.includes('REV4A_JWT_SECRET=')) {
       const secret = generateSecret(64);
-      content += '\nOLYMPUS_JWT_SECRET=' + secret + '\n';
+      content += '\nREV4A_JWT_SECRET=' + secret + '\n';
     }
 
     // Generate API token if missing
-    if (!content.includes('OLYMPUS_TOKEN=')) {
+    if (!content.includes('REV4A_TOKEN=')) {
       const token = generateSecret(32);
-      content += '\nOLYMPUS_TOKEN=' + token + '\n';
+      content += '\nREV4A_TOKEN=' + token + '\n';
     }
 
     fs.writeFileSync(ENV_FILE, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
 
     // Update in-memory so proxy redirects work before restart
-    process.env.OLYMPUS_PASSWORD = body.password;
+    process.env.REV4A_PASSWORD = body.password;
 
     return NextResponse.json({ status: 'ok' });
   } catch (e: unknown) {

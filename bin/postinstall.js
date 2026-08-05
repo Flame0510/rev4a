@@ -11,10 +11,10 @@ const NEXT_DIR = join(ROOT, '.next');
 if (!existsSync(NEXT_DIR)) {
   try {
     const { execSync } = require('child_process');
-    console.log('[olympus] Building dashboard… (one-time, may take a minute)');
+    console.log('[rev4a] Building dashboard… (one-time, may take a minute)');
     execSync('npx next build', { cwd: ROOT, stdio: 'inherit' });
-    console.log('[olympus] Build complete.');
+    console.log('[rev4a] Build complete.');
   } catch (e) {
-    console.error('[olympus] Build failed. Run "olympus build" to retry.');
+    console.error('[rev4a] Build failed. Run "rev4a build" to retry.');
   }
 }

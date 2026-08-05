@@ -3,13 +3,13 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
-import { buildOlympusProviderConfig } from '@/app/api/gateway/sync';
+import { buildRev4aProviderConfig } from '@/app/api/gateway/sync';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + health check (60s) + config patch (60s)
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 /** Timestamp YYYY-MM-DD_HHmmssSSS (ms precision avoids same-second collisions). */
 function ts(): string {
@@ -141,7 +141,7 @@ export async function POST(
       );
     }
 
-    // Run the new container with all mounts (persistent volume + shared skills + shared repos + olympus rules)
+    // Run the new container with all mounts (persistent volume + shared skills + shared repos + rev4a rules)
     const cmd = [
       `docker run -d`,
       `--name "${id}"`,
@@ -167,14 +167,14 @@ export async function POST(
       );
     }
 
-    // Guarantee Olympus runtime config (hooks, shared-skills, provider).
+    // Guarantee Rev4a runtime config (hooks, shared-skills, provider).
     // Uses config patch (deep-merge) — idempotent, preserves user customizations.
     try {
       applyRuntimeConfig(id);
 
-      // Also guarantee models.providers.olympus (host-dependent, not in base image)
-      const providerConfig = buildOlympusProviderConfig();
-      const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
+      // Also guarantee models.providers.rev4a (host-dependent, not in base image)
+      const providerConfig = buildRev4aProviderConfig();
+      const providerJson = JSON.stringify({ models: { providers: { rev4a: providerConfig } } });
       execSync(
         `docker exec -i ${id} sh -c 'openclaw config patch --stdin'`,
         { timeout: 15000, stdio: 'pipe', input: providerJson },

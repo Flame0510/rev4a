@@ -1,4 +1,4 @@
-# AGENTS.md — Agent Guidelines for Olympus
+# AGENTS.md — Agent Guidelines for Rev4a
 
 > **Purpose:** A single entry point for any AI agent (or human contributor) working
 > on this repository. Read this first, then follow the docs it references.
@@ -14,11 +14,11 @@ If you are an AI agent arriving on this repo for the first time:
 
 1. Read this file completely.
 2. Read `README.md` for project overview, features, and quick start.
-3. Read `docs/OLYMPUS.md` for app-level features, pages, and navigation.
+3. Read `docs/REV4A.md` for app-level features, pages, and navigation.
 4. Read `docs/ARCHITECTURE.md` for system architecture and component layout.
 5. Read `docs/dev/API-REFERENCE.md` for API endpoints.
 6. Read `docs/dev/GATEWAY.md` for provider sync and agent model configuration.
-7. Read `docs/dev/PROVIDERS.md` for key management and the Olympus provider proxy.
+7. Read `docs/dev/PROVIDERS.md` for key management and the Rev4a provider proxy.
 8. Read `docs/FRONTEND-ARCHITECTURE.md` for frontend structure and decisions.
 9. Read `docs/CONTAINER-TERMINAL.md` for terminal WebSocket implementation.
 10. Read `docs/dev/DATABASE.md` for SQLite schema and storage notes.
@@ -34,8 +34,8 @@ If you are an AI agent arriving on this repo for the first time:
 > Do not assume docs are authoritative — verify against code.
 >
 > **Key source files (centralized logic):**
-> - `lib/agent-setup.ts` — single source of truth for Olympus volumes + runtime config
-> - `olympus-rules/AGENTS.md` — system rules injected into every agent session via hook
+> - `lib/agent-setup.ts` — single source of truth for Rev4a volumes + runtime config
+> - `rev4a-rules/AGENTS.md` — system rules injected into every agent session via hook
 
 ---
 
@@ -58,7 +58,7 @@ No Italian, no other languages in code or docs.
 - **React Server Components** by default; use `'use client'` only when necessary
 - **CSS** — inline styles or `globals.css` tokens (CSS variables). No CSS modules, no Tailwind.
 - **SQLite** — via `better-sqlite3`, synchronous API
-- **Systemd** — production process management via `olympus.target`
+- **Systemd** — production process management via `rev4a.service`
 - **Python NOT allowed** — no Python scripts, no Jupyter, no notebooks in this repo
 
 ### 2.2a Workspace Skills
@@ -70,13 +70,13 @@ access to them.
 
 | Skill | Description |
 |---|---|
-| `olympus-deep-review` | Deep code review via 4 parallel sub-agents (regressions, edge-cases, security, docs&lang) |
+| `rev4a-deep-review` | Deep code review via 4 parallel sub-agents (regressions, edge-cases, security, docs&lang) |
 
 ---
 
 ### 2.2b Design System (UI)
 
-Olympus has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FRONTEND-ARCHITECTURE.md` before writing any UI code.**
+Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FRONTEND-ARCHITECTURE.md` before writing any UI code.**
 
 1. **Use shared primitives.** All UI lives in `app/components/ui/`. `Button`, `Input`, `Select`, `Modal`, `Toast`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `Pill`, `Metric`, `StatusCard`, `Surface`, `Page`. Never replicate them.
 2. **No inline styles on interactive elements.** Buttons, inputs, selects use the shared component. Only layout wrappers use inline style.
@@ -97,7 +97,7 @@ Olympus has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/
 - [ ] Does `docs/CONTAINER-TERMINAL.md` need updating? (Terminal-related changes.)
 - [ ] Does `docs/FRONTEND-ARCHITECTURE.md` need updating? (Frontend changes.)
 - [ ] Does `docs/DESIGN-SYSTEM.md` need updating? (Design token changes.)
-- [ ] Does `docs/OLYMPUS.md` need updating? (App-level features, pages, navigation.)
+- [ ] Does `docs/REV4A.md` need updating? (App-level features, pages, navigation.)
 - [ ] Does `docs/dev/API-REFERENCE.md` need updating? (New/modified API routes.)
 - [ ] Does `docs/dev/DATABASE.md` need updating? (Schema changes.)
 - [ ] Does `docs/dev/GATEWAY.md` need updating? (Provider/agent config changes.)
@@ -131,11 +131,11 @@ documentation is incomplete.
 ## 3. Architecture Overview (Quick Reference)
 
 ```
-domain:      <your-olympus-domain> (port 3740, proxied by Traefik)
+domain:      <your-rev4a-domain> (port 3740, proxied by Traefik)
 stack:       Next.js 16 + React 19 + TypeScript + SQLite + systemd
-processes:   olympus-next (Next.js, port 3740)
-             olympus-terminal-ws (WebSocket PTY, port 3741)
-repo:        github.com/Flame0510/olympus.git (branch main)
+processes:   rev4a-next (Next.js, port 3740)
+             rev4a-terminal-ws (WebSocket PTY, port 3741)
+repo:        github.com/Flame0510/rev4a.git (branch main)
 language:    100% English
 ```
 
@@ -146,12 +146,12 @@ language:    100% English
 | `docs/ARCHITECTURE.md` | System architecture, multi-container vision, component design |
 | `docs/CONTAINER-TERMINAL.md` | Terminal WebSocket PTY, custom DOM terminal, design decisions |
 | `docs/FRONTEND-ARCHITECTURE.md` | Frontend structure, component tree, mobile breakpoints |
-| `docs/OLYMPUS.md` | App-level features, pages, navigation |
+| `docs/REV4A.md` | App-level features, pages, navigation |
 | `docs/DESIGN-SYSTEM.md` | Design tokens, colors, typography |
 | `docs/dev/API-REFERENCE.md` | API route documentation |
 | `docs/dev/DATABASE.md` | SQLite schema, tables, relations |
 | `docs/dev/GATEWAY.md` | Gateway page: provider sync, agent model config, UI |
-| `docs/dev/PROVIDERS.md` | Provider key management and Olympus proxy gateway |
+| `docs/dev/PROVIDERS.md` | Provider key management and Rev4a proxy gateway |
 | `docs/dev/WORKSPACE.md` | Workspace API file explorer and editor |
 | `docs/rag/` | LLM-facing knowledge base for RAG-powered responses |
 
@@ -171,8 +171,8 @@ When the user asks you to do something on this repository:
 ### If you are a Nexus-level agent (infra access)
 
 - You have `docker`, `systemctl`, and filesystem access on the VPS
-- Use `sudo systemctl restart olympus.target` after builds
-- Use `sudo journalctl -u olympus-next -f` to view Next.js logs
+- Use `sudo systemctl restart rev4a.service` after builds
+- Use `sudo journalctl -u rev4a-next -f` to view Next.js logs
 - Use `npm run build` for Next.js builds
 - Never expose secrets in responses
 - Monitor `docs/MEMORY.md` is NOT part of this repo — it's a private workspace file
@@ -184,11 +184,11 @@ When the user asks you to do something on this repository:
 ```bash
 npm run dev          # Start Next.js dev server
 npm run build        # Build for production
-olympus serve        # Start all services (dashboard + daemon + terminal)
-npm start            # Same as olympus serve
-sudo systemctl status olympus.target  # Production: check running services
-sudo journalctl -u olympus-next -f    # Production: Next.js logs
-sudo journalctl -u olympus-daemon -f  # Production: daemon logs
+rev4a serve        # Start all services (dashboard + daemon + terminal)
+npm start            # Same as rev4a serve
+sudo systemctl status rev4a.service  # Production: check running services
+sudo journalctl -u rev4a-next -f    # Production: Next.js logs
+sudo journalctl -u rev4a-daemon -f  # Production: daemon logs
 ```
 
 ---
@@ -197,9 +197,9 @@ sudo journalctl -u olympus-daemon -f  # Production: daemon logs
 
 | Term | Meaning |
 |---|---|
-| **Olympus** | This project — monitoring dashboard + orchestrator |
-| **PYTHIA** | Embedded AI assistant in the UI |
-| **OpenClaw** | The agent runtime that Olympus monitors |
+| **Rev4a** | This project — monitoring dashboard + orchestrator |
+| **PULSE** | Embedded AI assistant in the UI |
+| **OpenClaw** | The agent runtime that Rev4a monitors |
 | **Nexus** | Host-level agent on the VPS (ops context) |
 | **Traefik** | Reverse proxy in front of all containers |
 | **node-pty** | Node.js PTY library for interactive terminal sessions |

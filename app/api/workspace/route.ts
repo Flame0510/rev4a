@@ -3,7 +3,7 @@ import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { NextResponse, type NextRequest } from 'next/server';
 
-const LOCAL_ROOT = (process.env.OLYMPUS_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
+const LOCAL_ROOT = (process.env.REV4A_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
 const HAS_LOCAL_WORKSPACE = LOCAL_ROOT.length > 0;
 const IGNORED_DIRS = new Set(['node_modules', '.trash', '.git', '.next', 'cache']);
 const TEXT_EXTENSIONS = new Set(['.md', '.json', '.txt', '.html', '.py', '.css', '.js', '.ts', '.tsx', '.yaml', '.yml', '.env', '.sh', '.mjs', '.cjs', '.jsx']);

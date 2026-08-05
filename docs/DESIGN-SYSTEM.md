@@ -1,4 +1,4 @@
-# Olympus Design System
+# Rev4a Design System
 
 Source of truth: `app/design-system.ts` + CSS tokens in `app/globals.css`.
 
@@ -34,7 +34,7 @@ Use the CSS custom property in `@media` queries, not raw pixel values.
 
 ### Shape
 
-Olympus uses a **square/sharp** visual language:
+Rev4a uses a **square/sharp** visual language:
 - Buttons, inputs, modals, cards — **0 border-radius by default** (no rounding).
 - `Pill` uses inline rounded shapes where appropriate (status badges).
 - No shadows, no gradients (except the login page background).
@@ -49,8 +49,8 @@ Defined in `app/globals.css` as CSS custom properties:
 --border:       #222         /* Default border */
 --text:         #e0e0e0      /* Primary text */
 --text-dim:     #888         /* Muted/secondary text */
---copper:       #d49b35      /* Brand accent */
---copper-bg:    #1a1208     /* Copper-tinted hover/active background */
+--violet:       #a78bfa      /* Brand accent */
+--violet-bg:    #1a1030     /* Violet-tinted hover/active background */
 --green:        #22c55e      /* Success */
 --red:          #ef4444      /* Error */
 --yellow:       #eab308      /* Warning */
@@ -68,7 +68,7 @@ Defined in `app/globals.css` as CSS custom properties:
 
 1. **Border radius: 0 everywhere.** `border-radius: 0` or sharp corners. Exceptions: `Pill`, avatar circles, status dots.
 2. **No shadows.** Flat design. Use `border: 1px solid var(--border)` to define surfaces.
-3. **Copper is the only accent.** `var(--copper)` for active states, primary actions, headings. `var(--copper-bg)` for hover/active backgrounds.
+3. **Violet is the only accent.** `var(--violet)` for active states, primary actions, headings. `var(--violet-bg)` for hover/active backgrounds.
 4. **Mono font on buttons and inputs.** All interactive text uses `var(--font-mono-stack)`.
 5. **CSS vars over hardcoded colors.** Never inline `#22c55e`, `#ef4444`, `#888` — use the CSS token.
 6. **Loading feedback.** Use `loading` prop on `Button` (shows inline spinner). Do not render separate loader elements.

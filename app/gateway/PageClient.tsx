@@ -110,8 +110,8 @@ function FallbackSelector({
                 gap: 4,
                 padding: '3px 8px',
                 borderRadius: 0,
-                background: 'rgba(212,155,53,0.14)',
-                border: '1px solid rgba(212,155,53,0.24)',
+                background: 'rgba(167,139,250,0.14)',
+                border: '1px solid rgba(167,139,250,0.24)',
                 fontSize: 11,
                 cursor: 'pointer',
               }}
@@ -292,10 +292,10 @@ function AgentEditForm({
                     fontSize: 11,
                     cursor: 'pointer',
                     background: isSelected
-                      ? 'rgba(212,155,53,0.18)'
+                      ? 'rgba(167,139,250,0.18)'
                       : 'rgba(255,255,255,0.05)',
                     border: isSelected
-                      ? '1px solid rgba(212,155,53,0.35)'
+                      ? '1px solid rgba(167,139,250,0.35)'
                       : '1px solid rgba(255,255,255,0.1)',
                     transition: 'all 0.12s',
                   }}
@@ -515,28 +515,28 @@ export default function GatewayPageClient() {
     });
   }
 
-  /* ---- Save Olympus API Key ---- */
-  async function handleSaveOlympusKey() {
-    const key = apiKeyInputs['olympus']?.trim();
+  /* ---- Save Rev4a API Key ---- */
+  async function handleSaveRev4aKey() {
+    const key = apiKeyInputs['rev4a']?.trim();
     if (!key) return;
-    await withOverlay('Saving OLYMPUS API KEY…', async () => {
-      setMessages((prev) => ({ ...prev, olympus: null }));
+    await withOverlay('Saving REV4A API KEY…', async () => {
+      setMessages((prev) => ({ ...prev, rev4a: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'olympus', apiKey: key }),
+          body: JSON.stringify({ provider: 'rev4a', apiKey: key }),
         });
         const json = await res.json();
         if (json.status === 'ok') {
-          setMessages((prev) => ({ ...prev, olympus: { type: 'success', text: 'OLYMPUS API KEY saved. Agent sync complete.' } }));
-          setOriginalKeys((prev) => ({ ...prev, olympus: key }));
+          setMessages((prev) => ({ ...prev, rev4a: { type: 'success', text: 'REV4A API KEY saved. Agent sync complete.' } }));
+          setOriginalKeys((prev) => ({ ...prev, rev4a: key }));
           await loadAll();
         } else {
-          setMessages((prev) => ({ ...prev, olympus: { type: 'error', text: json.error || 'Error' } }));
+          setMessages((prev) => ({ ...prev, rev4a: { type: 'error', text: json.error || 'Error' } }));
         }
       } catch (e: unknown) {
-        setMessages((prev) => ({ ...prev, olympus: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
+        setMessages((prev) => ({ ...prev, rev4a: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
       }
     });
   }
@@ -625,8 +625,8 @@ export default function GatewayPageClient() {
   }
 
   /* ---- Helpers ---- */
-  const configuredCount = providers.filter((p) => p.configured && p.provider !== 'olympus').length;
-  const olympusKeyConfigured = providers.find((p) => p.provider === 'olympus')?.configured ?? false;
+  const configuredCount = providers.filter((p) => p.configured && p.provider !== 'rev4a').length;
+  const rev4aKeyConfigured = providers.find((p) => p.provider === 'rev4a')?.configured ?? false;
   const agentCount = gatewayData?.agents?.total ?? 0;
   const allEnabledModels = providers
     .filter((p) => p.configured)
@@ -638,7 +638,7 @@ export default function GatewayPageClient() {
   if (loading) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Olympus" title="Gateway" description="Loading…" />
+        <PageHeader eyebrow="Rev4a" title="Gateway" description="Loading…" />
         <div style={{ display: 'grid', gap: 12 }}>
           {[1, 2, 3].map((i) => (
             <Surface key={i}>
@@ -654,7 +654,7 @@ export default function GatewayPageClient() {
   if (error && providers.length === 0) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Olympus" title="Gateway" description="Error" />
+        <PageHeader eyebrow="Rev4a" title="Gateway" description="Error" />
         <Surface variant="panel" tone="danger">
           <div style={{ fontSize: 13, lineHeight: 1.5 }}>{error}</div>
         </Surface>
@@ -668,7 +668,7 @@ export default function GatewayPageClient() {
       {overlay.active && <LoadingOverlay message={overlay.message} />}
 
       <PageHeader
-        eyebrow="Olympus"
+        eyebrow="Rev4a"
         title="Gateway"
         description="Provider, models and agents. API keys are stored in .env."
       />
@@ -704,13 +704,13 @@ export default function GatewayPageClient() {
 
       {/* Metrics */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'olympus').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
+        <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'rev4a').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
         <Metric title="Active models" value={allEnabledModels.length} subtitle="for all configured providers" tone={allEnabledModels.length > 0 ? 'success' : 'warning'} />
         <Metric title="Agents" value={agentCount} subtitle="with AGENT_ID label" tone={agentCount > 0 ? 'success' : 'warning'} />
       </section>
 
       {/* =========================================================== */}
-      {/*  OLYMPUS API KEY — sezione speciale                         */}
+      {/*  REV4A API KEY — sezione speciale                         */}
       {/* =========================================================== */}
       <div style={{ marginBottom: 20 }}>
       <Surface variant="panel">
@@ -718,36 +718,36 @@ export default function GatewayPageClient() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{
               width: 8, height: 8, borderRadius: '50%',
-              background: olympusKeyConfigured ? 'var(--green)' : 'var(--gray)',
+              background: rev4aKeyConfigured ? 'var(--green)' : 'var(--gray)',
               flexShrink: 0,
             }} />
-            <div style={{ fontWeight: 600, fontSize: 14 }}>OLYMPUS API KEY</div>
-            {olympusKeyConfigured ? <Pill tone="success">Configured</Pill> : <Pill tone="warning">Not configured</Pill>}
+            <div style={{ fontWeight: 600, fontSize: 14 }}>REV4A API KEY</div>
+            {rev4aKeyConfigured ? <Pill tone="success">Configured</Pill> : <Pill tone="warning">Not configured</Pill>}
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <PasswordInput
-              value={apiKeyInputs['olympus'] ?? ''}
-              onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, olympus: v }))}
-              placeholder="OLYMPUS_API_KEY"
+              value={apiKeyInputs['rev4a'] ?? ''}
+              onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, rev4a: v }))}
+              placeholder="REV4A_API_KEY"
               style={{ flex: 1, minWidth: 200 }}
               showGenerate
             />
             <Button variant="primary" size="sm"
               loading={overlay.active}
-              disabled={apiKeyInputs['olympus']?.trim() === originalKeys['olympus']?.trim()}
-              onClick={() => handleSaveOlympusKey()}>
+              disabled={apiKeyInputs['rev4a']?.trim() === originalKeys['rev4a']?.trim()}
+              onClick={() => handleSaveRev4aKey()}>
               Save
             </Button>
 
-            {messages['olympus'] && (
+            {messages['rev4a'] && (
               <div style={{
                 flex: '1 1 100%', padding: '6px 10px', borderRadius: 0,
                 fontSize: 12, fontWeight: 500,
-                background: messages['olympus']!.type === 'success' ? 'rgba(var(--green-rgb,34,197,94),0.1)' : 'rgba(var(--red-rgb,239,68,68),0.1)',
-                color: messages['olympus']!.type === 'success' ? 'var(--green)' : 'var(--red)',
+                background: messages['rev4a']!.type === 'success' ? 'rgba(var(--green-rgb,34,197,94),0.1)' : 'rgba(var(--red-rgb,239,68,68),0.1)',
+                color: messages['rev4a']!.type === 'success' ? 'var(--green)' : 'var(--red)',
               }}>
-                {messages['olympus']!.text}
+                {messages['rev4a']!.text}
               </div>
             )}
           </div>
@@ -762,7 +762,7 @@ export default function GatewayPageClient() {
             label: 'Provider',
             active: tab === 'providers',
             onClick: () => setTab('providers'),
-            count: `${configuredCount}/${providers.filter(p => p.provider !== 'olympus').length}`,
+            count: `${configuredCount}/${providers.filter(p => p.provider !== 'rev4a').length}`,
           },
           {
             label: 'Agents',
@@ -778,7 +778,7 @@ export default function GatewayPageClient() {
       {/* =========================================================== */}
       {tab === 'providers' && (
         <section style={{ display: 'grid', gap: 16 }}>
-          {providers.filter((p) => p.provider !== 'olympus').map((p) => {
+          {providers.filter((p) => p.provider !== 'rev4a').map((p) => {
             const enabledCount = p.models.filter((m) => m.enabled).length;
             const msg = messages[p.provider];
             const isExpanded = expandedProviders.has(p.provider);
@@ -885,7 +885,7 @@ export default function GatewayPageClient() {
                     {p.baseUrl && (
                       <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                         Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>{p.baseUrl}</code>
-                        {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Get key ↗</a>
+                        {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--violet)' }}>Get key ↗</a>
                       </div>
                     )}
 
@@ -894,7 +894,7 @@ export default function GatewayPageClient() {
                       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                           Models
-                          <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--copper)', opacity: 0.7, fontSize: 10 }}>
+                          <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--violet)', opacity: 0.7, fontSize: 10 }}>
                             in / out per 1M tokens
                           </span>
                         </div>
@@ -914,7 +914,7 @@ export default function GatewayPageClient() {
                                   <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
                                   <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
                                     {m.id}
-                                    <span style={{ marginLeft: 8, color: 'var(--copper)', fontWeight: 500 }}>
+                                    <span style={{ marginLeft: 8, color: 'var(--violet)', fontWeight: 500 }}>
                                       {fmtPrice((m as any).pricing)}
                                     </span>
                                   </div>
@@ -957,7 +957,7 @@ export default function GatewayPageClient() {
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {allEnabledModels.map((m) => {
-                    const tone: Tone | undefined = m.providerLabel === 'Olympus Aliases' ? 'accent' : undefined;
+                    const tone: Tone | undefined = m.providerLabel === 'Rev4a Aliases' ? 'accent' : undefined;
                     return <Pill key={m.id} tone={tone}>{m.id} <span style={{ opacity: 0.5 }}>({m.providerLabel})</span></Pill>;
                   })}
                 </div>

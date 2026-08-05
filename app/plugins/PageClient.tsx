@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill, LoadingSpinner } from '../components/ui';
 
-type BadgeColor = 'green' | 'red' | 'gray' | 'copper' | 'blue';
+type BadgeColor = 'green' | 'red' | 'gray' | 'violet' | 'blue';
 
 function Badge({ children, color }: { children: React.ReactNode; color: BadgeColor }) {
   const toneMap: Record<BadgeColor, 'success' | 'danger' | 'neutral' | 'accent' | 'info'> = {
-    green: 'success', red: 'danger', gray: 'neutral', copper: 'accent', blue: 'info',
+    green: 'success', red: 'danger', gray: 'neutral', violet: 'accent', blue: 'info',
   };
   return <Pill tone={toneMap[color]}>{children}</Pill>;
 }
@@ -19,7 +19,7 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
       padding: '10px 20px',
       fontSize: 10,
       letterSpacing: 2,
-      color: 'var(--copper)',
+      color: 'var(--violet)',
       borderBottom: '1px solid var(--border)',
       background: 'var(--bg2)',
       textTransform: 'uppercase',
@@ -163,7 +163,7 @@ export default function PluginsPage() {
         flexShrink: 0,
         boxSizing: 'border-box',
       }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>PLUGINS</span>
+        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>PLUGINS</span>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : 'row', overflow: 'hidden' }}>
         {/* List */}
@@ -194,7 +194,7 @@ export default function PluginsPage() {
                   borderBottom: '1px solid #18181c',
                   cursor: 'pointer',
                   background: selected?.id === p.id ? 'var(--bg3)' : 'transparent',
-                  borderLeft: selected?.id === p.id ? '2px solid #D49B35' : '2px solid transparent',
+                  borderLeft: selected?.id === p.id ? '2px solid #a78bfa' : '2px solid transparent',
                   transition: 'all 0.1s',
                 }}
               >
@@ -225,7 +225,7 @@ export default function PluginsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
                   <h2 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: 'var(--text)', margin: 0 }}>{selected.name || selected.id}</h2>
                   <Badge color={selected.enabled ? 'green' : 'gray'}>{selected.status || (selected.enabled ? 'enabled' : 'disabled')}</Badge>
-                  <Badge color={selected.origin === 'bundled' ? 'blue' : 'copper'}>{selected.origin || 'unknown'}</Badge>
+                  <Badge color={selected.origin === 'bundled' ? 'blue' : 'violet'}>{selected.origin || 'unknown'}</Badge>
                 </div>
 
                 {selected.version && <Row label="Version" value={selected.version} />}
@@ -253,7 +253,7 @@ export default function PluginsPage() {
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>COMPAT</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {selected.compat.map(c => <Badge key={c} color="copper">{c}</Badge>)}
+                      {selected.compat.map(c => <Badge key={c} color="violet">{c}</Badge>)}
                     </div>
                   </div>
                 )}
@@ -277,7 +277,7 @@ export default function PluginsPage() {
         {toastMsg && (
           <div style={{
             position: 'fixed', bottom: 24, right: 24,
-            background: 'var(--bg2)', border: '1px solid #D49B35',
+            background: 'var(--bg2)', border: '1px solid #a78bfa',
             color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace",
             fontSize: 12, padding: '10px 18px', borderRadius: 0,
             zIndex: 1000,

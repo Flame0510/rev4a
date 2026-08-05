@@ -1,5 +1,5 @@
 /**
- * POST /api/config/restart - restart the olympus service via systemd
+ * POST /api/config/restart - restart the rev4a service via systemd
  *
  * Agent sync is handled by instrumentation.ts on startup — no need to sync
  * here (the restart kills this process, and the new process syncs on boot).
@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
 
 export async function POST() {
   try {
-    execSync('sudo systemctl daemon-reload && sudo systemctl restart olympus.target', {
+    execSync('sudo systemctl daemon-reload && sudo systemctl restart rev4a.service', {
       timeout: 15000,
       stdio: 'pipe',
     });

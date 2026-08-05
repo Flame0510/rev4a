@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Olympus Lineage — declare the parent→child hierarchy and agent name
- * Usage: node /data/olympus/lineage.js <childSessionKey> <parentSessionKey> [name]
+ * Rev4a Lineage — declare the parent→child hierarchy and agent name
+ * Usage: node /data/rev4a/lineage.js <childSessionKey> <parentSessionKey> [name]
  *
  * Example (Forge after spawning Atlas):
- *   node /data/olympus/lineage.js \
+ *   node /data/rev4a/lineage.js \
  *     "agent:website:subagent:atlas-uuid" \
  *     "agent:website:main" \
  *     "Atlas 🗺️"
  *
  * Example (Atlas after spawning Developer):
- *   node /data/olympus/lineage.js \
+ *   node /data/rev4a/lineage.js \
  *     "agent:website:subagent:dev-uuid" \
  *     "agent:website:subagent:atlas-uuid" \
  *     "Developer 💻"
@@ -20,7 +20,7 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
-const DB_PATH = process.env.OLYMPUS_DB || path.join(__dirname, 'data', 'events.db');
+const DB_PATH = process.env.REV4A_DB || path.join(__dirname, 'data', 'events.db');
 
 const [,, childId, parentId, agentName] = process.argv;
 

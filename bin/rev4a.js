@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * Olympus CLI — Dashboard for monitoring OpenClaw agents
+ * Rev4a CLI — Revolution for Agents
  *
  * Usage:
- *   olympus serve [--port <port>]   Start everything (default)
- *   olympus build                   Manual build
- *   olympus --help / --version      Info
+ *   rev4a serve [--port <port>]   Start everything (default)
+ *   rev4a build                   Manual build
+ *   rev4a --help / --version      Info
  *
- * olympus serve:
+ * rev4a serve:
  *   1. Ensures .env exists (auto-generates on first run)
  *   2. Ensures .next build exists (builds if missing)
  *   3. Ensures Docker is installed (installs if missing + root)
  *   4. Ensures agent base image is built (builds if missing)
  *   5. Starts Next.js + daemon + terminal WS as a single process group
  *
- * olympus serve auto-restarts when olympus update triggers exit code 42.
+ * rev4a serve auto-restarts when rev4a update triggers exit code 42.
  * No systemd required.
  *
  * Graceful shutdown on Ctrl+C / SIGTERM stops all children cleanly.
@@ -30,14 +30,14 @@ const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
 const PKG_JSON = join(ROOT, 'package.json');
 // Config lives outside the npm package so it survives npm update / reinstall
-const CONFIG_DIR = join(os.homedir(), '.config', 'olympus');
+const CONFIG_DIR = join(os.homedir(), '.config', 'rev4a');
 const DATA_DIR = join(CONFIG_DIR, 'data');
 const ENV_SOURCE = join(CONFIG_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_IMAGE = 'openclaw-agent-base:latest';
-const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
-const DOCKER_NETWORK = 'olympus-network';
+const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
+const DOCKER_NETWORK = 'rev4a-network';
 
 let pkg;
 try { pkg = require(PKG_JSON); } catch { pkg = { version: '0.0.0' }; }
@@ -94,15 +94,15 @@ function ensureDocker() {
   }
 
   if (!isLinux()) {
-    log('DOCKER', '⚠ Docker not found. Olympus needs Docker to create agent containers.');
+    log('DOCKER', '⚠ Docker not found. Rev4a needs Docker to create agent containers.');
     log('DOCKER', '  Install Docker: https://docs.docker.com/get-docker/');
-    log('DOCKER', '  Then run: olympus serve');
+    log('DOCKER', '  Then run: rev4a serve');
     return;
   }
 
   if (!isRoot()) {
-    log('DOCKER', '⚠ Docker not found. Run Olympus as root to auto-install:');
-    log('DOCKER', '  sudo olympus serve');
+    log('DOCKER', '⚠ Docker not found. Run Rev4a as root to auto-install:');
+    log('DOCKER', '  sudo rev4a serve');
     return;
   }
 
@@ -125,7 +125,7 @@ function ensureDocker() {
   } catch (err) {
     log('DOCKER', '⚠ Docker auto-install failed. Install manually:');
     log('DOCKER', '  https://docs.docker.com/engine/install/');
-    log('DOCKER', '  Then run: olympus serve');
+    log('DOCKER', '  Then run: rev4a serve');
   }
 }
 
@@ -155,7 +155,7 @@ function ensureAgentImage() {
       stdio: 'inherit',
       timeout: 300_000, // 5 min timeout
     });
-    // Tag locally for Olympus internal use
+    // Tag locally for Rev4a internal use
     execSync(`docker tag ${AGENT_IMAGE_REGISTRY} ${AGENT_IMAGE}`, {
       stdio: 'inherit',
       timeout: 10_000,
@@ -204,22 +204,22 @@ function ensureNetwork() {
   }
 }
 
-// ── Olympus system rules ───────────────────────────────────────────────────
+// ── Rev4a system rules ───────────────────────────────────────────────────
 
-function ensureOlympusRules() {
-  // Ensure all Olympus host directories exist (shared-skills, olympus-rules, …).
+function ensureRev4aRules() {
+  // Ensure all Rev4a host directories exist (shared-skills, rev4a-rules, …).
   // Defined centrally in lib/agent-setup so create & recreate routes stay in sync.
   try {
     const { ensureHostDirs } = require(join(ROOT, '.next', 'server', 'lib', 'agent-setup.js'));
     if (typeof ensureHostDirs === 'function') ensureHostDirs();
   } catch { /* .next not built yet — dirs may already exist */ }
 
-  const olympusRulesDir = '/docker/olympus-rules';
-  const ruleFile = join(olympusRulesDir, 'AGENTS.md');
-  const source = join(ROOT, 'olympus-rules', 'AGENTS.md');
+  const rev4aRulesDir = '/docker/rev4a-rules';
+  const ruleFile = join(rev4aRulesDir, 'AGENTS.md');
+  const source = join(ROOT, 'rev4a-rules', 'AGENTS.md');
 
   if (!existsSync(source)) {
-    log('RULES', 'No olympus-rules source found, skipping');
+    log('RULES', 'No rev4a-rules source found, skipping');
     return;
   }
 
@@ -230,21 +230,21 @@ function ensureOlympusRules() {
   } catch { /* file doesn't exist yet */ }
 
   if (sourceContent === deployedContent) {
-    log('RULES', 'Olympus system rules up to date');
+    log('RULES', 'Rev4a system rules up to date');
     return;
   }
 
   try {
     const sudo = isRoot() ? '' : 'sudo ';
-    if (!existsSync(olympusRulesDir)) {
-      execSync(`${sudo}mkdir -p ${olympusRulesDir}`);
+    if (!existsSync(rev4aRulesDir)) {
+      execSync(`${sudo}mkdir -p ${rev4aRulesDir}`);
     }
-    const tmpFile = `/tmp/olympus-rules-${Date.now()}.md`;
+    const tmpFile = `/tmp/rev4a-rules-${Date.now()}.md`;
     writeFileSync(tmpFile, sourceContent, 'utf-8');
     execSync(`${sudo}cp ${tmpFile} ${ruleFile} && ${sudo}rm ${tmpFile}`);
-    log('RULES', 'Deployed olympus system rules to /docker/olympus-rules/');
+    log('RULES', 'Deployed rev4a system rules to /docker/rev4a-rules/');
   } catch (err) {
-    log('RULES', `⚠ Failed to deploy olympus rules: ${err.message}`);
+    log('RULES', `⚠ Failed to deploy rev4a rules: ${err.message}`);
   }
 }
 
@@ -302,20 +302,20 @@ function ensureEnv() {
   const gatewayToken = randomString(48);
 
   const env = [
-    '# Olympus environment — auto-generated on first run',
+    '# Rev4a environment — auto-generated on first run',
     `# Generated: ${new Date().toISOString()}`,
     '',
     '# Dashboard login password (set via setup wizard on first visit)',
-    'OLYMPUS_PASSWORD=',
+    'REV4A_PASSWORD=',
     '',
     '# JWT secret for session tokens (auto-generated)',
-    `OLYMPUS_JWT_SECRET=${jwt}`,
+    `REV4A_JWT_SECRET=${jwt}`,
     '',
-    '# API token for Olympus → agents communication (auto-generated)',
-    `OLYMPUS_TOKEN=${token}`,
+    '# API token for Rev4a → agents communication (auto-generated)',
+    `REV4A_TOKEN=${token}`,
     '',
     '# API key for Gateway provider endpoint (auto-generated)',
-    `OLYMPUS_API_KEY=${apiKey}`,
+    `REV4A_API_KEY=${apiKey}`,
     '',
     '# Gateway token shared with agent containers (auto-generated)',
     `GATEWAY_TOKEN=${gatewayToken}`,
@@ -359,7 +359,7 @@ function build() {
 // ── Version check ───────────────────────────────────────────────────────────
 
 function checkVersion() {
-  const pkgName = '@flame0510/olympus';
+  const pkgName = '@flame0510/rev4a';
   try {
     const latest = execSync(
       `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
@@ -369,12 +369,12 @@ function checkVersion() {
 
     console.log('');
     console.log('  ╔══════════════════════════════════════════╗');
-    console.log('  ║  🆕 Olympus update available!            ║');
+    console.log('  ║  🆕 Rev4a update available!            ║');
     console.log('  ║  Latest: ' + `v${latest}`.padEnd(31) + ' ║');
     console.log('  ║  Installed: ' + `v${pkg.version}`.padEnd(28) + ' ║');
     console.log('  ║                                           ║');
-    console.log('  ║  Run: npm install -g @flame0510/olympus   ║');
-    console.log('  ║  Then: restart olympus                    ║');
+    console.log('  ║  Run: npm install -g @flame0510/rev4a   ║');
+    console.log('  ║  Then: restart rev4a                    ║');
     console.log('  ╚══════════════════════════════════════════╝');
     console.log('');
   } catch {
@@ -390,7 +390,7 @@ function preflight() {
   ensureDocker();
   ensureNetwork();
   ensureAgentImage();
-  ensureOlympusRules();
+  ensureRev4aRules();
 
   if (!existsSync(NEXT_DIR)) {
     log('PREFLIGHT', 'No build found — running build first…');
@@ -405,8 +405,8 @@ function serve(port) {
   // Version check is non-blocking — runs after startup
   setTimeout(checkVersion, 2000);
 
-  // Load .env vars so child processes (especially Next.js) can read OLYMPUS_*
-  // at runtime. process.env may not have them if olympus serve was started
+  // Load .env vars so child processes (especially Next.js) can read REV4A_*
+  // at runtime. process.env may not have them if rev4a serve was started
   // without the vars already exported in the shell.
   const envVars = loadEnv();
   const childEnv = {
@@ -419,7 +419,7 @@ function serve(port) {
   const children = [];
   const wsPort = process.env.TERMINAL_WS_PORT || '3741';
 
-  log('SERVE', `Starting Olympus on port ${port}…`);
+  log('SERVE', `Starting Rev4a on port ${port}…`);
 
   // Next.js
   const next = spawn('npx', ['next', 'start', '-p', String(port)], {
@@ -470,7 +470,7 @@ function serve(port) {
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
 
-  // Watch for restart flag (written by olympus update command)
+  // Watch for restart flag (written by rev4a update command)
   const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
   const restartWatcher = setInterval(() => {
     if (existsSync(RESTART_FLAG)) {
@@ -513,7 +513,7 @@ function serve(port) {
   setTimeout(() => {
     console.log('');
     console.log('  ╔══════════════════════════════════════╗');
-    console.log('  ║        Olympus is running            ║');
+    console.log('  ║        Rev4a is running            ║');
     console.log(`  ║        http://localhost:${String(port).padEnd(5)}     ║`);
     console.log('  ╚══════════════════════════════════════╝');
     console.log('');
@@ -538,17 +538,17 @@ const BANNER = `
 
 const HELP_TEXT = `
 USAGE:
-  olympus serve [--port <port>]   Start the dashboard + daemon + terminal WS
-  olympus build                   Build the Next.js app
-  olympus update                  Check for updates and install latest
-  olympus restart                 Signal a running olympus to restart
-  olympus --help / --version      Show help or version
+  rev4a serve [--port <port>]   Start the dashboard + daemon + terminal WS
+  rev4a build                   Build the Next.js app
+  rev4a update                  Check for updates and install latest
+  rev4a restart                 Signal a running rev4a to restart
+  rev4a --help / --version      Show help or version
 
 EXAMPLES:
-  olympus serve                    → http://localhost:3740
-  olympus serve --port 8080        → http://localhost:8080
+  rev4a serve                    → http://localhost:3740
+  rev4a serve --port 8080        → http://localhost:8080
 
-On first run, olympus serve automatically:
+On first run, rev4a serve automatically:
   • Generates .env (JWT secret + API token)
   • Installs Docker if missing (requires root)
   • Builds the agent base image (openclaw-agent-base:latest)
@@ -563,7 +563,7 @@ CONFIGURATION:
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   console.log(BANNER);
-  console.log(`Olympus v${pkg.version} — Agency Monitor Dashboard`);
+  console.log(`Rev4a v${pkg.version} — Agency Monitor Dashboard`);
   console.log(HELP_TEXT);
   process.exit(0);
 }
@@ -573,25 +573,25 @@ if (cmd === 'serve') {
   const portIdx = args.indexOf('--port');
   const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
 
-  // Kill any stale olympus processes on this port before starting.
+  // Kill any stale rev4a processes on this port before starting.
   // Prevents zombie process accumulation on systems without systemd.
   try {
     execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
   } catch { /* best-effort */ }
 
-  // Auto-restart loop: when olympus update triggers exit code 42,
-  // re-exec olympus serve so the new binary is loaded. Works with
+  // Auto-restart loop: when rev4a update triggers exit code 42,
+  // re-exec rev4a serve so the new binary is loaded. Works with
   // or without systemd (systemd Restart=always also handles it).
   let exitCode = 42;
   while (exitCode === 42) {
     const result = spawnSync(
       process.execPath,
-      [process.argv[1] || join(__dirname, 'olympus.js'), '_run', String(port)],
+      [process.argv[1] || join(__dirname, 'rev4a.js'), '_run', String(port)],
       { stdio: 'inherit', env: process.env }
     );
     exitCode = result.signal ? 0 : (result.status ?? 0);
     if (exitCode === 42) {
-      console.log('[OLYMPUS] Restarting with updated binary…');
+      console.log('[REV4A] Restarting with updated binary…');
       // Wait for the port to be fully released before respawning
       const net = require('net');
       const portNum = port;
@@ -618,7 +618,7 @@ if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
 }
 
 if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
-  console.log(`olympus v${pkg.version}`);
+  console.log(`rev4a v${pkg.version}`);
   process.exit(0);
 }
 
@@ -629,14 +629,14 @@ if (cmd === 'build') {
 }
 
 if (cmd === 'restart') {
-  // Find and kill the running olympus serve process, then restart it.
+  // Find and kill the running rev4a serve process, then restart it.
   // Uses the restart flag file as the primary mechanism (works with
   // the watcher inside _run), but also does a direct kill + respawn
   // as a fallback for environments where the watcher might miss the flag
   // (e.g. multiple zombie processes, nohup edge cases).
   const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
   writeFileSync(RESTART_FLAG, '');
-  console.log('Restart signal sent. The running olympus serve process will restart.');
+  console.log('Restart signal sent. The running rev4a serve process will restart.');
 
   // Also kill the port directly — ensures restart even if watcher misses the flag
   const port = parseInt(process.env.PORT, 10) || DEFAULT_PORT;
@@ -650,7 +650,7 @@ if (cmd === 'update') {
   console.log(`Checking for updates…`);
   try {
     const latest = execSync(
-      'npm view @flame0510/olympus version --registry https://registry.npmjs.org 2>/dev/null',
+      'npm view @flame0510/rev4a version --registry https://registry.npmjs.org 2>/dev/null',
       { stdio: 'pipe', timeout: 10_000 },
     ).toString().trim();
     if (latest === pkg.version) {
@@ -658,7 +658,7 @@ if (cmd === 'update') {
       process.exit(0);
     }
     console.log(`Updating from v${pkg.version} to v${latest}…`);
-    const root = process.env.OLYMPUS_ROOT || ROOT;
+    const root = process.env.REV4A_ROOT || ROOT;
     const isGitRepo = existsSync(join(root, '.git'));
     if (isGitRepo) {
       console.log('Detected git repo — pulling and building…');
@@ -668,11 +668,11 @@ if (cmd === 'update') {
       });
     } else {
       console.log('Using npm global install…');
-      execSync('npm install -g @flame0510/olympus@latest', {
+      execSync('npm install -g @flame0510/rev4a@latest', {
         stdio: 'inherit',
         timeout: 120_000,
       });
-      // Wipe old build so olympus serve rebuilds with the new version
+      // Wipe old build so rev4a serve rebuilds with the new version
       const nextDir = join(ROOT, '.next');
       if (existsSync(nextDir)) {
         try { execSync(`rm -rf "${nextDir}"`, { stdio: 'inherit' }); } catch {}
@@ -680,9 +680,9 @@ if (cmd === 'update') {
     }
     console.log('Update complete. Restarting…');
     try {
-      execSync('olympus restart', { stdio: 'inherit', timeout: 10_000 });
+      execSync('rev4a restart', { stdio: 'inherit', timeout: 10_000 });
     } catch {
-      // olympus serve not running — restart flag written, harmless
+      // rev4a serve not running — restart flag written, harmless
     }
   } catch (err) {
     console.error('Update failed:', err.message);
@@ -692,5 +692,5 @@ if (cmd === 'update') {
 }
 
 console.error(`Unknown command: ${cmd}`);
-console.error('Run olympus --help for usage.');
+console.error('Run rev4a --help for usage.');
 process.exit(1);

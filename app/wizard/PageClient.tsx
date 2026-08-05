@@ -50,15 +50,15 @@ export default function WizardPageClient() {
 function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      <h2 className="wizard-title">Welcome to Olympus</h2>
+      <h2 className="wizard-title">Welcome to Rev4a</h2>
       <p className="wizard-text">
-        Olympus is the control center for your OpenClaw agent ecosystem.
+        Rev4a is the control center for your OpenClaw agent ecosystem.
         Create, monitor, and manage AI agents running as Docker containers
         on your VPS — all from one dashboard.
       </p>
       <div className="wizard-feature-box">
         <Feature icon={<DockerIcon />} title="Agent Dashboard" desc="View all running agents, their status, ports, and resource usage at a glance." />
-        <Feature icon={<GatewayIcon />} title="Provider Gateway" desc="Configure LLM providers once — every agent gets automatic access through the Olympus proxy." />
+        <Feature icon={<GatewayIcon />} title="Provider Gateway" desc="Configure LLM providers once — every agent gets automatic access through the Rev4a proxy." />
         <Feature icon={<AgentIcon />} title="One-Click Deploy" desc="Create new agents from templates with a single click. No Docker expertise needed." />
       </div>
       <div className="wizard-actions">
@@ -157,11 +157,11 @@ function DoneStep({ onComplete, saving, onRestart }: { onComplete: () => void; s
   return (
     <div style={{ display: 'grid', gap: 14, textAlign: 'center' }}>
             <div style={{ margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
-        <CheckCircleIcon size={48} color="var(--copper)" />
+        <CheckCircleIcon size={48} color="var(--violet)" />
       </div>
       <h2 className="wizard-title">You&apos;re All Set</h2>
       <p className="wizard-text">
-        Olympus is ready. Here&apos;s a quick map of the key sections:
+        Rev4a is ready. Here&apos;s a quick map of the key sections:
       </p>
       <div className="wizard-feature-box" style={{ borderColor: 'rgba(52,211,153,0.15)', background: 'rgba(52,211,153,0.06)', textAlign: 'left' }}>
         {routes.map((r) => (
@@ -178,7 +178,7 @@ function DoneStep({ onComplete, saving, onRestart }: { onComplete: () => void; s
             Restart Wizard
           </Button>
           <Button variant="primary" size="md" onClick={onComplete} loading={saving}>
-            Start Using Olympus <ArrowRightIcon />
+            Start Using Rev4a <ArrowRightIcon />
           </Button>
         </div>
       </div>
@@ -215,7 +215,7 @@ function WizardFrame({
       <div className="wizard-card">
         {/* Header */}
         <div className="wizard-header">
-          <div className="wizard-logo">OLYMPUS</div>
+          <div className="wizard-logo">REV4A</div>
 
           {/* Step indicators — compact on mobile, full labels on desktop */}
           <div className="wizard-stepper">
@@ -264,7 +264,7 @@ function WizardFrame({
           display: flex;
           align-items: flex-start;
           justify-content: center;
-          background: radial-gradient(circle at top, rgba(212,155,53,0.10), transparent 36%), var(--bg);
+          background: radial-gradient(circle at top, rgba(167,139,250,0.10), transparent 36%), var(--bg);
           font-family: var(--font-mono-stack);
           padding: 0;
         }
@@ -285,7 +285,7 @@ function WizardFrame({
           font-family: var(--font-serif-stack);
           font-size: 18px;
           letter-spacing: 2px;
-          color: var(--copper);
+          color: var(--violet);
         }
         .wizard-body {
           padding: 12px 14px 14px;
@@ -322,8 +322,8 @@ function WizardFrame({
           cursor: default;
           transition: all 0.2s;
         }
-        .wizard-step-dot.done { background: var(--copper); opacity: 0.7; }
-        .wizard-step-dot.active { background: var(--copper); opacity: 1; box-shadow: 0 0 5px rgba(212,155,53,0.4); }
+        .wizard-step-dot.done { background: var(--violet); opacity: 0.7; }
+        .wizard-step-dot.active { background: var(--violet); opacity: 1; box-shadow: 0 0 5px rgba(167,139,250,0.4); }
         .wizard-step-dot.clickable { cursor: pointer; }
         .wizard-step-label {
           display: none; /* hidden on mobile */
@@ -332,14 +332,14 @@ function WizardFrame({
           letter-spacing: 0.05em;
           white-space: nowrap;
         }
-        .wizard-step-label.current { color: var(--copper); font-weight: 700; }
+        .wizard-step-label.current { color: var(--violet); font-weight: 700; }
         .wizard-step-mobile {
           font-size: 10px;
           color: var(--text-dim);
           white-space: nowrap;
           font-weight: 500;
         }
-        .wizard-step-mobile.current { color: var(--copper); font-weight: 700; }
+        .wizard-step-mobile.current { color: var(--violet); font-weight: 700; }
         .wizard-step-line {
           width: 10px; min-width: 10px; height: 1px;
           background: var(--border);
@@ -361,14 +361,14 @@ function WizardFrame({
           transition: opacity 0.2s;
           flex-shrink: 0;
         }
-        .wizard-restart:hover { opacity: 1; color: var(--copper); }
+        .wizard-restart:hover { opacity: 1; color: var(--violet); }
 
         /* ── Shared element styles ── */
         .wizard-title {
           font-family: var(--font-serif-stack);
           font-size: 22px;
           letter-spacing: 1.5px;
-          color: var(--copper);
+          color: var(--violet);
           margin: 0;
         }
         .wizard-text {
@@ -389,8 +389,8 @@ function WizardFrame({
         }
         .wizard-badge {
           font-size: 8px;
-          background: rgba(212,155,53,0.15);
-          color: var(--copper);
+          background: rgba(167,139,250,0.15);
+          color: var(--violet);
           padding: 1px 5px;
         }
         .wizard-input {
@@ -404,13 +404,13 @@ function WizardFrame({
           width: 100%;
           box-sizing: border-box;
         }
-        .wizard-input:focus { border-color: var(--copper); }
+        .wizard-input:focus { border-color: var(--violet); }
         .wizard-feature-box {
           display: grid;
           gap: 8px;
           padding: 10px 12px;
-          background: rgba(212,155,53,0.06);
-          border: 1px solid rgba(212,155,53,0.15);
+          background: rgba(167,139,250,0.06);
+          border: 1px solid rgba(167,139,250,0.15);
         }
         .wizard-feature {
           display: flex;
@@ -419,7 +419,7 @@ function WizardFrame({
         }
         .wizard-feature-icon {
           flex-shrink: 0;
-          color: var(--copper);
+          color: var(--violet);
           margin-top: 1px;
         }
         .wizard-feature-title {
