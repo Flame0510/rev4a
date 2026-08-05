@@ -5,8 +5,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildOlympusProviderConfig } from '../../gateway/sync';
 import { detectPublicHost } from '@/lib/docker-utils';
-import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
+import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/olympus-paths';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
+import { loadModelsConfig } from '@/lib/model-catalogue';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -97,7 +98,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + health check (60s) + seeding (60s)
 
 const TEMPLATES_DIR = templatesDir(process.cwd());
-const MODELS_CONFIG = MODELS_CONFIG_FILE;
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
 const DEFAULT_NETWORK = 'olympus-network';
 
@@ -465,10 +465,8 @@ function getAvailableTemplates(): string[] {
 
 function isValidModel(modelId: string): boolean {
   try {
-    if (!fs.existsSync(MODELS_CONFIG)) return true; // skip validation if no config
-    const raw = fs.readFileSync(MODELS_CONFIG, 'utf-8');
-    const config = JSON.parse(raw);
-    return config.models?.some((m: { id: string }) => m.id === modelId) ?? false;
+    const config = loadModelsConfig();
+    return config.some((m) => m.id === modelId);
   } catch {
     return true; // skip on errors
   }

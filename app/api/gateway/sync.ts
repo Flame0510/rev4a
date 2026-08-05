@@ -9,38 +9,16 @@
  *   syncAgent('container')   — sync a single container
  */
 import { execSync } from 'child_process';
-import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
 import * as fs from 'fs';
-import * as path from 'path';
 import { readProviderKeys } from './provider/keys';
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                             */
-/* ------------------------------------------------------------------ */
-interface ModelConfigEntry {
-  id: string;
-  name: string;
-  provider: string;
-  enabled: boolean;
-}
-
+import { loadModelsConfig, type ModelConfigEntry } from '@/lib/model-catalogue';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 
-const MODELS_CONFIG_PATH = MODELS_CONFIG_FILE;
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
-
-function loadModelsConfig(): ModelConfigEntry[] {
-  try {
-    const raw = fs.readFileSync(MODELS_CONFIG_PATH, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.models)) return parsed.models as ModelConfigEntry[];
-  } catch { /* fall through */ }
-  return [];
-}
 
 function getActiveOlympusModels(models: ModelConfigEntry[]): { id: string; name: string }[] {
   const providerKeys = readProviderKeys();

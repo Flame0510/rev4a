@@ -309,13 +309,6 @@
       "modality": "text->text"
     },
     {
-      "id": "openrouter/deepseek/deepseek-r1-0528",
-      "name": "DeepSeek R1 0528 (OR)",
-      "provider": "openrouter",
-      "enabled": true,
-      "modality": "text->text"
-    },
-    {
       "id": "openrouter/google/gemini-2.5-flash",
       "name": "Gemini 2.5 Flash (OR)",
       "provider": "openrouter",
@@ -339,13 +332,6 @@
     {
       "id": "openrouter/qwen/qwen3-coder-plus",
       "name": "Qwen 3 Coder Plus (OR)",
-      "provider": "openrouter",
-      "enabled": true,
-      "modality": "text->text"
-    },
-    {
-      "id": "openrouter/deepseek/deepseek-r1",
-      "name": "DeepSeek R1 (OR)",
       "provider": "openrouter",
       "enabled": true,
       "modality": "text->text"
