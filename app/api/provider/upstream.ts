@@ -17,6 +17,10 @@ export interface ProviderEnvConfig {
 }
 
 export const PROVIDER_ENVS: Record<string, ProviderEnvConfig> = {
+  google: {
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    authHeader: 'x-goog-api-key',
+  },
   openai: {
     baseUrl: 'https://api.openai.com',
     authHeader: 'Authorization',

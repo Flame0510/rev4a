@@ -39,6 +39,13 @@ interface ProviderEnvConfig {
 const MODELS_CONFIG_PATH = MODELS_CONFIG_FILE;
 
 const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
+  google: {
+    envKey: 'PROVIDER_GOOGLE_API_KEY',
+    label: 'Google Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    authHeader: 'x-goog-api-key',
+    docsUrl: 'https://aistudio.google.com/app/apikey',
+  },
   deepseek: {
     envKey: 'PROVIDER_DEEPSEEK_API_KEY',
     label: 'DeepSeek',
@@ -220,6 +227,7 @@ export async function GET() {
         const entry: Record<string, unknown> = { id: m.id, name: m.name, enabled: m.enabled };
         const p = getPricing(m.id);
         if (p) entry.pricing = p;
+        if ((m as any).modality) entry.modality = (m as any).modality;
         return entry;
       }),
       ...(providerKeys[key] ? { apiKey: providerKeys[key] } : {}),

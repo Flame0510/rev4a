@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, ConfirmModal, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
@@ -350,6 +350,10 @@ export default function GatewayPageClient() {
   const [balances, setBalances] = useState<Record<string, { balance: string; label?: string; loading?: boolean; error?: string } | null>>({});
   const [fetchingBalance, setFetchingBalance] = useState<Record<string, boolean>>({});
 
+  // Accordion state — which provider cards are expanded
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+  const expandedInitRef = useRef(false);
+
   /* ---- Data loading ---- */
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -361,6 +365,16 @@ export default function GatewayPageClient() {
       if (provRes.ok) {
         const provJson: ProviderApiResponse = await provRes.json();
         setProviders(provJson.providers);
+
+        // Auto-expand configured providers on first load
+        if (!expandedInitRef.current) {
+          expandedInitRef.current = true;
+          const configured = new Set<string>();
+          provJson.providers.forEach((p: any) => {
+            if (p.configured) configured.add(p.provider);
+          });
+          if (configured.size > 0) setExpandedProviders(configured);
+        }
         // Load keys from provider response (all configured providers now return apiKey)
         const keyEntries: Record<string, string> = {};
         const origEntries: Record<string, string> = {};
@@ -558,14 +572,20 @@ export default function GatewayPageClient() {
   }
 
   /* ---- Agent model update ---- */
-  async function handleUpdateAgent(containerName: string, model?: string, fallbacksFromForm?: string[]) {
+  async function handleUpdateAgent(key: string, model?: string, fallbacksFromForm?: string[]) {
     if (!model && !agentModelInput.trim()) return;
     const modelValue = model || agentModelInput.trim();
     const fallbacksValue = fallbacksFromForm || (agentFallbackInput.trim()
       ? agentFallbackInput.split(',').map((s) => s.trim()).filter(Boolean)
       : []);
 
-    // Overlay: solo durante la chiamata PUT
+    // Resolve container name from agentId or containerName
+    const agent = gatewayData?.agents?.list?.find(
+      (a) => a.containerName === key || a.agentId === key,
+    );
+    const containerName = agent?.containerName || key;
+
+    // Overlay: only during the PUT call
     setOverlay({ active: true, message: 'Updating model…' });
     try {
       const res = await fetch('/api/gateway/agent', {
@@ -577,7 +597,7 @@ export default function GatewayPageClient() {
       setOverlay({ active: false, message: '' });
 
       if (json.status === 'ok') {
-        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'success', text: 'Restarting gateway…' } }));
+        setMessages((prev) => ({ ...prev, [`agent-${key}`]: { type: 'success', text: 'Restarting gateway…' } }));
         setEditingAgent(null);
         setAgentModelInput('');
         setAgentFallbackInput('');
@@ -593,14 +613,14 @@ export default function GatewayPageClient() {
             }
           } catch { /* retry */ }
         }
-        // Pulisci il messaggio
-        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: null }));
+        // Clear the message
+        setMessages((prev) => ({ ...prev, [`agent-${key}`]: null }));
       } else {
-        setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'error', text: json.error || 'Error' } }));
+        setMessages((prev) => ({ ...prev, [`agent-${key}`]: { type: 'error', text: json.error || 'Error' } }));
       }
     } catch (e: unknown) {
       setOverlay({ active: false, message: '' });
-      setMessages((prev) => ({ ...prev, [`agent-${containerName}`]: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
+      setMessages((prev) => ({ ...prev, [`agent-${key}`]: { type: 'error', text: e instanceof Error ? e.message : 'Network error' } }));
     }
   }
 
@@ -761,122 +781,163 @@ export default function GatewayPageClient() {
           {providers.filter((p) => p.provider !== 'olympus').map((p) => {
             const enabledCount = p.models.filter((m) => m.enabled).length;
             const msg = messages[p.provider];
+            const isExpanded = expandedProviders.has(p.provider);
+
+            const toggleExpanded = () => {
+              setExpandedProviders((prev) => {
+                const next = new Set(prev);
+                if (next.has(p.provider)) next.delete(p.provider);
+                else next.add(p.provider);
+                return next;
+              });
+            };
+
             return (
               <Surface key={p.provider} variant="panel">
-                <div style={{ padding: '16px 18px', display: 'grid', gap: 14 }}>
-                  {/* Header */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.configured ? 'var(--green)' : 'var(--gray)', flexShrink: 0 }} />
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
-                    {p.configured ? <Pill tone="success">Connected</Pill> : <Pill tone="warning">Not configured</Pill>}
-                    {enabledCount > 0 ? <Pill tone="accent">{enabledCount} active models</Pill> : <Pill>{enabledCount} active models</Pill>}
-                    {/* Balance badge — auto-loaded for supported providers with configured key */}
-                    {p.configured && ['deepseek','openrouter','glm'].includes(p.provider) && (
-                      balances[p.provider] && !balances[p.provider]?.error ? (
-                        <span
-                          title={balances[p.provider]?.label || ''}
-                          style={{
-                            fontSize: 11, fontWeight: 600,
-                            color: 'var(--green)',
-                            background: 'rgba(var(--green-rgb,34,197,94),0.1)',
-                            padding: '2px 8px', borderRadius: 0,
-                            border: '1px solid rgba(var(--green-rgb,34,197,94),0.2)',
-                            cursor: 'pointer',
-                          }}
-                          onClick={() => fetchBalance(p.provider)}
-                        >
-                          {balances[p.provider]!.balance}
-                        </span>
-                      ) : (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--text-dim)',
-                            opacity: 0.5,
-                          }}
-                        >
-                          {fetchingBalance[p.provider] ? '…' : '…'}
-                        </span>
-                      )
-                    )}
-                  </div>
-
-                  {/* API Key input con show/hide integrato */}
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <PasswordInput
-                      value={apiKeyInputs[p.provider] ?? ''}
-                      onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, [p.provider]: v }))}
-                      placeholder={`API Key ${p.label}`}
-                      style={{ flex: 1, minWidth: 200 }}
-                    />
-                    <Button variant="primary" size="sm"
-                      loading={overlay.active}
-                      disabled={apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim()}
-                      onClick={() => handleSave(p.provider)}>
-                      Save
-                    </Button>
-                    {p.configured && (
-                      <Button variant="danger" size="sm" disabled={overlay.active} onClick={() => handleRemove(p.provider)}>
-                        Remove
-                      </Button>
-                    )}
-                  </div>
-
-                  {p.baseUrl && (
-                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                      Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>{p.baseUrl}</code>
-                      {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Get key ↗</a>
-                    </div>
-                  )}
-
-                  {/* Models with checkboxes */}
-                  {p.models.length > 0 && (
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                        Models
-                        <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--copper)', opacity: 0.7, fontSize: 10 }}>
-                          in / out per 1M tokens
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gap: 4 }}>
-                        {p.models.map((m) => {
-                          const modelMsg = messages[`model-${m.id}`];
-                          return (
-                            <label key={m.id} style={{
-                              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 0,
-                              background: m.enabled ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
-                              cursor: overlay.active ? 'wait' : 'pointer', fontSize: 13,
-                            }}>
-                              <input type="checkbox" checked={m.enabled} disabled={overlay.active}
-                                onChange={(e) => handleToggleModel(m.id, e.target.checked)}
-                                style={{ accentColor: 'var(--green)', cursor: 'pointer' }} />
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
-                                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
-                                  {m.id}
-                                  <span style={{ marginLeft: 8, color: 'var(--copper)', fontWeight: 500 }}>
-                                    {fmtPrice((m as any).pricing)}
-                                  </span>
-                                </div>
-                              </div>
-                              {modelMsg && (
-                                <span style={{ fontSize: 11, color: modelMsg.type === 'success' ? 'var(--green)' : 'var(--red)' }}>
-                                  {modelMsg.text}
-                                </span>
-                              )}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {msg && (
-                    <div className={msg.type === 'success' ? 'msg-success' : 'msg-error'}>
-                      {msg.text}
-                    </div>
+                {/* Accordion header — always visible, clickable */}
+                <div
+                  onClick={toggleExpanded}
+                  style={{
+                    padding: '12px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  {/* Expand/collapse arrow */}
+                  <span style={{
+                    fontSize: 10,
+                    color: 'var(--text-dim)',
+                    transition: 'transform 0.15s',
+                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    minWidth: 12,
+                    textAlign: 'center',
+                  }}>
+                    ▶
+                  </span>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.configured ? 'var(--green)' : 'var(--gray)', flexShrink: 0 }} />
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</div>
+                  {p.configured ? <Pill tone="success">Connected</Pill> : <Pill tone="warning">Not configured</Pill>}
+                  {enabledCount > 0 ? <Pill tone="accent">{enabledCount} active models</Pill> : <Pill>{enabledCount} active models</Pill>}
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-dim)' }}>
+                    {p.models.length} models
+                  </span>
+                  {/* Balance badge — auto-loaded for supported providers with configured key */}
+                  {p.configured && ['deepseek','openrouter','glm'].includes(p.provider) && (
+                    balances[p.provider] && !balances[p.provider]?.error ? (
+                      <span
+                        title={balances[p.provider]?.label || ''}
+                        onClick={(e) => { e.stopPropagation(); fetchBalance(p.provider); }}
+                        style={{
+                          fontSize: 11, fontWeight: 600,
+                          color: 'var(--green)',
+                          background: 'rgba(var(--green-rgb,34,197,94),0.1)',
+                          padding: '2px 8px', borderRadius: 0,
+                          border: '1px solid rgba(var(--green-rgb,34,197,94),0.2)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {balances[p.provider]!.balance}
+                      </span>
+                    ) : (
+                      <span
+                        onClick={(e) => { e.stopPropagation(); fetchBalance(p.provider); }}
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--text-dim)',
+                          opacity: 0.5,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {fetchingBalance[p.provider] ? '…' : '…'}
+                      </span>
+                    )
                   )}
                 </div>
+
+                {/* Accordion body — expandable */}
+                {isExpanded && (
+                  <div style={{ padding: '0 18px 16px 18px', display: 'grid', gap: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                    {/* API Key input con show/hide integrato */}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <PasswordInput
+                        value={apiKeyInputs[p.provider] ?? ''}
+                        onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, [p.provider]: v }))}
+                        placeholder={`API Key ${p.label}`}
+                        style={{ flex: 1, minWidth: 200 }}
+                      />
+                      <Button variant="primary" size="sm"
+                        loading={overlay.active}
+                        disabled={apiKeyInputs[p.provider]?.trim() === originalKeys[p.provider]?.trim()}
+                        onClick={() => handleSave(p.provider)}>
+                        Save
+                      </Button>
+                      {p.configured && (
+                        <Button variant="danger" size="sm" disabled={overlay.active} onClick={() => handleRemove(p.provider)}>
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+
+                    {p.baseUrl && (
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                        Endpoint: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 0 }}>{p.baseUrl}</code>
+                        {' • '}<a href={p.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)' }}>Get key ↗</a>
+                      </div>
+                    )}
+
+                    {/* Models with checkboxes */}
+                    {p.models.length > 0 && (
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                          Models
+                          <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--copper)', opacity: 0.7, fontSize: 10 }}>
+                            in / out per 1M tokens
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gap: 4, maxHeight: 360, overflowY: 'auto' }}>
+                          {p.models.map((m) => {
+                            const modelMsg = messages[`model-${m.id}`];
+                            return (
+                              <label key={m.id} style={{
+                                display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px', borderRadius: 0,
+                                background: m.enabled ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
+                                cursor: overlay.active ? 'wait' : 'pointer', fontSize: 12,
+                              }}>
+                                <input type="checkbox" checked={m.enabled} disabled={overlay.active}
+                                  onChange={(e) => handleToggleModel(m.id, e.target.checked)}
+                                  style={{ accentColor: 'var(--green)', cursor: 'pointer' }} />
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
+                                  <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                                    {m.id}
+                                    <span style={{ marginLeft: 8, color: 'var(--copper)', fontWeight: 500 }}>
+                                      {fmtPrice((m as any).pricing)}
+                                    </span>
+                                  </div>
+                                </div>
+                                {modelMsg && (
+                                  <span style={{ fontSize: 11, color: modelMsg.type === 'success' ? 'var(--green)' : 'var(--red)' }}>
+                                    {modelMsg.text}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {msg && (
+                      <div className={msg.type === 'success' ? 'msg-success' : 'msg-error'}>
+                        {msg.text}
+                      </div>
+                    )}
+                  </div>
+                )}
               </Surface>
             );
           })}
@@ -913,15 +974,15 @@ export default function GatewayPageClient() {
           ) : (
             <div style={{ display: 'grid', gap: 14 }}>
               {gatewayData.agents.list.map((agent) => {
-                const msg = messages[`agent-${agent.containerName}`];
-                const isEditing = editingAgent === agent.containerName;
+                const key = agent.agentId || agent.containerName;
+                const msg = messages[`agent-${key}`];
+                const isEditing = editingAgent === key;
                 return (
-                  <Surface key={agent.containerName} variant="panel">
+                  <Surface key={key} variant="panel">
                     <div style={{ padding: '16px 18px', display: 'grid', gap: 12 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                         <div className={'gateway-agent-dot' + (agent.state === 'running' ? ' gateway-agent-dot--ok' : ' gateway-agent-dot--err')} />
                         <div style={{ fontWeight: 600 }}>{agent.agentId}</div>
-                        <Pill>{agent.containerName}</Pill>
                         <Pill tone={agent.state === 'running' ? 'success' : 'danger'}>{agent.state}</Pill>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 16px', fontSize: 12 }}>
@@ -937,11 +998,11 @@ export default function GatewayPageClient() {
                           initialModel={agent.defaultModel}
                           initialFallbacks={agent.fallbacks.join(', ')}
                           saving={overlay.active}
-                          onSave={(model, fallbacks) => handleUpdateAgent(agent.containerName, model, fallbacks)}
+                          onSave={(model, fallbacks) => handleUpdateAgent(key, model, fallbacks)}
                           onCancel={() => setEditingAgent(null)}
                         />
                       ) : (
-                        <Button variant="secondary" size="sm" onClick={() => { setEditingAgent(agent.containerName); setAgentModelInput(agent.defaultModel || ''); setAgentFallbackInput(agent.fallbacks.join(', ')); }}>
+                        <Button variant="secondary" size="sm" onClick={() => { setEditingAgent(key); setAgentModelInput(agent.defaultModel || ''); setAgentFallbackInput(agent.fallbacks.join(', ')); }}>
                           ✏️ Change model
                         </Button>
                       )}

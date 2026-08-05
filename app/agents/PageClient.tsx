@@ -575,7 +575,7 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '10px 14px', borderBottom: '1px solid var(--border)',
         }}>
-          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json - {agent.name}</span>
+          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json - {agent.displayName || agent.agentId || agent.name}</span>
           <Button variant="ghost" size="sm" onClick={onClose}>
             ✕
           </Button>
