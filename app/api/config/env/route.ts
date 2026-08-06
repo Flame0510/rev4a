@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -52,7 +53,7 @@ function serializeEnvFile(vars: Record<string, string>): string {
   return lines.join('\n') + '\n';
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     let content = '';
     try {
@@ -77,6 +78,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body: { env?: Record<string, string> } = await request.json();
     if (!body.env || typeof body.env !== 'object') {

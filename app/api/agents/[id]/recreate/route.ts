@@ -5,6 +5,7 @@ import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 import { buildRev4aProviderConfig } from '@/app/api/gateway/sync';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + health check (60s) + config patch (60s)
@@ -44,10 +45,10 @@ function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
  * Shared volumes (skills, repos) are always mounted.
  * After the container is up, guarantee extraDirs + provider config.
  */
-export async function POST(
-  _req: Request,
+export async function POST(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });

@@ -8,6 +8,7 @@ import { detectPublicHost } from '@/lib/docker-utils';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { loadModelsConfig } from '@/lib/model-catalogue';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 /**
  * Wait for a Docker container gateway to be ready.
@@ -133,6 +134,7 @@ function readAgentsToken(): string {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     let body: CreateBody;
     try {

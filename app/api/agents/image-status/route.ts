@@ -1,3 +1,4 @@
+import { type NextRequest } from "next/server";
 /**
  * GET /api/agents/image-status
  *
@@ -8,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { getIsDownloading } from '@/lib/buildAgentImage';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +70,7 @@ function getRemoteDigest(): string | null {
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const exists = localImageExists();
   const localId = getLocalImageId();
   const downloading = getIsDownloading();

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { isBillableDollarModel } from '@/lib/billing';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ function getStartOfDaySeconds(): number {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   // Return cached result if fresh
   if (costsCache && Date.now() - costsCache.ts < CACHE_TTL_MS) {
     return NextResponse.json(costsCache.data);

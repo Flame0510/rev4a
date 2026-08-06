@@ -12,6 +12,7 @@ import { syncAllAgents } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 import { getPricing } from '@/lib/model-pricing';
 import { loadModelsConfig, toggleModelOverride, type ModelConfigEntry } from '@/lib/model-catalogue';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -134,7 +135,7 @@ function restartService(): { stdout: string; stderr: string } {
 /*  Routes                                                             */
 /* ------------------------------------------------------------------ */
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
   const providers = Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => {
@@ -156,6 +157,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body: { provider?: string; apiKey?: string; _syncOnly?: boolean } = await request.json();
 
@@ -187,6 +189,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body: { modelId?: string; enabled?: boolean } = await request.json();
     const { modelId, enabled } = body;

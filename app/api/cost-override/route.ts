@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireAuth, openDb } from '@/lib/db';
+import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,7 +8,7 @@ const CREATE_TABLE = `CREATE TABLE IF NOT EXISTS cost_override
   (month TEXT PRIMARY KEY, amount REAL, note TEXT, updated_at INTEGER)`;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const denied = requireAuth(request);
+  const denied = await requireAuthJWT(request);
   if (denied) return denied;
   try {
     const db = openDb(false);
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const denied = requireAuth(request);
+  const denied = await requireAuthJWT(request);
   if (denied) return denied;
   try {
     const body = (await request.json()) as { amount?: unknown; note?: string; month?: string };

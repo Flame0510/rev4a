@@ -1,3 +1,4 @@
+import { type NextRequest } from "next/server";
 /**
  * POST /api/agents/download-image
  *
@@ -10,10 +11,11 @@
  */
 import { NextResponse } from 'next/server';
 import { downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (getIsDownloading()) {
     return NextResponse.json(
       { error: 'A download is already in progress' },

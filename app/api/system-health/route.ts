@@ -4,6 +4,7 @@ import { maybeSendAlert } from '@/lib/alerts';
 import { summarizeBilling } from '@/lib/billing';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
 import type { ModelCost } from '@/lib/types';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +59,7 @@ function columnExists(db: ReturnType<typeof openDb>, tableName: string, columnNa
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   const now = new Date();
   const createdAt = now.toISOString();

@@ -3,6 +3,7 @@ import { jwtVerify } from 'jose';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 function getPackageInfo() {
   try {
@@ -28,6 +29,7 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
  * GET /api/update-check
  */
 export async function GET(request: Request): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const url = new URL(request.url);
   const check = url.searchParams.get('check') === '1';
 
@@ -91,6 +93,7 @@ async function verifyAuth(request: Request): Promise<boolean> {
  * with the newly installed binary. No systemd required.
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   if (!(await verifyAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

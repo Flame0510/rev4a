@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { searchParams } = new URL(request.url);
   const parsed = Number.parseInt(searchParams.get('limit') ?? '50', 10);
   const limit = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 500) : 50;

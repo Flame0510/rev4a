@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { readProviderKeys, writeProviderKeys } from '@/app/api/gateway/provider/keys';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,6 +84,7 @@ const OAUTH_CONFIGS: Record<string, DeviceCodeConfig> = {
 // ── START device code flow ─────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = await request.json().catch(() => ({}));
     const provider = body.provider as string | undefined;
@@ -151,6 +153,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 // ── POLL authorization status ──────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const provider = request.nextUrl.searchParams.get('provider');
     const deviceAuthId = request.nextUrl.searchParams.get('deviceAuthId');

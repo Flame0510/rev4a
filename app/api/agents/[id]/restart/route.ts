@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,10 +9,10 @@ export const dynamic = 'force-dynamic';
  * POST /api/agents/[id]/restart
  * Restart a container (docker restart) after verifying it has a matching AGENT_ID label.
  */
-export async function POST(
-  _req: Request,
+export async function POST(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });

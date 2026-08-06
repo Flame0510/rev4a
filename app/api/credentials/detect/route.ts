@@ -9,6 +9,7 @@ import {
   detectTrello,
   detectNotion,
 } from '@/lib/credentials/detect';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -162,6 +163,7 @@ function matchProfiles(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const url = new URL(request.url);
     const filterAgent = url.searchParams.get('agent');

@@ -1,3 +1,4 @@
+import { type NextRequest } from "next/server";
 /**
  * Gateway Status API
  *
@@ -8,6 +9,7 @@
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -128,7 +130,7 @@ function getAgentModels(container: string): GatewayModel[] {
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const timestamp = Date.now();
 

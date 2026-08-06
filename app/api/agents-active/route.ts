@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { NextResponse, type NextRequest } from 'next/server';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,7 +113,8 @@ function readDockerAgents(): { id: string; agentId: string; name: string; image:
   }
 }
 
-export async function GET(_request: NextRequest): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const configuredAgents = readConfiguredAgents();
     const dockerAgents = readDockerAgents();

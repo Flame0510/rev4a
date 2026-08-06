@@ -8,14 +8,16 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchProviderBalance, type BalanceProvider } from '@/lib/provider-balance';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const SUPPORTED: BalanceProvider[] = ['deepseek', 'openrouter', 'glm'];
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  const provider = req.nextUrl.searchParams.get('provider') as BalanceProvider | null;
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const provider = request.nextUrl.searchParams.get('provider') as BalanceProvider | null;
 
   if (!provider || !SUPPORTED.includes(provider)) {
     return NextResponse.json(

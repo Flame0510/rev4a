@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { id } = await params;
   const sessionId = decodeURIComponent(id);
   const db = openDb();

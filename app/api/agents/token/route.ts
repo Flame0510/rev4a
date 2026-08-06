@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import { NextResponse, type NextRequest } from 'next/server';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,11 +28,12 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json(readTokenFile());
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : null;

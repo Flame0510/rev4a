@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { NextResponse, type NextRequest } from 'next/server';
 import { templatesDir } from '@/lib/rev4a-paths';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -394,6 +395,7 @@ function copyTemplateFiles(templateId: string, workspace: string): string[] {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   try {
     const body = (await request.json()) as CreateAgentPayload;
@@ -471,6 +473,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   try {
     return NextResponse.json(buildConfigPayload(readConfig()));
@@ -480,6 +483,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   try {
     const body = (await request.json()) as UpdatePayload;

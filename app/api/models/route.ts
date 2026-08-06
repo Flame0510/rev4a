@@ -1,8 +1,10 @@
+import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
 import { MODELS_CONFIG_FILE } from '@/lib/rev4a-paths';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +46,8 @@ function loadModelsConfig(): ModelsConfigEntry[] {
   return [];
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(_req: NextRequest): Promise<NextResponse> {
+  const request = _req;
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
   const configured = new Set(Object.keys(providerKeys));

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { NextResponse, type NextRequest } from 'next/server';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,7 @@ function getTimezone(): string {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const config = readConfig();
     const audio = getAudio(config);
@@ -109,6 +111,7 @@ const VALID_TIMEZONES = [
 ];
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = (await request.json()) as { audio?: AudioInput; timezone?: string };
 

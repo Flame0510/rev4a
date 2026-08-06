@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -56,6 +57,7 @@ function readFileFromContainer(container: string, remotePath: string): string {
 }
 
 export async function PUT(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body: { containerName?: string; model?: string; fallbacks?: string[] } = await request.json();
     const { containerName } = body;

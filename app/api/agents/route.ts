@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detectPublicHost } from '@/lib/docker-utils';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
@@ -42,7 +43,8 @@ function dockerAvailable(): boolean {
   }
 }
 
-export async function GET(_request: NextRequest): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   // If Docker is not available (e.g. testing environment), return empty list
   if (!dockerAvailable()) {
     return NextResponse.json([]);

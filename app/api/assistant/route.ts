@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 import { extractProviderAndModel, getApiKey, callUpstream } from '@/app/api/provider/upstream';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
 
@@ -155,6 +156,7 @@ RULES:
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let body: { message?: string; page?: string; model?: string; history?: { role: string; content: string }[] };
   try {
     body = await request.json();

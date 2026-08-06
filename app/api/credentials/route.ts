@@ -1,10 +1,12 @@
+import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
 import { listProfiles, createProfile } from '@/lib/credentials/vault';
 import { CREDENTIAL_PROVIDERS } from '@/lib/credentials/providers';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const profiles = listProfiles();
     return NextResponse.json({ profiles, providers: CREDENTIAL_PROVIDERS });
@@ -13,9 +15,10 @@ export async function GET(): Promise<NextResponse> {
   }
 }
 
-export async function POST(req: Request): Promise<NextResponse> {
+export async function POST(request: Request): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
-    const body = await req.json() as { providerId?: string; label?: string; secret?: Record<string, string> };
+    const body = await request.json() as { providerId?: string; label?: string; secret?: Record<string, string> };
     const { providerId, label, secret } = body;
 
     if (!providerId || !label || !secret) {

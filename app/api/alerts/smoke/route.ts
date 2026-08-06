@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { maybeSendAlert } from '@/lib/alerts';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,7 @@ function smokeAllowed(): boolean {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   if (!smokeAllowed()) return NextResponse.json({ error: 'disabled' }, { status: 403 });
 
   const stale = new URL(request.url).searchParams.get('stale') !== '0';

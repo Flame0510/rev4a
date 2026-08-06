@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 function ensureLineageSchema(db: ReturnType<typeof openDb>): void {
   db.prepare(
@@ -27,6 +28,7 @@ function ensureLineageSchema(db: ReturnType<typeof openDb>): void {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = (await request.json()) as { childId?: string; parentId?: string; label?: string };
     const childId = body?.childId?.trim();
