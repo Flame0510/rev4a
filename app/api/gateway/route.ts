@@ -74,7 +74,7 @@ function getAgents(): { agentId: string; containerName: string; state: string }[
 
 /** Query an agent container for model status */
 function getAgentStatus(agent: { agentId: string; containerName: string; state: string }): GatewayAgentStatus | null {
-  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 20000);
+  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 8000);
   if (!raw) return null;
   try {
     const data = JSON.parse(raw);
@@ -110,7 +110,7 @@ function getAgentStatus(agent: { agentId: string; containerName: string; state: 
 
 /** Get available models from an agent */
 function getAgentModels(container: string): GatewayModel[] {
-  const raw = dockerExec(container, 'openclaw models list --json', 20000);
+  const raw = dockerExec(container, 'openclaw models list --json', 8000);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);

@@ -110,7 +110,7 @@ export default function ConfigPageClient() {
   return (
     <Page maxWidth={900}>
       <PageHeader
-        eyebrow="Rev4a"
+        eyebrow=""
         title="Configuration"
         description="Environment variables. Values are visible only to you."
       />

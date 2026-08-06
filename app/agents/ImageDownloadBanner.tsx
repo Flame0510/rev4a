@@ -142,11 +142,11 @@ function Banner({
   children: React.ReactNode; warning?: boolean; downloading?: boolean; success?: boolean;
 }) {
   const bg = success ? 'rgba(34,197,94,0.08)' :
-             downloading ? 'rgba(167,139,250,0.1)' :
-             warning ? 'rgba(251,191,36,0.08)' : 'rgba(167,139,250,0.08)';
+             downloading ? 'rgba(146,91,252,0.1)' :
+             warning ? 'rgba(251,191,36,0.08)' : 'rgba(146,91,252,0.08)';
   const border = success ? 'rgba(34,197,94,0.25)' :
-                 downloading ? 'rgba(167,139,250,0.25)' :
-                 warning ? 'rgba(251,191,36,0.2)' : 'rgba(167,139,250,0.2)';
+                 downloading ? 'rgba(146,91,252,0.25)' :
+                 warning ? 'rgba(251,191,36,0.2)' : 'rgba(146,91,252,0.2)';
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,

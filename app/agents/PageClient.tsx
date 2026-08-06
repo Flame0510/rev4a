@@ -277,18 +277,18 @@ export default function AgentsPageClient() {
     return (
       <div style={{ padding: 40, textAlign: 'center' }}>
         <div style={{ color: '#ef4444', fontSize: 14, marginBottom: 10 }}>{error}</div>
-        <Button variant="secondary" size="sm" onClick={load}>
+        <Button variant="secondary" size="sm" onClick={() => load()}>
           RETRY
         </Button>
       </div>
     );
   }
 
-  // ─── Mobile: mostra lista o dettaglio ───
+  // ─── Mobile: show list or detail ───
   if (isMobile) {
     if (!showList && selected) {
       return (
-        <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
+        <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
@@ -309,7 +309,7 @@ export default function AgentsPageClient() {
 
     // Mobile: lista
     return (
-      <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
+      <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
@@ -335,7 +335,7 @@ export default function AgentsPageClient() {
                 <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                 {agent.template && (
-                  <span style={{ fontSize: 10, background: 'rgba(167,139,250,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(167,139,250,0.25)' }}>{agent.template}</span>
+                  <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
                 )}
                 <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
                   {agent.state === 'running' && agent.traefikUrl && (
@@ -373,7 +373,7 @@ export default function AgentsPageClient() {
 
   // ─── Desktop: split view ───
   return (
-    <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
@@ -405,7 +405,7 @@ export default function AgentsPageClient() {
                   <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
                   <span style={{ color: isSelected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                   {agent.template && (
-                    <span style={{ fontSize: 10, background: 'rgba(167,139,250,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(167,139,250,0.25)' }}>{agent.template}</span>
+                    <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
                   )}
                   <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
                     {agent.state === 'running' && agent.traefikUrl && (
@@ -643,7 +643,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
             <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{agent.status}</div>
           </div>
           {agent.template && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(167,139,250,0.12)', color: 'var(--violet)', padding: '3px 8px', borderRadius: 0, border: '1px solid rgba(167,139,250,0.25)' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '3px 8px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>
               template: {agent.template}
             </span>
           )}
@@ -815,7 +815,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
             {count > 0 && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {profiles.map((p) => (
-                  <span key={p.providerId} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--violet)', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', padding: '2px 8px' }}>
+                  <span key={p.providerId} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--violet)', background: 'rgba(146,91,252,0.08)', border: '1px solid rgba(146,91,252,0.2)', padding: '2px 8px' }}>
                     {p.label}
                   </span>
                 ))}
@@ -931,8 +931,8 @@ function BackupSection({ agentName }: { agentName: string }) {
             fontSize: 11,
             fontFamily: 'var(--font-mono)',
             color: 'var(--violet)',
-            background: 'rgba(167,139,250,0.08)',
-            border: '1px solid rgba(167,139,250,0.25)',
+            background: 'rgba(146,91,252,0.08)',
+            border: '1px solid rgba(146,91,252,0.25)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -1096,8 +1096,8 @@ function RecreateSection({ agentName }: { agentName: string }) {
             fontSize: 11,
             fontFamily: 'var(--font-mono)',
             color: 'var(--violet)',
-            background: 'rgba(167,139,250,0.08)',
-            border: '1px solid rgba(167,139,250,0.25)',
+            background: 'rgba(146,91,252,0.08)',
+            border: '1px solid rgba(146,91,252,0.25)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,

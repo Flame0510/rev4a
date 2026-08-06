@@ -260,7 +260,7 @@ export default function PulseChat() {
                 <ellipse cx="12" cy="12" rx="10" ry="6" />
                 <circle cx="12" cy="12" r="3" fill="var(--violet)" stroke="none" />
               </svg>
-              PULSE 🔴
+              PULSE
             </span>
             <select
               value={selectedModel}
@@ -299,8 +299,8 @@ export default function PulseChat() {
                 <button
                   className="ochat__clear"
                   onClick={newSession}
-                  title="Nuova sessione"
-                  aria-label="Nuova sessione"
+                  title="New session"
+                  aria-label="New session"
                 >
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
                     <path d="M2 8h12M8 2v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -318,7 +318,7 @@ export default function PulseChat() {
           <div className="ochat__messages">
             {messages.length === 0 && (
               <p className="ochat__empty">
-                Hello! I'm <strong>Pulse</strong> 🔴, the oracle of Rev4a. Ask me about the dashboard, data, or the page you're looking at.
+                Hello! I'm <strong>Pulse</strong>, the oracle of Rev4a. Ask me about the dashboard, data, or the page you're looking at.
               </p>
             )}
             {messages.map((m, i) => (

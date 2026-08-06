@@ -76,11 +76,11 @@ export default function CredentialsPageClient() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const [credsRes, detectRes] = await Promise.all([
-        fetch('/api/credentials'),
-        fetch('/api/credentials/detect'),
+        fetch('/api/credentials', { signal }),
+        fetch('/api/credentials/detect', { signal }),
       ]);
       if (!credsRes.ok) throw new Error(`HTTP ${credsRes.status}`);
       const json = await credsRes.json() as ApiData;
@@ -108,13 +108,18 @@ export default function CredentialsPageClient() {
       setDetectData(detectJson.agents ?? []);
       setError(null);
     } catch (e: unknown) {
+      if ((e as Error)?.name === 'AbortError') return;
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const refreshDetectOnly = async () => {
     try {
@@ -183,7 +188,7 @@ export default function CredentialsPageClient() {
   if (loading) {
     return (
       <Page>
-        <PageHeader eyebrow="REV4A" title="Credentials" />
+        <PageHeader eyebrow="" title="Credentials" />
         <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading…</p>
       </Page>
     );
@@ -201,7 +206,7 @@ export default function CredentialsPageClient() {
   return (
     <Page>
       <PageHeader
-        eyebrow="REV4A"
+        eyebrow=""
         title="Credentials"
         description="Store third-party credentials once, sync to all agent containers."
       />

@@ -91,22 +91,27 @@ export default function PluginsPage() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const isMobile = useResponsive('lg');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/plugins', { credentials: 'same-origin' });
+      const res = await fetch('/api/plugins', { credentials: 'same-origin', signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setPlugins(data.plugins || []);
+      if (!signal?.aborted) setPlugins(data.plugins || []);
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error)?.name === 'AbortError') return;
+      if (!signal?.aborted) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const filtered = plugins.filter(p => {
     if (filter === 'enabled') return p.enabled;
@@ -148,7 +153,7 @@ export default function PluginsPage() {
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      height: '100vh',
+      flex: 1,
       background: 'var(--bg)',
       color: 'var(--text)',
       overflow: 'hidden',
@@ -175,7 +180,7 @@ export default function PluginsPage() {
                 {f.toUpperCase()}
               </Button>
             ))}
-            <Button variant="ghost" size="sm" onClick={load} style={{ marginLeft: 'auto' }}>
+            <Button variant="ghost" size="sm" onClick={() => load()} style={{ marginLeft: 'auto' }}>
               ⟳
             </Button>
           </div>
@@ -194,7 +199,7 @@ export default function PluginsPage() {
                   borderBottom: '1px solid #18181c',
                   cursor: 'pointer',
                   background: selected?.id === p.id ? 'var(--bg3)' : 'transparent',
-                  borderLeft: selected?.id === p.id ? '2px solid #a78bfa' : '2px solid transparent',
+                  borderLeft: selected?.id === p.id ? '2px solid #925BFC' : '2px solid transparent',
                   transition: 'all 0.1s',
                 }}
               >
@@ -277,7 +282,7 @@ export default function PluginsPage() {
         {toastMsg && (
           <div style={{
             position: 'fixed', bottom: 24, right: 24,
-            background: 'var(--bg2)', border: '1px solid #a78bfa',
+            background: 'var(--bg2)', border: '1px solid #925BFC',
             color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace",
             fontSize: 12, padding: '10px 18px', borderRadius: 0,
             zIndex: 1000,

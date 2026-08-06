@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, ConfirmModal, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
+import { Skeleton } from '../components/Skeleton';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -334,6 +335,9 @@ export default function GatewayPageClient() {
   // Overlay loader
   const [overlay, setOverlay] = useState<{ active: boolean; message: string }>({ active: false, message: '' });
 
+  // Show skeleton inline instead of blocking whole page
+  const skeletonRows = loading;
+
   // API key form state
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [originalKeys, setOriginalKeys] = useState<Record<string, string>>({});
@@ -635,15 +639,15 @@ export default function GatewayPageClient() {
   );
 
   /* ---- Loading state ---- */
-  if (loading) {
+  if (loading && providers.length === 0 && !error) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Rev4a" title="Gateway" description="Loading…" />
+        <PageHeader eyebrow="" title="Gateway" description="Loading…" />
         <div style={{ display: 'grid', gap: 12 }}>
           {[1, 2, 3].map((i) => (
             <Surface key={i}>
-              <div style={{ height: 18, background: 'rgba(255,255,255,0.04)', borderRadius: 0, marginBottom: 8 }} />
-              <div style={{ height: 28, background: 'rgba(255,255,255,0.04)', borderRadius: 0 }} />
+              <Skeleton width="60%" height={14} style={{ marginBottom: 10 }} />
+              <Skeleton width="80%" height={20} />
             </Surface>
           ))}
         </div>
@@ -654,7 +658,7 @@ export default function GatewayPageClient() {
   if (error && providers.length === 0) {
     return (
       <Page maxWidth={1000}>
-        <PageHeader eyebrow="Rev4a" title="Gateway" description="Error" />
+        <PageHeader eyebrow="" title="Gateway" description="Error" />
         <Surface variant="panel" tone="danger">
           <div style={{ fontSize: 13, lineHeight: 1.5 }}>{error}</div>
         </Surface>
@@ -668,7 +672,7 @@ export default function GatewayPageClient() {
       {overlay.active && <LoadingOverlay message={overlay.message} />}
 
       <PageHeader
-        eyebrow="Rev4a"
+        eyebrow=""
         title="Gateway"
         description="Provider, models and agents. API keys are stored in .env."
       />
@@ -704,9 +708,19 @@ export default function GatewayPageClient() {
 
       {/* Metrics */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'rev4a').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
-        <Metric title="Active models" value={allEnabledModels.length} subtitle="for all configured providers" tone={allEnabledModels.length > 0 ? 'success' : 'warning'} />
-        <Metric title="Agents" value={agentCount} subtitle="with AGENT_ID label" tone={agentCount > 0 ? 'success' : 'warning'} />
+        {skeletonRows ? (
+          <>
+            <Skeleton height={72} style={{ border: '1px solid rgba(255,255,255,0.06)' }} />
+            <Skeleton height={72} style={{ border: '1px solid rgba(255,255,255,0.06)' }} />
+            <Skeleton height={72} style={{ border: '1px solid rgba(255,255,255,0.06)' }} />
+          </>
+        ) : (
+          <>
+            <Metric title="Configured providers" value={`${configuredCount} / ${providers.filter((p) => p.provider !== 'rev4a').length}`} subtitle="DeepSeek, OpenRouter, Codex, …" tone={configuredCount > 0 ? 'success' : 'warning'} />
+            <Metric title="Active models" value={allEnabledModels.length} subtitle="for all configured providers" tone={allEnabledModels.length > 0 ? 'success' : 'warning'} />
+            <Metric title="Agents" value={agentCount} subtitle="with AGENT_ID label" tone={agentCount > 0 ? 'success' : 'warning'} />
+          </>
+        )}
       </section>
 
       {/* =========================================================== */}

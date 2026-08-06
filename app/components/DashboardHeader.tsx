@@ -42,7 +42,7 @@ export default function DashboardHeader({ costs, loading: dataLoading = false, h
   return (
     <header className="header">
       <div className="logo">
-        {!hideLogo && <img src="/rev4a-logo.png" alt="Rev4a" style={{ width: 22, height: 22, objectFit: 'contain' }} />}
+        {!hideLogo && <img src="/rev4a-logo.svg" alt="Rev4a" style={{ width: 22, height: 22, objectFit: 'contain' }} />}
         <span>{title ?? 'REV4A'}</span>
       </div>
       <div className="meta">

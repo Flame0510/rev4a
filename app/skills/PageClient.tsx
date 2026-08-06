@@ -77,25 +77,30 @@ export default function SkillsPage() {
   const abortRef = useRef<AbortController | null>(null);
   const contentAbortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const mergedSignal = signal || controller.signal;
     try {
-      const res = await fetch('/api/skills', { credentials: 'same-origin', signal: controller.signal });
+      const res = await fetch('/api/skills', { credentials: 'same-origin', signal: mergedSignal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setSkills(data.skills || []);
+      if (!mergedSignal.aborted) setSkills(data.skills || []);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!mergedSignal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const searchLower = search.toLowerCase();
   const filtered = skills.filter(s => {
@@ -247,7 +252,7 @@ export default function SkillsPage() {
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      height: '100vh',
+      flex: 1,
       background: 'var(--bg)',
       color: 'var(--text)',
       overflow: 'hidden',

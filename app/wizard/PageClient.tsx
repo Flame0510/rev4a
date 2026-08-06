@@ -264,7 +264,7 @@ function WizardFrame({
           display: flex;
           align-items: flex-start;
           justify-content: center;
-          background: radial-gradient(circle at top, rgba(167,139,250,0.10), transparent 36%), var(--bg);
+          background: radial-gradient(circle at top, rgba(146,91,252,0.10), transparent 36%), var(--bg);
           font-family: var(--font-mono-stack);
           padding: 0;
         }
@@ -323,7 +323,7 @@ function WizardFrame({
           transition: all 0.2s;
         }
         .wizard-step-dot.done { background: var(--violet); opacity: 0.7; }
-        .wizard-step-dot.active { background: var(--violet); opacity: 1; box-shadow: 0 0 5px rgba(167,139,250,0.4); }
+        .wizard-step-dot.active { background: var(--violet); opacity: 1; box-shadow: 0 0 5px rgba(146,91,252,0.4); }
         .wizard-step-dot.clickable { cursor: pointer; }
         .wizard-step-label {
           display: none; /* hidden on mobile */
@@ -389,7 +389,7 @@ function WizardFrame({
         }
         .wizard-badge {
           font-size: 8px;
-          background: rgba(167,139,250,0.15);
+          background: rgba(146,91,252,0.15);
           color: var(--violet);
           padding: 1px 5px;
         }
@@ -409,8 +409,8 @@ function WizardFrame({
           display: grid;
           gap: 8px;
           padding: 10px 12px;
-          background: rgba(167,139,250,0.06);
-          border: 1px solid rgba(167,139,250,0.15);
+          background: rgba(146,91,252,0.06);
+          border: 1px solid rgba(146,91,252,0.15);
         }
         .wizard-feature {
           display: flex;

@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { isWizardComplete } from '../wizard/storage';
 import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -18,13 +20,13 @@ export default function LoginPage() {
       .then((r) => r.json())
       .then((d: { configured: boolean }) => {
         if (!d.configured) {
-          window.location.replace('/setup');
+          router.replace('/setup');
           return;
         }
         setChecking(false);
       })
       .catch(() => setChecking(false));
-  }, []);
+  }, [router]);
 
   // Enter key handler for the password input
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
@@ -51,11 +53,11 @@ export default function LoginPage() {
         try {
           const done = await isWizardComplete();
           if (!done) {
-            window.location.replace('/wizard');
+            router.replace('/wizard');
             return;
           }
         } catch { /* fallback to dashboard */ }
-        window.location.replace('/');
+        router.replace('/');
       } else {
         const data = (await res.json()) as { error?: string };
         setError(data.error ?? 'Invalid password');
@@ -76,7 +78,7 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(circle at top, rgba(167,139,250,0.12), transparent 32%), var(--bg)',
+        background: 'radial-gradient(circle at top, rgba(146,91,252,0.12), transparent 32%), var(--bg)',
         fontFamily: 'var(--font-mono-stack, monospace)',
         padding: '24px',
       }}
@@ -92,7 +94,7 @@ export default function LoginPage() {
         }}
       >
         <div style={{ padding: '22px 24px 18px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-          <img src="/rev4a-logo.png" alt="Rev4a" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(167,139,250,0.25))' }} />
+          <img src="/rev4a-logo.svg" alt="Rev4a" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(146,91,252,0.25))' }} />
           <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--violet)' }}>REV4A</div>
           <div style={{ marginTop: 8, color: 'var(--text-dim)', fontSize: 11, letterSpacing: '0.12em' }}>
             AGENCY MONITOR — RESTRICTED ACCESS

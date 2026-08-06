@@ -27,18 +27,22 @@ export default function MemoryContextPageClient() {
   const timezone = useRev4aTimezone();
 
   useEffect(() => {
+    const controller = new AbortController();
     async function load() {
       try {
-        const res = await apiFetch('/api/memory-context');
+        const res = await apiFetch('/api/memory-context', { signal: controller.signal });
+        if (controller.signal.aborted) return;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         setData((await res.json()) as MemoryContextPayload);
       } catch (err) {
+        if (controller.signal.aborted) return;
         setError((err as Error).message);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
     void load();
+    return () => controller.abort();
   }, []);
 
   const metrics = useMemo(() => {

@@ -73,7 +73,7 @@ async function verifyAuth(request: Request): Promise<boolean> {
   const cookieToken = decodeURIComponent(match.split('=')[1]);
   try {
     const secret = new TextEncoder().encode(
-      process.env.REV4A_JWT_SECRET || 'rev4a-jwt-secret-change-in-prod',
+      process.env.REV4A_JWT_SECRET || (() => { throw new Error('REV4A_JWT_SECRET not set'); })(),
     );
     await jwtVerify(cookieToken, secret);
     return true;

@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
 
+const SENSITIVE = ['REV4A_PASSWORD', 'REV4A_TOKEN', 'REV4A_JWT_SECRET'];
+
 export async function GET() {
-  return NextResponse.json({
-    REV4A_PASSWORD: process.env.REV4A_PASSWORD || '(not set)',
-    REV4A_TOKEN: process.env.REV4A_TOKEN || '(not set)',
-    REV4A_JWT_SECRET: process.env.REV4A_JWT_SECRET?.substring(0,10) + '...' || '(not set)',
-    NODE_ENV: process.env.NODE_ENV,
-  });
+  const safe: Record<string, string> = {};
+  for (const key of ['REV4A_PASSWORD', 'REV4A_TOKEN', 'REV4A_JWT_SECRET', 'REV4A_ALERTS_ENABLED', 'REV4A_DB', 'REV4A_WORKSPACE_ROOT', 'PROVIDER_DEEPSEEK_API_KEY', 'NODE_ENV']) {
+    const val = process.env[key];
+    if (SENSITIVE.includes(key)) {
+      safe[key] = val ? '✅ set (' + val.substring(0, 4) + '...)' : '❌ not set';
+    } else {
+      safe[key] = val || '(not set)';
+    }
+  }
+  return NextResponse.json(safe);
 }

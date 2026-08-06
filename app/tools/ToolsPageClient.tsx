@@ -86,16 +86,20 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
   }, [timezone]);
 
   useEffect(() => {
-    fetch('/api/tools-config', API_FETCH_OPTIONS)
+    const controller = new AbortController();
+    fetch('/api/tools-config', { ...API_FETCH_OPTIONS, signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
+        if (controller.signal.aborted) return;
         setAudio(sanitizeAudioConfig(data.audio));
         if (data.timezone) setTimezone(data.timezone);
         if (data.error) setError(String(data.error));
       })
       .catch((e: unknown) => {
+        if (controller.signal.aborted) return;
         setError((e as Error).message);
       });
+    return () => controller.abort();
   }, []);
 
   async function handleSave() {
@@ -136,7 +140,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
   const catalog = useMemo(() => TOOL_CATALOG.map((category) => ({ ...category, tools: category.tools.map((tool) => ({ ...tool, status: tool.name === 'tts' ? audioStatus : tool.status ?? 'Available' })) })), [audioStatus]);
 
   return (
-    <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <header style={{ height: '48px', padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxSizing: 'border-box' }}>
         <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>TOOLS</span>
         <div style={heroPillStyle}>{configuredCount}/{CONFIGURABLE_TOOL_COUNT} configurable ready</div>

@@ -260,7 +260,7 @@ export default function TerminalClient({ containerId }: { containerId: string })
         padding: '0 16px', color: '#888', fontSize: 12, flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: '#a78bfa', letterSpacing: '4px', fontSize: 14, fontFamily: 'Instrument Serif, serif' }}>TERMINAL</span>
+          <span style={{ color: '#925BFC', letterSpacing: '4px', fontSize: 14, fontFamily: 'Instrument Serif, serif' }}>TERMINAL</span>
           <span style={{ color: status === 'Connected' ? '#22c55e' : '#ef4444' }}>●</span>
           <span style={{ color: '#ccc' }}>{containerId}</span>
           <span style={{ color: '#555', fontSize: 11 }}>{status}</span>

@@ -20,21 +20,26 @@ export default function ContainersClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     try {
-      const res = await fetch('/api/containers');
+      const res = await fetch('/api/containers', { signal });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setContainers(Array.isArray(data) ? data : []);
+      if (!signal?.aborted) setContainers(Array.isArray(data) ? data : []);
     } catch(e: any) {
-      setError(e.message);
+      if (e?.name === 'AbortError') return;
+      if (!signal?.aborted) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }
 
-  useEffect(() => { load() }, []);
-  useEffect(() => { const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    const i = setInterval(() => { if (!controller.signal.aborted) load(controller.signal); }, 15000);
+    return () => { controller.abort(); clearInterval(i); };
+  }, []);
 
   return (
     <div style={{ padding: '16px', maxWidth: 1080, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -45,7 +50,7 @@ export default function ContainersClient() {
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
             {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{new Date().toLocaleTimeString('it-IT')}</span>
           </span>
-          <Button variant="ghost" size="sm" onClick={load}>↻</Button>
+          <Button variant="ghost" size="sm" onClick={() => load()}>↻</Button>
         </div>
       </div>
 

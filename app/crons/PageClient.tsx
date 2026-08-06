@@ -201,15 +201,16 @@ export default function CronsPage() {
     finally { setBusyJobId(null); }
   }
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     try {
-      const jobsRes = await apiFetch('/api/crons');
+      const jobsRes = await apiFetch('/api/crons', { signal });
+      if (signal?.aborted) return;
       if (jobsRes.ok) {
         const data = await jobsRes.json() as CronJob[] | { jobs: CronJob[] };
-        setJobs(Array.isArray(data) ? data : (data.jobs ?? []));
+        if (!signal?.aborted) setJobs(Array.isArray(data) ? data : (data.jobs ?? []));
       }
     } catch { /* keep UI alive */ }
-    finally { setLoading(false); }
+    finally { if (!signal?.aborted) setLoading(false); }
   }
 
   // Clear selected job when filter changes (old selection may no longer be visible)
@@ -264,9 +265,10 @@ export default function CronsPage() {
   }, [selectedJob?.id, selectedJob?.containerName]);
 
   useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 15_000);
-    return () => clearInterval(t);
+    const controller = new AbortController();
+    void load(controller.signal);
+    const t = setInterval(() => { if (!controller.signal.aborted) void load(controller.signal); }, 15_000);
+    return () => { controller.abort(); clearInterval(t); };
   }, []);
 
   return (

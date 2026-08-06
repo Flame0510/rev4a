@@ -1,7 +1,5 @@
-import { requireAuth } from '@/lib/requireAuth';
 import GatewayPageClient from './PageClient';
 
-export default async function GatewayPage() {
-  await requireAuth();
+export default function GatewayPage() {
   return <GatewayPageClient />;
 }

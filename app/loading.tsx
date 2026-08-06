@@ -5,8 +5,8 @@ export default function Loading() {
     <div
       style={{
         flex: 1,
-        minHeight: '100vh',
-        background: 'radial-gradient(circle at center, rgba(167,139,250,0.10), transparent 34%), var(--bg)',
+        minHeight: '100dvh',
+        background: 'radial-gradient(circle at center, rgba(146,91,252,0.10), transparent 34%), var(--bg)',
       }}
     >
       <Rev4aLoader label="LOADING SECTION" fullHeight />

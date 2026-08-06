@@ -1,4 +1,3 @@
-import { requireAuth } from '@/lib/requireAuth';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -108,7 +107,6 @@ async function getUsedPorts(): Promise<number[]> {
 }
 
 export default async function CreateAgentPage() {
-  await requireAuth();
 
   const [templates, models, usedNames, usedPorts] = await Promise.all([
     getTemplates(),

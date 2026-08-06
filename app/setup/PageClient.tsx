@@ -169,7 +169,7 @@ export default function SetupPageClient() {
         .setup-outer {
           min-height: 100vh; min-height: 100dvh;
           display: flex; align-items: flex-start; justify-content: center;
-          background: radial-gradient(circle at top, rgba(167,139,250,0.12), transparent 40%), var(--bg);
+          background: radial-gradient(circle at top, rgba(146,91,252,0.12), transparent 40%), var(--bg);
           font-family: var(--font-mono-stack);
           padding: 0;
         }
@@ -200,7 +200,7 @@ export default function SetupPageClient() {
           flex-shrink: 0;
         }
         .setup-step.done { background: var(--violet); opacity: 0.7; }
-        .setup-step.active { background: var(--violet); opacity: 1; box-shadow: 0 0 6px rgba(167,139,250,0.5); }
+        .setup-step.active { background: var(--violet); opacity: 1; box-shadow: 0 0 6px rgba(146,91,252,0.5); }
         .setup-body { padding: 16px; }
         .setup-input {
           background: var(--bg); border: 1px solid var(--border);

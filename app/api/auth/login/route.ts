@@ -73,7 +73,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const response = NextResponse.json({ ok: true });
     response.cookies.set('rev4a_token', token, {
       httpOnly: true,
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'strict',
       maxAge: 60 * 60 * 24 * 7,
       path: '/',
     });
