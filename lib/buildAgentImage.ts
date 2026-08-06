@@ -3,13 +3,13 @@
  *
  * Shared logic for obtaining the openclaw-agent-base Docker image.
  * Used by /api/agents/download-image, /api/agents/image-status, and
- * the olympus serve CLI.
+ * the rev4a serve CLI.
  *
  * Strategy (in order):
- *   1. docker pull from ghcr.io/flame0510/olympus/openclaw-agent-base:latest (public, no auth)
+ *   1. docker pull from ghcr.io/flame0510/rev4a/openclaw-agent-base:latest (public, no auth)
  *   2. If pull fails (offline / no network) → fallback to local docker build
  *
- * Logs are written to /tmp/olympus-download-<timestamp>.log so they survive
+ * Logs are written to /tmp/rev4a-download-<timestamp>.log so they survive
  * page refreshes and modal closes.
  */
 import * as crypto from 'crypto';
@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync as execSyncRaw } from 'child_process';
 
-const REGISTRY_IMAGE = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
+const REGISTRY_IMAGE = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
 const LOCAL_IMAGE = 'openclaw-agent-base:latest';
 
 let isDownloading = false;
@@ -84,7 +84,7 @@ function cleanupOldLogs(): void {
     const files = fs.readdirSync(tmpDir);
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     for (const f of files) {
-      if (!f.startsWith('olympus-download-') || !f.endsWith('.log')) continue;
+      if (!f.startsWith('rev4a-download-') || !f.endsWith('.log')) continue;
       const fullPath = path.join(tmpDir, f);
       const stat = fs.statSync(fullPath);
       if (stat.mtimeMs < cutoff) {
@@ -222,7 +222,7 @@ function localBuild(
     const hash = getDockerfileHash();
     const noCache = opts.force ? '--no-cache ' : '';
     const cmd = hash
-      ? `docker build ${noCache}-t ${LOCAL_IMAGE} --label "olympus.dockerfile_hash=${hash}" --progress=plain .`
+      ? `docker build ${noCache}-t ${LOCAL_IMAGE} --label "rev4a.dockerfile_hash=${hash}" --progress=plain .`
       : `docker build ${noCache}-t ${LOCAL_IMAGE} --progress=plain .`;
 
     appendLog('');
@@ -298,7 +298,7 @@ export async function downloadAgentImage(opts: DownloadOptions): Promise<void> {
   }
 
   const timestamp = Date.now();
-  downloadLogPath = `/tmp/olympus-download-${timestamp}.log`;
+  downloadLogPath = `/tmp/rev4a-download-${timestamp}.log`;
 
   const emit = (data: string) => {
     onEvent?.(data);

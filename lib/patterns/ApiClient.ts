@@ -1,11 +1,11 @@
-// Facade + Singleton: wraps all Olympus API calls behind a clean interface
+// Facade + Singleton: wraps all Rev4a API calls behind a clean interface
 import type { Session, SessionDetail, Costs, SessionEvent } from '../types';
 import { SessionFactory, EventFactory } from './SessionFactory';
 import { adaptCosts, adaptSession, adaptEvent } from './ApiAdapter';
 
 const API_TOKEN =
   typeof process !== 'undefined'
-    ? (process.env.NEXT_PUBLIC_OLYMPUS_TOKEN ?? '')
+    ? (process.env.NEXT_PUBLIC_REV4A_TOKEN ?? '')
     : '';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -21,14 +21,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-class OlympusApiClientClass {
-  private static _instance: OlympusApiClientClass | null = null;
+class Rev4aApiClientClass {
+  private static _instance: Rev4aApiClientClass | null = null;
 
   private constructor() {}
 
-  static get instance(): OlympusApiClientClass {
-    OlympusApiClientClass._instance ??= new OlympusApiClientClass();
-    return OlympusApiClientClass._instance;
+  static get instance(): Rev4aApiClientClass {
+    Rev4aApiClientClass._instance ??= new Rev4aApiClientClass();
+    return Rev4aApiClientClass._instance;
   }
 
   async fetchSessions(): Promise<Session[]> {
@@ -62,4 +62,4 @@ class OlympusApiClientClass {
   }
 }
 
-export const OlympusApiClient = OlympusApiClientClass.instance;
+export const Rev4aApiClient = Rev4aApiClientClass.instance;

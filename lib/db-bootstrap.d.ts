@@ -1,3 +1,3 @@
 declare module '*/db-bootstrap.mjs' {
-  export function initializeOlympusDb(dbPath: string): void;
+  export function initializeRev4aDb(dbPath: string): void;
 }

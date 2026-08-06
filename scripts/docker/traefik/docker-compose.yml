@@ -1,7 +1,7 @@
-# Olympus Traefik — dedicated reverse proxy
+# Rev4a Traefik — dedicated reverse proxy
 #
 # This Traefik instance is isolated from any other Traefik running on the host.
-# It uses its own Docker network (olympus-traefik) and config directory.
+# It uses its own Docker network (rev4a-traefik) and config directory.
 #
 # Ports:
 #   80  → HTTP  (entrypoint: web)
@@ -11,13 +11,13 @@
 services:
   traefik:
     image: traefik:latest
-    container_name: traefik-olympus
+    container_name: traefik-'rev4a'
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     networks:
-      - olympus-traefik
+      - rev4a-traefik
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
@@ -27,6 +27,6 @@ services:
       - "traefik.enable=false"
 
 networks:
-  olympus-traefik:
-    name: olympus-traefik
+  rev4a-traefik:
+    name: rev4a-traefik
     external: true  # created by setup.sh before this Compose stack starts

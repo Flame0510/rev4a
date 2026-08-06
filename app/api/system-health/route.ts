@@ -4,6 +4,7 @@ import { maybeSendAlert } from '@/lib/alerts';
 import { summarizeBilling } from '@/lib/billing';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
 import type { ModelCost } from '@/lib/types';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +59,7 @@ function columnExists(db: ReturnType<typeof openDb>, tableName: string, columnNa
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   const now = new Date();
   const createdAt = now.toISOString();
@@ -70,7 +72,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const latestSessionRow = db.prepare('SELECT MAX(COALESCE(updated_at, started_at, 0)) AS latest FROM sessions').get() as { latest: number | null };
     const latestSessionTs = getSeconds(latestSessionRow.latest);
     const latestSessionAgeSeconds = latestSessionTs ? Math.floor(Date.now() / 1000) - latestSessionTs : null;
-    const staleThresholdSeconds = getEnvNumber('OLYMPUS_ALERT_STALE_SECONDS', 120);
+    const staleThresholdSeconds = getEnvNumber('REV4A_ALERT_STALE_SECONDS', 120);
 
     checks.push({
       id: 'runtime.sessions',
@@ -113,7 +115,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         id: 'runtime.check-freshness',
         severity: 'warning',
         source: 'runtime',
-        title: 'Check Olympus runtime heartbeat',
+        title: 'Check Rev4a runtime heartbeat',
         details: latestMetricAgeSeconds === null
           ? 'No heartbeat metrics available from runtime.'
           : `Heartbeat metrics stuck for ${latestMetricAgeSeconds}s (soglia ${staleThresholdSeconds}s).`,
@@ -126,13 +128,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     await maybeSendAlert({
       key: 'system-health.db-freshness',
       kind: 'db-freshness',
-      title: 'Olympus DB freshness',
+      title: 'Rev4a DB freshness',
       message: !hasSystemMetrics
         ? 'system_metrics table unavailable: freshness runtime not verifiable.'
         : latestMetricAgeSeconds === null
           ? 'No heartbeat metrics detected.'
           : `Last heartbeat metrics ${latestMetricAgeSeconds}s fa (soglia ${staleThresholdSeconds}s).`,
-      resolvedMessage: 'DB Olympus fresh again.',
+      resolvedMessage: 'DB Rev4a fresh again.',
       stale: hasSystemMetrics ? (latestMetricAgeSeconds === null ? true : latestMetricAgeSeconds > staleThresholdSeconds) : false,
     });
 
@@ -208,8 +210,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     db.close();
   } catch (error) {
-    checks.push({ id: 'runtime.db', label: 'Olympus DB', health: 'error', value: 'error', details: (error as Error).message, source: 'runtime' });
-    recommendations.push({ id: 'runtime.db-error', severity: 'critical', source: 'runtime', title: 'Olympus DB unreadable', details: (error as Error).message, dismissible: false, createdAt });
+    checks.push({ id: 'runtime.db', label: 'Rev4a DB', health: 'error', value: 'error', details: (error as Error).message, source: 'runtime' });
+    recommendations.push({ id: 'runtime.db-error', severity: 'critical', source: 'runtime', title: 'Rev4a DB unreadable', details: (error as Error).message, dismissible: false, createdAt });
   }
 
   try {

@@ -1,10 +1,10 @@
-# Olympus Frontend Architecture
+# Rev4a Frontend Architecture
 
 > **Last updated:** 2026-07-19
 
 ## Layering
 
-Olympus UI should follow a layered architecture:
+Rev4a UI should follow a layered architecture:
 
 1. `app/*/page.tsx` — routing only.
 2. `app/components/*Page*.tsx` — page composition and data orchestration.
@@ -73,7 +73,7 @@ Added UI-side discipline:
 
 ## Responsive system
 
-Olympus uses Bootstrap v5 breakpoint categories as project-wide tokens, declared in `app/globals.css`:
+Rev4a uses Bootstrap v5 breakpoint categories as project-wide tokens, declared in `app/globals.css`:
 
 - `--bp-sm: 576px`
 - `--bp-md: 768px`

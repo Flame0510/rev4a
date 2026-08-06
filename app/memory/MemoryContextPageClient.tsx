@@ -5,7 +5,7 @@ import type { MemoryContextPayload } from '@/lib/memory-context';
 import { Pill, Metric, Surface, Page, PageHeader, toneFromHealth } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
 import { SkeletonLines } from '../components/Skeleton';
-import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
+import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
 
 function formatBytes(value: number | null): string {
@@ -24,21 +24,25 @@ export default function MemoryContextPageClient() {
   const [data, setData] = useState<MemoryContextPayload | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const timezone = useOlympusTimezone();
+  const timezone = useRev4aTimezone();
 
   useEffect(() => {
+    const controller = new AbortController();
     async function load() {
       try {
-        const res = await apiFetch('/api/memory-context');
+        const res = await apiFetch('/api/memory-context', { signal: controller.signal });
+        if (controller.signal.aborted) return;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         setData((await res.json()) as MemoryContextPayload);
       } catch (err) {
+        if (controller.signal.aborted) return;
         setError((err as Error).message);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
     void load();
+    return () => controller.abort();
   }, []);
 
   const metrics = useMemo(() => {
@@ -54,7 +58,7 @@ export default function MemoryContextPageClient() {
   return (
     <Page>
       <div style={{ height: '48px', padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxSizing: 'border-box' }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>MEMORY</span>
+        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>MEMORY</span>
         {data?.strategy ? <Pill tone={toneFromHealth(data.strategy.health)}>health: {data.strategy.health}</Pill> : undefined}
       </div>
 
@@ -88,7 +92,7 @@ export default function MemoryContextPageClient() {
 
             <Surface variant="panel">
               <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--copper)' }}>Agent Memory Health</strong>
+                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Agent Memory Health</strong>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <Pill>user: {data.strategy.userProfile}</Pill>
                   <Pill>memory: {data.strategy.memory}</Pill>
@@ -151,7 +155,7 @@ export default function MemoryContextPageClient() {
 
             <Surface variant="panel">
               <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--copper)' }}>Global Context files</strong>
+                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Global Context files</strong>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, padding: 14 }}>
                 {data.globalContext.map((file) => (
@@ -176,7 +180,7 @@ export default function MemoryContextPageClient() {
             {data.strategy.warnings.length > 0 && (
               <Surface variant="panel" tone="warning">
                 <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                  <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--copper)' }}>Warnings</strong>
+                  <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Warnings</strong>
                 </div>
                 <ul style={{ margin: 0, padding: '12px 14px 12px 32px', color: 'var(--warning, #f6c66b)', fontSize: 12, lineHeight: 1.5 }}>
                   {data.strategy.warnings.map((warning) => <li key={warning}>{warning}</li>)}

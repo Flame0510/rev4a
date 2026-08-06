@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { isValidAgentId } from '@/lib/container';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 /**
  * Determine the volume name for an agent by checking if it exists.
@@ -42,10 +43,10 @@ function fmtSize(bytes: number): string {
  * POST /api/agents/[id]/backup
  * Create a backup of the agent's persistent volume.
  */
-export async function POST(
-  _req: Request,
+export async function POST(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
@@ -84,10 +85,10 @@ interface BackupFile {
  * GET /api/agents/[id]/backup
  * List available backups for an agent.
  */
-export async function GET(
-  _req: Request,
+export async function GET(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
@@ -138,16 +139,16 @@ export async function GET(
  * DELETE /api/agents/[id]/backup?file=agent-xxx-2026-07-11_2115.tar.gz
  * Remove a specific backup file.
  */
-export async function DELETE(
-  req: Request,
+export async function DELETE(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
     if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
-    const url = new URL(req.url);
+    const url = new URL(request.url);
     const file = url.searchParams.get('file');
     if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
 

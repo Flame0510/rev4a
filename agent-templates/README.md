@@ -2,7 +2,7 @@
 
 ## Base Image: `openclaw-agent-base`
 
-The base image for all agent containers in the Olympus ecosystem.
+The base image for all agent containers in the Rev4a ecosystem.
 
 ### Traefik Integration
 
@@ -10,7 +10,7 @@ The image includes the minimum static labels required by Traefik:
 - `traefik.enable=true`
 
 Dynamic labels (router rule, hostname, certresolver) must be passed at
-`docker run` time. The Olympus agent creation wizard (`/agents/create`)
+`docker run` time. The Rev4a agent creation wizard (`/agents/create`)
 generates them automatically.
 
 ### Required Traefik Labels
@@ -34,4 +34,4 @@ docker run -d \
 
 After creation:
 - The agent is reachable at `https://<agent_id>.<your-domain>`
-- The Olympus Agents page shows it with the Traefik link and a copyable token
+- The Rev4a Agents page shows it with the Traefik link and a copyable token

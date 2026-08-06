@@ -1,10 +1,12 @@
 import { type NextRequest } from 'next/server';
 import { DB_PATH } from '@/lib/db';
 import Database from 'better-sqlite3';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let lastEventId = 0;
   const encoder = new TextEncoder();
 

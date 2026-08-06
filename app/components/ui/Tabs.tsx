@@ -33,8 +33,8 @@ export function Tabs({ items, className }: TabsProps) {
           style={{
             background: 'transparent',
             border: 'none',
-            borderBottom: item.active ? '2px solid var(--copper)' : '2px solid transparent',
-            color: item.active ? 'var(--copper)' : 'var(--text-dim)',
+            borderBottom: item.active ? '2px solid var(--violet)' : '2px solid transparent',
+            color: item.active ? 'var(--violet)' : 'var(--text-dim)',
             padding: '12px 16px',
             fontSize: 13,
             fontFamily: 'var(--font-mono-stack)',

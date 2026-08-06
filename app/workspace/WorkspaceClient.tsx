@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/ui';
+import { Skeleton, TreeSkeleton, CodeSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ function fmtDate(ms: number) {
 }
 
 // ─── File type icon SVGs ──────────────────────────────────────────────────────
-const COPPER = 'var(--copper)'; // #b8860b-ish
+const COPPER = 'var(--violet)'; // #b8860b-ish
 
 function FolderIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -193,10 +194,10 @@ function TreeNodeRow({
       style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: `3px 8px 3px ${8 + indent}px`,
         cursor: 'pointer', userSelect: 'none', outline: 'none',
-        background: isSelected ? '#1a1208' : 'transparent',
-        color: isSelected ? 'var(--copper)' : isDir ? '#aaa' : '#ccc',
+        background: isSelected ? '#1a1030' : 'transparent',
+        color: isSelected ? 'var(--violet)' : isDir ? '#aaa' : '#ccc',
         fontSize: 11, fontFamily: 'var(--font-mono-stack)',
-        borderLeft: isSelected ? '2px solid var(--copper)' : focused ? '2px solid #555' : '2px solid transparent',
+        borderLeft: isSelected ? '2px solid var(--violet)' : focused ? '2px solid #555' : '2px solid transparent',
         transition: 'background 0.1s',
       }}
       onMouseEnter={(e) => { if (!isSelected && !focused) (e.currentTarget as HTMLElement).style.background = '#111'; }}
@@ -244,6 +245,7 @@ export default function WorkspaceClient() {
   const flatItemsRef = useRef<FlatItem[]>([]);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [wsLoading, setWsLoading] = useState(true);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('');
 
   // Load workspaces list on mount
@@ -263,6 +265,8 @@ export default function WorkspaceClient() {
         }
       } catch {
         setWorkspaces([]);
+      } finally {
+        setWsLoading(false);
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -284,11 +288,17 @@ export default function WorkspaceClient() {
     };
 
     const scheduleNext = () => {
+      if (document.hidden) return; // don't poll when tab is hidden
       pollTimer = setTimeout(async () => {
         await load(false);
         if (mounted) scheduleNext();
       }, 5000);
     };
+
+    const onVisibility = () => {
+      if (!document.hidden) { clearTimeout(pollTimer); scheduleNext(); }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     void load(true);
     scheduleNext();
@@ -296,6 +306,7 @@ export default function WorkspaceClient() {
     return () => {
       mounted = false;
       clearTimeout(pollTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [selectedWorkspace]);
 
@@ -440,7 +451,7 @@ export default function WorkspaceClient() {
   }, []);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', overflow: 'hidden' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         {isMobile === 'phone' && mobileView === 'editor' ? (
@@ -450,39 +461,45 @@ export default function WorkspaceClient() {
           </Button>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--copper)' }}>WORKSPACE</span>
-            <select
-              value={selectedWorkspace}
-              onChange={(e) => {
-                const newWs = e.target.value;
-                setSelectedWorkspace(newWs);
-                setTree([]);
-                setSelectedPath(null);
-                setSelectedNode(null);
-                setFileContent('');
-                setEditContent('');
-                setFocusedIndex(-1);
-                setMobileView('tree');
-                setSaveState('idle');
-              }}
-              className="ui-select-workspace"
-              style={{
-                background: 'var(--bg3)',
-                color: 'var(--copper)',
-                border: '1px solid var(--border)',
-                borderRadius: 0,
-                fontSize: 11,
-                padding: '3px 8px',
-                fontFamily: 'var(--font-mono-stack)',
-                maxWidth: 220,
-                cursor: 'pointer',
-                outline: 'none',
-              }}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>{w.label}</option>
-              ))}
-            </select>
+            <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--violet)' }}>WORKSPACE</span>
+            {wsLoading ? (
+              <Skeleton width={160} height={24} accent />
+            ) : workspaces.length === 0 ? (
+              <span style={{ fontSize: 11, color: '#555', fontFamily: 'var(--font-mono-stack)' }}>No workspaces</span>
+            ) : (
+              <select
+                value={selectedWorkspace}
+                onChange={(e) => {
+                  const newWs = e.target.value;
+                  setSelectedWorkspace(newWs);
+                  setTree([]);
+                  setSelectedPath(null);
+                  setSelectedNode(null);
+                  setFileContent('');
+                  setEditContent('');
+                  setFocusedIndex(-1);
+                  setMobileView('tree');
+                  setSaveState('idle');
+                }}
+                className="ui-select-workspace"
+                style={{
+                  background: 'var(--bg3)',
+                  color: 'var(--violet)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 0,
+                  fontSize: 11,
+                  padding: '3px 8px',
+                  fontFamily: 'var(--font-mono-stack)',
+                  maxWidth: 220,
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+              >
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>{w.label}</option>
+                ))}
+              </select>
+            )}
           </div>
         )}
         {selectedPath && (
@@ -529,7 +546,7 @@ export default function WorkspaceClient() {
             style={{ flex: 1, overflowY: 'auto', paddingTop: 6, paddingBottom: 24, outline: 'none' }}
           >
             {treeLoading ? (
-              <div style={{ padding: '20px 12px', color: '#555', fontSize: 11 }}>Loading…</div>
+              <TreeSkeleton rows={16} />
             ) : tree.length === 0 ? (
               <div style={{ padding: '20px 12px', color: '#555', fontSize: 11 }}>Empty workspace</div>
             ) : flatItems.map((item, index) => (
@@ -558,7 +575,7 @@ export default function WorkspaceClient() {
         {isMobile === 'desktop' && (
         <div
           onMouseDown={onMouseDown}
-          style={{ width: 4, cursor: 'col-resize', background: isDragging ? 'var(--copper)' : 'transparent', transition: isDragging ? 'none' : 'background 0.15s', flexShrink: 0 }}
+          style={{ width: 4, cursor: 'col-resize', background: isDragging ? 'var(--violet)' : 'transparent', transition: isDragging ? 'none' : 'background 0.15s', flexShrink: 0 }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#333'; }}
           onMouseLeave={(e) => { if (!isDragging) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
         />
@@ -571,12 +588,17 @@ export default function WorkspaceClient() {
               Select a file to view or edit
             </div>
           ) : fileLoading ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 11 }}>Loading…</div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
+                <div style={{ flex: 1 }} />
+              </div>
+              <CodeSkeleton lines={18} />
+            </div>
           ) : (
             <>
               {/* File meta bar */}
               <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
-                <span style={{ fontSize: 11, color: 'var(--copper)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{selectedPath?.replace('/data/.openclaw/', '')}</span>
+                <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{selectedPath?.replace('/data/.openclaw/', '')}</span>
                 <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{lang}</span>
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtSize(selectedNode.size)}</span>}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtDate(selectedNode.mtimeMs)}</span>}

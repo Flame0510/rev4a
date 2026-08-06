@@ -1,6 +1,6 @@
 # OpenClaw Agent Base Image
 #
-# Base image for agent containers in the Olympus ecosystem.
+# Base image for agent containers in the Rev4a ecosystem.
 # Includes: Node, OpenClaw, gh CLI, Vercel CLI, Trello CLI, entrypoint.
 #
 # Traefik integration:
@@ -31,8 +31,8 @@
 
 FROM node:24-bookworm-slim
 
-LABEL description="OpenClaw Agent Base — Olympus multicontainer ecosystem"
-LABEL maintainer="Olympus Agency"
+LABEL description="OpenClaw Agent Base — Rev4a multicontainer ecosystem"
+LABEL maintainer="Rev4a Agency"
 
 # Traefik static labels — enable proxy support by default.
 # Dynamic router/service labels must be provided at container creation.
@@ -55,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Agent containers route model requests through Olympus provider proxy
+# Agent containers route model requests through Rev4a provider proxy
 RUN npm install -g openclaw@2026.7.1-2 vercel trello-cli \
 # Supabase CLI — installed via official GitHub release (npm global no longer supported on Linux)
 # Pinned to v2.109.1. Bump the version here to update.
@@ -67,15 +67,15 @@ RUN npm install -g openclaw@2026.7.1-2 vercel trello-cli \
        | openclaw config patch --stdin
 
 # Default config directory + shared-skills extraDirs pre-wired.
-# Also pre-wires the bootstrap-extra-files hook to inject Olympus system rules
-# from workspace/.olympus/ (mounted read-only by the Olympus create route).
+# Also pre-wires the bootstrap-extra-files hook to inject Rev4a system rules
+# from workspace/.rev4a/ (mounted read-only by the Rev4a create route).
 # Note: config patch deep-merges objects, replaces arrays.
 # These two sections (skills + hooks) target different config paths so they
 # are merged independently — the second patch does not overwrite the first.
 RUN mkdir -p /data/.openclaw \
     && echo '{"skills":{"load":{"extraDirs":["/data/.openclaw/shared-skills"]}}}' \
        | openclaw config patch --stdin \
-    && echo '{"hooks":{"internal":{"entries":{"bootstrap-extra-files":{"enabled":true,"paths":[".olympus/*.md"]}}}}}' \
+    && echo '{"hooks":{"internal":{"entries":{"bootstrap-extra-files":{"enabled":true,"paths":[".rev4a/*.md"]}}}}}' \
        | openclaw config patch --stdin
 
 # Standard entrypoint

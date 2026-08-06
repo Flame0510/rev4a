@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -538,6 +539,7 @@ function buildCopilotQuotas(db: ReturnType<typeof openDb>): QuotaMetric[] | null
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let providers: ProviderUsageEntry[] = [];
   const quotas: Record<string, QuotaMetric[] | null> = {
     anthropic: null,

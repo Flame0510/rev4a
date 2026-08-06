@@ -19,7 +19,7 @@ function SectionHeader({ icon, label, danger = false }: { icon: React.ReactNode;
       display: 'flex', alignItems: 'center', gap: 7,
       padding: '8px 14px',
       borderBottom: `1px solid ${danger ? 'rgba(239,68,68,0.15)' : 'var(--border)'}`,
-      color: danger ? '#ef4444' : 'var(--copper)',
+      color: danger ? '#ef4444' : 'var(--violet)',
       fontSize: 10, letterSpacing: '0.08em',
     }}>
       <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
@@ -84,7 +84,7 @@ function NoProviderBanner() {
       <div>
         <strong style={{ color: '#fbbf24' }}>⚠ No providers configured.</strong>
         {' '}Agents need model providers to run. Configure them in the&nbsp;
-        <a href="/gateway" style={{ color: 'var(--copper)', textDecoration: 'underline' }}>
+        <a href="/gateway" style={{ color: 'var(--violet)', textDecoration: 'underline' }}>
           Gateway
         </a>.
       </div>
@@ -92,8 +92,8 @@ function NoProviderBanner() {
         href="/gateway"
         style={{
           padding: '4px 10px',
-          border: '1px solid var(--copper)',
-          color: 'var(--copper)',
+          border: '1px solid var(--violet)',
+          color: 'var(--violet)',
           fontSize: 11,
           textDecoration: 'none',
           background: 'transparent',
@@ -234,7 +234,7 @@ export default function AgentsPageClient() {
 
   const tokenSection = (
     <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', flexShrink: 0 }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.06em', color: 'var(--copper)', marginBottom: 6, textTransform: 'uppercase' }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.06em', color: 'var(--violet)', marginBottom: 6, textTransform: 'uppercase' }}>
         Gateway Token
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.4 }}>
@@ -277,25 +277,25 @@ export default function AgentsPageClient() {
     return (
       <div style={{ padding: 40, textAlign: 'center' }}>
         <div style={{ color: '#ef4444', fontSize: 14, marginBottom: 10 }}>{error}</div>
-        <Button variant="secondary" size="sm" onClick={load}>
+        <Button variant="secondary" size="sm" onClick={() => load()}>
           RETRY
         </Button>
       </div>
     );
   }
 
-  // ─── Mobile: mostra lista o dettaglio ───
+  // ─── Mobile: show list or detail ───
   if (isMobile) {
     if (!showList && selected) {
       return (
-        <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
+        <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
               BACK
             </Button>
-            <span style={{ fontSize: 12, color: 'var(--copper)' }}>{selected.name}</span>
+            <span style={{ fontSize: 12, color: 'var(--violet)' }}>{selected.name}</span>
           </div>
           <ImageDownloadBanner onImageReady={handleImageReady} />
         {!providersConfigured && <NoProviderBanner />}
@@ -309,9 +309,9 @@ export default function AgentsPageClient() {
 
     // Mobile: lista
     return (
-      <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', paddingBottom: 54, boxSizing: 'border-box' }}>
+      <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
+          <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
           <Button variant="primary" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
             + NEW
@@ -335,7 +335,7 @@ export default function AgentsPageClient() {
                 <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                 {agent.template && (
-                  <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
+                  <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
                 )}
                 <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
                   {agent.state === 'running' && agent.traefikUrl && (
@@ -373,10 +373,10 @@ export default function AgentsPageClient() {
 
   // ─── Desktop: split view ───
   return (
-    <div style={{ height: '100vh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>AGENTS</span>
+          <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
           <Button variant="primary" size="sm" disabled={!imageReady || !providersConfigured} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : !providersConfigured ? 'No providers configured' : undefined}>
             + NEW
@@ -403,9 +403,9 @@ export default function AgentsPageClient() {
               <ListItem key={agent.id} onClick={() => setSelected(agent)} active={isSelected} style={{ padding: '12px 14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
-                  <span style={{ color: isSelected ? 'var(--copper)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
+                  <span style={{ color: isSelected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
                   {agent.template && (
-                    <span style={{ fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>{agent.template}</span>
+                    <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
                   )}
                   <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
                     {agent.state === 'running' && agent.traefikUrl && (
@@ -501,7 +501,7 @@ function EditAgentModal({ agent, onClose }: { agent: Agent; onClose: () => void 
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 500, color: 'var(--copper)', letterSpacing: '0.05em' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 500, color: 'var(--violet)', letterSpacing: '0.05em' }}>
             <span>EDIT AGENT</span>
             <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>✕</Button>
           </div>
@@ -575,7 +575,7 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '10px 14px', borderBottom: '1px solid var(--border)',
         }}>
-          <span style={{ fontSize: 12, color: 'var(--copper)' }}>openclaw.json - {agent.displayName || agent.agentId || agent.name}</span>
+          <span style={{ fontSize: 12, color: 'var(--violet)' }}>openclaw.json - {agent.displayName || agent.agentId || agent.name}</span>
           <Button variant="ghost" size="sm" onClick={onClose}>
             ✕
           </Button>
@@ -643,7 +643,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
             <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{agent.status}</div>
           </div>
           {agent.template && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(212,155,53,0.12)', color: 'var(--copper)', padding: '3px 8px', borderRadius: 0, border: '1px solid rgba(212,155,53,0.25)' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '3px 8px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>
               template: {agent.template}
             </span>
           )}
@@ -815,7 +815,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
             {count > 0 && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {profiles.map((p) => (
-                  <span key={p.providerId} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--copper)', background: 'rgba(212,155,53,0.08)', border: '1px solid rgba(212,155,53,0.2)', padding: '2px 8px' }}>
+                  <span key={p.providerId} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--violet)', background: 'rgba(146,91,252,0.08)', border: '1px solid rgba(146,91,252,0.2)', padding: '2px 8px' }}>
                     {p.label}
                   </span>
                 ))}
@@ -823,7 +823,7 @@ function IntegrationSection({ agentName }: { agentName: string }) {
             )}
             <a
               href="/credentials"
-              style={{ fontSize: 11, color: 'var(--copper)', textDecoration: 'none', cursor: 'pointer', marginTop: 4 }}
+              style={{ fontSize: 11, color: 'var(--violet)', textDecoration: 'none', cursor: 'pointer', marginTop: 4 }}
             >
               Manage credentials →
             </a>
@@ -930,9 +930,9 @@ function BackupSection({ agentName }: { agentName: string }) {
             padding: '8px 12px',
             fontSize: 11,
             fontFamily: 'var(--font-mono)',
-            color: 'var(--copper)',
-            background: 'rgba(212,155,53,0.08)',
-            border: '1px solid rgba(212,155,53,0.25)',
+            color: 'var(--violet)',
+            background: 'rgba(146,91,252,0.08)',
+            border: '1px solid rgba(146,91,252,0.25)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -941,7 +941,7 @@ function BackupSection({ agentName }: { agentName: string }) {
               display: 'inline-block',
               width: 8, height: 8,
               borderRadius: '50%',
-              background: 'var(--copper)',
+              background: 'var(--violet)',
               animation: 'pulse 1s infinite',
             }} />
             {status.label}
@@ -964,7 +964,7 @@ function BackupSection({ agentName }: { agentName: string }) {
                       type="button"
                       disabled={!!status}
                       onClick={() => handleRestore(b.name)}
-                      style={{ background: 'none', border: '1px solid var(--copper)', color: 'var(--copper)', cursor: 'pointer', fontSize: 10, padding: '2px 6px', opacity: status ? 0.5 : 1 }}
+                      style={{ background: 'none', border: '1px solid var(--violet)', color: 'var(--violet)', cursor: 'pointer', fontSize: 10, padding: '2px 6px', opacity: status ? 0.5 : 1 }}
                     >
                       Restore
                     </button>
@@ -1095,9 +1095,9 @@ function RecreateSection({ agentName }: { agentName: string }) {
             padding: '8px 12px',
             fontSize: 11,
             fontFamily: 'var(--font-mono)',
-            color: 'var(--copper)',
-            background: 'rgba(212,155,53,0.08)',
-            border: '1px solid rgba(212,155,53,0.25)',
+            color: 'var(--violet)',
+            background: 'rgba(146,91,252,0.08)',
+            border: '1px solid rgba(146,91,252,0.25)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -1107,7 +1107,7 @@ function RecreateSection({ agentName }: { agentName: string }) {
               display: 'inline-block',
               width: 8, height: 8,
               borderRadius: '50%',
-              background: 'var(--copper)',
+              background: 'var(--violet)',
               animation: 'pulse 1s infinite',
             }} />
             Recreating container...

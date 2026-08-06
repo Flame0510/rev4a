@@ -189,8 +189,8 @@ function deliverNotion(container: string, secret: Record<string, string>): void 
 
 // ── TOOLS.md managed section (per-container) ──────────────────────────────
 
-const MARKER_START = '<!-- OLYMPUS:INTEGRATIONS:START -->';
-const MARKER_END = '<!-- OLYMPUS:INTEGRATIONS:END -->';
+const MARKER_START = '<!-- REV4A:INTEGRATIONS:START -->';
+const MARKER_END = '<!-- REV4A:INTEGRATIONS:END -->';
 const TOOLS_MD_PATH = '/root/.openclaw/workspace/TOOLS.md';
 
 interface IntegrationEntry {
@@ -235,14 +235,14 @@ function buildBlock(integrations: IntegrationEntry[]): string {
   const ts = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
   if (integrations.length === 0) {
-    return `${MARKER_START}\n_No integrations configured via Olympus._\n${MARKER_END}`;
+    return `${MARKER_START}\n_No integrations configured via Rev4a._\n${MARKER_END}`;
   }
 
   const rows = integrations.map((e) => entryRow(e)).join('\n');
   return `${MARKER_START}
 ## Active Integrations
 
-> Managed by Olympus — do not edit this section manually. Last synced: ${ts}
+> Managed by Rev4a — do not edit this section manually. Last synced: ${ts}
 
 | Tool | Status | Notes |
 |---|---|---|

@@ -9,10 +9,11 @@
  * Each provider defines its own device code config + token exchange logic.
  *
  * After successful auth, the API key is saved to provider-keys.json
- * and the provider appears automatically in /api/models and Pythia.
+ * and the provider appears automatically in /api/models and Pulse.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { readProviderKeys, writeProviderKeys } from '@/app/api/gateway/provider/keys';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +57,7 @@ const OAUTH_CONFIGS: Record<string, DeviceCodeConfig> = {
     authStyle: 'json',
     extraHeaders: {
       originator: 'openclaw',
-      'User-Agent': 'openclaw/olympus',
+      'User-Agent': 'openclaw/rev4a',
     },
   },
 
@@ -83,6 +84,7 @@ const OAUTH_CONFIGS: Record<string, DeviceCodeConfig> = {
 // ── START device code flow ─────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = await request.json().catch(() => ({}));
     const provider = body.provider as string | undefined;
@@ -151,6 +153,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 // ── POLL authorization status ──────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const provider = request.nextUrl.searchParams.get('provider');
     const deviceAuthId = request.nextUrl.searchParams.get('deviceAuthId');

@@ -80,7 +80,7 @@ export default function SetupPageClient() {
     <div className="setup-outer">
       <div className="setup-card">
         <div className="setup-header">
-          <div className="setup-logo">OLYMPUS</div>
+          <div className="setup-logo">REV4A</div>
           <div className="setup-stepper">
             {STEPS.map((s, i) => (
               <div
@@ -96,12 +96,12 @@ export default function SetupPageClient() {
             <div style={{ display: 'grid', gap: 14 }}>
               <h2 style={{
                 fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
-                color: 'var(--copper)', margin: 0,
+                color: 'var(--violet)', margin: 0,
               }}>
                 Set Admin Password
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
-                Choose a password to protect your Olympus dashboard.
+                Choose a password to protect your Rev4a dashboard.
                 You'll use this to log in as admin.
               </p>
               <input
@@ -134,11 +134,11 @@ export default function SetupPageClient() {
           {step === 'done' && (
             <div style={{ display: 'grid', gap: 14, textAlign: 'center' }}>
               <div style={{ margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
-                <CheckCircleIcon size={48} color="var(--copper)" />
+                <CheckCircleIcon size={48} color="var(--violet)" />
               </div>
               <h2 style={{
                 fontFamily: 'var(--font-serif-stack)', fontSize: 22, letterSpacing: 1.5,
-                color: 'var(--copper)', margin: 0,
+                color: 'var(--violet)', margin: 0,
               }}>
                 Ready to Go
               </h2>
@@ -153,12 +153,12 @@ export default function SetupPageClient() {
                   'Next: add providers & agents in the wizard',
                 ].map((t) => (
                   <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text)' }}>
-                    <span style={{ color: 'var(--copper)' }}>•</span> {t}
+                    <span style={{ color: 'var(--violet)' }}>•</span> {t}
                   </div>
                 ))}
               </div>
               <Button variant="primary" size="md" onClick={handleDone}>
-                Start Using Olympus <ArrowRightIcon />
+                Start Using Rev4a <ArrowRightIcon />
               </Button>
             </div>
           )}
@@ -169,7 +169,7 @@ export default function SetupPageClient() {
         .setup-outer {
           min-height: 100vh; min-height: 100dvh;
           display: flex; align-items: flex-start; justify-content: center;
-          background: radial-gradient(circle at top, rgba(212,155,53,0.12), transparent 40%), var(--bg);
+          background: radial-gradient(circle at top, rgba(146,91,252,0.12), transparent 40%), var(--bg);
           font-family: var(--font-mono-stack);
           padding: 0;
         }
@@ -186,7 +186,7 @@ export default function SetupPageClient() {
         .setup-logo {
           font-family: var(--font-serif-stack);
           font-size: 20px; letter-spacing: 3px;
-          color: var(--copper);
+          color: var(--violet);
         }
         .setup-stepper {
           display: flex; gap: 6px; align-items: center;
@@ -199,8 +199,8 @@ export default function SetupPageClient() {
           transition: all 0.2s;
           flex-shrink: 0;
         }
-        .setup-step.done { background: var(--copper); opacity: 0.7; }
-        .setup-step.active { background: var(--copper); opacity: 1; box-shadow: 0 0 6px rgba(212,155,53,0.5); }
+        .setup-step.done { background: var(--violet); opacity: 0.7; }
+        .setup-step.active { background: var(--violet); opacity: 1; box-shadow: 0 0 6px rgba(146,91,252,0.5); }
         .setup-body { padding: 16px; }
         .setup-input {
           background: var(--bg); border: 1px solid var(--border);
@@ -208,7 +208,7 @@ export default function SetupPageClient() {
           font-size: 12px; font-family: var(--font-mono-stack);
           outline: none; width: 100%; box-sizing: border-box;
         }
-        .setup-input:focus { border-color: var(--copper); }
+        .setup-input:focus { border-color: var(--violet); }
 
         @media (min-width: 481px) {
           .setup-outer { align-items: center; padding: 24px; }

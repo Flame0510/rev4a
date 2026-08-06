@@ -1,10 +1,10 @@
 'use client';
-// Replaces AgentDrawer.jsx — uses OlympusApiClient (Facade) instead of raw fetch
+// Replaces AgentDrawer.jsx — uses Rev4aApiClient (Facade) instead of raw fetch
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useResponsive } from '../design-system';
 import type { SessionDetail } from '@/lib/types';
-import { OlympusApiClient } from '@/lib/patterns/ApiClient';
+import { Rev4aApiClient } from '@/lib/patterns/ApiClient';
 import { deriveSessionDisplayLabel } from '@/lib/patterns/sessionPresentation';
 import {
   formatUsd,
@@ -16,7 +16,7 @@ import {
   statusColor,
   parseEventData,
 } from '@/lib/utils/format';
-import OlympusLoader from './OlympusLoader';
+import Rev4aLoader from './Rev4aLoader';
 
 interface SessionDrawerProps {
   sessionId: string | null;
@@ -70,7 +70,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
       setLoading(true);
       setError('');
       try {
-        const data = await OlympusApiClient.fetchSessionDetail(sessionId);
+        const data = await Rev4aApiClient.fetchSessionDetail(sessionId);
         if (!controller.signal.aborted) setDetail(data);
       } catch (e: unknown) {
         if (!controller.signal.aborted) {
@@ -167,13 +167,13 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
         ✕
       </button>
 
-      {loading && <OlympusLoader label="LOADING SESSION" compact />}
+      {loading && <Rev4aLoader label="LOADING SESSION" compact />}
       {error && <div style={{ color: '#f07070' }}>{error}</div>}
 
       {!loading && !error && session && (
         <>
           <Section>
-            <div style={{ color: 'var(--copper)', fontSize: 12, marginBottom: 8 }}>
+            <div style={{ color: 'var(--violet)', fontSize: 12, marginBottom: 8 }}>
               {truncate(deriveSessionDisplayLabel(session), 40)}
             </div>
             <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 10 }}>
@@ -239,7 +239,7 @@ function Section({ title, children }: { title?: string; children: React.ReactNod
   return (
     <div style={{ borderTop: title ? '1px solid var(--border)' : 'none', marginTop: title ? 14 : 0, paddingTop: title ? 10 : 0 }}>
       {title && (
-        <div style={{ fontSize: 12, color: 'var(--copper)', marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 12, color: 'var(--violet)', marginBottom: 8 }}>{title}</div>
       )}
       <div style={{ display: 'grid', gap: 7 }}>{children}</div>
     </div>

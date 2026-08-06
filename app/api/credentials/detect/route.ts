@@ -9,6 +9,7 @@ import {
   detectTrello,
   detectNotion,
 } from '@/lib/credentials/detect';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,7 +97,7 @@ function detectGithub(container: string): { loggedIn: boolean; user: string } {
 function detectToolsMd(container: string): boolean {
   const raw = execInContainer(
     container,
-    `grep -c 'OLYMPUS:INTEGRATIONS:START' /root/.openclaw/workspace/TOOLS.md 2>/dev/null || echo 0`,
+    `grep -c 'REV4A:INTEGRATIONS:START' /root/.openclaw/workspace/TOOLS.md 2>/dev/null || echo 0`,
     (r) => r.trim(),
     '0',
   );
@@ -162,6 +163,7 @@ function matchProfiles(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const url = new URL(request.url);
     const filterAgent = url.searchParams.get('agent');

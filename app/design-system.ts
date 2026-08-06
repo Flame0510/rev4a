@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// Olympus Design System — Responsive Breakpoints & Tokens
+// Rev4a Design System — Responsive Breakpoints & Tokens
 // ═══════════════════════════════════════════════════════════════
 // Source of truth for all responsive values.
 // Change here → propagates everywhere.
@@ -34,13 +34,13 @@ export type BreakpointKey = keyof typeof Breakpoint;
 export function useResponsive(bp: BreakpointKey): boolean {
   const getInitial = (): boolean => {
     if (typeof window === 'undefined') return false;
-    const key = ((window as any)?.__OLYMPUS_BREAKPOINT_OVERRIDE?.[bp] ?? Breakpoint[bp]) as number;
+    const key = ((window as any)?.__REV4A_BREAKPOINT_OVERRIDE?.[bp] ?? Breakpoint[bp]) as number;
     return window.matchMedia(`(max-width: ${key - 1}px)`).matches;
   };
 
   const [matches, setMatches] = useState(getInitial);
   const mqlRef = useRef<MediaQueryList | null>(null);
-  const key = (typeof window !== 'undefined' ? (window as any)?.__OLYMPUS_BREAKPOINT_OVERRIDE?.[bp] : undefined) ?? Breakpoint[bp];
+  const key = (typeof window !== 'undefined' ? (window as any)?.__REV4A_BREAKPOINT_OVERRIDE?.[bp] : undefined) ?? Breakpoint[bp];
 
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${key - 1}px)`);

@@ -52,7 +52,7 @@ export function detectPublicHost(): string {
 
 /**
  * Build the provider gateway base URL used to sync model config into agent
- * containers. Agents reach Olympus through the Docker host gateway
+ * containers. Agents reach Rev4a through the Docker host gateway
  * (host.docker.internal), injected at container creation via --add-host.
  */
 export function detectProviderGatewayUrl(): string {

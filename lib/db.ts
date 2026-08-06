@@ -2,11 +2,11 @@
 import Database from 'better-sqlite3';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { initializeOlympusDb } from './db-bootstrap.mjs';
-import { DB_FILE } from './olympus-paths';
+import { initializeRev4aDb } from './db-bootstrap.mjs';
+import { DB_FILE } from './rev4a-paths';
 
-export const DB_PATH = process.env.OLYMPUS_DB || DB_FILE;
-export const TOKEN = process.env.OLYMPUS_TOKEN ?? '';
+export const DB_PATH = process.env.REV4A_DB || DB_FILE;
+export const TOKEN = process.env.REV4A_TOKEN ?? '';
 
 export function requireAuth(request: NextRequest): NextResponse | null {
   const token = new URL(request.url).searchParams.get('token');
@@ -16,7 +16,7 @@ export function requireAuth(request: NextRequest): NextResponse | null {
 }
 
 export function ensureDbReady(): void {
-  initializeOlympusDb(DB_PATH);
+  initializeRev4aDb(DB_PATH);
 }
 
 export function openDb(readonly = true): Database.Database {

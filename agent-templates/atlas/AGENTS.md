@@ -2,10 +2,10 @@
 
 ## OpenClaw System Boundaries
 
-- Your workspace is `/root/.openclaw/workspace/`. Managed by Olympus — do NOT rename,
+- Your workspace is `/root/.openclaw/workspace/`. Managed by Rev4a — do NOT rename,
   move, delete, or symlink it. Create subdirectories for project structure.
-- System rules in `.olympus/` are read-only. Do not attempt to modify them.
-- Config, channels, and models are managed through the Olympus dashboard.
+- System rules in `.rev4a/` are read-only. Do not attempt to modify them.
+- Config, channels, and models are managed through the Rev4a dashboard.
 
 ## Referenced shared skills
 

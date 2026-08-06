@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { execSync, execFileSync } from 'child_process';
-import { requireAuthJWT } from '@/lib/olympus-auth';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const SHARED_SKILLS_DIR = '/docker/shared-skills';
 const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';

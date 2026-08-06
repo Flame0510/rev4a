@@ -1,8 +1,8 @@
-# What PYTHIA Can Answer
+# What PULSE Can Answer
 
 > **Last updated:** 2026-07-18
 
-PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what she can and cannot answer.
+PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
 ---
 
@@ -33,7 +33,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 ## How-To Questions
 
 - "How do I create an agent?"
-- "How do I set up Olympus for the first time?"
+- "How do I set up Rev4a for the first time?"
 - "How do I complete the onboarding wizard?"
 - "How do I add an API key for a provider?"
 - "How do I filter agents by status?"
@@ -50,7 +50,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "How do I restore an agent from a backup?"
 - "How do I recreate an agent with the latest image?"
 - "How do I delete an agent?"
-- "How do I restart the Olympus server?"
+- "How do I restart the Rev4a server?"
 - "How do I change environment variables?"
 - "How do I add a cost override?"
 - "How do I see the session lineage?"
@@ -70,7 +70,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "What are MCP tools?"
 - "What does 'cost override' mean?"
 - "What is the vault?"
-- "What are credentials in Olympus?"
+- "What are credentials in Rev4a?"
 - "What is an agent template?"
 - "What happens when I recreate an agent?"
 - "How do agent backups work?"
@@ -104,7 +104,7 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 - "Why can't I approve a pairing code?"
 - "Why is the TG badge missing from my agent?"
 
-## What PYTHIA CANNOT do
+## What PULSE CANNOT do
 
 - Access real-time data (session costs, live statuses, actual CPU/RAM). She only knows features and navigation.
 - Execute actions (create agents, sync gateway, change config). She guides you to the right page.
@@ -114,11 +114,11 @@ PYTHIA is the in-dashboard AI concierge for Olympus. This document defines what 
 
 ---
 
-## How PYTHIA uses context
+## How PULSE uses context
 
-When you ask a question, PYTHIA knows which page you're currently on (e.g. `/agents`, `/gateway`). She tailors her answer to the page you're looking at. If you're on the Agents page and ask "how do I create one?", she knows you mean an agent, not a cron job.
+When you ask a question, PULSE knows which page you're currently on (e.g. `/agents`, `/gateway`). She tailors her answer to the page you're looking at. If you're on the Agents page and ask "how do I create one?", she knows you mean an agent, not a cron job.
 
 ### Best results
-1. **Open the relevant page first.** PYTHIA gives better guidance when you're on the Agents page asking about agents, or on the Gateway page asking about model routing.
+1. **Open the relevant page first.** PULSE gives better guidance when you're on the Agents page asking about agents, or on the Gateway page asking about model routing.
 2. **Be specific.** "How do I add a fallback model?" works better than "help me with models."
-3. **Ask follow-ups.** PYTHIA remembers the conversation within the same chat session.
+3. **Ask follow-ups.** PULSE remembers the conversation within the same chat session.

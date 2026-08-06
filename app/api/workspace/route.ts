@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { NextResponse, type NextRequest } from 'next/server';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
-const LOCAL_ROOT = (process.env.OLYMPUS_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
+const LOCAL_ROOT = (process.env.REV4A_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
 const HAS_LOCAL_WORKSPACE = LOCAL_ROOT.length > 0;
 const IGNORED_DIRS = new Set(['node_modules', '.trash', '.git', '.next', 'cache']);
 const TEXT_EXTENSIONS = new Set(['.md', '.json', '.txt', '.html', '.py', '.css', '.js', '.ts', '.tsx', '.yaml', '.yml', '.env', '.sh', '.mjs', '.cjs', '.jsx']);
@@ -265,6 +266,7 @@ function readContainerFile(containerName: string, filePath: string): { content: 
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
   let ws = url.searchParams.get('workspace');
@@ -349,6 +351,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body = (await request.json()) as { workspace?: string; path?: string; content?: string };
     const ws = body?.workspace || 'local';

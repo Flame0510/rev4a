@@ -1,7 +1,7 @@
 /**
- * Olympus Agent Setup — Centralized volumes & config guarantees.
+ * Rev4a Agent Setup — Centralized volumes & config guarantees.
  *
- * Every Olympus-managed agent gets a fixed set of bind mounts + a
+ * Every Rev4a-managed agent gets a fixed set of bind mounts + a
  * guaranteed set of OpenClaw config keys.  This module is the single
  * source of truth; both the "create" and "recreate" API routes import
  * from here so that a future volume or mandatory config key is a
@@ -13,7 +13,7 @@ import * as fs from 'fs';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
-export interface OlympusVolume {
+export interface Rev4aVolume {
   /** Absolute host path (e.g. /docker/shared-skills). */
   source: string;
   /** Absolute path inside the container. */
@@ -23,18 +23,18 @@ export interface OlympusVolume {
 }
 
 /**
- * Fixed volumes mounted into every Olympus agent container.
+ * Fixed volumes mounted into every Rev4a agent container.
  * Append entries here to add a new shared volume across all agents.
  */
-export const OLYMPUS_VOLUMES: OlympusVolume[] = [
+export const REV4A_VOLUMES: Rev4aVolume[] = [
   {
     source: '/docker/shared-skills',
     target: '/data/.openclaw/shared-skills',
     mode: 'ro',
   },
   {
-    source: '/docker/olympus-rules',
-    target: '/root/.openclaw/workspace/.olympus',
+    source: '/docker/rev4a-rules',
+    target: '/root/.openclaw/workspace/.rev4a',
     mode: 'ro',
   },
 ];
@@ -46,7 +46,7 @@ export const OLYMPUS_VOLUMES: OlympusVolume[] = [
  */
 export function getMountFlags(): string[] {
   const flags: string[] = [];
-  for (const vol of OLYMPUS_VOLUMES) {
+  for (const vol of REV4A_VOLUMES) {
     flags.push('-v', `${vol.source}:${vol.target}:${vol.mode}`);
   }
   return flags;
@@ -56,11 +56,11 @@ export function getMountFlags(): string[] {
 
 /**
  * Create every host-side source directory if it doesn't exist.
- * Called once during `olympus serve` preflight; safe to call
+ * Called once during `rev4a serve` preflight; safe to call
  * multiple times.
  */
 export function ensureHostDirs(): void {
-  for (const vol of OLYMPUS_VOLUMES) {
+  for (const vol of REV4A_VOLUMES) {
     if (!fs.existsSync(vol.source)) {
       try {
         execSync(`sudo mkdir -p ${escapeShell(vol.source)}`, { stdio: 'pipe' });
@@ -81,14 +81,14 @@ export function ensureHostDirs(): void {
  * so it can reference earlier-merged keys if needed.
  */
 const GUARANTEED_CONFIG_PATCHES: object[] = [
-  // Olympus system rules hook — loads .olympus/*.md into every session
+  // Rev4a system rules hook — loads .rev4a/*.md into every session
   {
     hooks: {
       internal: {
         entries: {
           'bootstrap-extra-files': {
             enabled: true,
-            paths: ['.olympus/*.md'],
+            paths: ['.rev4a/*.md'],
           },
         },
       },

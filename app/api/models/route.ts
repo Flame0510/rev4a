@@ -1,8 +1,10 @@
+import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
-import { MODELS_CONFIG_FILE } from '@/lib/olympus-paths';
+import { MODELS_CONFIG_FILE } from '@/lib/rev4a-paths';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +24,7 @@ const PROVIDER_EMOJI: Record<string, string> = {
   openai: '🤖',
   'openai-codex': '🤖',
   anthropic: '🟣',
-  olympus: '🏛️',
+  rev4a: '🔴',
 };
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -32,7 +34,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   openai: 'OpenAI',
   'openai-codex': 'OpenAI Codex',
   anthropic: 'Anthropic',
-  olympus: 'Olympus',
+  rev4a: 'Rev4a',
 };
 
 function loadModelsConfig(): ModelsConfigEntry[] {
@@ -44,7 +46,8 @@ function loadModelsConfig(): ModelsConfigEntry[] {
   return [];
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(_req: NextRequest): Promise<NextResponse> {
+  const request = _req;
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
   const configured = new Set(Object.keys(providerKeys));
@@ -52,8 +55,8 @@ export async function GET(): Promise<NextResponse> {
   const eligible = allModels.filter((m) => {
     if (!m.enabled) return false;
     if (configured.has(m.provider)) return true;
-    // olympus/* aliases resolve to deepseek upstream
-    if (m.provider === 'olympus' && configured.has('deepseek')) return true;
+    // rev4a/* aliases resolve to deepseek upstream
+    if (m.provider === 'rev4a' && configured.has('deepseek')) return true;
     return false;
   });
 

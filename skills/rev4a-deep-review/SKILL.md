@@ -1,6 +1,6 @@
-# Olympus Deep Code Review
+# Rev4a Deep Code Review
 
-Specialized deep code review for the Olympus VPS repository.
+Specialized deep code review for the Rev4a VPS repository.
 Trigger phrases: "deep review", "anti-regression code review", "review PR", "deep code review".
 
 ## When to use
@@ -26,7 +26,7 @@ Trigger phrases: "deep review", "anti-regression code review", "review PR", "dee
    - **Verify severity** — sub-agents often inflate severity. Downgrade if the impact is theoretical, cosmetic, or already handled.
    - **Merge duplicates** — same issue reported by multiple sub-agents → keep one, note the overlap.
    - **Re-test borderline claims** — if a finding sounds plausible but you can't confirm from code alone, test it (run the command, check the file exists, etc.).
-   - **Language audit (🇬🇧) — scan ALL changed files for Italian text.** Any Italian word, comment, string, error message, variable name, or UI label in source code, docs, or config files is a violation. Olympus is 100% English. Flag every occurrence with file:line and the Italian text found. Severity: **HIGH** (code/comments), **MEDIUM** (docs).
+   - **Language audit (🇬🇧) — scan ALL changed files for Italian text.** Any Italian word, comment, string, error message, variable name, or UI label in source code, docs, or config files is a violation. Rev4a is 100% English. Flag every occurrence with file:line and the Italian text found. Severity: **HIGH** (code/comments), **MEDIUM** (docs).
    - This validation step is **mandatory** and must be done before producing the final report. Do NOT trust sub-agent output blindly.
 6. **The orchestrator produces a single unified report** with the validated, deduplicated, severity-adjusted findings **in Italian** for the user. The report must include a section listing discarded allucinations with a brief reason for each.
 
@@ -37,7 +37,7 @@ Trigger phrases: "deep review", "anti-regression code review", "review PR", "dee
 |---|
 | Does `docker run` in the wizard have all required mounts? |
 | `waitForContainerReady` timeout adequate? Rollback on failure? |
-| Does `syncAgent` / `buildOlympusProviderConfig` work? Is `models.providers.olympus` written correctly? |
+| Does `syncAgent` / `buildRev4aProviderConfig` work? Is `models.providers.rev4a` written correctly? |
 | Does `openclaw gateway restart` preserve existing flags? |
 | Does `config patch --stdin` overwrite manually configured arrays? |
 | Does `extraDirs` survive all write paths (create, recreate, sync)? |
@@ -48,7 +48,7 @@ Trigger phrases: "deep review", "anti-regression code review", "review PR", "dee
 ### 🔀 Edge cases
 | Check |
 |---|
-| `buildOlympusProviderConfig()` with empty `provider-keys.json` or missing `olympus` key? |
+| `buildRev4aProviderConfig()` with empty `provider-keys.json` or missing `rev4a` key? |
 | `models.config.json` missing or corrupted? |
 | Template copy: workspace doesn't exist yet, does `test -f` fail cleanly? |
 | RECREATE: `openclaw.json` not yet generated when lightweight patch starts? |
@@ -57,7 +57,7 @@ Trigger phrases: "deep review", "anti-regression code review", "review PR", "dee
 | Parallel CREATEs: race condition on `fs.mkdirSync` of shared dirs? |
 | `docker run` time > 60s → `execSync` timeout killed, orphan container? |
 | Container names with special characters: `shellQuote` applied everywhere? |
-| What happens when `buildOlympusProviderConfig().apiKey` is empty string? |
+| What happens when `buildRev4aProviderConfig().apiKey` is empty string? |
 
 ### 📚 Doc coherence
 **Mandatory: read ALL `.md` files in `docs/`, `agent-templates/README.md`, and any other referenced doc files.**
@@ -89,19 +89,19 @@ Trigger phrases: "deep review", "anti-regression code review", "review PR", "dee
 | Is `dangerouslyDisableDeviceAuth` justified by alternative protection (token)? |
 | Do Traefik labels generate correct routing rules without exposing internals? |
 
-## Olympus-specific checks
+## Rev4a-specific checks
 
 Always verify these areas in addition to generic checks:
 
 | Area | What to check |
 |---|---|
 | **Container creation** | Does `docker run` in the wizard have all required mounts? Are shared volumes mounted? Is `waitForContainerReady` timeout adequate? Is there rollback on failure? |
-| **Provider gateway** | Does `syncAgent` work with the new changes? Is `models.providers.olympus` written correctly? Does `openclaw gateway restart` preserve flags? |
+| **Provider gateway** | Does `syncAgent` work with the new changes? Is `models.providers.rev4a` written correctly? Does `openclaw gateway restart` preserve flags? |
 | **Config patch** | Does `config patch --stdin` replace arrays? Could it overwrite user-configured keys? Does `extraDirs` survive all write paths? |
 | **Entrypoint** | Does `entrypoint.sh` overwrite critical config? Does token auth work? |
 | **Mount paths** | Do mount paths in code match the documentation? Are internal container paths (`/root` vs `/data`) consistent? |
-| **Setup flow** | Does `olympus.sh` create all directories before they're needed? Is function ordering correct? |
-| **Systemd** | Does the olympus service have correct `WorkingDirectory` and `Environment`? |
+| **Setup flow** | Does `rev4a.sh` create all directories before they're needed? Is function ordering correct? |
+| **Systemd** | Does the rev4a service have correct `WorkingDirectory` and `Environment`? |
 | **Traefik** | Are labels generated correctly? Is the domain consistent? |
 | **Mobile scroll** | Do pages with long lists have `minHeight: '100dvh'` and `overflowY: 'auto'`? |
 | **Performance** | Is `maxDuration` declared in every route that does `docker run` or long `execSync`? Is the value sufficient for worst case? Can blocking `execSync` calls saturate the Node thread? |
@@ -165,6 +165,6 @@ Before accepting any sub-agent finding, verify at least these:
 4. **Severity calibrated?** — Could this actually happen in production? Does it have a safety net (try/catch, fallback, validation)?
 5. **Not fictional?** — Does the claim reference functions, variables, or files that don't exist? If yes → discard.
 6. **Not a design choice?** — If the "issue" is an intentional trade-off (e.g., minimal setup, no rate limiting yet), note it but don't flag as a bug.
-7. **Language (🇬🇧)?** — Any Italian word in source code, comments, error messages, UI strings, or docs? Flag it. Olympus repo rule: 100% English in everything except the final review report delivered to the maintainer.
+7. **Language (🇬🇧)?** — Any Italian word in source code, comments, error messages, UI strings, or docs? Flag it. Rev4a repo rule: 100% English in everything except the final review report delivered to the maintainer.
 
 If a sub-agent report is entirely low-quality (majority of claims are hallucinations), note this in the discarded section and consider re-spawning that sub-agent with a different model.

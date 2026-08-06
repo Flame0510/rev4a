@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { setTelegramConfig, removeTelegram } from '@/lib/channelManager';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,6 +8,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { id } = await params;
 
   try {
@@ -32,10 +34,10 @@ export async function PUT(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
+export async function DELETE(request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { id } = await params;
 
   const result = removeTelegram(id);

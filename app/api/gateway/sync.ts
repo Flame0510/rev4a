@@ -1,7 +1,7 @@
 /**
  * Agent Gateway Sync
  *
- * Syncs the models.providers.olympus config block to all agent containers
+ * Syncs the models.providers.rev4a config block to all agent containers
  * (or a single container) without touching model references (primary/fallback).
  *
  * Import and call:
@@ -20,7 +20,7 @@ const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function getActiveOlympusModels(models: ModelConfigEntry[]): { id: string; name: string }[] {
+function getActiveRev4aModels(models: ModelConfigEntry[]): { id: string; name: string }[] {
   const providerKeys = readProviderKeys();
   const configuredProviders = Object.keys(providerKeys);
   return models
@@ -77,39 +77,39 @@ function restartContainerGateway(container: string): string | null {
 /* ------------------------------------------------------------------ */
 
 /**
- * Build the models.providers.olympus config object from local state.
+ * Build the models.providers.rev4a config object from local state.
  * Shared between the create wizard and syncAgent — single source of truth
  * for the provider block injected into every agent container.
  */
-export function buildOlympusProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] } {
+export function buildRev4aProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] } {
   const providerKeys = readProviderKeys();
-  const olympusApiKey = providerKeys['olympus'] || '';
+  const rev4aApiKey = providerKeys['rev4a'] || '';
   const allModels = loadModelsConfig();
-  const activeModels = getActiveOlympusModels(allModels);
+  const activeModels = getActiveRev4aModels(allModels);
   return {
     baseUrl: PROVIDER_GATEWAY_BASE_URL,
-    apiKey: olympusApiKey,
+    apiKey: rev4aApiKey,
     api: 'openai-completions',
     models: activeModels,
   };
 }
 
 /**
- * Sync models.providers.olympus to all agent containers.
+ * Sync models.providers.rev4a to all agent containers.
  * Does NOT touch agents.defaults.model or agents.list[].model.
  */
 export function syncAllAgents(): string[] {
-  const olympusProviderConfig = buildOlympusProviderConfig();
-  if (!olympusProviderConfig.apiKey) {
-    return ['ERROR: OLYMPUS_API_KEY not found in provider-keys.json (add "olympus" key)'];
+  const rev4aProviderConfig = buildRev4aProviderConfig();
+  if (!rev4aProviderConfig.apiKey) {
+    return ['ERROR: REV4A_API_KEY not found in provider-keys.json (add "rev4a" key)'];
   }
 
   const containers = getAgentContainers();
-  const results: string[] = [`Active models: ${olympusProviderConfig.models.length} across ${containers.length} agent(s)`];
+  const results: string[] = [`Active models: ${rev4aProviderConfig.models.length} across ${containers.length} agent(s)`];
 
   for (const container of containers) {
     try {
-      const result = syncContainer(container, olympusProviderConfig);
+      const result = syncContainer(container, rev4aProviderConfig);
       results.push(result);
     } catch (e: unknown) {
       const err = e as { stderr?: string; message?: string };
@@ -125,23 +125,23 @@ export function syncAllAgents(): string[] {
 }
 
 /**
- * Sync models.providers.olympus to a single agent container.
+ * Sync models.providers.rev4a to a single agent container.
  * Does NOT touch agents.defaults.model or agents.list[].model.
  */
 export function syncAgent(containerName: string): string {
-  const olympusProviderConfig = buildOlympusProviderConfig();
-  if (!olympusProviderConfig.apiKey) {
-    throw new Error('OLYMPUS_API_KEY not found in provider-keys.json (add "olympus" key)');
+  const rev4aProviderConfig = buildRev4aProviderConfig();
+  if (!rev4aProviderConfig.apiKey) {
+    throw new Error('REV4A_API_KEY not found in provider-keys.json (add "rev4a" key)');
   }
-  return syncContainer(containerName, olympusProviderConfig);
+  return syncContainer(containerName, rev4aProviderConfig);
 }
 
 /**
- * Internal: write models.providers.olympus to one container and restart its gateway.
+ * Internal: write models.providers.rev4a to one container and restart its gateway.
  */
 function syncContainer(
   container: string,
-  olympusProviderConfig: { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] },
+  rev4aProviderConfig: { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] },
 ): string {
   const remotePath = '/root/.openclaw/openclaw.json';
   const config = readContainerJson(container, remotePath) as Record<string, unknown>;
@@ -156,10 +156,10 @@ function syncContainer(
     // non-fatal
   }
 
-  // Write/overwrite models.providers.olympus — do NOT touch agents.*
+  // Write/overwrite models.providers.rev4a — do NOT touch agents.*
   const models = (config.models as Record<string, unknown>) || {};
   if (!models.providers) models.providers = {};
-  (models.providers as Record<string, unknown>)['olympus'] = olympusProviderConfig;
+  (models.providers as Record<string, unknown>)['rev4a'] = rev4aProviderConfig;
   config.models = models;
 
   writeContainerJson(container, remotePath, config);

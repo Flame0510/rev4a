@@ -2,14 +2,14 @@
  * Model catalogue — bundle-first + user-overrides.
  *
  * Reads the bundled models.config.json from the npm package and applies
- * user toggles from OLYMPUS_DATA/model-overrides.json.
+ * user toggles from REV4A_DATA/model-overrides.json.
  *
  * Imported by both provider/route.ts and gateway/sync.ts — shared logic,
  * avoids circular dependencies.
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { OLYMPUS_DATA } from '@/lib/olympus-paths';
+import { REV4A_DATA } from '@/lib/rev4a-paths';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -27,9 +27,9 @@ export interface ModelConfigEntry {
 /*  Path helpers                                                        */
 /* ------------------------------------------------------------------ */
 
-/** Absolute path to model-overrides.json in OLYMPUS_DATA. */
+/** Absolute path to model-overrides.json in REV4A_DATA. */
 function overridesPath(): string {
-  return path.join(OLYMPUS_DATA, 'model-overrides.json');
+  return path.join(REV4A_DATA, 'model-overrides.json');
 }
 
 /** Resolve the bundled models.config.json (in the npm package). */
@@ -79,8 +79,8 @@ export function loadOverrides(): Record<string, boolean> {
 }
 
 export function writeOverrides(overrides: Record<string, boolean>): void {
-  if (!fs.existsSync(OLYMPUS_DATA)) {
-    fs.mkdirSync(OLYMPUS_DATA, { recursive: true });
+  if (!fs.existsSync(REV4A_DATA)) {
+    fs.mkdirSync(REV4A_DATA, { recursive: true });
   }
   fs.writeFileSync(overridesPath(), JSON.stringify(overrides, null, 2), 'utf-8');
 }

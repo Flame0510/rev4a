@@ -61,7 +61,7 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
                 padding: '6px 10px',
                 border: '1px solid var(--border)',
                 background: mobileTab === t.key ? 'var(--bg3)' : 'transparent',
-                color: mobileTab === t.key ? 'var(--copper)' : 'var(--text-dim)',
+                color: mobileTab === t.key ? 'var(--violet)' : 'var(--text-dim)',
               }}
             >
               {t.label}

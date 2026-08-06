@@ -1,26 +1,27 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 /**
  * POST /api/agents/[id]/restore?file=agent-xxx-2026-07-11_2115.tar.gz
  * Restore an agent's persistent volume from a backup.
  * Stops the container, restores the volume, then restarts.
  */
-export async function POST(
-  req: Request,
+export async function POST(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
     if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
 
-    const url = new URL(req.url);
+    const url = new URL(request.url);
     const file = url.searchParams.get('file');
     if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
 

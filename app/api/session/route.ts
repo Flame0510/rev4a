@@ -1,9 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const sessionId = new URL(request.url).searchParams.get('id');
   if (!sessionId) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   try {

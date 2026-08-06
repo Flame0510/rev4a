@@ -1,13 +1,15 @@
+import { type NextRequest } from "next/server";
 /**
  * Gateway Status API
  *
- * Aggregates live model/provider state from Olympus agent containers.
+ * Aggregates live model/provider state from Rev4a agent containers.
  * Only queries containers with AGENT_ID label — no hardcoded container names.
  *
  * GET /api/gateway
  */
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +57,7 @@ function dockerExec(container: string, cmd: string, timeout = 15000): string {
   }
 }
 
-/** Get Docker containers with AGENT_ID label — only Olympus-managed agents */
+/** Get Docker containers with AGENT_ID label — only Rev4a-managed agents */
 function getAgents(): { agentId: string; containerName: string; state: string }[] {
   try {
     const raw = execSync(
@@ -74,7 +76,7 @@ function getAgents(): { agentId: string; containerName: string; state: string }[
 
 /** Query an agent container for model status */
 function getAgentStatus(agent: { agentId: string; containerName: string; state: string }): GatewayAgentStatus | null {
-  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 20000);
+  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 8000);
   if (!raw) return null;
   try {
     const data = JSON.parse(raw);
@@ -110,7 +112,7 @@ function getAgentStatus(agent: { agentId: string; containerName: string; state: 
 
 /** Get available models from an agent */
 function getAgentModels(container: string): GatewayModel[] {
-  const raw = dockerExec(container, 'openclaw models list --json', 20000);
+  const raw = dockerExec(container, 'openclaw models list --json', 8000);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -128,11 +130,11 @@ function getAgentModels(container: string): GatewayModel[] {
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const timestamp = Date.now();
 
-    // Only Olympus-managed agents (AGENT_ID label)
+    // Only Rev4a-managed agents (AGENT_ID label)
     const agentsRaw = getAgents();
     const agents = agentsRaw
       .map((a) => getAgentStatus(a))
@@ -183,7 +185,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json({
       timestamp,
-      gateway: 'Olympus Model Gateway',
+      gateway: 'Rev4a Model Gateway',
       status: 'online',
       models: {
         total: allModels.length,

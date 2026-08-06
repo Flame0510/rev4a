@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# backup.sh — Backup Olympus data to a tar.gz archive
+# backup.sh — Backup Rev4a data to a tar.gz archive
 #
 # Usage:
 #   sudo bash scripts/backup.sh                     # backup to ./backups/
@@ -19,19 +19,19 @@ set -euo pipefail
 
 # Resolve script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLYMPUS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BACKUP_DIR="${1:-${OLYMPUS_ROOT}/backups}"
+REV4A_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BACKUP_DIR="${1:-${REV4A_ROOT}/backups}"
 
 mkdir -p "$BACKUP_DIR"
 
 TS=$(date -u +%Y%m%d-%H%M%S)
-ARCHIVE="${BACKUP_DIR}/olympus-backup-${TS}.tar.gz"
+ARCHIVE="${BACKUP_DIR}/rev4a-backup-${TS}.tar.gz"
 
-echo "Backing up Olympus data..."
-echo "  Source: ${OLYMPUS_ROOT}"
+echo "Backing up Rev4a data..."
+echo "  Source: ${REV4A_ROOT}"
 echo "  Target: ${ARCHIVE}"
 
-cd "$OLYMPUS_ROOT"
+cd "$REV4A_ROOT"
 
 # Restrict permissions during archive creation
 umask 077

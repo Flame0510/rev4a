@@ -28,8 +28,8 @@ export function TemplateOption({ id, selected, description, onClick, badge }: Te
         cursor: 'pointer',
         outline: 'none',
         transition: 'background 0.1s, border-color 0.1s',
-        background: selected ? 'var(--copper-bg)' : 'transparent',
-        border: `1px solid ${selected ? 'var(--copper)' : 'var(--border)'}`,
+        background: selected ? 'var(--violet-bg)' : 'transparent',
+        border: `1px solid ${selected ? 'var(--violet)' : 'var(--border)'}`,
       }}
     >
       <span
@@ -40,7 +40,7 @@ export function TemplateOption({ id, selected, description, onClick, badge }: Te
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: selected ? 'var(--copper)' : 'var(--border)',
+          background: selected ? 'var(--violet)' : 'var(--border)',
           color: selected ? '#111' : '#666',
           fontSize: 12,
           fontWeight: 600,

@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { isBillableDollarModel } from '@/lib/billing';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
+
+// In-memory cache: 30 second TTL for cost aggregation
+let costsCache: { data: unknown; ts: number } | null = null;
+const CACHE_TTL_MS = 30_000;
 
 interface ModelCostRow {
   model: string | null;
@@ -25,6 +30,12 @@ function getStartOfDaySeconds(): number {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  // Return cached result if fresh
+  if (costsCache && Date.now() - costsCache.ts < CACHE_TTL_MS) {
+    return NextResponse.json(costsCache.data);
+  }
+
   try {
     const db = openDb();
     const startOfDay = getStartOfDaySeconds();
@@ -58,12 +69,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     db.close();
 
-    return NextResponse.json({
+    const result = {
       today,
       allTime: sessionsAllTime,
       allTimeSource: 'sessions_billable',
       byModel,
-    });
+    };
+    costsCache = { data: result, ts: Date.now() };
+
+    return NextResponse.json(result);
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

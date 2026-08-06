@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import type { Session, SessionEvent, Costs, FilterConfig, Period, AgentFilter } from '../types';
-import { OlympusEventBus } from '../patterns/EventBus';
+import { Rev4aEventBus } from '../patterns/EventBus';
 import { buildFilterStrategy } from '../patterns/FilterStrategy';
 import { isCronSession, extractAgentId } from '../patterns/SessionFactory';
 import { isSessionActive } from '../patterns/sessionPresentation';
@@ -148,7 +148,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
   useEffect(() => {
     const controller = new AbortController();
 
-    const unsubscribe = OlympusEventBus.subscribe({
+    const unsubscribe = Rev4aEventBus.subscribe({
       onSessions: (sessions) => dispatch({ type: 'SET_SESSIONS', sessions }),
       onEvents: (events) => dispatch({ type: 'PREPEND_EVENTS', events }),
       onCostUpdate: (today) => dispatch({ type: 'UPDATE_COST_TODAY', today }),

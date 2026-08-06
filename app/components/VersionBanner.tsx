@@ -8,7 +8,7 @@ interface VersionInfo {
   updateAvailable: boolean;
 }
 
-const DISMISS_KEY = 'olympus-update-dismissed';
+const DISMISS_KEY = 'rev4a-update-dismissed';
 
 export default function VersionBanner() {
   const [info, setInfo] = useState<VersionInfo | null>(null);

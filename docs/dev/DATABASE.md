@@ -1,15 +1,15 @@
-# Olympus — Database Reference
+# Rev4a — Database Reference
 
 > **Last updated:** 2026-06-30
 
-Olympus uses a single SQLite file (`events.db`) in WAL mode.
+Rev4a uses a single SQLite file (`events.db`) in WAL mode.
 
 ## Location
 
 | Environment | Path |
 |---|---|
-| VPS (default) | `/path/to/olympus/data/events.db` |
-| Custom | Set `OLYMPUS_DB` env var |
+| VPS (default) | `/path/to/rev4a/data/events.db` |
+| Custom | Set `REV4A_DB` env var |
 
 ## WAL Mode
 
@@ -143,7 +143,7 @@ SELECT * FROM tree;
 sqlite3 events.db ".backup events.db.bak-$(date +%s)"
 
 # Automated (via backup.sh in repo root)
-bash /data/.openclaw/workspace-ops/olympus-next-ts/backup.sh
+bash /data/.openclaw/workspace-ops/rev4a-next-ts/backup.sh
 ```
 
 Backups are stored in `backups/` inside the repo directory.
@@ -155,7 +155,7 @@ events.db in the same data directory. It stores credentials that can be synced
 to agent containers via CLI auth or env files.
 
 **Location:** `data/credentials.db` (same directory as `events.db`)
-**Custom path:** Set `OLYMPUS_CREDENTIALS_DB` env var to override.
+**Custom path:** Set `REV4A_CREDENTIALS_DB` env var to override.
 **WAL mode:** Enabled.
 
 ### `credential_profiles` — credential hub metadata
@@ -219,6 +219,6 @@ sqlite3 events.db "PRAGMA quick_check"
 # Expected output: ok
 ```
 
-**Current location on VPS:** `/path/to/olympus/data/events.db`
+**Current location on VPS:** `/path/to/rev4a/data/events.db`
 
-The `OLYMPUS_DB` env var is set in the systemd override file at `/etc/systemd/system/olympus.service.d/env.conf`.
+The `REV4A_DB` env var is set in the systemd override file at `/etc/systemd/system/rev4a.service.d/env.conf`.

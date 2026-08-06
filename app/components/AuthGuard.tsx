@@ -1,47 +1,64 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+
+// Cache auth result per session to avoid re-checking on every navigation
+const authCache = { valid: false, checked: false, ts: 0 };
+const AUTH_CACHE_TTL = 30_000; // 30s before re-check
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(true);
+  const [redirecting, setRedirecting] = useState(false);
+  const checkingRef = useRef(false);
 
   useEffect(() => {
-    // /setup is always accessible (no auth, no redirect)
-    if (pathname === '/setup') {
-      setChecking(false);
-      return;
-    }
+    // /setup: always accessible
+    if (pathname === '/setup') return;
 
-    // /login is public
+    // /login: public, check if already authenticated
     if (pathname === '/login') {
       fetch('/api/auth/status')
         .then((r) => r.json())
         .then((d: { configured: boolean }) => {
           if (!d.configured) router.replace('/setup');
-          setChecking(false);
         })
-        .catch(() => setChecking(false));
+        .catch(() => {});
       return;
     }
 
-    // Protected routes — check auth
+    // Already checking — prevent duplicate
+    if (checkingRef.current) return;
+
+    // Cache hit — skip check
+    if (authCache.checked && authCache.valid && (Date.now() - authCache.ts) < AUTH_CACHE_TTL) {
+      return; // Still valid, no re-check
+    }
+
+    checkingRef.current = true;
+
+    // Protected routes — check auth in background
     fetch('/api/auth/check')
       .then(async (r) => {
         if (!r.ok) {
+          // Not authenticated — redirect
+          authCache.valid = false;
+          authCache.checked = true;
           const status = await fetch('/api/auth/status').then((r2) => r2.json());
+          setRedirecting(true);
           router.replace(status.configured ? '/login' : '/setup');
           return;
         }
 
-        // Authenticated — redirect to wizard only if both conditions met
-        if (pathname === '/wizard') {
-          setChecking(false);
-          return;
-        }
+        // Auth valid
+        authCache.valid = true;
+        authCache.checked = true;
+        authCache.ts = Date.now();
 
+        if (pathname === '/wizard') return;
+
+        // Check wizard status
         const [statusRes, wizardRes] = await Promise.all([
           fetch('/api/auth/status'),
           fetch('/api/wizard/status'),
@@ -50,24 +67,25 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         const { done: wizardDone } = await wizardRes.json();
 
         if (!configured && !wizardDone) {
+          setRedirecting(true);
           router.replace('/wizard');
-          return;
         }
-        setChecking(false);
       })
       .catch(async () => {
-        // Check if password is configured before redirecting to login
         try {
           const status = await fetch('/api/auth/status').then((r) => r.json());
+          setRedirecting(true);
           router.replace(status.configured ? '/login' : '/setup');
         } catch {
+          setRedirecting(true);
           router.replace('/login');
         }
-        setChecking(false);
+      })
+      .finally(() => {
+        checkingRef.current = false;
       });
   }, [pathname, router]);
 
-  if (checking && pathname !== '/setup') return null;
-
+  // NEVER hide children — always render, auth check happens in background
   return <>{children}</>;
 }

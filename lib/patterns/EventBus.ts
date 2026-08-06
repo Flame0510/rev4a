@@ -20,8 +20,8 @@ function sessionsFingerprint(data: unknown[]): string {
     .join('\n');
 }
 
-class OlympusEventBusClass {
-  private static _instance: OlympusEventBusClass | null = null;
+class Rev4aEventBusClass {
+  private static _instance: Rev4aEventBusClass | null = null;
   private observers = new Set<IDashboardObserver>();
   private source: EventSource | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -32,9 +32,9 @@ class OlympusEventBusClass {
 
   private constructor() {}
 
-  static get instance(): OlympusEventBusClass {
-    OlympusEventBusClass._instance ??= new OlympusEventBusClass();
-    return OlympusEventBusClass._instance;
+  static get instance(): Rev4aEventBusClass {
+    Rev4aEventBusClass._instance ??= new Rev4aEventBusClass();
+    return Rev4aEventBusClass._instance;
   }
 
   subscribe(observer: IDashboardObserver): () => void {
@@ -52,7 +52,7 @@ class OlympusEventBusClass {
   private connect(): void {
     this.disconnect();
     // EventSource cannot send headers; pass token via query param for browser auth
-    const token = process.env.NEXT_PUBLIC_OLYMPUS_TOKEN ?? '';
+    const token = process.env.NEXT_PUBLIC_REV4A_TOKEN ?? '';
     this.source = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`);
 
     this.source.onmessage = (e: MessageEvent<string>) => {
@@ -110,4 +110,4 @@ class OlympusEventBusClass {
   }
 }
 
-export const OlympusEventBus = OlympusEventBusClass.instance;
+export const Rev4aEventBus = Rev4aEventBusClass.instance;

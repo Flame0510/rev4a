@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill, LoadingSpinner, ListContainer, ListItem, ConfirmModal } from '../components/ui';
 
-type BadgeColor = 'green' | 'red' | 'gray' | 'copper' | 'blue';
+type BadgeColor = 'green' | 'red' | 'gray' | 'violet' | 'blue';
 
 function Badge({ children, color }: { children: React.ReactNode; color: BadgeColor }) {
   const toneMap: Record<BadgeColor, 'success' | 'danger' | 'neutral' | 'accent' | 'info'> = {
-    green: 'success', red: 'danger', gray: 'neutral', copper: 'accent', blue: 'info',
+    green: 'success', red: 'danger', gray: 'neutral', violet: 'accent', blue: 'info',
   };
   return <Pill tone={toneMap[color]}>{children}</Pill>;
 }
@@ -19,7 +19,7 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
       padding: '10px 20px',
       fontSize: 10,
       letterSpacing: 2,
-      color: 'var(--copper)',
+      color: 'var(--violet)',
       borderBottom: '1px solid var(--border)',
       background: 'var(--bg2)',
       textTransform: 'uppercase',
@@ -77,25 +77,30 @@ export default function SkillsPage() {
   const abortRef = useRef<AbortController | null>(null);
   const contentAbortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const mergedSignal = signal || controller.signal;
     try {
-      const res = await fetch('/api/skills', { credentials: 'same-origin', signal: controller.signal });
+      const res = await fetch('/api/skills', { credentials: 'same-origin', signal: mergedSignal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setSkills(data.skills || []);
+      if (!mergedSignal.aborted) setSkills(data.skills || []);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!mergedSignal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const searchLower = search.toLowerCase();
   const filtered = skills.filter(s => {
@@ -227,7 +232,7 @@ export default function SkillsPage() {
     }
   };
 
-  const typeColor: Record<string, BadgeColor> = { shared: 'copper', workspace: 'green', bundled: 'blue' };
+  const typeColor: Record<string, BadgeColor> = { shared: 'violet', workspace: 'green', bundled: 'blue' };
 
   const typeLabel = (s: Skill) => {
     if (s.agentId) return `agent:${s.agentId}`;
@@ -247,7 +252,7 @@ export default function SkillsPage() {
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      height: '100vh',
+      flex: 1,
       background: 'var(--bg)',
       color: 'var(--text)',
       overflow: 'hidden',
@@ -262,7 +267,7 @@ export default function SkillsPage() {
         flexShrink: 0,
         boxSizing: 'border-box',
       }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--copper)' }}>SKILLS</span>
+        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>SKILLS</span>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {isMobile && (
@@ -480,7 +485,7 @@ export default function SkillsPage() {
         {toastMsg && (
           <div style={{
             position: 'fixed', bottom: 24, right: 24,
-            background: 'var(--bg2)', border: '1px solid var(--copper)',
+            background: 'var(--bg2)', border: '1px solid var(--violet)',
             color: 'var(--text)', fontFamily: 'var(--font-mono-stack)',
             fontSize: 12, padding: '10px 18px', borderRadius: 0,
             zIndex: 1000,

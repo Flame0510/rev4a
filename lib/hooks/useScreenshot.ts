@@ -15,7 +15,7 @@ export function useScreenshot() {
         pixelRatio: window.devicePixelRatio || 1,
       });
       const a = document.createElement('a');
-      a.download = 'olympus-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.png';
+      a.download = 'rev4a-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.png';
       a.href = dataUrl;
       a.click();
     } catch (e) {

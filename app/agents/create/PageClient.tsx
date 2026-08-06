@@ -24,12 +24,12 @@ interface Props {
 
 type Step = 'template' | 'config' | 'creating' | 'done' | 'error';
 
-const OLYMPUS_PORT = 3740;
+const REV4A_PORT = 3740;
 
 function findFirstFreeBlock(usedPorts: number[]): number | null {
   const used = new Set(usedPorts);
   for (let base = 3700; base + 9 <= 3799; base += 10) {
-    if (base <= OLYMPUS_PORT && OLYMPUS_PORT <= base + 9) continue;
+    if (base <= REV4A_PORT && REV4A_PORT <= base + 9) continue;
     const block = Array.from({ length: 10 }, (_, i) => base + i);
     if (block.every((p) => !used.has(p))) return base;
   }
@@ -184,7 +184,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '24px 16px' }}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
-      <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 24, color: 'var(--copper)' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 24, color: 'var(--violet)' }}>
         Create Agent
       </h1>
 
@@ -198,7 +198,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           {/* ── Custom: blank slate ── */}
           <div style={{ marginBottom: 24 }}>
             <div style={{
-              fontSize: 10, color: 'var(--copper)', textTransform: 'uppercase',
+              fontSize: 10, color: 'var(--violet)', textTransform: 'uppercase',
               letterSpacing: '0.08em', marginBottom: 8,
             }}>
               Start from scratch
@@ -219,8 +219,8 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                 cursor: 'pointer',
                 outline: 'none',
                 transition: 'background 0.1s, border-color 0.1s',
-                background: selectedTemplate === 'custom' ? 'var(--copper-bg)' : 'transparent',
-                border: `1px solid ${selectedTemplate === 'custom' ? 'var(--copper)' : 'var(--border)'}`,
+                background: selectedTemplate === 'custom' ? 'var(--violet-bg)' : 'transparent',
+                border: `1px solid ${selectedTemplate === 'custom' ? 'var(--violet)' : 'var(--border)'}`,
               }}
             >
               <span style={{
@@ -229,7 +229,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: selectedTemplate === 'custom' ? 'var(--copper)' : 'var(--border)',
+                background: selectedTemplate === 'custom' ? 'var(--violet)' : 'var(--border)',
                 color: selectedTemplate === 'custom' ? '#111' : '#666',
                 fontSize: 14,
                 fontWeight: 600,
@@ -369,7 +369,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
         <div style={{ textAlign: 'center', padding: 40 }}>
           <div style={{ fontSize: 14, color: '#888', marginBottom: 16 }}>Creating agent container...</div>
           <div style={{
-            width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--copper)',
+            width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--violet)',
             borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto',
           }} />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

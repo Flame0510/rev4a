@@ -1,4 +1,4 @@
-# Contributing to Olympus
+# Contributing to Rev4a
 
 ## Documentation rule
 
@@ -28,7 +28,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |
 | Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section |
-| New feature (any) | `docs/rag/OLYMPUS-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PYTHIA should know about it |
+| New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
 
 ---
@@ -43,16 +43,16 @@ docs/
 │   ├── PROVIDERS.md         # Provider key management, proxy auth
 │   ├── WORKSPACE.md         # Workspace API file explorer
 │   ├── DATABASE.md          # SQLite schema, WAL, backup
-├── rag/                     # PYTHIA knowledge base (plain language)
-│   ├── OLYMPUS-OVERVIEW.md  # What Olympus is and does
+├── rag/                     # PULSE knowledge base (plain language)
+│   ├── REV4A-OVERVIEW.md  # What Rev4a is and does
 │   ├── GLOSSARY.md          # Key terms
-│   ├── WHAT-I-CAN-ANSWER.md # PYTHIA capability scope
+│   ├── WHAT-I-CAN-ANSWER.md # PULSE capability scope
 │   └── DATA-FRESHNESS.md    # Update intervals and data latency
 ├── ARCHITECTURE.md          # High-level architecture diagram/summary
 ├── CONTAINER-TERMINAL.md    # Terminal WebSocket PTY implementation
 ├── DESIGN-SYSTEM.md         # Design tokens, colors, typography
 ├── FRONTEND-ARCHITECTURE.md # Component layers and design system
-├── OLYMPUS.md               # Operational docs
+├── REV4A.md               # Operational docs
 └── README.md               # Project overview, setup, configuration
 ```
 

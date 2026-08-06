@@ -1,18 +1,18 @@
 # Add dynamic Traefik routes here.
 # Files in this directory are watched and applied automatically.
 #
-# Example: route olympus.yourdomain.com to the Olympus dashboard:
+# Example: route rev4a.yourdomain.com to the Rev4a dashboard:
 #
 # http:
 #   routers:
-#     olympus-dashboard:
+#     rev4a-dashboard:
 #       entryPoints: [websecure]
-#       rule: "Host(`olympus.yourdomain.com`)"
-#       service: olympus
+#       rule: "Host(`rev4a.yourdomain.com`)"
+#       service: rev4a
 #       tls:
 #         certResolver: letsencrypt
 #   services:
-#     olympus:
+#     rev4a:
 #       loadBalancer:
 #         servers:
 #           - url: "http://127.0.0.1:3740"

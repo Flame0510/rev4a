@@ -3,46 +3,46 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 
 /**
- * Centralised Olympus data directory.
+ * Centralised Rev4a data directory.
  *
  * Cross-platform policy:
- *   Linux/macOS: ~/.config/olympus/
- *   Windows:     %APPDATA%/olympus/
+ *   Linux/macOS: ~/.config/rev4a/
+ *   Windows:     %APPDATA%/rev4a/
  *
  * All persistent files live here so npm reinstall / update
  * never destroys configuration, databases, or secrets.
  */
-function olympusDataDir(): string {
-  if (process.env.OLYMPUS_DATA_DIR) return process.env.OLYMPUS_DATA_DIR;
+function rev4aDataDir(): string {
+  if (process.env.REV4A_DATA_DIR) return process.env.REV4A_DATA_DIR;
   if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'olympus');
+    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'rev4a');
   }
-  return path.join(os.homedir(), '.config', 'olympus');
+  return path.join(os.homedir(), '.config', 'rev4a');
 }
 
-export const OLYMPUS_DATA = olympusDataDir();
+export const REV4A_DATA = rev4aDataDir();
 
 /* ── File locations ─────────────────────────────────────────────── */
 
-/** Persistent environment file (~/.config/olympus/.env) */
-export const ENV_FILE = path.join(OLYMPUS_DATA, '.env');
+/** Persistent environment file (~/.config/rev4a/.env) */
+export const ENV_FILE = path.join(REV4A_DATA, '.env');
 
 /** SQLite events database */
-export const DB_FILE = path.join(OLYMPUS_DATA, 'data', 'events.db');
+export const DB_FILE = path.join(REV4A_DATA, 'data', 'events.db');
 
 /** Credentials vault database */
-export const CREDENTIALS_DB = path.join(OLYMPUS_DATA, 'data', 'credentials.db');
+export const CREDENTIALS_DB = path.join(REV4A_DATA, 'data', 'credentials.db');
 
 /** Shared gateway token for agent containers */
-export const AGENTS_TOKEN_FILE = path.join(OLYMPUS_DATA, 'data', 'agents-token.json');
+export const AGENTS_TOKEN_FILE = path.join(REV4A_DATA, 'data', 'agents-token.json');
 
 /** Provider API keys JSON */
-export const PROVIDER_KEYS_FILE = path.join(OLYMPUS_DATA, 'data', 'provider-keys.json');
+export const PROVIDER_KEYS_FILE = path.join(REV4A_DATA, 'data', 'provider-keys.json');
 
 /** Model overrides JSON */
-export const MODELS_CONFIG_FILE = path.join(OLYMPUS_DATA, 'models.config.json');
+export const MODELS_CONFIG_FILE = path.join(REV4A_DATA, 'models.config.json');
 
-/** Top-level .next build directory (kept inside npm package for now — built by olympus serve) */
+/** Top-level .next build directory (kept inside npm package for now — built by rev4a serve) */
 export function nextDir(pkgRoot: string): string {
   return path.join(pkgRoot, '.next');
 }
@@ -61,7 +61,7 @@ export function dockerfileDir(pkgRoot: string): string {
 
 /** Ensure the data directory tree exists. */
 export function ensurePaths(): void {
-  for (const dir of [OLYMPUS_DATA, path.dirname(ENV_FILE), path.dirname(DB_FILE)]) {
+  for (const dir of [REV4A_DATA, path.dirname(ENV_FILE), path.dirname(DB_FILE)]) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -69,7 +69,7 @@ export function ensurePaths(): void {
 }
 
 /**
- * Read OLYMPUS_* env vars from the persistent .env file.
+ * Read REV4A_* env vars from the persistent .env file.
  * Returns a plain object suitable for spreading into child process env.
  */
 export function loadEnvVars(): Record<string, string> {
@@ -84,7 +84,7 @@ export function loadEnvVars(): Record<string, string> {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
     const val = trimmed.slice(eq + 1).trim();
-    if (key.startsWith('OLYMPUS_') || key.startsWith('PROVIDER_')) {
+    if (key.startsWith('REV4A_') || key.startsWith('PROVIDER_')) {
       vars[key] = val;
     }
   }

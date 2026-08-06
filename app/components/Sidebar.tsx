@@ -202,6 +202,8 @@ export default function Sidebar() {
           href={href}
           className={`sidebar__item${isActive(href) ? ' sidebar__item--active' : ''}`}
           onClick={() => setMobileOpen(false)}
+          onMouseEnter={() => router.prefetch(href)}
+          prefetch={true}
         >
           <span className="sidebar__icon">{icon}</span>
           <span className="sidebar__label">{label}</span>
@@ -211,15 +213,61 @@ export default function Sidebar() {
   );
 
   const EyeLogo = () => (
-    <img src="/olympus-logo.png" alt="Olympus" width="20" height="20" style={{ display: 'block', objectFit: 'contain' }} />
+    <img src="/rev4a-logo.svg" alt="Rev4a" width="20" height="20" style={{ display: 'block', objectFit: 'contain' }} />
   );
 
   return (
     <>
+      {/* Mobile top bar */}
+      <header className={`mobile-topbar${mobileOpen ? ' mobile-topbar--open' : ''}`}>
+        <div className="mobile-topbar__row">
+          <div className="mobile-topbar__brand">
+            <EyeLogo />
+            <span>REV4A</span>
+          </div>
+          <button
+            className="mobile-topbar__menu"
+            aria-label={mobileOpen ? 'Close menu' : 'Menu'}
+            onClick={() => setMobileOpen((v) => !v)}
+          >
+            {mobileOpen ? (
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M5 5l10 10M15 5L5 15"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M3 5h14M3 10h14M3 15h14"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+        {/* Drawer — grows below the top bar row */}
+        <div className="mobile-drawer__wrapper" aria-hidden={!mobileOpen}>
+          <nav className="mobile-drawer">
+            {navItems}
+          </nav>
+        </div>
+      </header>
+
+      {/* Backdrop */}
+      {mobileOpen && (
+        <div className="mobile-drawer__backdrop" onClick={() => setMobileOpen(false)} />
+      )}
+
       <aside className="sidebar sidebar--desktop">
         <div className="sidebar__logo">
           <EyeLogo />
-          <span className="sidebar__title">OLYMPUS</span>
+          <span className="sidebar__title">REV4A</span>
         </div>
         {navItems}
         <div className="sidebar__bottom">
@@ -240,48 +288,6 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      <button
-        className="sidebar__hamburger"
-        aria-label="Menu"
-        onClick={() => setMobileOpen(true)}
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <path
-            d="M3 5h14M3 10h14M3 15h14"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
-
-      {mobileOpen && (
-        <div className="sidebar__overlay" onClick={() => setMobileOpen(false)}>
-          <aside className="sidebar sidebar--mobile" onClick={(e) => e.stopPropagation()}>
-            <div className="sidebar__mobile-header">
-              <div className="sidebar__logo">
-                <EyeLogo />
-                <span className="sidebar__title">OLYMPUS</span>
-              </div>
-              <button
-                className="sidebar__close"
-                aria-label="Chiudi menu"
-                onClick={() => setMobileOpen(false)}
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <path
-                    d="M4 4l10 10M14 4L4 14"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-            </div>
-            {navItems}
-          </aside>
-        </div>
-      )}
       <MobileBottomNav />
     </>
   );

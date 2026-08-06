@@ -6,8 +6,8 @@ The Gateway page (`/gateway`) is the central control panel for managing provider
 configurations and agent model assignments across all Docker containers.
 
 The Gateway aggregates multiple upstream AI providers (DeepSeek, OpenAI, Anthropic,
-Kimi, GLM, Qwen, and others) behind a single Olympus provider. Agent containers see
-only `olympus` as their provider and route all LLM traffic through the Olympus proxy
+Kimi, GLM, Qwen, and others) behind a single Rev4a provider. Agent containers see
+only `rev4a` as their provider and route all LLM traffic through the Rev4a proxy
 at `/api/provider/v1/`.
 
 ---
@@ -43,12 +43,12 @@ Provider API keys are stored in `data/provider-keys.json`:
 {
   "deepseek": "sk-...",
   "openrouter": "sk-...",
-  "olympus": "ciao"
+  "rev4a": "ciao"
 }
 ```
 
-The `olympus` entry is the master gateway token. Agent containers authenticate
-against the Olympus provider proxy using this token. See [`PROVIDERS.md`](PROVIDERS.md).
+The `rev4a` entry is the master gateway token. Agent containers authenticate
+against the Rev4a provider proxy using this token. See [`PROVIDERS.md`](PROVIDERS.md).
 
 ### Sync Flow
 
@@ -56,7 +56,7 @@ When a provider key is saved or a model toggle is changed, the Gateway:
 
 1. **Reads** `models.config.json` to get the full model catalogue
 2. **Filters** enabled models for providers that have a configured API key
-3. **Builds** a `models.providers.olympus` config block (without `olympus/` prefix
+3. **Builds** a `models.providers.rev4a` config block (without `rev4a/` prefix
    on model IDs)
 4. **Writes** the block into `/root/.openclaw/openclaw.json` on every agent container
    (containers with `AGENT_ID` Docker label)
@@ -68,14 +68,14 @@ When a provider key is saved or a model toggle is changed, the Gateway:
 
 ### Model ID Convention
 
-Inside `models.providers.olympus.models`, model IDs are stored **without** the
-`olympus/` prefix:
+Inside `models.providers.rev4a.models`, model IDs are stored **without** the
+`rev4a/` prefix:
 
 ```json
 {
   "models": {
     "providers": {
-      "olympus": {
+      "rev4a": {
         "baseUrl": "http://host.docker.internal:3740/api/provider/v1",
         "api": "openai-completions",
         "apiKey": "***",
@@ -90,7 +90,7 @@ Inside `models.providers.olympus.models`, model IDs are stored **without** the
 ```
 
 OpenClaw automatically prefixes model IDs with the provider name at runtime,
-producing `olympus/deepseek/deepseek-v4-flash`. The `mode` field is **not** set —
+producing `rev4a/deepseek/deepseek-v4-flash`. The `mode` field is **not** set —
 OpenClaw defaults to merging config models with auto-discovered models.
 
 ### Model Catalogue
@@ -145,7 +145,7 @@ On save:
 1. **PUT /api/gateway/agent** writes the model config to the container's
    `openclaw.json`:
    - `agents.defaults.model.primary` and `agents.list[0].model.primary` written
-     with format `olympus/<provider>/<model>`
+     with format `rev4a/<provider>/<model>`
    - No fallbacks are set unless explicitly provided
 2. **No restart** — writes are live via `docker exec node -e`
 
@@ -174,7 +174,7 @@ via `openclaw models status --json` inside each container.
         "containerName": "openclaw-atlas",
         "agentId": "atlas",
         "agentName": "Atlas",
-        "defaultModel": "olympus/deepseek/deepseek-v4-flash",
+        "defaultModel": "rev4a/deepseek/deepseek-v4-flash",
         "configured": true
       }
     ]
@@ -185,7 +185,7 @@ via `openclaw models status --json` inside each container.
 ### `PUT /api/gateway/provider`
 
 Triggers a full provider model sync to all agent containers. Only writes
-`models.providers.olympus` — does NOT touch model references.
+`models.providers.rev4a` — does NOT touch model references.
 
 **Body:** none (reads current provider state from `models.config.json` and
 `data/provider-keys.json`)
@@ -217,7 +217,7 @@ Updates model config for a single agent container (primary model only).
   "status": "ok",
   "agent": "openclaw-atlas",
   "model": {
-    "primary": "olympus/deepseek/deepseek-v4-flash"
+    "primary": "rev4a/deepseek/deepseek-v4-flash"
   },
   "verify": { "ok": true, "bytes": 2058 }
 }
@@ -255,13 +255,13 @@ triggering a server restart.
 
 Update environment variables on the VPS host.
 
-**Body:** `{ "OLYMPUS_PASSWORD": "newpass", ... }`
+**Body:** `{ "REV4A_PASSWORD": "newpass", ... }`
 
 **Response:** `{ "ok": true }`
 
 ### `POST /api/config/restart`
 
-Restart the Olympus server (via systemd).
+Restart the Rev4a server (via systemd).
 
 **Response:** `{ "ok": true }`
 
@@ -273,8 +273,8 @@ Restart the Olympus server (via systemd).
    config. OpenClaw uses its default merge behavior, combining config models with
    auto-discovered models from the provider API.
 
-2. **Model IDs without `olympus/` prefix in config** — Inside
-   `models.providers.olympus.models`, model IDs do NOT include the `olympus/`
+2. **Model IDs without `rev4a/` prefix in config** — Inside
+   `models.providers.rev4a.models`, model IDs do NOT include the `rev4a/`
    prefix. OpenClaw adds it automatically at runtime.
 
 3. **Provider keys in `data/provider-keys.json`** — Not in env vars or

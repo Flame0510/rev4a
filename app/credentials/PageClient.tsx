@@ -30,7 +30,7 @@ const PROVIDER_COLOR: Record<string, string> = {
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, padding: '4px 0' }}>
-      <input type="checkbox" checked={checked} onChange={onChange} style={{ accentColor: 'var(--copper)' }} />
+      <input type="checkbox" checked={checked} onChange={onChange} style={{ accentColor: 'var(--violet)' }} />
       <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)' }}>{label}</span>
     </label>
   );
@@ -76,11 +76,11 @@ export default function CredentialsPageClient() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const [credsRes, detectRes] = await Promise.all([
-        fetch('/api/credentials'),
-        fetch('/api/credentials/detect'),
+        fetch('/api/credentials', { signal }),
+        fetch('/api/credentials/detect', { signal }),
       ]);
       if (!credsRes.ok) throw new Error(`HTTP ${credsRes.status}`);
       const json = await credsRes.json() as ApiData;
@@ -108,13 +108,18 @@ export default function CredentialsPageClient() {
       setDetectData(detectJson.agents ?? []);
       setError(null);
     } catch (e: unknown) {
+      if ((e as Error)?.name === 'AbortError') return;
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const refreshDetectOnly = async () => {
     try {
@@ -183,7 +188,7 @@ export default function CredentialsPageClient() {
   if (loading) {
     return (
       <Page>
-        <PageHeader eyebrow="OLYMPUS" title="Credentials" />
+        <PageHeader eyebrow="" title="Credentials" />
         <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading…</p>
       </Page>
     );
@@ -201,7 +206,7 @@ export default function CredentialsPageClient() {
   return (
     <Page>
       <PageHeader
-        eyebrow="OLYMPUS"
+        eyebrow=""
         title="Credentials"
         description="Store third-party credentials once, sync to all agent containers."
       />
@@ -216,7 +221,7 @@ export default function CredentialsPageClient() {
         {providers.map((provider) => {
           const provProfiles = profilesByProvider[provider.id] ?? [];
           const isConfigured = provProfiles.length > 0;
-          const accentColor = PROVIDER_COLOR[provider.id] ?? 'var(--copper)';
+          const accentColor = PROVIDER_COLOR[provider.id] ?? 'var(--violet)';
 
           return (
             <div
@@ -259,7 +264,7 @@ export default function CredentialsPageClient() {
               <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
                 {provider.description}
                 {provider.docsUrl && (
-                  <a href={provider.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--copper)', marginLeft: 6, fontSize: 11 }}>
+                  <a href={provider.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--violet)', marginLeft: 6, fontSize: 11 }}>
                     docs ↗
                   </a>
                 )}
@@ -554,7 +559,7 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
               <button
                 onClick={() =>
                   window.open(
-                    `https://trello.com/1/authorize?key=${encodeURIComponent(fields['apiKey'])}&response_type=token&scope=read,write&expiration=never&name=Olympus`,
+                    `https://trello.com/1/authorize?key=${encodeURIComponent(fields['apiKey'])}&response_type=token&scope=read,write&expiration=never&name=Rev4a`,
                     '_blank',
                   )
                 }

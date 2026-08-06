@@ -5,10 +5,11 @@
  * Uses base64-safe write — no heredoc shell escaping issues.
  *
  * Body:
- *   { "containerName": "openclaw-atlas", "model": "olympus/deepseek-v4-flash", "fallbacks": ["olympus/deepseek-v4-pro"] }
+ *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-v4-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -25,12 +26,12 @@ function execInContainer(container: string, cmd: string, timeout = 15000): strin
   }
 }
 
-function ensureOlympusPrefix(id: string): string {
-  return id.startsWith('olympus/') ? id : `olympus/${id}`;
+function ensureRev4aPrefix(id: string): string {
+  return id.startsWith('rev4a/') ? id : `rev4a/${id}`;
 }
 
-function ensureOlympusPrefixes(ids: string[]): string[] {
-  return ids.map(ensureOlympusPrefix);
+function ensureRev4aPrefixes(ids: string[]): string[] {
+  return ids.map(ensureRev4aPrefix);
 }
 
 function dedupe<T>(arr: T[]): T[] {
@@ -56,6 +57,7 @@ function readFileFromContainer(container: string, remotePath: string): string {
 }
 
 export async function PUT(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const body: { containerName?: string; model?: string; fallbacks?: string[] } = await request.json();
     const { containerName } = body;
@@ -96,8 +98,8 @@ export async function PUT(request: NextRequest) {
 
     const mainAgent = list.find((a) => a.id === 'main');
     if (mainAgent) {
-      const primary = ensureOlympusPrefix(body.model);
-      let fallbacks = dedupe(ensureOlympusPrefixes(body.fallbacks || []));
+      const primary = ensureRev4aPrefix(body.model);
+      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks || []));
       // Remove the primary model dai fallback
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       mainAgent.model = {
@@ -108,8 +110,8 @@ export async function PUT(request: NextRequest) {
 
     const defaults = (agents.defaults || {}) as Record<string, unknown>;
     {
-      const primary = ensureOlympusPrefix(body.model);
-      let fallbacks = dedupe(ensureOlympusPrefixes(body.fallbacks || []));
+      const primary = ensureRev4aPrefix(body.model);
+      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks || []));
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       defaults.model = {
         primary,

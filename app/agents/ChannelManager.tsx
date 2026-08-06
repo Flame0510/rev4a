@@ -355,7 +355,7 @@ function TelegramTab({
     <div>
       <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '0 0 10px' }}>
         Get a bot token from{' '}
-        <a href="https://t.me/BotFather" target="_blank" rel="noopener" style={{ color: 'var(--copper)' }}>
+        <a href="https://t.me/BotFather" target="_blank" rel="noopener" style={{ color: 'var(--violet)' }}>
           @BotFather
         </a>{' '}
         on Telegram.
@@ -395,14 +395,14 @@ function PairingSection({
   return (
     <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
       <div style={{
-        fontSize: 10, color: 'var(--copper)', textTransform: 'uppercase',
+        fontSize: 10, color: 'var(--violet)', textTransform: 'uppercase',
         letterSpacing: '0.08em', marginBottom: 8,
       }}>
         Pairing
       </div>
 
       <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '0 0 10px 0' }}>
-        Send <code style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--copper)' }}>/start</code> to the bot on Telegram.
+        Send <code style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--violet)' }}>/start</code> to the bot on Telegram.
       </p>
 
       {pairingsLoading ? (

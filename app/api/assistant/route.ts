@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 import { extractProviderAndModel, getApiKey, callUpstream } from '@/app/api/provider/upstream';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
 
@@ -56,8 +57,8 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/config': {
     title: 'Config',
-    description: 'Olympus application configuration page. View and manage settings that control how Olympus behaves.',
-    actions: ['View current configuration values', 'Modify configuration settings', 'Save changes to update Olympus behavior'],
+    description: 'Rev4a application configuration page. View and manage settings that control how Rev4a behaves.',
+    actions: ['View current configuration values', 'Modify configuration settings', 'Save changes to update Rev4a behavior'],
     hints: 'Configuration changes take effect immediately when saved.',
   },
   '/lineage': {
@@ -99,7 +100,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
 };
 
 const NAV_LINKS = `
-Navigation links inside Olympus:
+Navigation links inside Rev4a:
 - Dashboard → /
 - Agents → /agents
 - Create Agent → /agents/create
@@ -129,10 +130,10 @@ function buildSystemPrompt(page: string): string {
     ? `\n\nWhat you can do on this page:\n${ctx.actions.map((a) => `- ${a}`).join('\n')}`
     : '';
 
-  return `You are Pythia, the Olympus assistant — a helpful concierge for users of Olympus, the AI agent monitoring dashboard. You are embedded in the dashboard UI and appear as a floating chat button (bottom-right) on every page.
+  return `You are Pulse, the Rev4a assistant — a helpful concierge for users of Rev4a, the AI agent monitoring dashboard. You are embedded in the dashboard UI and appear as a floating chat button (bottom-right) on every page.
 
 YOUR ROLE:
-- Guide users through the Olympus dashboard
+- Guide users through the Rev4a dashboard
 - Explain what each page does and how to use features
 - Answer questions about agents, providers, containers, cron jobs, costs, sessions, and configuration
 - Give contextual advice based on the current page the user is on
@@ -155,6 +156,7 @@ RULES:
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let body: { message?: string; page?: string; model?: string; history?: { role: string; content: string }[] };
   try {
     body = await request.json();

@@ -20,32 +20,37 @@ export default function ContainersClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     try {
-      const res = await fetch('/api/containers');
+      const res = await fetch('/api/containers', { signal });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setContainers(Array.isArray(data) ? data : []);
+      if (!signal?.aborted) setContainers(Array.isArray(data) ? data : []);
     } catch(e: any) {
-      setError(e.message);
+      if (e?.name === 'AbortError') return;
+      if (!signal?.aborted) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }
 
-  useEffect(() => { load() }, []);
-  useEffect(() => { const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    const i = setInterval(() => { if (!controller.signal.aborted) load(controller.signal); }, 15000);
+    return () => { controller.abort(); clearInterval(i); };
+  }, []);
 
   return (
     <div style={{ padding: '16px', maxWidth: 1080, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 400, color: 'var(--copper)', letterSpacing: 2, margin: 0 }}>CONTAINERS</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 400, color: 'var(--violet)', letterSpacing: 2, margin: 0 }}>CONTAINERS</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
             {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{new Date().toLocaleTimeString('it-IT')}</span>
           </span>
-          <Button variant="ghost" size="sm" onClick={load}>↻</Button>
+          <Button variant="ghost" size="sm" onClick={() => load()}>↻</Button>
         </div>
       </div>
 
@@ -84,9 +89,9 @@ export default function ContainersClient() {
                   href={`/containers/terminal/${encodeURIComponent(c.name)}`}
                   style={{
                     fontSize: 10,
-                    color: 'var(--copper)',
+                    color: 'var(--violet)',
                     textDecoration: 'none',
-                    border: '1px solid var(--copper)',
+                    border: '1px solid var(--violet)',
                     padding: '2px 8px',
                     borderRadius: 0,
                     flexShrink: 0,
@@ -106,7 +111,7 @@ export default function ContainersClient() {
               {c.ports && <span style={{ fontFamily: 'var(--font-mono-stack)', color: '#888' }}>{c.ports}</span>}
             </div>
 
-            {/* Agent badge — only for Olympus-managed agents */}
+            {/* Agent badge — only for Rev4a-managed agents */}
             {(c.displayName || c.agentId) && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {c.displayName ? (

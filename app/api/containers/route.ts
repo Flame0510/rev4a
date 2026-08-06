@@ -1,6 +1,8 @@
+import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
 import * as http from 'http';
 import * as fs from 'fs';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
@@ -36,7 +38,7 @@ function dockerFetch(method: string, path: string): Promise<any> {
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   if (!dockerAvailable()) {
     return NextResponse.json([]);
   }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getChannels } from '@/lib/channelManager';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15; // 15-second timeout for channels summary
@@ -11,9 +12,9 @@ export const maxDuration = 15; // 15-second timeout for channels summary
  * Returns a lightweight channel status map for all running agents.
  * { [agentId]: { telegram: boolean } }
  */
-export async function GET(
-  _request: NextRequest,
+export async function GET(request: NextRequest,
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     // Discover agents with AGENT_ID label
     const out = execSync(

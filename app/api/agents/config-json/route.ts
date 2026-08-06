@@ -6,11 +6,13 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const name = request.nextUrl.searchParams.get('name');
     if (!name) {

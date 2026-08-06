@@ -237,7 +237,7 @@ function discoverAgents(globalWarnings: string[]): AgentSeed[] {
     globalWarnings.push(`Unable to scan workspaces: ${(error as Error).message}`);
   }
 
-  // Discover Docker agents with AGENT_ID label (Olympus-managed containers)
+  // Discover Docker agents with AGENT_ID label (Rev4a-managed containers)
   try {
     const { execSync } = require('child_process');
     const out = execSync(

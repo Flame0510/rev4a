@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import * as fs from 'fs';
-import { ENV_FILE } from '@/lib/olympus-paths';
+import { ENV_FILE } from '@/lib/rev4a-paths';
 
 function getJwtSecret(): Uint8Array {
-  const fromEnv = process.env.OLYMPUS_JWT_SECRET;
+  const fromEnv = process.env.REV4A_JWT_SECRET;
   if (typeof fromEnv === 'string' && fromEnv.length > 0) {
     return new TextEncoder().encode(fromEnv);
   }
@@ -13,7 +13,7 @@ function getJwtSecret(): Uint8Array {
     try {
       if (fs.existsSync(file)) {
         const content = fs.readFileSync(file, 'utf-8');
-        const match = content.match(/^OLYMPUS_JWT_SECRET=(.*)$/m);
+        const match = content.match(/^REV4A_JWT_SECRET=(.*)$/m);
         if (match && match[1].trim()) {
           return new TextEncoder().encode(match[1].trim());
         }
@@ -24,7 +24,7 @@ function getJwtSecret(): Uint8Array {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const cookieToken = request.cookies.get('olympus_token')?.value;
+  const cookieToken = request.cookies.get('rev4a_token')?.value;
   if (cookieToken) {
     try {
       const secret = getJwtSecret();

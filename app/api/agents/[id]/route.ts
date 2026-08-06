@@ -3,18 +3,19 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
-import { buildOlympusProviderConfig } from '@/app/api/gateway/sync';
+import { buildRev4aProviderConfig } from '@/app/api/gateway/sync';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
-import { DB_FILE } from '@/lib/olympus-paths';
+import { DB_FILE } from '@/lib/rev4a-paths';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
-const BACKUP_VOLUME = 'olympus-backups';
+const BACKUP_VOLUME = 'rev4a-backups';
 
 export const dynamic = 'force-dynamic';
 
-export async function DELETE(
-  _request: Request,
+export async function DELETE(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
 
@@ -115,6 +116,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent ID required' }, { status: 400 });
@@ -257,8 +259,8 @@ export async function PATCH(
     // Apply runtime config
     try {
       applyRuntimeConfig(id);
-      const providerConfig = buildOlympusProviderConfig();
-      const providerJson = JSON.stringify({ models: { providers: { olympus: providerConfig } } });
+      const providerConfig = buildRev4aProviderConfig();
+      const providerJson = JSON.stringify({ models: { providers: { rev4a: providerConfig } } });
       execSync(
         `docker exec -i ${id} sh -c 'openclaw config patch --stdin'`,
         { timeout: 15000, stdio: 'pipe', input: providerJson },

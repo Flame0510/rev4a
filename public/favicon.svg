@@ -1,1 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#D49B35" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+ xmlns="http://www.w3.org/2000/svg"
+ viewBox="0 0 1254 1254"
+ role="img"
+ aria-labelledby="title desc"
+ shape-rendering="geometricPrecision"
+>
+ <title id="title">REV4A glyph</title>
+ <desc id="desc">The fused geometric 4A monogram used by REV4A.</desc>
+
+ <defs>
+ <linearGradient
+ id="rev4a-violet"
+ x1="249"
+ y1="250"
+ x2="1012"
+ y2="1005"
+ gradientUnits="userSpaceOnUse"
+ >
+ <stop offset="0" stop-color="#965FFF" />
+ <stop offset="0.52" stop-color="#925BFC" />
+ <stop offset="1" stop-color="#8E57FB" />
+ </linearGradient>
+ </defs>
+
+ <path
+ fill="url(#rev4a-violet)"
+ fill-rule="evenodd"
+ clip-rule="evenodd"
+ d="
+ M 1012 1005
+ H 882
+ L 857 961
+ H 733
+ L 732 1005
+ H 613
+ V 416
+ L 418 662
+ L 578 663
+ L 579 803
+ H 249
+ V 664
+ L 416 458
+ L 575 255
+ L 579 250
+ H 736
+ V 541
+ L 1012 1005
+ Z
+
+ M 729 746
+ V 875
+ H 807
+ Z
+ "
+ />
+</svg>

@@ -22,7 +22,7 @@ providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
-    network: olympus-traefik
+    network: rev4a-traefik
 
   file:
     directory: /etc/traefik/dynamic

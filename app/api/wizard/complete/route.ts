@@ -7,11 +7,11 @@
 import { NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { OLYMPUS_DATA } from '@/lib/olympus-paths';
+import { REV4A_DATA } from '@/lib/rev4a-paths';
 
 export const dynamic = 'force-dynamic';
 
-const WIZARD_FILE = OLYMPUS_DATA + '/data/wizard.json';
+const WIZARD_FILE = REV4A_DATA + '/data/wizard.json';
 
 export function POST(): NextResponse {
   // Write persistent marker

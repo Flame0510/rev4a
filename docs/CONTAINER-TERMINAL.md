@@ -7,13 +7,13 @@
 
 ## Overview
 
-Olympus provides an interactive web-based terminal for Docker containers.
+Rev4a provides an interactive web-based terminal for Docker containers.
 It connects to any container with `AGENT_ID` label, spawning a real PTY session
 via `node-pty` and streaming I/O over a dedicated WebSocket server.
 
 ```
 Browser (xterm-compatible DOM terminal)
-  │  WebSocket wss://olympus/containers/terminal/{id}
+  │  WebSocket wss://rev4a/containers/terminal/{id}
   ▼
 terminal-ws-server.js (port 3741, proxied by Traefik)
   │  node-pty
@@ -30,10 +30,10 @@ Container Shell (bash, interactive, full PTY)
 
 | Process          | Port  | Role |
 |------------------|-------|------|
-| `olympus-next`   | 3740  | Next.js app (pages, API routes, auth) |
-| `olympus-terminal-ws` | 3741 | Standalone WebSocket server for terminal sessions |
+| `rev4a-next`   | 3740  | Next.js app (pages, API routes, auth) |
+| `rev4a-terminal-ws` | 3741 | Standalone WebSocket server for terminal sessions |
 
-The terminal server is a separate systemd service (olympus-terminal-ws). It was isolated from
+The terminal server is a separate systemd service (rev4a-terminal-ws). It was isolated from
 the Next.js app to avoid event-loop contention during high-throughput I/O (fast
 `seq`, `cat` on large files, interactive shell sessions).
 
@@ -257,8 +257,8 @@ app/containers/terminal/
 ├── [id]/
 │   ├── page.tsx               # Next.js page (auth-protected)
 │   └── TerminalClient.tsx     # Client-side terminal component
-terminal-ws-server.js           # WebSocket PTY server (olympus-terminal-ws.service)
-olympus.target                  # Systemd target for all three services
+terminal-ws-server.js           # WebSocket PTY server (rev4a-terminal-ws.service)
+rev4a.service                  # Systemd target for all three services
 ```
 
 ## Known Limitations

@@ -1,3 +1,4 @@
+import { type NextRequest } from "next/server";
 /**
  * GET /api/agents/image-status
  *
@@ -8,10 +9,11 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { getIsDownloading } from '@/lib/buildAgentImage';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const REGISTRY_IMAGE = 'ghcr.io/flame0510/olympus/openclaw-agent-base:latest';
+const REGISTRY_IMAGE = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
 const LOCAL_IMAGE = 'openclaw-agent-base:latest';
 
 function dockerOk(): boolean {
@@ -68,7 +70,7 @@ function getRemoteDigest(): string | null {
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const exists = localImageExists();
   const localId = getLocalImageId();
   const downloading = getIsDownloading();
@@ -99,7 +101,7 @@ export async function GET(): Promise<NextResponse> {
       );
       const localRepoDigests: string[] = inspect?.RepoDigests || [];
       const registryDigest = localRepoDigests.find((d: string) =>
-        d.startsWith('ghcr.io/flame0510/olympus/openclaw-agent-base@'),
+        d.startsWith('ghcr.io/flame0510/rev4a/openclaw-agent-base@'),
       );
 
       if (registryDigest) {

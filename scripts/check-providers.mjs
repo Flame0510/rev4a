@@ -7,7 +7,7 @@ import http from 'http';
  */
 
 const BASE = 'http://127.0.0.1:3740';
-const PASSWORD = process.env.OLYMPUS_PASSWORD || '';
+const PASSWORD = process.env.REV4A_PASSWORD || '';
 
 function postLogin() {
   return new Promise((resolve, reject) => {
@@ -20,7 +20,7 @@ function postLogin() {
       res.on('data', (c) => body += c);
       res.on('end', () => {
         const cookies = (res.headers['set-cookie'] || []).join('; ');
-        const token = cookies.match(/olympus_token=([^;]+)/)?.[1];
+        const token = cookies.match(/rev4a_token=([^;]+)/)?.[1];
         resolve(token ? { token, cookie: cookies } : null);
       });
     });
@@ -80,9 +80,9 @@ async function getAgentProviders(cookie) {
   // 3. Playwright: headless browser visit providers page with cookie
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const context = await browser.newContext();
-  // Set the olympus_token cookie manually for the domain
+  // Set the rev4a_token cookie manually for the domain
   await context.addCookies([{
-    name: 'olympus_token',
+    name: 'rev4a_token',
     value: login.token,
     domain: '127.0.0.1',
     path: '/',

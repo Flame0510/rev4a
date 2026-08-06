@@ -12,7 +12,7 @@ export async function register() {
       syncAllAgents();
     } catch {
       // Best-effort — don't block startup if sync fails
-      console.warn('[olympus] Failed to sync agents on startup');
+      console.warn('[rev4a] Failed to sync agents on startup');
     }
   }
 }

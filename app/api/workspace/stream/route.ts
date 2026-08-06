@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { type NextRequest } from 'next/server';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const ROOT_PATH = process.env.OLYMPUS_WORKSPACE_ROOT || '';
+const ROOT_PATH = process.env.REV4A_WORKSPACE_ROOT || '';
 const STREAM_ENABLED = ROOT_PATH.length > 0;
 const POLL_MS = 3000;
 const IGNORED_DIRS = new Set(['node_modules', '.trash']);
@@ -87,8 +88,9 @@ function diffSnapshots(previous: Map<string, SnapshotEntry>, next: Map<string, S
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   if (!STREAM_ENABLED) {
-    return new Response('Workspace stream disabled (OLYMPUS_WORKSPACE_ROOT not set)', { status: 404 });
+    return new Response('Workspace stream disabled (REV4A_WORKSPACE_ROOT not set)', { status: 404 });
   }
 
   const encoder = new TextEncoder();

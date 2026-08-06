@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { execSync, execFileSync } from 'child_process';
+import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const SHARED_SKILLS_DIR = '/docker/shared-skills';
 const CONTAINER_BUNDLED_SKILLS_DIR = '/usr/local/lib/node_modules/openclaw/skills';
@@ -117,7 +118,8 @@ function parseSkillContent(content) {
   return { description, version };
 }
 
-export async function GET(_request) {
+export async function GET(request) {
+  const denied = await requireAuthJWT(request); if (denied) return denied;
   const skills = [];
 
   // 1. Shared skills

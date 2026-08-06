@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import type { Costs } from '@/lib/types';
 import { formatUsd } from '@/lib/utils/format';
 import { useScreenshot } from '@/lib/hooks/useScreenshot';
-import { useOlympusTimezone } from '@/lib/hooks/useOlympusTimezone';
+import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
 import { Skeleton } from './Skeleton';
 
@@ -25,7 +25,7 @@ const CameraIcon = () => (
 export default function DashboardHeader({ costs, loading: dataLoading = false, hideLogo = false, title }: DashboardHeaderProps) {
   const [clock, setClock] = useState('');
   const { loading, takeScreenshot } = useScreenshot();
-  const timezone = useOlympusTimezone();
+  const timezone = useRev4aTimezone();
 
   useEffect(() => {
     const tick = () =>
@@ -42,8 +42,8 @@ export default function DashboardHeader({ costs, loading: dataLoading = false, h
   return (
     <header className="header">
       <div className="logo">
-        {!hideLogo && <img src="/olympus-logo.png" alt="Olympus" style={{ width: 22, height: 22, objectFit: 'contain' }} />}
-        <span>{title ?? 'OLYMPUS'}</span>
+        {!hideLogo && <img src="/rev4a-logo.svg" alt="Rev4a" style={{ width: 22, height: 22, objectFit: 'contain' }} />}
+        <span>{title ?? 'REV4A'}</span>
       </div>
       <div className="meta">
         <div suppressHydrationWarning>

@@ -1,15 +1,15 @@
-import OlympusLoader from './components/OlympusLoader';
+import Rev4aLoader from './components/Rev4aLoader';
 
 export default function Loading() {
   return (
     <div
       style={{
         flex: 1,
-        minHeight: '100vh',
-        background: 'radial-gradient(circle at center, rgba(212,155,53,0.10), transparent 34%), var(--bg)',
+        minHeight: '100dvh',
+        background: 'radial-gradient(circle at center, rgba(146,91,252,0.10), transparent 34%), var(--bg)',
       }}
     >
-      <OlympusLoader label="LOADING SECTION" fullHeight />
+      <Rev4aLoader label="LOADING SECTION" fullHeight />
     </div>
   );
 }
