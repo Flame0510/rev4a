@@ -1,5 +1,9 @@
 name: Release NPM Publish
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
   release:
     types: [published]
   workflow_dispatch:
