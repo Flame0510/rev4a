@@ -21,10 +21,13 @@ export function POST(): NextResponse {
 
   const response = NextResponse.json({ done: true });
   // Also set cookie for backwards compat / existing clients
+  const isProduction = process.env.NODE_ENV === 'production';
+  const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
+
   response.cookies.set('wizard_done', '1', {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
+    secure: isProduction && !forceInsecure,
     maxAge: 60 * 60 * 24 * 365,
     path: '/',
   });

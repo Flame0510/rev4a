@@ -17,10 +17,13 @@ export function POST(): NextResponse {
   try { fs.unlinkSync(WIZARD_FILE); } catch { /* ignore */ }
 
   const response = NextResponse.json({ done: false });
+  const isProduction = process.env.NODE_ENV === 'production';
+  const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
+
   response.cookies.set('wizard_done', '', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProduction && !forceInsecure,
+    sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
     maxAge: 0,
     path: '/',
   });

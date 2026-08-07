@@ -413,7 +413,7 @@ function serve(port) {
     ...process.env,
     ...envVars,
     PORT: String(port),
-    NODE_ENV: 'production',
+    NODE_ENV: process.env.NODE_ENV || 'production',
   };
 
   const children = [];

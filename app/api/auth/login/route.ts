@@ -70,11 +70,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .setExpirationTime('7d')
       .sign(secretKey);
 
+    // Use secure cookies only when running behind HTTPS.
+    // On plain HTTP the Secure flag prevents the browser from sending
+    // the cookie, causing an immediate redirect loop after login.
+    const isProduction = process.env.NODE_ENV === 'production';
+    const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
+
     const response = NextResponse.json({ ok: true });
     response.cookies.set('rev4a_token', token, {
       httpOnly: true,
-      secure: true,
-      sameSite: 'strict',
+      secure: isProduction && !forceInsecure,
+      sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
       maxAge: 60 * 60 * 24 * 7,
       path: '/',
     });
