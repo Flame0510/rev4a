@@ -66,6 +66,48 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
+/** ToggleSwitch - compact on/off toggle for container lifecycle */
+function ToggleSwitch({ checked, disabled, onChange, ariaLabel }: { checked: boolean; disabled?: boolean; onChange: () => void; ariaLabel: string }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); onChange(); }}
+      aria-label={ariaLabel}
+      aria-pressed={checked}
+      className={`toggle-switch${checked ? ' toggle-switch--on' : ''}`}
+      style={{
+        position: 'relative',
+        width: 38,
+        height: 22,
+        borderRadius: 11,
+        border: '1px solid var(--border)',
+        background: checked ? 'var(--violet)' : 'var(--bg)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        transition: 'background 0.15s ease, border-color 0.15s ease',
+        flexShrink: 0,
+        opacity: disabled ? 0.4 : 1,
+        padding: 0,
+        outline: 'none',
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 2,
+          left: checked ? 18 : 2,
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          background: checked ? '#fff' : '#888',
+          transition: 'left 0.15s ease, background 0.15s ease',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+        }}
+      />
+    </button>
+  );
+}
+
 /** NoProviderBanner - shown when no provider API keys are configured */
 function NoProviderBanner() {
   return (
@@ -107,6 +149,67 @@ function NoProviderBanner() {
 }
 
 
+/** Shared agent list-item used in both mobile and desktop views. */
+function AgentListItem({
+  agent,
+  loading,
+  selected,
+  channelSummary,
+  onClick,
+  onLifecycle,
+}: {
+  agent: Agent;
+  loading: boolean;
+  selected?: boolean;
+  channelSummary: Record<string, { telegram: boolean }>;
+  onClick: () => void;
+  onLifecycle: () => void;
+}) {
+  return (
+    <ListItem onClick={onClick} active={selected} style={{ padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <ToggleSwitch
+          checked={agent.state === 'running'}
+          disabled={loading || agent.state === 'unknown'}
+          onChange={() => { void onLifecycle(); }}
+          ariaLabel={agent.state === 'running' ? 'Stop container' : 'Start container'}
+        />
+        <span style={{ color: selected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
+        {agent.template && (
+          <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
+        )}
+        <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {loading && <span style={{ fontSize: 10, color: '#888' }}>...</span>}
+          {agent.state === 'running' && agent.traefikUrl && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
+              title="Open agent Control UI"
+            >
+              Open ↗
+            </Button>
+          )}
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+        {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
+        {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
+      </div>
+      {channelSummary[agent.agentId]?.telegram && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+          <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
+        </div>
+      )}
+      {agent.imageOutdated && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
+        </div>
+      )}
+    </ListItem>
+  );
+}
+
 export default function AgentsPageClient() {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -123,6 +226,8 @@ export default function AgentsPageClient() {
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenSaving, setTokenSaving] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [lifecycleLoading, setLifecycleLoading] = useState<string | null>(null);
+  const skipNextPoll = useRef(false);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -150,7 +255,14 @@ export default function AgentsPageClient() {
     }
   }, []);
 
-  useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, [load]);
+  useEffect(() => {
+    load();
+    const i = setInterval(() => {
+      if (skipNextPoll.current) { skipNextPoll.current = false; return; }
+      load();
+    }, 15000);
+    return () => clearInterval(i);
+  }, [load]);
 
   // Check if agent base image exists (needed for creating agents)
   useEffect(() => {
@@ -196,6 +308,29 @@ export default function AgentsPageClient() {
   const handleImageReady = useCallback(() => {
     setImageReady(true);
   }, []);
+
+  const handleLifecycle = useCallback(async (agent: Agent) => {
+    const action = agent.state === 'running' ? 'stop' : 'start';
+    setLifecycleLoading(agent.agentId);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}/lifecycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error(`Lifecycle ${action} failed:`, data.error || res.statusText);
+      }
+      // Refresh agent list to pick up new state; skip the next polling cycle
+      skipNextPoll.current = true;
+      await load();
+    } catch (e: unknown) {
+      console.error(`Lifecycle request failed:`, (e as Error).message);
+    } finally {
+      setLifecycleLoading(null);
+    }
+  }, [load]);
 
   async function saveToken() {
     setTokenSaving(true);
@@ -330,41 +465,14 @@ export default function AgentsPageClient() {
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
-            <ListItem key={agent.id} onClick={() => selectAgent(agent)} style={{ padding: '12px 14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
-                {agent.template && (
-                  <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
-                )}
-                <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-                  {agent.state === 'running' && agent.traefikUrl && (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
-                      title="Open agent Control UI"
-                    >
-                      Open ↗
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
-                {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
-              </div>
-              {chSummary[agent.agentId]?.telegram && (
-                <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                  <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
-                </div>
-              )}
-              {agent.imageOutdated && (
-                <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                  <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
-                </div>
-              )}
-            </ListItem>
+            <AgentListItem
+              key={agent.id}
+              agent={agent}
+              loading={lifecycleLoading === agent.agentId}
+              channelSummary={chSummary}
+              onClick={() => selectAgent(agent)}
+              onLifecycle={() => handleLifecycle(agent)}
+            />
           ))}
         </div>
       </div>
@@ -400,42 +508,15 @@ export default function AgentsPageClient() {
             const isSelected = selected?.id === agent.id;
 
             return (
-              <ListItem key={agent.id} onClick={() => setSelected(agent)} active={isSelected} style={{ padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: STATUS_BULLET[agent.state] || '#888' }} />
-                  <span style={{ color: isSelected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
-                  {agent.template && (
-                    <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
-                  )}
-                  <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-                    {agent.state === 'running' && agent.traefikUrl && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
-                        title="Open agent Control UI"
-                      >
-                        Open ↗
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: '#666', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  <span>{agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}</span>
-                  {agent.ip && <span>{agent.ip}</span>}
-                  {agent.ports && <span style={{ color: '#888' }}>{agent.ports}</span>}
-                </div>
-                {chSummary[agent.agentId]?.telegram && (
-                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                    <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
-                  </div>
-                )}
-                {agent.imageOutdated && (
-                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                    <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
-                  </div>
-                )}
-              </ListItem>
+              <AgentListItem
+                key={agent.id}
+                agent={agent}
+                loading={lifecycleLoading === agent.agentId}
+                channelSummary={chSummary}
+                selected={isSelected}
+                onClick={() => setSelected(agent)}
+                onLifecycle={() => handleLifecycle(agent)}
+              />
             );
           })}
         </div>

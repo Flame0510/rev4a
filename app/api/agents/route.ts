@@ -51,10 +51,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // List all running containers with AGENT_ID label via Docker API
+    // List all containers (including stopped) with AGENT_ID label via Docker API
     const containers: any[] = await dockerFetch(
       'GET',
-      '/containers/json?filters={"label":["AGENT_ID"]}',
+      '/containers/json?all=true&filters={"label":["AGENT_ID"]}',
     );
 
     // Current image ID — used to detect outdated containers
@@ -74,6 +74,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         let env: string[] = [];
         let authToken: string | null = null;
         let traefikUrl: string | null = null;
+        let portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> | null = null;
 
         try {
           const inspect: any = await dockerFetch(
@@ -90,6 +91,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           env = (inspect.Config?.Env || []).filter((e: string) =>
             e.startsWith('AGENT_') || e.startsWith('MODEL_')
           );
+
+          // Ports from inspect (HostConfig) — works even when container is stopped
+          portBindings = inspect.HostConfig?.PortBindings || null;
 
           // Read auth token — always prefer the shared agents-token.json (user-managed)
           const cName = (c.Names?.[0] || '').replace(/^\//, '');
@@ -123,10 +127,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           // Build the agent URL from the host's public IP + mapped port.
           // Every agent has -p <port>:3000, so we look for the public port
           // that maps to the internal port 3000.
-          const publicPort = (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000);
+          // Use portBindings from inspect (works stopped) with fallback to c.Ports (running only).
+          const port3000Binding = portBindings?.['3000/tcp'];
+          const publicPort = port3000Binding?.[0]?.HostPort
+            || (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000)?.PublicPort
+            || null;
           if (publicPort) {
             const host = detectPublicHost();
-            let baseUrl = `http://${host}:${publicPort.PublicPort}`;
+            let baseUrl = `http://${host}:${publicPort}`;
             if (authToken) {
               baseUrl += `#token=${encodeURIComponent(authToken)}`;
             }
@@ -145,13 +153,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           template = templateLine ? templateLine.split('=').slice(1).join('=') : 'custom';
         }
 
-        const ports = (c.Ports || [])
-          .filter((p: any) => p.PublicPort)
-          .map(
-            (p: any) =>
-              `${p.PublicPort}:${p.PrivatePort}${p.Type === 'udp' ? '/udp' : ''}`,
-          )
-          .join(', ');
+        // Build ports string from portBindings (works stopped) with fallback to c.Ports (running only)
+        let ports = '';
+        if (portBindings && Object.keys(portBindings).length > 0) {
+          ports = Object.entries(portBindings)
+            .flatMap(([containerPort, hostPorts]) =>
+              (hostPorts as any[]).map((h: any) => `${h.HostPort}:${containerPort.replace('/tcp', '')}${containerPort.includes('/udp') ? '/udp' : ''}`)
+            )
+            .join(', ');
+        } else {
+          ports = (c.Ports || [])
+            .filter((p: any) => p.PublicPort)
+            .map(
+              (p: any) =>
+                `${p.PublicPort}:${p.PrivatePort}${p.Type === 'udp' ? '/udp' : ''}`,
+            )
+            .join(', ');
+        }
 
         return {
           id: (c.Id || '').slice(0, 12),
