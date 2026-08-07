@@ -428,8 +428,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       try {
         execSync(`docker exec ${containerName} openclaw gateway restart`, { timeout: 15000 });
       } catch { /* restart is best-effort */ }
-    } catch {
-      // runtime config patch is best-effort
+    } catch (e: unknown) {
+      // runtime config patch is best-effort; log but don't fail the create
+      console.error('[agent:create] runtime config patch failed:', (e as Error).message || String(e));
     }
 
     return NextResponse.json({

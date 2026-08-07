@@ -20,12 +20,29 @@ const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function getActiveRev4aModels(models: ModelConfigEntry[]): { id: string; name: string }[] {
+/**
+ * Convert internal modality string (e.g. "text+image+file->text") to
+ * OpenClaw `input` array. Filters out values not in the allowed set
+ * (text | image | video | audio).
+ */
+const ALLOWED_INPUT = new Set(['text', 'image', 'video', 'audio']);
+
+function modalityToInput(modality: string): string[] {
+  const arrowIdx = modality.indexOf('->');
+  const left = arrowIdx >= 0 ? modality.slice(0, arrowIdx) : modality;
+  return left.split('+').map((s) => s.trim()).filter((s) => ALLOWED_INPUT.has(s));
+}
+
+function getActiveRev4aModels(models: ModelConfigEntry[]): { id: string; name: string; input?: string[] }[] {
   const providerKeys = readProviderKeys();
   const configuredProviders = Object.keys(providerKeys);
   return models
     .filter((m) => m.enabled && configuredProviders.includes(m.provider))
-    .map((m) => ({ id: m.id, name: m.name }));
+    .map((m) => {
+      const entry: { id: string; name: string; input?: string[] } = { id: m.id, name: m.name };
+      if (m.modality) entry.input = modalityToInput(m.modality);
+      return entry;
+    });
 }
 
 function getAgentContainers(): string[] {
@@ -81,7 +98,7 @@ function restartContainerGateway(container: string): string | null {
  * Shared between the create wizard and syncAgent — single source of truth
  * for the provider block injected into every agent container.
  */
-export function buildRev4aProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] } {
+export function buildRev4aProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string; input?: string[] }[] } {
   const providerKeys = readProviderKeys();
   const rev4aApiKey = providerKeys['rev4a'] || '';
   const allModels = loadModelsConfig();

@@ -6,7 +6,11 @@ export default function ContainersLoading() {
       padding: '16px 20px',
       maxWidth: 1080,
       margin: '0 auto',
-      minHeight: '100dvh',
+      height: '100%',
+      boxSizing: 'border-box',
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
+      paddingBottom: 72,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
         <Skeleton width={140} height={20} accent />

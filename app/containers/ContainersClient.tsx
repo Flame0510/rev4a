@@ -42,7 +42,7 @@ export default function ContainersClient() {
   }, []);
 
   return (
-    <div style={{ padding: '16px', maxWidth: 1080, margin: '0 auto', minHeight: '100dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+    <div style={{ padding: '16px', maxWidth: 1080, margin: '0 auto', height: '100%', overflowY: 'auto', WebkitOverflowScrolling: 'touch', boxSizing: 'border-box', paddingBottom: 72 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h1 style={{ fontSize: 20, fontWeight: 400, color: 'var(--violet)', letterSpacing: 2, margin: 0 }}>CONTAINERS</h1>

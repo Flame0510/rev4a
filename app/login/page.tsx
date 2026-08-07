@@ -97,7 +97,7 @@ export default function LoginPage() {
           <img src="/rev4a-logo.svg" alt="Rev4a" width="76" height="76" style={{ objectFit: 'contain', display: 'block', marginBottom: 14, filter: 'drop-shadow(0 0 12px rgba(146,91,252,0.25))' }} />
           <div style={{ fontFamily: 'var(--font-serif-stack, serif)', fontSize: 26, letterSpacing: 4, color: 'var(--violet)' }}>REV4A</div>
           <div style={{ marginTop: 8, color: 'var(--text-dim)', fontSize: 11, letterSpacing: '0.12em' }}>
-            AGENCY MONITOR — RESTRICTED ACCESS
+            REVOLUTION FOR AGENTS — RESTRICTED ACCESS
           </div>
         </div>
 

@@ -971,7 +971,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   color: #111;
 }
 .ui-btn--primary:hover:not(:disabled) {
-  background: #e6ab3d;
+  background: var(--violet-hover, #7B4FD4);
 }
 
 .ui-btn--secondary {

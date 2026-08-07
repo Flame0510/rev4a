@@ -39,8 +39,26 @@ export const AGENTS_TOKEN_FILE = path.join(REV4A_DATA, 'data', 'agents-token.jso
 /** Provider API keys JSON */
 export const PROVIDER_KEYS_FILE = path.join(REV4A_DATA, 'data', 'provider-keys.json');
 
-/** Model overrides JSON */
-export const MODELS_CONFIG_FILE = path.join(REV4A_DATA, 'models.config.json');
+/**
+ * Model catalogue — read-only, shipped with the package.
+ * Resolved at module load from the package root (alongside bin/rev4a.js).
+ */
+function resolvePackageFile(filename: string): string {
+  // cwd in dev (workspace checkout)
+  const cwdPath = path.join(process.cwd(), filename);
+  if (fs.existsSync(cwdPath)) return cwdPath;
+
+  // Installed package: this file is at <pkgRoot>/lib/rev4a-paths.js
+  const pkgRoot = path.resolve(__dirname, '..');
+  const pkgPath = path.join(pkgRoot, filename);
+  if (fs.existsSync(pkgPath)) return pkgPath;
+
+  // Last resort: accept that it may not exist (will throw at read time)
+  return cwdPath;
+}
+
+/** Static model catalogue — read-only, inside the package repo */
+export const MODELS_CONFIG_FILE = resolvePackageFile('models.config.json');
 
 /** Top-level .next build directory (kept inside npm package for now — built by rev4a serve) */
 export function nextDir(pkgRoot: string): string {

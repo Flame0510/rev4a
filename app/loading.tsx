@@ -4,8 +4,9 @@ export default function Loading() {
   return (
     <div
       style={{
-        flex: 1,
-        minHeight: '100dvh',
+        height: '100%',
+        boxSizing: 'border-box',
+        paddingBottom: 72,
         background: 'radial-gradient(circle at center, rgba(146,91,252,0.10), transparent 34%), var(--bg)',
       }}
     >

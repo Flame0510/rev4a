@@ -288,7 +288,7 @@ export default function AgentsPageClient() {
   if (isMobile) {
     if (!showList && selected) {
       return (
-        <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
+        <div style={{ height: '100dvh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
