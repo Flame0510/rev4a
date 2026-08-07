@@ -359,7 +359,7 @@ function build() {
 // ── Version check ───────────────────────────────────────────────────────────
 
 function checkVersion() {
-  const pkgName = '@flame0510/rev4a';
+  const pkgName = '@flame0510/project-aether';
   try {
     const latest = execSync(
       `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
@@ -373,7 +373,7 @@ function checkVersion() {
     console.log('  ║  Latest: ' + `v${latest}`.padEnd(31) + ' ║');
     console.log('  ║  Installed: ' + `v${pkg.version}`.padEnd(28) + ' ║');
     console.log('  ║                                           ║');
-    console.log('  ║  Run: npm install -g @flame0510/rev4a   ║');
+    console.log('  ║  Run: npm install -g @flame0510/project-aether   ║');
     console.log('  ║  Then: restart rev4a                    ║');
     console.log('  ╚══════════════════════════════════════════╝');
     console.log('');
@@ -650,7 +650,7 @@ if (cmd === 'update') {
   console.log(`Checking for updates…`);
   try {
     const latest = execSync(
-      'npm view @flame0510/rev4a version --registry https://registry.npmjs.org 2>/dev/null',
+      'npm view @flame0510/project-aether version --registry https://registry.npmjs.org 2>/dev/null',
       { stdio: 'pipe', timeout: 10_000 },
     ).toString().trim();
     if (latest === pkg.version) {
@@ -668,7 +668,7 @@ if (cmd === 'update') {
       });
     } else {
       console.log('Using npm global install…');
-      execSync('npm install -g @flame0510/rev4a@latest', {
+      execSync('npm install -g @flame0510/project-aether@latest', {
         stdio: 'inherit',
         timeout: 120_000,
       });

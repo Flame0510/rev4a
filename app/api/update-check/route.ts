@@ -12,7 +12,7 @@ function getPackageInfo() {
     const raw = readFileSync(pkgPath, 'utf-8');
     return JSON.parse(raw);
   } catch {
-    return { version: '0.0.0', name: '@flame0510/rev4a' };
+    return { version: '0.0.0', name: '@flame0510/project-aether' };
   }
 }
 
@@ -45,7 +45,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       updateAvailable = cache.updateAvailable;
     } else {
       try {
-        const pkgName = pkg.name || '@flame0510/rev4a';
+        const pkgName = pkg.name || '@flame0510/project-aether';
         latest = execSync(
           `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
           { stdio: 'pipe', timeout: 10_000 },
