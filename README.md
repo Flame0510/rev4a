@@ -62,13 +62,22 @@ rev4a serve --port 8080
 
 ## Environment Variables
 
+`rev4a serve` generates `~/.config/rev4a/.env` on first run with the secrets
+already filled in — you normally never set these by hand. See
+[.env.example](./.env.example) for the full reference.
+
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `PORT` | `3740` | No | Dashboard HTTP port |
-| `REV4A_TOKEN` | — | Yes | Bearer token for API routes and login |
-| `REV4A_JWT_SECRET` | auto-generated | No | Secret for auth cookies |
-| `REV4A_DB` | `./events.db` | No | SQLite database path |
-| `OPENCLAW_BIN` | `/usr/bin/openclaw` | No | OpenClaw CLI path |
+| `TERMINAL_WS_PORT` | `3741` | No | Container terminal WebSocket port |
+| `REV4A_PASSWORD` | — | Yes | Dashboard login password (set via the setup wizard) |
+| `REV4A_TOKEN` | auto-generated | Yes | Bearer token for API routes and agent calls |
+| `REV4A_JWT_SECRET` | auto-generated | Yes | Secret for auth cookies |
+| `REV4A_API_KEY` | auto-generated | No | API key for the Gateway provider endpoint |
+| `GATEWAY_TOKEN` | auto-generated | No | Shared token handed to agent containers |
+| `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
+| `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
+| `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
 
 ---
 

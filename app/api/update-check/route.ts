@@ -5,6 +5,10 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
+// Fallback used only when package.json cannot be read — the published npm
+// package name is the single source of truth, so never hardcode it elsewhere.
+const FALLBACK_PKG_NAME = '@flame0510/project-aether';
+
 function getPackageInfo() {
   try {
     // Resolve relative to the project root (two levels above .next)
@@ -12,7 +16,7 @@ function getPackageInfo() {
     const raw = readFileSync(pkgPath, 'utf-8');
     return JSON.parse(raw);
   } catch {
-    return { version: '0.0.0', name: '@flame0510/project-aether' };
+    return { version: '0.0.0', name: FALLBACK_PKG_NAME };
   }
 }
 
@@ -45,7 +49,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       updateAvailable = cache.updateAvailable;
     } else {
       try {
-        const pkgName = pkg.name || '@flame0510/project-aether';
+        const pkgName = pkg.name || FALLBACK_PKG_NAME;
         latest = execSync(
           `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
           { stdio: 'pipe', timeout: 10_000 },

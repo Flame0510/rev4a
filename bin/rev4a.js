@@ -39,8 +39,14 @@ const AGENT_IMAGE = 'openclaw-agent-base:latest';
 const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
 const DOCKER_NETWORK = 'rev4a-network';
 
+// Fallback used only when package.json cannot be read — the published npm
+// package name is the single source of truth, so never hardcode it elsewhere.
+const FALLBACK_PKG_NAME = '@flame0510/project-aether';
+
 let pkg;
-try { pkg = require(PKG_JSON); } catch { pkg = { version: '0.0.0' }; }
+try { pkg = require(PKG_JSON); } catch { pkg = { version: '0.0.0', name: FALLBACK_PKG_NAME }; }
+
+const PKG_NAME = pkg.name || FALLBACK_PKG_NAME;
 
 const DEFAULT_PORT = 3740;
 
@@ -298,7 +304,7 @@ function ensureEnv() {
 
   const jwt = randomString(48);
   const token = randomString(32);
-  const apiKey = 'oly_' + randomString(48);
+  const apiKey = 'rev_' + randomString(48);
   const gatewayToken = randomString(48);
 
   const env = [
@@ -359,23 +365,30 @@ function build() {
 // ── Version check ───────────────────────────────────────────────────────────
 
 function checkVersion() {
-  const pkgName = '@flame0510/project-aether';
   try {
     const latest = execSync(
-      `npm view ${pkgName} version --registry https://registry.npmjs.org 2>/dev/null`,
+      `npm view ${PKG_NAME} version --registry https://registry.npmjs.org 2>/dev/null`,
       { stdio: 'pipe', timeout: 8000 },
     ).toString().trim();
     if (!latest || latest === pkg.version) return;
 
+    const rows = [
+      '🆕 Rev4a update available!',
+      `Latest: v${latest}`,
+      `Installed: v${pkg.version}`,
+      '',
+      `Run: npm install -g ${PKG_NAME}`,
+      'Then: restart rev4a',
+    ];
+    // Box is sized to the longest row so the package name can change freely.
+    const width = Math.max(...rows.map((r) => r.length));
+
     console.log('');
-    console.log('  ╔══════════════════════════════════════════╗');
-    console.log('  ║  🆕 Rev4a update available!            ║');
-    console.log('  ║  Latest: ' + `v${latest}`.padEnd(31) + ' ║');
-    console.log('  ║  Installed: ' + `v${pkg.version}`.padEnd(28) + ' ║');
-    console.log('  ║                                           ║');
-    console.log('  ║  Run: npm install -g @flame0510/project-aether   ║');
-    console.log('  ║  Then: restart rev4a                    ║');
-    console.log('  ╚══════════════════════════════════════════╝');
+    console.log(`  ╔══${'═'.repeat(width)}══╗`);
+    for (const row of rows) {
+      console.log(`  ║  ${row}${' '.repeat(width - row.length)}  ║`);
+    }
+    console.log(`  ╚══${'═'.repeat(width)}══╝`);
     console.log('');
   } catch {
     // No internet or npm not configured — skip silently
@@ -650,7 +663,7 @@ if (cmd === 'update') {
   console.log(`Checking for updates…`);
   try {
     const latest = execSync(
-      'npm view @flame0510/project-aether version --registry https://registry.npmjs.org 2>/dev/null',
+      `npm view ${PKG_NAME} version --registry https://registry.npmjs.org 2>/dev/null`,
       { stdio: 'pipe', timeout: 10_000 },
     ).toString().trim();
     if (latest === pkg.version) {
@@ -668,7 +681,7 @@ if (cmd === 'update') {
       });
     } else {
       console.log('Using npm global install…');
-      execSync('npm install -g @flame0510/project-aether@latest', {
+      execSync(`npm install -g ${PKG_NAME}@latest`, {
         stdio: 'inherit',
         timeout: 120_000,
       });
