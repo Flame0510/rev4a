@@ -44,7 +44,10 @@ rev4a serve --port 8080
 ```
 
 > **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
-> **Container deploy:** `docker run -d --name rev4a -v rev4a-data:/rev4a/data -v /var/run/docker.sock:/var/run/docker.sock -p 3740:3740 ghcr.io/flame0510/rev4a:latest`
+>
+> **Container deploy:** on hold. The root `Dockerfile` (Docker-in-Docker packaging of
+> the dashboard itself) is an experimental path, not currently built or published —
+> see the file for details. Use the git-clone install above.
 
 ---
 

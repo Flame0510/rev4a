@@ -1,8 +1,18 @@
-# ── Rev4a Docker Image ────────────────────────────────────────────────────
-# Public image, pullable without authentication.
-# Rev4a self-bootstraps on first run: env, Next.js build, agent image pull.
+# ── Rev4a Docker Image — ON HOLD, not currently built or published ────────
 #
-# Usage:
+# This packages the Rev4a dashboard itself (Next.js + daemon + terminal-ws)
+# to run as a Docker-in-Docker container: the dashboard runs inside a
+# container and creates agent containers as siblings via the mounted
+# host socket. Built for that DinD use case, not for general distribution.
+#
+# No CI workflow builds or pushes this image today (ghcr.io/flame0510/rev4a
+# does not exist). Deferred deliberately — do not wire up a build for this
+# without an explicit decision to resume it. The supported install path is
+# git clone + `rev4a serve` (see README.md).
+#
+# Kept here so the Docker-in-Docker approach isn't lost if picked back up.
+#
+# Usage (once resumed):
 #   docker run -d --name rev4a \
 #     -v rev4a-data:/rev4a/data \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
@@ -13,9 +23,6 @@
 #   .env is stored in /rev4a/data/.env (survives container recreates)
 #   and copied to /rev4a/.env on startup for Next.js compatibility.
 #   All databases, credentials, and tokens live in the data/ volume.
-#
-# To update: docker pull ghcr.io/flame0510/rev4a:latest && docker rm -f rev4a && docker run ... (same flags)
-#     OR use the built-in update banner in the Rev4a dashboard.
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM node:22-bookworm-slim
