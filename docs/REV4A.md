@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-07-27
+> **Last updated:** 2026-08-09
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -52,15 +52,24 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ### Environment
 
-Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`.
+Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`. See [.env.example](../.env.example) for the canonical, always-current list.
 
 | Variable | Required | Description |
 |---|---|---|
 | `REV4A_PASSWORD` | Yes | Login password for the dashboard |
 | `REV4A_TOKEN` | Yes | Token used for programmatic API access |
 | `REV4A_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
-| `REV4A_DB` | No | Path to the events database (default: `data/events.db`) |
+| `REV4A_API_KEY` | No | API key for the Gateway provider endpoint (auto-generated) |
+| `GATEWAY_TOKEN` | No | Shared token handed to agent containers |
+| `REV4A_DATA_DIR` | No | Root of all persistent data (default: `~/.config/rev4a`) |
+| `REV4A_DB` | No | Path to the events database (default: `<data dir>/data/events.db`) |
+| `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
 | `REV4A_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
+| `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
+| `REV4A_TIMEZONE` | No | IANA timezone used for scheduling and timestamps |
+| `REV4A_FORCE_INSECURE_COOKIE` | No | Allow a non-Secure session cookie — plain-HTTP deployments only |
+
+See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 
 ## Agent creation
 
@@ -138,6 +147,29 @@ REV4A_JWT_SECRET=***  # Secret for signing JWTs
 
 ---
 
+## Alerts (Telegram)
+
+Rev4a can send Telegram alerts when the events database goes stale (no
+recent writes — see `/api/system-health`). Implemented in `lib/alerts.ts`.
+
+**Env vars:**
+```
+REV4A_ALERTS_ENABLED=false        # Master switch — no alerts sent unless "true"
+REV4A_TELEGRAM_BOT_TOKEN=         # Telegram bot token
+REV4A_TELEGRAM_CHAT_ID=           # Telegram chat to notify
+REV4A_ALERT_COOLDOWN_MS=600000    # Minimum time between repeat alerts for the same condition
+REV4A_ALERT_STALE_SECONDS=120     # How long without a DB write before the system is considered stale
+REV4A_ALERT_SMOKE=false           # Set true to send a one-off test alert on startup
+```
+
+**Behavior:**
+- If `REV4A_ALERTS_ENABLED` is not `"true"`, `maybeSendAlert` is a no-op — nothing is sent, nothing is recorded.
+- If enabled but `REV4A_TELEGRAM_BOT_TOKEN` or `REV4A_TELEGRAM_CHAT_ID` is missing, alerts run in **dry-run**: state transitions are still recorded in the `alert_state` table (SQLite), but no Telegram message is sent — visible in server logs as `[alerts] dry-run`.
+- Alert state (`ok` / `alerted` / `resolved`) is tracked per `alert_key` in `alert_state`, so a resolved condition sends a follow-up "✅ resolved" message instead of staying silent.
+- `REV4A_ALERT_COOLDOWN_MS` prevents repeat-sending the same stale alert while the condition persists.
+
+---
+
 ## Service Management
 
 ```bash
@@ -167,8 +199,6 @@ Environment=REV4A_PASSWORD=***
 Environment=REV4A_TOKEN=***
 Environment=REV4A_JWT_SECRET=***
 Environment=REV4A_DB=/path/to/rev4a/data/events.db
-Environment=OPENCLAW_CONFIG_PATH=/path/to/openclaw-core.json
-Environment=SHARED_CONTEXT_DIR=/path/to/shared-context
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 ```
@@ -498,7 +528,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ├── public/                  # Static assets
 ├── scripts/                 # Utility scripts (setup, helpers)
 ├── .env                     # Local env vars (gitignored)
-├── proxy.ts                  # Auth proxy
+├── middleware.ts              # Auth gate — redirects to /login without a valid JWT cookie
 ├── next.config.mjs
 └── package.json
 ```

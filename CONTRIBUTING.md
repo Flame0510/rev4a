@@ -30,6 +30,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section |
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
+| `.github/workflows/release-publish.yml` | This file — Release process section |
 
 ---
 
@@ -67,6 +68,38 @@ docs/
 - **New page/component** → add it to `frontend-architecture.md` with its responsibility
 
 Keep docs accurate and current, not historical. No changelog entries inside doc files.
+
+---
+
+## Release process
+
+Publishing to npm is driven entirely by the GitHub release tag — never by
+pushing to `package.json`.
+
+```bash
+gh release create v1.2.0 --target main --title "v1.2.0" --notes "..."
+```
+
+This triggers `.github/workflows/release-publish.yml`, which:
+
+1. Checks out the tag and derives the version from it (validated as semver — a
+   malformed tag like `v1.2` fails before publishing anything)
+2. Installs, bumps `package.json` to that version, builds — the build is a
+   gate, a broken build never gets published
+3. Skips the publish (with a warning, not a failed run) if that version
+   already exists on npm — safe to re-run a release
+4. Publishes to npm with `NPM_TOKEN`
+5. Commits the version bump back to `main` (`chore: allinea package.json a
+   vX.Y.Z [skip ci]`) so the repo can never drift from what's on npm
+
+`workflow_dispatch` is also available for a dry run (`dry_run: true`, the
+default) — it runs the same steps up to `npm publish --dry-run` without
+actually publishing, useful to sanity-check the pipeline itself.
+
+**Do not** re-add a `push` trigger on `package.json` — that was the previous
+setup, and it made every commit touching `package.json` attempt a publish,
+racing against the `release` trigger and failing with `403 cannot publish
+over the previously published version` more often than not.
 
 ---
 
