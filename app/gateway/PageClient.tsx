@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, ConfirmModal, LoadingSpinner, Metric, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
+import { Button, ConfirmModal, Input, LoadingSpinner, Metric, ModalityIcons, Page, PageHeader, Pill, Surface, Tabs, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import { Skeleton } from '../components/Skeleton';
 
@@ -14,6 +14,12 @@ interface ModelInfo {
   id: string;
   name: string;
   enabled: boolean;
+  /** USD per 1M tokens. -1/-1 means the model routes dynamically. */
+  pricing?: { input: number; output: number };
+  /** Set when the price came from the live OpenRouter catalogue, not the static file. */
+  pricingLive?: boolean;
+  /** e.g. "text+image+file->text" — curated, matches what sync.ts provisions. */
+  modality?: string;
 }
 
 interface GatewayProvider {
@@ -345,6 +351,9 @@ export default function GatewayPageClient() {
   const [revealedKeys, setRevealedKeys] = useState<Record<string, string | null>>({});
   const [revealing, setRevealing] = useState<Record<string, boolean>>({});
 
+  // Per-provider model filter (purely local, no requests)
+  const [modelSearch, setModelSearch] = useState<Record<string, string>>({});
+
   // Agent edit state
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
   const [agentModelInput, setAgentModelInput] = useState('');
@@ -429,6 +438,24 @@ export default function GatewayPageClient() {
     if (p.input === 0 && p.output === 0) return 'Free';
     const f = (n: number) => n < 0.01 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`;
     return `${f(p.input)} / ${f(p.output)}`;
+  }
+
+  /**
+   * Local model filter. Matches against both the display name and the id,
+   * because the upstream vendor often only appears in one of them — e.g.
+   * "Kimi K2 (OR)" has id `openrouter/moonshotai/kimi-k2`, so searching
+   * either "kimi" or "moonshot" has to find it.
+   *
+   * Every whitespace-separated term must match somewhere, so "kimi code"
+   * narrows rather than widening.
+   */
+  function filterModels<T extends { id: string; name: string }>(models: T[], query: string): T[] {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return models;
+    return models.filter((m) => {
+      const haystack = `${m.name} ${m.id}`.toLowerCase();
+      return terms.every((t) => haystack.includes(t));
+    });
   }
 
   /* ---- Overlay helper ---- */
@@ -904,33 +931,93 @@ export default function GatewayPageClient() {
                     )}
 
                     {/* Models with checkboxes */}
-                    {p.models.length > 0 && (
+                    {p.models.length > 0 && (() => {
+                      const query = modelSearch[p.provider] || '';
+                      const visibleModels = filterModels(p.models, query);
+                      // Below this many, everything fits on screen and a
+                      // search box is just noise.
+                      const showSearch = p.models.length > 6;
+                      return (
                       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                          Models
-                          <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--violet)', opacity: 0.7, fontSize: 10 }}>
-                            in / out per 1M tokens
-                          </span>
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                            Models
+                            <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: 'var(--violet)', opacity: 0.7, fontSize: 10 }}>
+                              in / out per 1M tokens
+                            </span>
+                          </div>
+                          {query && (
+                            <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+                              {visibleModels.length} of {p.models.length}
+                            </span>
+                          )}
                         </div>
+
+                        {showSearch && (
+                          <div style={{ marginBottom: 8 }}>
+                            {/* Deliberately type="text": Safari clears type="search"
+                                on Escape via a `search` event React never sees,
+                                leaving an empty box over a still-filtered list. */}
+                            <Input
+                              type="text"
+                              value={query}
+                              placeholder="Filter by name or provider — e.g. kimi, moonshot, flash"
+                              aria-label={`Filter ${p.label} models`}
+                              onChange={(e) => setModelSearch((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                            />
+                          </div>
+                        )}
+
                         <div style={{ display: 'grid', gap: 4, maxHeight: 360, overflowY: 'auto' }}>
-                          {p.models.map((m) => {
+                          {visibleModels.length === 0 && (
+                            <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '8px 4px' }}>
+                              No model matches “{query}”.
+                            </div>
+                          )}
+                          {visibleModels.map((m) => {
                             const modelMsg = messages[`model-${m.id}`];
+                            const pricing = m.pricing;
+                            // -1/-1 is OpenRouter's marker for router models,
+                            // whose price and capabilities both vary per call.
+                            const isDynamic = pricing?.input === -1 && pricing?.output === -1;
                             return (
-                              <label key={m.id} style={{
-                                display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px', borderRadius: 0,
+                              // Only the name/id are inside the <label>: clicking
+                              // anywhere in a label toggles its checkbox, and the
+                              // badges below carry tooltips people will click to
+                              // read — which would silently flip the model and
+                              // restart every agent container.
+                              <div key={m.id} style={{
+                                display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px',
                                 background: m.enabled ? 'rgba(var(--green-rgb,34,197,94),0.06)' : 'transparent',
-                                cursor: overlay.active ? 'wait' : 'pointer', fontSize: 12,
+                                fontSize: 12,
                               }}>
                                 <input type="checkbox" checked={m.enabled} disabled={overlay.active}
+                                  id={`model-${m.id}`}
                                   onChange={(e) => handleToggleModel(m.id, e.target.checked)}
                                   style={{ accentColor: 'var(--green)', cursor: 'pointer' }} />
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontWeight: m.enabled ? 500 : 400 }}>{m.name}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                    <label
+                                      htmlFor={`model-${m.id}`}
+                                      style={{ fontWeight: m.enabled ? 500 : 400, cursor: overlay.active ? 'wait' : 'pointer' }}
+                                    >
+                                      {m.name}
+                                    </label>
+                                    <ModalityIcons modality={m.modality} dynamic={isDynamic} />
+                                  </div>
                                   <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
                                     {m.id}
                                     <span style={{ marginLeft: 8, color: 'var(--violet)', fontWeight: 500 }}>
-                                      {fmtPrice((m as any).pricing)}
+                                      {fmtPrice(pricing)}
                                     </span>
+                                    {m.pricingLive && (
+                                      <span
+                                        title="Live price from the OpenRouter API"
+                                        style={{ marginLeft: 6, display: 'inline-block', verticalAlign: 'middle' }}
+                                      >
+                                        <Pill tone="success">LIVE</Pill>
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
                                 {modelMsg && (
@@ -938,12 +1025,13 @@ export default function GatewayPageClient() {
                                     {modelMsg.text}
                                   </span>
                                 )}
-                              </label>
+                              </div>
                             );
                           })}
                         </div>
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {msg && (
                       <div className={msg.type === 'success' ? 'msg-success' : 'msg-error'}>
