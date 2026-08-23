@@ -38,6 +38,8 @@
     "lineage.js",
     "terminal-ws-server.js",
     "package.json",
+    "proxy.ts",
+    "instrumentation.ts",
     "next.config.mjs",
     "tsconfig.json",
     "next-env.d.ts",
