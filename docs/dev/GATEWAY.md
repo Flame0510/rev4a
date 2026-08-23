@@ -237,12 +237,48 @@ Returns current provider configuration state.
       "configured": true,
       "baseUrl": "https://api.deepseek.com",
       "models": [
-        { "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "enabled": true }
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "enabled": true,
+          "pricing": { "input": 0.05, "output": 0.10 },
+          "pricingLive": true,
+          "modality": "text->text"
+        }
       ]
     }
   ]
 }
 ```
+
+`pricing` is USD per 1M tokens. `-1 / -1` means the model routes dynamically
+(OpenRouter Auto) — the UI renders "Dynamic" and shows "varies" for
+capabilities rather than concrete icons.
+
+#### Live pricing
+
+`model-pricing.json` is maintained by hand and drifts — 16 of 79 OpenRouter
+entries were wrong when this was added, one understating the real cost ~8x.
+`lib/openrouter-pricing.ts` overlays the live catalogue on top of it and sets
+`pricingLive: true` on the models it covers, which the UI marks with a `LIVE`
+pill.
+
+- Endpoint: `GET https://openrouter.ai/api/v1/models` — public, no API key,
+  CDN-cached, never billed.
+- Scope: **only** models whose provider is `openrouter`. The same model sold
+  direct (openai, anthropic, google…) has different rates, so applying
+  OpenRouter's price there would show the wrong vendor's number.
+- Cache mirrors what the endpoint itself declares: `max-age=300` for
+  freshness, `stale-if-error=3600` as the upper bound past which a stale
+  entry is dropped in favour of the static file. Failures back off for a
+  minute instead of retrying on every request.
+- Skipped entirely when OpenRouter isn't configured, so callers that only
+  read `configured` (the agents page) don't wait on a network round trip.
+- `modality` is **not** taken from upstream. `sync.ts` provisions agent
+  containers from the curated `models.config.json` value, so a different
+  capability set in the UI would advertise inputs the container never
+  accepted. (`moonshotai/kimi-k3` currently differs: `text+image` curated
+  vs `text+image+video` upstream.)
 
 ---
 

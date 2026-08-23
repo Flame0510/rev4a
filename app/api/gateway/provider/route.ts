@@ -12,6 +12,7 @@ import { syncAllAgents } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 import { getPricing } from '@/lib/model-pricing';
 import { loadModelsConfig, toggleModelOverride, type ModelConfigEntry } from '@/lib/model-catalogue';
+import { getLivePricing } from '@/lib/openrouter-pricing';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -140,6 +141,17 @@ export async function GET(request: NextRequest) {
   if (denied) return denied;
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
+
+  // Live prices overlaid on the static file, which drifts. Fetched regardless
+  // of whether OpenRouter is configured: the catalogue is public, and prices
+  // are most useful precisely to someone still deciding whether to enable it.
+  // Best-effort — an empty map means the static values stand in.
+  //
+  // Modality deliberately stays on the curated value: sync.ts provisions
+  // containers from it, so taking a different one upstream would advertise
+  // inputs the agent was never configured to accept.
+  const livePricing = await getLivePricing(allModels.map((m) => m.id));
+
   const providers = Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => {
     const providerModels = allModels.filter((m) => m.provider === key);
     return {
@@ -147,8 +159,14 @@ export async function GET(request: NextRequest) {
       baseUrl: cfg.baseUrl, docsUrl: cfg.docsUrl,
       models: providerModels.map((m) => {
         const entry: Record<string, unknown> = { id: m.id, name: m.name, enabled: m.enabled };
-        const p = getPricing(m.id);
-        if (p) entry.pricing = p;
+        const livePrice = livePricing.get(m.id);
+        if (livePrice) {
+          entry.pricing = livePrice;
+          entry.pricingLive = true;
+        } else {
+          const staticPrice = getPricing(m.id);
+          if (staticPrice) entry.pricing = staticPrice;
+        }
         if (m.modality) entry.modality = m.modality;
         return entry;
       }),
