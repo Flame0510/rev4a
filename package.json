@@ -53,6 +53,7 @@
     "build": "next build",
     "start": "rev4a serve",
     "start:all": "rev4a serve",
+    "refresh:pricing": "node scripts/refresh-model-pricing.mjs",
     "smoke:db-bootstrap": "node scripts/smoke-db-bootstrap.mjs",
     "postinstall": "node bin/postinstall.js"
   },
