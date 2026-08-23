@@ -4,13 +4,15 @@
  * Returns whether the wizard is complete.
  * Checks a persistent file so it survives browser changes and cache clears.
  */
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import * as fs from 'fs';
+import * as path from 'path';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
+import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const WIZARD_FILE = REV4A_DATA + '/data/wizard.json';
+const WIZARD_FILE = path.join(REV4A_DATA, 'data', 'wizard.json');
 
 function readWizardFile(): boolean {
   try {
@@ -22,7 +24,8 @@ function readWizardFile(): boolean {
   }
 }
 
-export function GET(): NextResponse {
-  const done = readWizardFile();
-  return NextResponse.json({ done });
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthIfConfigured(request);
+  if (denied) return denied;
+  return NextResponse.json({ done: readWizardFile() });
 }

@@ -29,11 +29,14 @@ function shellQuote(value: string): string {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   return NextResponse.json(readTokenFile());
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : null;

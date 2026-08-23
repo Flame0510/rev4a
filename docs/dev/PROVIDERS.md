@@ -218,9 +218,10 @@ Key points:
 
 ## Security Notes
 
-- The `GET /api/vault/provider/key` endpoint is protected by the authentication
-  middleware (browser cookie or bearer token). Only authenticated users can reveal
-  keys.
+- The `GET /api/vault/provider/key` endpoint calls `requireAuthJWT` directly
+  (browser cookie or bearer token) — API routes are never covered by `proxy.ts`
+  (it explicitly exempts `/api/*`), so each route must guard itself. Only
+  authenticated users can reveal keys.
 - The UI **must never** log, screenshot, or otherwise persist the revealed key
   outside the active screen view.
 - All secrets in documentation, logs, or reports must be masked (e.g. `sk-...ast4`).

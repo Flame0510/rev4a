@@ -131,6 +131,8 @@ function getAgentModels(container: string): GatewayModel[] {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     const timestamp = Date.now();
 

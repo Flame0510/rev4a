@@ -16,6 +16,8 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   if (getIsDownloading()) {
     return NextResponse.json(
       { error: 'A download is already in progress' },

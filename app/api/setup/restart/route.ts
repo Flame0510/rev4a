@@ -12,15 +12,21 @@
  *   2. Otherwise send SIGTERM to the current process. The parent process
  *      manager (npx rev4a all or a shell wrapper) should restart it.
  */
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
+import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Open only during initial setup (before a password exists). Once
+  // configured, this triggers a production service restart and must
+  // require a valid session like every other privileged route.
+  const denied = await requireAuthIfConfigured(request);
+  if (denied) return denied;
   try {
     if (!fs.existsSync(ENV_FILE)) {
       return NextResponse.json({ error: '.env file not found' }, { status: 500 });

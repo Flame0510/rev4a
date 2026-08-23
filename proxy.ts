@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { getJwtSecret } from '@/lib/rev4a-auth';
 
 /* ------------------------------------------------------------------ */
 /*  Public routes — no auth required                                  */
@@ -24,17 +25,12 @@ function isStaticOrApi(pathname: string): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/*  JWT secret resolver — read from env, no fs fallback in edge       */
+/*  Proxy (formerly middleware — Next.js 16 renamed the convention;   */
+/*  runs on Node.js runtime by default now, so it shares the same     */
+/*  env+file secret resolution as every API route instead of its own */
+/*  env-only copy.)                                                    */
 /* ------------------------------------------------------------------ */
-function getSecret(): Uint8Array {
-  const s = process.env.REV4A_JWT_SECRET || '';
-  return new TextEncoder().encode(s);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Middleware                                                         */
-/* ------------------------------------------------------------------ */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public routes
@@ -55,7 +51,8 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(token, getSecret());
+    const secret = new TextEncoder().encode(getJwtSecret());
+    await jwtVerify(token, secret);
     return NextResponse.next();
   } catch {
     const loginUrl = new URL('/login', request.url);

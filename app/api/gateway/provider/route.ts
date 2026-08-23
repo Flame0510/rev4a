@@ -136,6 +136,8 @@ function restartService(): { stdout: string; stderr: string } {
 /* ------------------------------------------------------------------ */
 
 export async function GET(request: NextRequest) {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
   const providers = Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => {
@@ -157,7 +159,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     const body: { provider?: string; apiKey?: string; _syncOnly?: boolean } = await request.json();
 
@@ -189,7 +192,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     const body: { modelId?: string; enabled?: boolean } = await request.json();
     const { modelId, enabled } = body;

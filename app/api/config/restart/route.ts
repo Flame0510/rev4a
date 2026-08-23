@@ -13,6 +13,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     execSync('sudo systemctl daemon-reload && sudo systemctl restart rev4a.service', {
       timeout: 15000,

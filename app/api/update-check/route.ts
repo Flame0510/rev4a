@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { jwtVerify } from 'jose';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -33,7 +32,8 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
  * GET /api/update-check
  */
 export async function GET(request: Request): Promise<NextResponse> {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   const url = new URL(request.url);
   const check = url.searchParams.get('check') === '1';
 
@@ -71,23 +71,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   return NextResponse.json({ installed, latest, updateAvailable, package: getPackageInfo().name });
 }
 
-async function verifyAuth(request: Request): Promise<boolean> {
-  const raw = request.headers.get('cookie') || '';
-  const match = raw.split(';').map(c => c.trim()).find(c => c.startsWith('rev4a_token='));
-  if (!match) return false;
-
-  const cookieToken = decodeURIComponent(match.split('=')[1]);
-  try {
-    const secret = new TextEncoder().encode(
-      process.env.REV4A_JWT_SECRET || (() => { throw new Error('REV4A_JWT_SECRET not set'); })(),
-    );
-    await jwtVerify(cookieToken, secret);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * POST /api/update-check
  *
@@ -97,10 +80,8 @@ async function verifyAuth(request: Request): Promise<boolean> {
  * with the newly installed binary. No systemd required.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
-  if (!(await verifyAuth(request))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
 
   // Spawn rev4a update in background, then write restart flag directly
   // from this process so rev4a serve detects it and restarts.

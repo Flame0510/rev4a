@@ -71,6 +71,8 @@ function getRemoteDigest(): string | null {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   const exists = localImageExists();
   const localId = getLocalImageId();
   const downloading = getIsDownloading();

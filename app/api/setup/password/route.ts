@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { ENV_FILE } from '@/lib/rev4a-paths';
+import { isConfigured } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -23,21 +24,33 @@ function generateSecret(len: number): string {
   return crypto.randomBytes(len).toString('base64url').slice(0, len);
 }
 
+/**
+ * True only if an actual assignment line for `key` exists — a commented-out
+ * or incidental mention (`# old REV4A_TOKEN=…`) does not count. A substring
+ * check here would report the key as present and skip generating it, leaving
+ * the instance without a usable secret.
+ */
+function hasEnvKey(content: string, key: string): boolean {
+  return content.split('\n').some((line) => line.trimStart().startsWith(`${key}=`));
+}
+
+/** Replace the assignment line for `key`, or append one if none exists. */
+function upsertEnvLine(content: string, key: string, value: string): string {
+  const lines = content.split('\n');
+  let replaced = false;
+  const updated = lines.map((line) => {
+    if (!replaced && line.trimStart().startsWith(`${key}=`)) {
+      replaced = true;
+      return `${key}=${value}`;
+    }
+    return line;
+  });
+  if (!replaced) updated.push(`${key}=${value}`);
+  return updated.join('\n');
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
-  // Check both env and .env file (same fallback pattern as login/status routes)
-  let currentPassword = process.env.REV4A_PASSWORD;
-  if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
-    try {
-      if (fs.existsSync(ENV_FILE)) {
-        const content = fs.readFileSync(ENV_FILE, 'utf-8');
-        const match = content.match(/^REV4A_PASSWORD=(.+)$/m);
-        if (match && match[1].trim()) {
-          currentPassword = match[1].trim();
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  if (typeof currentPassword === 'string' && currentPassword.length > 0) {
+  if (isConfigured()) {
     return NextResponse.json(
       { error: 'Password is already configured. Use the Config page to change it.' },
       { status: 409 },
@@ -72,30 +85,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       content = fs.readFileSync(ENV_FILE, 'utf-8');
     }
 
-    // Ensure password line
-    if (content.includes('REV4A_PASSWORD=')) {
-      content = content
-        .split('\n')
-        .map((line) =>
-          line.startsWith('REV4A_PASSWORD=')
-            ? 'REV4A_PASSWORD=' + body.password
-            : line,
-        )
-        .join('\n');
-    } else {
-      content += '\nREV4A_PASSWORD=' + body.password + '\n';
+    content = upsertEnvLine(content, 'REV4A_PASSWORD', body.password);
+    if (!hasEnvKey(content, 'REV4A_JWT_SECRET')) {
+      content = upsertEnvLine(content, 'REV4A_JWT_SECRET', generateSecret(64));
     }
-
-    // Generate JWT secret if missing
-    if (!content.includes('REV4A_JWT_SECRET=')) {
-      const secret = generateSecret(64);
-      content += '\nREV4A_JWT_SECRET=' + secret + '\n';
-    }
-
-    // Generate API token if missing
-    if (!content.includes('REV4A_TOKEN=')) {
-      const token = generateSecret(32);
-      content += '\nREV4A_TOKEN=' + token + '\n';
+    if (!hasEnvKey(content, 'REV4A_TOKEN')) {
+      content = upsertEnvLine(content, 'REV4A_TOKEN', generateSecret(32));
     }
 
     fs.writeFileSync(ENV_FILE, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });

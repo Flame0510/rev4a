@@ -12,9 +12,10 @@
  * Only one download at a time — returns 409 if already running.
  * Cleans up the docker process if the client disconnects.
  */
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
 import { execSync } from 'child_process';
+import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,9 @@ function dockerOk(): boolean {
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthIfConfigured(request);
+  if (denied) return denied;
   if (!dockerOk()) {
     return NextResponse.json({ exists: false });
   }
@@ -55,7 +58,9 @@ export async function GET(): Promise<NextResponse> {
   }
 }
 
-export async function POST(): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
+  const denied = await requireAuthIfConfigured(request);
+  if (denied) return denied;
   if (getIsDownloading()) {
     return new Response(
       JSON.stringify({ error: 'A download is already in progress' }),

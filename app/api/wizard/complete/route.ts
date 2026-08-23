@@ -4,16 +4,20 @@
  * Sets wizard as complete in a persistent file (cross-browser).
  * Also sets the httpOnly cookie for backwards compatibility.
  */
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
+import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const WIZARD_FILE = REV4A_DATA + '/data/wizard.json';
+const WIZARD_FILE = path.join(REV4A_DATA, 'data', 'wizard.json');
 
-export function POST(): NextResponse {
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthIfConfigured(request);
+  if (denied) return denied;
+
   // Write persistent marker
   const dir = path.dirname(WIZARD_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

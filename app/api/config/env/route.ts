@@ -5,7 +5,8 @@
  * PUT  /api/config/env  — upsert one or more env vars
  *
  * Only keys prefixed with REV4A_ or PROVIDER_ are exposed.
- * Auth: browser cookie (authenticated session via middleware).
+ * Auth: requireAuthJWT (browser cookie or bearer token) — API routes are
+ * never covered by proxy.ts, it explicitly exempts /api/*.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
@@ -54,6 +55,8 @@ function serializeEnvFile(vars: Record<string, string>): string {
 }
 
 export async function GET(request: NextRequest) {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     let content = '';
     try {
@@ -78,7 +81,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   try {
     const body: { env?: Record<string, string> } = await request.json();
     if (!body.env || typeof body.env !== 'object') {
@@ -115,7 +119,7 @@ export async function PUT(request: NextRequest) {
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
     // No need to write individual Environment= lines into unit files —
-    // rev4a-next.service already reads .env via EnvironmentFile=.
+    // rev4a.service already reads .env via EnvironmentFile=.
     try {
       execSync('sudo systemctl daemon-reload', { timeout: 5000 });
     } catch (syncErr) {

@@ -48,6 +48,8 @@ function loadModelsConfig(): ModelsConfigEntry[] {
 
 export async function GET(_req: NextRequest): Promise<NextResponse> {
   const request = _req;
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
   const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
   const configured = new Set(Object.keys(providerKeys));

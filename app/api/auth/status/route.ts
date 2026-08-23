@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import * as fs from 'fs';
-import { ENV_FILE } from '@/lib/rev4a-paths';
+import { isConfigured } from '@/lib/rev4a-auth';
 
 /**
  * GET /api/auth/status
@@ -11,23 +10,5 @@ import { ENV_FILE } from '@/lib/rev4a-paths';
  * the setup wizard or the login form.
  */
 export function GET(): NextResponse {
-  let password = process.env.REV4A_PASSWORD;
-
-  // Fallback: read .env from config dir if env var is empty (Next.js inlines at build)
-  if (typeof password !== 'string' || password.length === 0) {
-    try {
-      if (fs.existsSync(ENV_FILE)) {
-        const content = fs.readFileSync(ENV_FILE, 'utf-8');
-        const match = content.match(/^REV4A_PASSWORD=(.*)$/m);
-        if (match && match[1].trim()) {
-          password = match[1].trim();
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  const configured = typeof password === 'string' && password.length > 0;
-  return NextResponse.json({ configured });
+  return NextResponse.json({ configured: isConfigured() });
 }

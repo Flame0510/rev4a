@@ -528,7 +528,7 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ├── public/                  # Static assets
 ├── scripts/                 # Utility scripts (setup, helpers)
 ├── .env                     # Local env vars (gitignored)
-├── middleware.ts              # Auth gate — redirects to /login without a valid JWT cookie
+├── proxy.ts                    # Auth gate — redirects to /login without a valid JWT cookie
 ├── next.config.mjs
 └── package.json
 ```
