@@ -193,7 +193,11 @@ async function pullFromRegistry(
 
     child.on('error', (err: Error) => {
       appendLog(`Pull process error: ${err.message}`);
-      releaseLock();
+      // Do NOT release the lock here: the caller falls through to
+      // localBuild(), which must stay protected. Releasing early let a
+      // concurrent request past getIsDownloading() and start a second
+      // `docker build` against the same tag. The lock is released by
+      // localBuild's own close/error handlers, or by the success path.
       resolve(false);
     });
   });
