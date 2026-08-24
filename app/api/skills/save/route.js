@@ -8,6 +8,21 @@ const SHARED_SKILLS_DIR = '/docker/shared-skills';
 const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
 
 /**
+ * Pick an HTTP status from a caught error.
+ *
+ * Only the deliberate `Object.assign(new Error(…), { status: 404 })` throws in
+ * this file carry a real HTTP status. A failing `docker exec` also sets
+ * `.status`, but to the process exit code — usually 1. Passing that straight
+ * to NextResponse makes undici throw `RangeError: init["status"] must be in
+ * the range of 200 to 599`, so the caller got an opaque 500 with no body
+ * instead of the intended error. Anything outside the valid range falls back.
+ */
+function httpStatus(err, fallback) {
+  const s = err?.status;
+  return Number.isInteger(s) && s >= 200 && s <= 599 ? s : fallback;
+}
+
+/**
  * Read SKILL.md content from various sources:
  * - Host path (shared / bundled)
  * - Container path (via docker exec)
@@ -96,8 +111,7 @@ export async function POST(request) {
     return NextResponse.json({ ok: true, saved: isContainer ? skillPath : absPath });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    const status = err.status || 500;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: httpStatus(err, 500) });
   }
 }
 
@@ -136,7 +150,6 @@ export async function GET(request) {
     return NextResponse.json({ content });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    const status = err.status || 404;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: httpStatus(err, 404) });
   }
 }

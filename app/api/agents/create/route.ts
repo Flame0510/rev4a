@@ -44,11 +44,23 @@ const DEFAULT_BLOCK_SIZE = 10;
 
 function getUsedHostPorts(): Set<number> {
   try {
+    // Parse host ports in JS rather than piping through grep. The previous
+    // form used `grep -oP '\d+(?=->)'` inside a template literal, where \d
+    // loses its backslash — the shell received `d+(?=->)`, which never
+    // matches Docker's `0.0.0.0:3700->3000/tcp`, so this always returned an
+    // empty set and every agent was offered port 3700. `grep -P` is also
+    // GNU-only and absent on macOS. This mirrors the client-side parser in
+    // app/agents/create/page.tsx.
     const raw = execSync(
-      `docker ps --format '{{.Ports}}' | grep -oP '\d+(?=->)' | sort -n`,
+      `docker ps --format '{{.Ports}}'`,
       { encoding: 'utf-8', timeout: 3000 },
-    ).trim();
-    return new Set(raw ? raw.split('\n').map(Number) : []);
+    );
+    const used = new Set<number>();
+    for (const [, port] of raw.matchAll(/(\d+)->/g)) {
+      const n = Number(port);
+      if (Number.isInteger(n)) used.add(n);
+    }
+    return used;
   } catch {
     return new Set();
   }
