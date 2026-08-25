@@ -1,47 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { detectPublicHost } from '@/lib/docker-utils';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-
-const DOCKER_SOCKET = '/var/run/docker.sock';
-
-function dockerFetch(method: string, path: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const options = {
-      socketPath: DOCKER_SOCKET,
-      path,
-      method,
-      headers: { 'Host': 'localhost' } as any,
-    };
-    const req = http.request(options, (res: any) => {
-      let data = '';
-      res.on('data', (chunk: string) => (data += chunk));
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          reject(new Error('Invalid JSON from Docker API'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
+import { dockerAvailable, dockerFetch } from '@/lib/docker-socket';
 
 export const dynamic = 'force-dynamic';
-
-function dockerAvailable(): boolean {
-  try {
-    fs.accessSync(DOCKER_SOCKET, fs.constants.R_OK | fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;

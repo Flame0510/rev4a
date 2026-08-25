@@ -1,40 +1,7 @@
 import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
-import * as http from 'http';
-import * as fs from 'fs';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-
-const DOCKER_SOCKET = '/var/run/docker.sock';
-
-function dockerAvailable(): boolean {
-  try {
-    fs.accessSync(DOCKER_SOCKET, fs.constants.R_OK | fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function dockerFetch(method: string, path: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const options = {
-      socketPath: DOCKER_SOCKET,
-      path,
-      method,
-      headers: { 'Host': 'localhost' } as any,
-    };
-    const req = http.request(options, (res: any) => {
-      let data = '';
-      res.on('data', (chunk: string) => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch { reject(new Error('Invalid JSON from Docker')); }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
+import { dockerAvailable, dockerFetch } from '@/lib/docker-socket';
 
 export const dynamic = 'force-dynamic';
 
