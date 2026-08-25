@@ -227,6 +227,11 @@ Updates model config for a single agent container (primary model only).
 
 Returns current provider configuration state.
 
+Add `?summary=1` for a cheap variant — `{ provider, label, configured }` only,
+skipping the live-pricing fetch. Used by the agents page, which needs nothing
+more than "is any provider configured" and shouldn't block on a network call to
+OpenRouter to find out.
+
 **Response:**
 ```json
 {

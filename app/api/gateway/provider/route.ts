@@ -139,8 +139,24 @@ function restartService(): { stdout: string; stderr: string } {
 export async function GET(request: NextRequest) {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
-  const allModels = loadModelsConfig();
   const providerKeys = readProviderKeys();
+
+  // ?summary=1 — just "which providers have a key", no models, no pricing.
+  // The full response awaits live pricing from OpenRouter, a network round trip
+  // that costs ~2.4s cold. Callers that only need the boolean (the agents page,
+  // to decide whether to warn about a missing provider) must not pay for it, and
+  // must not be left guessing while it's in flight.
+  if (request.nextUrl.searchParams.get('summary') === '1') {
+    return NextResponse.json({
+      providers: Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => ({
+        provider: key,
+        label: cfg.label,
+        configured: !!providerKeys[key],
+      })),
+    });
+  }
+
+  const allModels = loadModelsConfig();
 
   // Live prices overlaid on the static file, which drifts. Fetched regardless
   // of whether OpenRouter is configured: the catalogue is public, and prices

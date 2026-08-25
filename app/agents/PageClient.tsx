@@ -216,12 +216,15 @@ export default function AgentsPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<FilterState>('all');
-  const [selected, setSelected] = useState<Agent | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [showList, setShowList] = useState(true);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   const [imageReady, setImageReady] = useState(true);
-  const [providersConfigured, setProvidersConfigured] = useState(false);
+  // null = not checked yet. Keeping "unknown" distinct from "none configured" is
+  // the whole point: `false` as the initial value makes an unanswered check look
+  // exactly like a negative answer, so the warning banner renders on no evidence.
+  const [providersConfigured, setProvidersConfigured] = useState<boolean | null>(null);
   const [gatewayToken, setGatewayToken] = useState('');
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenSaving, setTokenSaving] = useState(false);
@@ -274,7 +277,8 @@ export default function AgentsPageClient() {
 
   // Check if any provider is configured in the Gateway
   useEffect(() => {
-    fetch('/api/gateway/provider')
+    // summary=1: skips the live-pricing round trip we don't need here.
+    fetch('/api/gateway/provider?summary=1')
       .then((r) => r.json())
       .then((d: { providers?: Array<{ configured: boolean }> }) =>
         setProvidersConfigured((d.providers || []).some((p) => p.configured))
@@ -358,8 +362,36 @@ export default function AgentsPageClient() {
     return list;
   }, [agents, filter]);
 
+  // Derive the selected agent from the live list rather than holding a snapshot.
+  // A snapshot goes stale on every 15s poll (status, ports, imageOutdated) and
+  // survives deletion; deriving means a rename shows up on the next load() and a
+  // deleted agent can't leave a detail panel pointing at something that's gone.
+  const selected = useMemo(
+    () => (selectedId ? agents.find((a) => a.agentId === selectedId) ?? null : null),
+    [agents, selectedId],
+  );
+
+  // The selection can vanish under us — deleted here, or from another tab/CLI
+  // and picked up by the poll. Drop it so mobile falls back to the list instead
+  // of rendering a dead detail view.
+  useEffect(() => {
+    if (selectedId && !agents.some((a) => a.agentId === selectedId)) {
+      setSelectedId(null);
+      setShowList(true);
+    }
+  }, [agents, selectedId]);
+
+  /** An agent was deleted: drop it optimistically, then reconcile with the server. */
+  const handleAgentDeleted = useCallback((agentId: string) => {
+    // The DELETE already succeeded server-side, so removing it here is safe and
+    // spares the user the round trip — the API tears down container, volume and
+    // backups before it answers, which takes seconds.
+    setAgents((prev) => prev.filter((a) => a.agentId !== agentId));
+    void load();
+  }, [load]);
+
   function selectAgent(agent: Agent) {
-    setSelected(agent);
+    setSelectedId(agent.agentId);
     if (isMobile) setShowList(false);
   }
 
@@ -396,7 +428,11 @@ export default function AgentsPageClient() {
     </div>
   );
 
-  if (loading) {
+  // Hold the skeleton until the provider check has answered too. Both effects
+  // fire on mount, so this costs nothing when the check is warm (~3ms) and only
+  // shows up on a cold one (~230ms) — where it's exactly what we want, since
+  // that's the window the banner used to flash in.
+  if (loading || providersConfigured === null) {
     return (
       <div style={{ padding: 14, display: 'grid', gap: 14 }}>
         {Array.from({ length: 3 }).map((_, i) => (
@@ -433,10 +469,10 @@ export default function AgentsPageClient() {
             <span style={{ fontSize: 12, color: 'var(--violet)' }}>{selected.name}</span>
           </div>
           <ImageDownloadBanner onImageReady={handleImageReady} />
-        {!providersConfigured && <NoProviderBanner />}
+        {providersConfigured === false && <NoProviderBanner />}
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            <DetailPanel agent={selected} />
+            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} />
           </div>
         </div>
       );
@@ -460,7 +496,7 @@ export default function AgentsPageClient() {
           ))} 
         </div>
         <ImageDownloadBanner onImageReady={handleImageReady} />
-        {!providersConfigured && <NoProviderBanner />}
+        {providersConfigured === false && <NoProviderBanner />}
         {tokenSection}
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
@@ -499,13 +535,15 @@ export default function AgentsPageClient() {
         ))}
       </div>
       <ImageDownloadBanner onImageReady={handleImageReady} />
-      {!providersConfigured && <NoProviderBanner />}
+      {providersConfigured === false && <NoProviderBanner />}
       {tokenSection}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: '38%', minWidth: 300, borderRight: '1px solid var(--border)', overflow: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => {
-            const isSelected = selected?.id === agent.id;
+            // Match on agentId, not the container id: recreate gives the agent a
+            // new container (new id) and would otherwise silently deselect it.
+            const isSelected = selectedId === agent.agentId;
 
             return (
               <AgentListItem
@@ -514,7 +552,7 @@ export default function AgentsPageClient() {
                 loading={lifecycleLoading === agent.agentId}
                 channelSummary={chSummary}
                 selected={isSelected}
-                onClick={() => setSelected(agent)}
+                onClick={() => setSelectedId(agent.agentId)}
                 onLifecycle={() => handleLifecycle(agent)}
               />
             );
@@ -524,7 +562,10 @@ export default function AgentsPageClient() {
           {!selected ? (
             <div style={{ color: '#666', fontSize: 12, padding: 20 }}>Select an agent for details</div>
           ) : (
-            <DetailPanel agent={selected} />
+            // key: without it React reuses one DetailPanel instance across
+            // selections, so in-flight state (deleting, recreating, restarting,
+            // toasts, open confirms) leaks onto the next agent you click.
+            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} />
           )}
         </div>
       </div>
@@ -533,7 +574,12 @@ export default function AgentsPageClient() {
 }
 
 // ─── Edit Agent modal ───
-function EditAgentModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+function EditAgentModal({ agent, onClose, onSaved }: {
+  agent: Agent;
+  onClose: () => void;
+  /** Rename succeeded — the parent refetches so the new name propagates. */
+  onSaved: () => void;
+}) {
   const [displayName, setDisplayName] = useState(agent.displayName || agent.name);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -558,8 +604,9 @@ function EditAgentModal({ agent, onClose }: { agent: Agent; onClose: () => void 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update');
-      // Reload to pick up the new display name
-      window.location.reload();
+      // Refetch the list so the new display name propagates — no full reload.
+      onSaved();
+      onClose();
     } catch (e: unknown) {
       setError((e as Error).message);
       setSaving(false);
@@ -682,7 +729,13 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
 }
 
 // ─── Detail panel (shared between mobile & desktop) ───
-function DetailPanel({ agent }: { agent: Agent }) {
+function DetailPanel({ agent, onDeleted, onChanged }: {
+  agent: Agent;
+  /** The agent is gone — the parent drops it from the list. */
+  onDeleted: (agentId: string) => void;
+  /** The agent changed in place (renamed, recreated) — refetch the list. */
+  onChanged: () => void;
+}) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [showConfig, setShowConfig] = useState(false);
@@ -693,14 +746,17 @@ function DetailPanel({ agent }: { agent: Agent }) {
     setDeleting(true);
     setDeleteError('');
     try {
-      const res = await fetch(`/api/agents/${agent.name}`, { method: 'DELETE' });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
         setDeleteError(data.error || 'Delete failed');
         setDeleting(false);
         return;
       }
-      window.location.reload();
+      setShowDeleteConfirm(false);
+      // No setDeleting(false): the parent drops the agent and this panel
+      // unmounts. Clearing state on an unmounted component would warn.
+      onDeleted(agent.agentId);
     } catch (e: unknown) {
       setDeleteError((e as Error).message || 'Network error');
       setDeleting(false);
@@ -796,7 +852,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
       {/* Edit agent modal */}
-      {showEdit && <EditAgentModal agent={agent} onClose={() => setShowEdit(false)} />}
+      {showEdit && <EditAgentModal agent={agent} onClose={() => setShowEdit(false)} onSaved={onChanged} />}
 
       {/* Delete confirmation */}
       <ConfirmModal
@@ -819,7 +875,7 @@ function DetailPanel({ agent }: { agent: Agent }) {
           </div>
         </div>
       )}
-      <RecreateSection agentName={agent.name} />
+      <RecreateSection agentName={agent.name} onRecreated={onChanged} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1137,7 +1193,11 @@ function RestartSection({ agentName }: { agentName: string }) {
 
 /* ─── Recreate section - rebuild container from same image while keeping volume ─── */
 
-function RecreateSection({ agentName }: { agentName: string }) {
+function RecreateSection({ agentName, onRecreated }: {
+  agentName: string;
+  /** The container was rebuilt — the parent refetches (new id, fresh image). */
+  onRecreated: () => void;
+}) {
   const [recreating, setRecreating] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<string | null>(null);
@@ -1157,7 +1217,9 @@ function RecreateSection({ agentName }: { agentName: string }) {
       const data = await res.json();
       if (data.success) {
         showToast(data.backup ? `Recreated (backup: ${data.backup})` : 'Container recreated successfully');
-        setTimeout(() => window.location.reload(), 2000);
+        // Refetch instead of reloading: the toast stays readable and the panel
+        // keeps its scroll position while the new container id comes in.
+        onRecreated();
       } else {
         setError(data.error || 'Recreate failed');
       }
