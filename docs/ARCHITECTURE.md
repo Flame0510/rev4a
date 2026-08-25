@@ -55,7 +55,7 @@
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │ SHARED VOLUMES                                           │  │
-│  │ • /docker/shared-skills → read-only on all agents        │  │
+│  │ • ~/.config/rev4a/shared/shared-skills → all agents (ro) │  │
 │  │ • /docker/shared-repos  → shared project repos           │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -107,14 +107,14 @@ The central container, running the Next.js dashboard + orchestration API.
 
 **Volume mounts (target):**
 ```
-/path/to/rev4a/data          → /data (persistent)
-/var/run/docker.sock            → /var/run/docker.sock
-/docker/shared-skills           → /data/.openclaw/shared-skills (ro)
-/docker/shared-repos            → /data/repos (rw)
+/path/to/rev4a/data                   → /data (persistent)
+/var/run/docker.sock                  → /var/run/docker.sock
+~/.config/rev4a/shared/shared-skills  → /data/.openclaw/shared-skills (ro)
+/docker/shared-repos                  → /data/repos (rw)
 ```
 
 **Rev4a System Rules** (`rev4a-rules/AGENTS.md`):
-- Versioned in the repo, deployed to `/docker/rev4a-rules/` on every `rev4a serve` start
+- Versioned in the repo, deployed to `~/.config/rev4a/shared/rev4a-rules/` on every `rev4a serve` start
 - Mounted read-only into every agent at `/root/.openclaw/workspace/.rev4a/AGENTS.md`
 - Injected into every session via the `bootstrap-extra-files` hook (glob `.rev4a/*.md`)
 - Immutable by agents — enforced by the `:ro` mount
@@ -132,9 +132,9 @@ copies the entrypoint script, and applies baseline gateway config patches.
 
 **Volume mounts (per agent):**
 ```
-/docker/shared-skills         → /data/.openclaw/shared-skills  (ro)
-/docker/rev4a-rules         → /root/.openclaw/workspace/.rev4a (ro)
-agent-{name}-data (named vol) → /root                            (rw, per-agent persistent state)
+~/.config/rev4a/shared/shared-skills  → /data/.openclaw/shared-skills    (ro)
+~/.config/rev4a/shared/rev4a-rules    → /root/.openclaw/workspace/.rev4a  (ro)
+agent-{name}-data (named vol)         → /root                             (rw, per-agent persistent state)
 ```
 
 All shared volumes are defined centrally in `lib/agent-setup.ts`
@@ -287,9 +287,9 @@ GET    /api/agents                 List all agents (Docker containers with AGENT
 
 ## 6. Shared Volumes
 
-### Shared Skills (`/docker/shared-skills`)
+### Shared Skills (`~/.config/rev4a/shared/shared-skills`)
 ```
-/docker/shared-skills/
+~/.config/rev4a/shared/shared-skills/
   my-custom-skill/    # promoted from an agent workspace
     SKILL.md
   another-skill/
@@ -306,12 +306,30 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
 - Both create and recreate routes guarantee this via `applyRuntimeConfig()` from `lib/agent-setup.ts`.
-- On first install, create `/docker/shared-skills` with `mkdir -p /docker/shared-skills && chmod 2775 /docker/shared-skills`.
+- No manual setup: `rev4a serve` creates both shared directories during
+  preflight (`ensureRev4aRules()` in `bin/rev4a.js`). They live under
+  `REV4A_DATA`, so a plain `mkdir` suffices — no `sudo`, no permission
+  bits to set.
+
+> These directories used to live at `/docker/shared-skills` and
+> `/docker/rev4a-rules`, which needed `sudo` on Linux and could not exist at
+> all on macOS — the root volume is a sealed APFS system volume, so `/docker`
+> is not creatable even as root, and agent creation failed with
+> `mounts denied`. Being under the user's home also puts them inside the
+> directories Docker Desktop shares with its Linux VM by default, so bind
+> mounts work with no extra configuration.
+>
+> Upgrading an existing install: move any promoted skills from
+> `/docker/shared-skills` into the new location, then hit **Recreate** on each
+> agent so its container picks up the new mount source. Containers freeze
+> their mounts at creation time, so running agents keep using the old path
+> until recreated. `rev4a-rules/AGENTS.md` needs no migration — it is
+> regenerated from the package on every start.
 
 ### Rev4a System Rules (`rev4a-rules/`)
 
 Versioned in the repo at `rev4a-rules/AGENTS.md`. Deployed to
-`/docker/rev4a-rules/` on every `rev4a serve` startup via
+`~/.config/rev4a/shared/rev4a-rules/` on every `rev4a serve` startup via
 `ensureRev4aRules()` in `bin/rev4a.js`. Mounted read-only into every
 agent container and injected into sessions through the
 `bootstrap-extra-files` hook (glob `.rev4a/*.md`).

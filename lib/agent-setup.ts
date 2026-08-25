@@ -10,6 +10,7 @@
 
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
@@ -28,12 +29,12 @@ export interface Rev4aVolume {
  */
 export const REV4A_VOLUMES: Rev4aVolume[] = [
   {
-    source: '/docker/shared-skills',
+    source: SHARED_SKILLS_DIR,
     target: '/data/.openclaw/shared-skills',
     mode: 'ro',
   },
   {
-    source: '/docker/rev4a-rules',
+    source: REV4A_RULES_DIR,
     target: '/root/.openclaw/workspace/.rev4a',
     mode: 'ro',
   },
@@ -60,14 +61,12 @@ export function getMountFlags(): string[] {
  * multiple times.
  */
 export function ensureHostDirs(): void {
+  // Plain mkdir: these now live under the user's own data directory, so no
+  // elevation is needed. The previous `sudo mkdir` with a plain fallback was
+  // only required because the paths sat at the filesystem root, and it could
+  // hang on a password prompt when run non-interactively.
   for (const vol of REV4A_VOLUMES) {
-    if (!fs.existsSync(vol.source)) {
-      try {
-        execSync(`sudo mkdir -p ${escapeShell(vol.source)}`, { stdio: 'pipe' });
-      } catch {
-        execSync(`mkdir -p ${escapeShell(vol.source)}`, { stdio: 'pipe' });
-      }
-    }
+    fs.mkdirSync(vol.source, { recursive: true });
   }
 }
 

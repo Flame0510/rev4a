@@ -29,8 +29,14 @@ const os = require('os');
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
 const PKG_JSON = join(ROOT, 'package.json');
-// Config lives outside the npm package so it survives npm update / reinstall
-const CONFIG_DIR = join(os.homedir(), '.config', 'rev4a');
+// Config lives outside the npm package so it survives npm update / reinstall.
+// REV4A_DATA_DIR must be honoured here exactly as rev4aDataDir() honours it in
+// lib/rev4a-paths.ts: this file creates the shared directories that the app then
+// bind-mounts into agents, so a divergence would have serve writing the system
+// rules to one path while every agent mounted another — silently empty.
+// It can only come from the real process environment, never from the .env file:
+// that file is looked up under this very directory.
+const CONFIG_DIR = process.env.REV4A_DATA_DIR || join(os.homedir(), '.config', 'rev4a');
 const DATA_DIR = join(CONFIG_DIR, 'data');
 const ENV_SOURCE = join(CONFIG_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
@@ -213,14 +219,26 @@ function ensureNetwork() {
 // ── Rev4a system rules ───────────────────────────────────────────────────
 
 function ensureRev4aRules() {
-  // Ensure all Rev4a host directories exist (shared-skills, rev4a-rules, …).
-  // Defined centrally in lib/agent-setup so create & recreate routes stay in sync.
-  try {
-    const { ensureHostDirs } = require(join(ROOT, '.next', 'server', 'lib', 'agent-setup.js'));
-    if (typeof ensureHostDirs === 'function') ensureHostDirs();
-  } catch { /* .next not built yet — dirs may already exist */ }
+  // These must mirror SHARED_SKILLS_DIR / REV4A_RULES_DIR in lib/rev4a-paths.ts.
+  // This file is CommonJS and runs before .next exists (it is what builds it),
+  // so it cannot import from lib/ — same reason CONFIG_DIR is recomputed above.
+  //
+  // It previously tried `require('.next/server/lib/agent-setup.js')` to reuse
+  // ensureHostDirs(). Next bundles route code and never emits that path, so the
+  // require always threw into an empty catch and the directories were never
+  // created here at all.
+  const sharedDir = join(CONFIG_DIR, 'shared');
+  const sharedSkillsDir = join(sharedDir, 'shared-skills');
+  const rev4aRulesDir = join(sharedDir, 'rev4a-rules');
 
-  const rev4aRulesDir = '/docker/rev4a-rules';
+  try {
+    mkdirSync(sharedSkillsDir, { recursive: true });
+    mkdirSync(rev4aRulesDir, { recursive: true });
+  } catch (err) {
+    log('RULES', `⚠ Could not create shared directories: ${err.message}`);
+    return;
+  }
+
   const ruleFile = join(rev4aRulesDir, 'AGENTS.md');
   const source = join(ROOT, 'rev4a-rules', 'AGENTS.md');
 
@@ -241,14 +259,10 @@ function ensureRev4aRules() {
   }
 
   try {
-    const sudo = isRoot() ? '' : 'sudo ';
-    if (!existsSync(rev4aRulesDir)) {
-      execSync(`${sudo}mkdir -p ${rev4aRulesDir}`);
-    }
-    const tmpFile = `/tmp/rev4a-rules-${Date.now()}.md`;
-    writeFileSync(tmpFile, sourceContent, 'utf-8');
-    execSync(`${sudo}cp ${tmpFile} ${ruleFile} && ${sudo}rm ${tmpFile}`);
-    log('RULES', 'Deployed rev4a system rules to /docker/rev4a-rules/');
+    // Direct write — the old /tmp + `sudo cp` + `sudo rm` dance was only
+    // needed because the destination sat outside the user's home.
+    writeFileSync(ruleFile, sourceContent, 'utf-8');
+    log('RULES', `Deployed rev4a system rules to ${rev4aRulesDir}/`);
   } catch (err) {
     log('RULES', `⚠ Failed to deploy rev4a rules: ${err.message}`);
   }

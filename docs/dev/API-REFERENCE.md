@@ -1562,7 +1562,7 @@ Enable or disable a plugin.
 ## Skills
 
 Skill discovery across three sources:
-- **Shared:** skills in `/docker/shared-skills` on the VPS host (global, available to all agents)
+- **Shared:** skills in `~/.config/rev4a/shared/shared-skills` on the VPS host (global, available to all agents)
 - **Workspace:** skills in `<workspace>/skills` inside each agent container (discovered via `docker exec`)
 - **Bundled:** skills shipped with OpenClaw (read-only)
 
@@ -1578,8 +1578,8 @@ List all available skills from all sources.
     {
       "name": "code-review",
       "type": "shared",
-      "path": "/docker/shared-skills/code-review",
-      "skillMdPath": "/docker/shared-skills/code-review/SKILL.md",
+      "path": "~/.config/rev4a/shared/shared-skills/code-review",
+      "skillMdPath": "~/.config/rev4a/shared/shared-skills/code-review/SKILL.md",
       "hasSkillMd": true,
       "description": "Systematic code review patterns...",
       "version": "1.0"
@@ -1643,7 +1643,7 @@ Copy a skill from an agent's workspace to the shared skills directory, making it
   "skillName": "my-custom-skill",
   "agentId": "atlas",
   "containerName": "openclaw-atlas",
-  "destPath": "/docker/shared-skills/my-custom-skill",
+  "destPath": "~/.config/rev4a/shared/shared-skills/my-custom-skill",
   "overwritten": false,
   "extraCopied": 0
 }

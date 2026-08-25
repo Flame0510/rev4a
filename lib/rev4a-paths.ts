@@ -39,6 +39,25 @@ export const AGENTS_TOKEN_FILE = path.join(REV4A_DATA, 'data', 'agents-token.jso
 /** Provider API keys JSON */
 export const PROVIDER_KEYS_FILE = path.join(REV4A_DATA, 'data', 'provider-keys.json');
 
+/* ── Host directories bind-mounted into every agent container ───── */
+
+/**
+ * These used to live at `/docker/shared-skills` and `/docker/rev4a-rules`.
+ * That path can't work on macOS: the root volume is a sealed APFS system
+ * volume, so `/docker` cannot be created even as root. It also required
+ * `sudo mkdir` on Linux for no real benefit.
+ *
+ * Under REV4A_DATA they sit inside the user's home, which additionally
+ * falls within the directories Docker Desktop shares with its Linux VM by
+ * default — so a bind mount from here works with no extra configuration.
+ */
+
+/** Skills shared across all agents, mounted read-only. */
+export const SHARED_SKILLS_DIR = path.join(REV4A_DATA, 'shared', 'shared-skills');
+
+/** Rev4a system rules injected into every agent workspace, mounted read-only. */
+export const REV4A_RULES_DIR = path.join(REV4A_DATA, 'shared', 'rev4a-rules');
+
 /**
  * Model catalogue — read-only, shipped with the package.
  * Resolved at module load from the package root (alongside bin/rev4a.js).

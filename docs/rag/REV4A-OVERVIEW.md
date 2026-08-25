@@ -87,7 +87,7 @@ Browse installed OpenClaw plugins. Enable/disable toggle per plugin. Plugins ext
 
 ### Skills (`/skills`)
 Skill registry showing all skills across three sources:
-- **Shared** — global skills from `/docker/shared-skills`, available to all agents
+- **Shared** — global skills from `~/.config/rev4a/shared/shared-skills`, available to all agents
 - **Per-agent** — skills in each agent's workspace (`<workspace>/skills`), shown with agent label
 - **Bundled** — skills shipped with OpenClaw (read-only)
 

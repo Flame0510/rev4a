@@ -3,8 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { execSync, execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 
-const SHARED_SKILLS_DIR = '/docker/shared-skills';
 const CONTAINER_BUNDLED_SKILLS_DIR = '/usr/local/lib/node_modules/openclaw/skills';
 
 function readSkillMeta(skillDir, name, type, agentId) {

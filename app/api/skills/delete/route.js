@@ -3,8 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 
-const SHARED_SKILLS_DIR = '/docker/shared-skills';
 
 /**
  * DELETE /api/skills/delete
