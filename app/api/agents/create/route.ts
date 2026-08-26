@@ -4,7 +4,6 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildRev4aProviderConfig } from '../../gateway/sync';
-import { detectPublicHost } from '@/lib/docker-utils';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { loadModelsConfig } from '@/lib/model-catalogue';
@@ -249,17 +248,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Every agent gets a host port range for direct access (http://<ip>:<port>).
-    const agentHostname = `${detectPublicHost()}:${portStart}`;
-    const traefikUrl = `http://${agentHostname}#token=${encodeURIComponent(agentsToken)}`;
-
+    // Every agent gets a host port range for direct access. The URL is composed
+    // by the browser from `port` + `controlToken` in the response — only the
+    // browser knows a hostname that actually reaches this machine.
+    //
+    // There used to be an AGENT_HOSTNAME env var here, holding `<detected-ip>:<port>`.
+    // Nothing ever read it: verified across this repo and across the whole
+    // filesystem of a running agent container, binaries included, with a control
+    // search proving the method finds AGENT_ID and OPENCLAW_GATEWAY_TOKEN in the
+    // same sweep. Worse, a container's env is immutable and recreate copies every
+    // AGENT_* var forward, so a wrong address was frozen in and propagated for the
+    // life of the agent, with no code path anywhere that could refresh it.
     const labels: string[] = [`AGENT_ID=${containerName}`];
     const envVars: string[] = [
       `AGENT_ID=${containerName}`,
       `AGENT_NAME=${displayName.trim()}`,
       `AGENT_TEMPLATE=${template}`,
       `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
-      `AGENT_HOSTNAME=${agentHostname}`,
       `TZ=Europe/Rome`,
     ];
 
@@ -452,7 +457,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       displayName: displayName.trim(),
       image,
       network,
-      traefikUrl,
+      controlToken: agentsToken,
       port: portStart,
       portEnd,
       isBlock,

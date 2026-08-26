@@ -77,8 +77,15 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [fallbacks] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [result, setResult] = useState<{ name: string; containerId: string; traefikUrl: string } | null>(null);
+  const [result, setResult] = useState<{ name: string; containerId: string; port: number; controlToken: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // The agent's Control UI URL, composed here rather than server-side: whatever
+  // hostname reached this dashboard is one that resolves and routes for this
+  // user, which the server can only guess at. Null until the create succeeds.
+  const controlUrl = result && typeof window !== 'undefined'
+    ? `http://${window.location.hostname}:${result.port}#token=${encodeURIComponent(result.controlToken)}`
+    : null;
 
   const handleSelectTemplate = (id: string) => {
     setSelectedTemplate(id);
@@ -389,10 +396,10 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
               Name: <span style={{ color: 'var(--text)' }}>{result.name}</span>
             </div>
-            {result.traefikUrl && (
+            {controlUrl && (
               <div style={{ fontSize: 13, color: '#888' }}>
-                Access: <a href={result.traefikUrl} target="_blank" rel="noopener noreferrer"
-                  style={{ color: '#60a5fa', textDecoration: 'underline' }}>{result.traefikUrl}</a>
+                Access: <a href={controlUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ color: '#60a5fa', textDecoration: 'underline' }}>{controlUrl}</a>
               </div>
             )}
           </div>

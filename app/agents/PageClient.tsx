@@ -42,9 +42,28 @@ interface Agent {
   ip: string | null;
   created: string | null;
   env: string[];
-  traefikUrl: string | null;
+  controlPort: string | null;
   authToken: string | null;
   imageOutdated?: boolean;
+}
+
+/**
+ * URL of the agent's OpenClaw Control UI.
+ *
+ * Composed here rather than on the server on purpose. The hostname the dashboard
+ * is currently being reached on is, by definition, one that resolves and routes
+ * for this user — `localhost` on a dev machine, a LAN address from a phone, the
+ * VPS IP, or a domain. The server can only guess, and it guessed badly: it shelled
+ * out to `curl icanhazip.com` on every call and, on macOS, ended up returning the
+ * machine's `.local` mDNS name.
+ *
+ * Returns null when the agent has no published port (nothing to link to) or when
+ * called during a server render, where `window` doesn't exist.
+ */
+function agentControlUrl(agent: Agent): string | null {
+  if (!agent.controlPort || typeof window === 'undefined') return null;
+  const base = `http://${window.location.hostname}:${agent.controlPort}`;
+  return agent.authToken ? `${base}#token=${encodeURIComponent(agent.authToken)}` : base;
 }
 
 type FilterState = 'all' | 'running' | 'exited';
@@ -180,11 +199,17 @@ function AgentListItem({
         )}
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           {loading && <span style={{ fontSize: 10, color: '#888' }}>...</span>}
-          {agent.state === 'running' && agent.traefikUrl && (
+          {agent.state === 'running' && agent.controlPort && (
             <Button
               variant="primary"
               size="sm"
-              onClick={(e) => { e.stopPropagation(); window.open(agent.traefikUrl!, '_blank'); }}
+              // Gate on the port, resolve the URL on click: the condition stays
+              // safe to evaluate during a server render, the URL never is.
+              onClick={(e) => {
+                e.stopPropagation();
+                const url = agentControlUrl(agent);
+                if (url) window.open(url, '_blank');
+              }}
               title="Open agent Control UI"
             >
               Open ↗
@@ -742,6 +767,11 @@ function DetailPanel({ agent, onDeleted, onChanged }: {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
+  // Safe to resolve during render: this panel only mounts once the agent list has
+  // been fetched client-side, so it never runs in a server render. The helper
+  // guards for a missing `window` regardless.
+  const controlUrl = agentControlUrl(agent);
+
   const handleDelete = async () => {
     setDeleting(true);
     setDeleteError('');
@@ -834,15 +864,15 @@ function DetailPanel({ agent, onDeleted, onChanged }: {
       {/* Backup - persistent volume backup & restore */}
       <BackupSection agentName={agent.name} />
 
-      {/* Access - agent URL (token inline in link) */}
-      {agent.traefikUrl && (
+      {/* Access - agent Control UI URL (token inline in link) */}
+      {controlUrl && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
           <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS" />
           <div style={{ padding: '7px 14px', fontSize: 12 }}>
             <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
-            <a href={agent.traefikUrl} target="_blank" rel="noopener noreferrer"
+            <a href={controlUrl} target="_blank" rel="noopener noreferrer"
               style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: 12, wordBreak: 'break-all' }}
-            >{agent.traefikUrl}</a>
+            >{controlUrl}</a>
 
           </div>
         </div>

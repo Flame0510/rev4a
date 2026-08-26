@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { detectPublicHost } from '@/lib/docker-utils';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dockerAvailable, dockerFetch } from '@/lib/docker-socket';
@@ -38,7 +37,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         let created: string | null = null;
         let env: string[] = [];
         let authToken: string | null = null;
-        let traefikUrl: string | null = null;
+        let controlPort: string | null = null;
         let portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> | null = null;
 
         try {
@@ -89,22 +88,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             }
           }
 
-          // Build the agent URL from the host's public IP + mapped port.
-          // Every agent has -p <port>:3000, so we look for the public port
-          // that maps to the internal port 3000.
-          // Use portBindings from inspect (works stopped) with fallback to c.Ports (running only).
+          // The host port mapped to the agent's Control UI (container port 3000).
+          // Only the port is returned: the browser composes the full URL, because
+          // only the browser knows which hostname actually reaches this machine.
+          // Read from portBindings (works on a stopped container) with a fallback
+          // to c.Ports, which is only populated while running.
           const port3000Binding = portBindings?.['3000/tcp'];
-          const publicPort = port3000Binding?.[0]?.HostPort
-            || (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000)?.PublicPort
+          controlPort = port3000Binding?.[0]?.HostPort
+            || (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000)?.PublicPort?.toString()
             || null;
-          if (publicPort) {
-            const host = detectPublicHost();
-            let baseUrl = `http://${host}:${publicPort}`;
-            if (authToken) {
-              baseUrl += `#token=${encodeURIComponent(authToken)}`;
-            }
-            traefikUrl = baseUrl;
-          }
         } catch {
           // inspect non-critical, continue with partial data
         }
@@ -150,7 +142,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           ip,
           created,
           env,
-          traefikUrl,
+          controlPort,
           authToken,
           // Flag as outdated when the container's image differs from the current base image.
           // We compare raw ImageID digests — no fragile name-based filtering.

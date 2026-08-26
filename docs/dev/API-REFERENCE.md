@@ -548,9 +548,9 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "ports": "",
     "ip": "172.19.0.5",
     "created": "2026-07-01T16:58:42.876829416Z",
-    "env": ["AGENT_ID=prometheus", "AGENT_HOSTNAME=<agent-name>.<your-domain>.com"],
+    "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
     "authToken": "***",
-    "traefikUrl": "http://203.0.113.10:3033#token=asdfghjkl"
+    "controlPort": "3033"
   }
 ]
 
@@ -589,7 +589,7 @@ Create a new agent container from a template.
 **Every agent is created with a host port mapping:**
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
 - Single port: `-p <port>:3000` — maps a single host port to container port 3000
-- URL format: `http://<host-ip>:<portStart>#token=...`
+- Control UI URL: composed by the browser as `http://<window.location.hostname>:<port>#token=<controlToken>` — the server returns the parts, not the URL
 - Port 3740 is reserved for Rev4a
 
 **Response:**
@@ -600,7 +600,7 @@ Create a new agent container from a template.
   "name": "my-agent",
   "image": "openclaw-agent-base:latest",
   "network": "rev4a-network",
-  "traefikUrl": "http://203.0.113.10:3700#token=asdfghjkl",
+  "controlToken": "asdfghjkl",
   "port": 3700,
   "portEnd": 3709,
   "isBlock": true,

@@ -147,7 +147,6 @@ and guaranteed at runtime by `applyRuntimeConfig()`.
 AGENT_NAME=<agent-name>
 AGENT_TEMPLATE=<template>
 OPENCLAW_GATEWAY_TOKEN=<shared agent token>
-AGENT_HOSTNAME=<host-ip>:<portStart>
 TZ=Europe/Rome
 ```
 
