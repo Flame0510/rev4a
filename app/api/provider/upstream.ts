@@ -5,8 +5,6 @@
  * Used by both /api/provider/v1/chat/completions and /api/assistant
  * to avoid HTTP loopback (calling localhost from inside Next.js).
  */
-import { detectPublicHost } from '@/lib/docker-utils';
-
 export const dynamic = 'force-dynamic';
 
 export interface ProviderEnvConfig {
@@ -127,7 +125,18 @@ export async function callUpstream(
   }
 
   if (provider === 'openrouter') {
-    headers['HTTP-Referer'] = `http://${detectPublicHost()}:3740`;
+    // Attribution only: OpenRouter uses this pair to identify the app on its
+    // public leaderboard. It never resolves or contacts the URL, and it has no
+    // effect on routing, rate limits, pricing, or whether the call succeeds.
+    //
+    // This used to be `http://${detectPublicHost()}:3740`, which shelled out to
+    // curl synchronously — blocking the whole event loop for ~270ms before every
+    // OpenRouter call, and 55 of the 69 models enabled in the catalogue are
+    // OpenRouter ones. It also fragmented the attribution it was supposed to
+    // provide: every install reported a different host, so each one showed up as
+    // a separate app. A per-install address was never the right value here —
+    // X-Title, the other half of the same label, was always a constant.
+    headers['HTTP-Referer'] = 'https://rev4a.app';
     headers['X-Title'] = 'Rev4a Gateway';
   }
 
