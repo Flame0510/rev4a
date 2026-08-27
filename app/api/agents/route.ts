@@ -60,7 +60,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           portBindings = inspect.HostConfig?.PortBindings || null;
 
           // Read auth token — always prefer the shared agents-token.json (user-managed)
-          const cName = (c.Names?.[0] || '').replace(/^\//, '');
           try {
             const tokenRaw = fs.readFileSync(
               AGENTS_TOKEN_FILE,
@@ -74,18 +73,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             // agents-token.json unavailable
           }
 
-          // Fallback only if shared token is missing: try the container's own gateway token
+          // Fallback when the shared file is missing: the container's own token,
+          // taken from the inspect data already fetched above.
+          //
+          // This used to `docker exec … grep OPENCLAW_GATEWAY_TOKEN /root/….env`
+          // — a path containing a literal U+2026 ellipsis, so not a path at all.
+          // Correcting the character wouldn't have helped: agent containers have
+          // no .env file, and no file under /root/ holds that variable (verified
+          // across the production fleet). The token exists only in the container
+          // environment, which is right here in Config.Env. So the fallback spawned
+          // a blocking process per agent to read a file that cannot exist, failed
+          // silently, and left every "Open" button without its token — while the
+          // value sat in memory, already fetched.
           if (!authToken) {
-            try {
-              const { execSync } = require('child_process');
-              let token = execSync(
-                `docker exec ${cName} sh -c 'grep ^OPENCLAW_GATEWAY_TOKEN= /root/….env 2>/dev/null | cut -d= -f2- | tr -d "\"\""' 2>/dev/null || echo ''`,
-                { timeout: 5000, encoding: 'utf-8' }
-              ).toString().trim();
-              if (token && token !== 'undefined') authToken = token;
-            } catch {
-              // token unavailable for this container
-            }
+            const fromEnv = ((inspect.Config?.Env || []) as string[])
+              .find((e) => e.startsWith('OPENCLAW_GATEWAY_TOKEN='));
+            const token = fromEnv?.slice('OPENCLAW_GATEWAY_TOKEN='.length).trim();
+            if (token && token !== 'undefined') authToken = token;
           }
 
           // The host port mapped to the agent's Control UI (container port 3000).
