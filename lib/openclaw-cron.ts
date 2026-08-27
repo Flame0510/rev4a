@@ -1,4 +1,19 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, execFile } from 'child_process';
+import { promisify } from 'util';
+import { dockerExecNoFail, mapWithConcurrency } from '@/lib/docker-exec';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * How many agents to query at once.
+ *
+ * Each one costs a `docker exec` plus an OpenClaw CLI boot — ~2.5-3s measured,
+ * and the route used to pay them in sequence: 19.2s on a seven-agent host, with
+ * the event loop blocked throughout. Running them concurrently makes the total
+ * the slowest agent rather than the sum. The cap is here because every one of
+ * these is a process, and the Docker daemon serialises past a point regardless.
+ */
+const AGENT_QUERY_CONCURRENCY = 6;
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -75,24 +90,26 @@ function extractScheduleExpr(job: OpenClawCronJob): string {
 
 // ── Discover agent containers ────────────────────────────────────────────
 
-function discoverAgentContainers(): AgentInfo[] {
+async function discoverAgentContainers(): Promise<AgentInfo[]> {
   try {
-    const namesRaw = execFileSync('docker', [
-      'ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}}'
-    ], { encoding: 'utf8', timeout: 5000 }).trim();
-    if (!namesRaw) return [];
+    // One `docker ps` for everything. This used to run an extra `docker inspect`
+    // per container just to read the AGENT_ID label — but `docker ps` prints
+    // labels itself, so that was N+1 process spawns (~260ms each) for data the
+    // first call already had.
+    const raw = await execFileAsync('docker', [
+      'ps', '--filter', 'label=AGENT_ID', '--format', '{{.Label "AGENT_ID"}}\t{{.Names}}',
+    ], { encoding: 'utf8', timeout: 5000 });
 
-    return namesRaw.split('\n').map(name => {
-      const containerName = name.trim();
-      if (!containerName) return null;
-      let agentId = containerName;
-      try {
-        agentId = execFileSync('docker', [
-          'inspect', containerName, '--format', '{{index .Config.Labels "AGENT_ID"}}'
-        ], { encoding: 'utf8', timeout: 5000 }).trim();
-      } catch { /* fallback */ }
-      return { containerName, agentId: agentId || containerName };
-    }).filter(Boolean) as AgentInfo[];
+    return raw.stdout.trim().split('\n')
+      .map((line) => {
+        const [agentId, containerName] = line.split('\t');
+        if (!containerName?.trim()) return null;
+        return {
+          containerName: containerName.trim(),
+          agentId: agentId?.trim() || containerName.trim(),
+        };
+      })
+      .filter(Boolean) as AgentInfo[];
   } catch {
     return [];
   }
@@ -113,34 +130,38 @@ function parseCronListOutput(raw: string): OpenClawCronJob[] | null {
   }
 }
 
-function listJobsOnHost(): OpenClawCronJob[] | null {
+async function listJobsOnHost(): Promise<OpenClawCronJob[] | null> {
   try {
-    const raw = execFileSync('openclaw', ['cron', 'list', '--json', '--all'], {
+    // Not a container command — this is the openclaw CLI on the host itself,
+    // so it goes through execFile directly rather than the docker-exec helper.
+    const raw = await execFileAsync('openclaw', ['cron', 'list', '--json', '--all'], {
       encoding: 'utf8', timeout: 15000,
     });
-    return parseCronListOutput(raw);
+    return parseCronListOutput(raw.stdout);
   } catch {
     return null;
   }
 }
 
-function listJobsInContainer(containerName: string): OpenClawCronJob[] | null {
+async function listJobsInContainer(containerName: string): Promise<OpenClawCronJob[] | null> {
   // Try both common agent gateway ports. Agents default to 3000 (OpenClaw
   // gateway --bind lan --port 3000) but may also run on 18789 (default).
+  // Kept sequential on purpose: the second is a fallback for the first, so
+  // firing both would double the load to discard one answer.
   const gatewayUrls = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:18789',
   ];
 
   for (const gwUrl of gatewayUrls) {
-    try {
-      const raw = execFileSync('docker', [
-        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
-        containerName, 'openclaw', 'cron', 'list', '--json', '--all',
-      ], { encoding: 'utf8', timeout: 15000 });
-      const parsed = parseCronListOutput(raw);
-      if (parsed) return parsed;
-    } catch { /* try next gateway port */ }
+    const raw = await dockerExecNoFail(
+      containerName,
+      ['openclaw', 'cron', 'list', '--json', '--all'],
+      { env: { OPENCLAW_GATEWAY_URL: gwUrl }, timeoutMs: 15000 },
+    );
+    if (!raw) continue;
+    const parsed = parseCronListOutput(raw);
+    if (parsed) return parsed;
   }
 
   return null;
@@ -180,12 +201,20 @@ function toggleInContainer(containerName: string, jobId: string, enabled: boolea
 
 // ── List: host gateway + per-container cron ─────────────────────────────
 
-export function listOpenClawCronJobs(): OpenClawCronListResult {
+export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   const seen = new Set<string>();
   const jobs: OpenClawCronJob[] = [];
 
+  // The host query and the agent discovery don't depend on each other, so they
+  // overlap. Everything below is ordered deterministically afterwards — host
+  // jobs first, then agents in discovery order — so the response doesn't shuffle
+  // between polls just because a container answered sooner this time.
+  const [hostJobs, agents] = await Promise.all([
+    listJobsOnHost(),
+    discoverAgentContainers(),
+  ]);
+
   // 1. Host gateway cron jobs
-  const hostJobs = listJobsOnHost();
   if (hostJobs) {
     for (const job of hostJobs) {
       job.scheduleExpr = extractScheduleExpr(job);
@@ -195,22 +224,26 @@ export function listOpenClawCronJobs(): OpenClawCronListResult {
     }
   }
 
-  // 2. Agent container cron jobs
-  const agents = discoverAgentContainers();
-  for (const agent of agents) {
-    const containerJobs = listJobsInContainer(agent.containerName);
-    if (containerJobs) {
-      for (const job of containerJobs) {
-        job.scheduleExpr = extractScheduleExpr(job);
-        job.source = 'container';
-        job.containerName = agent.containerName;
-        if (!job.agentId) job.agentId = agent.agentId;
+  // 2. Agent container cron jobs — queried concurrently, merged in order.
+  const perAgent = await mapWithConcurrency(
+    agents,
+    AGENT_QUERY_CONCURRENCY,
+    (agent) => listJobsInContainer(agent.containerName),
+  );
 
-        if (job.id && seen.has(job.id)) continue;
+  for (const [i, containerJobs] of perAgent.entries()) {
+    if (!containerJobs) continue;
+    const agent = agents[i];
+    for (const job of containerJobs) {
+      job.scheduleExpr = extractScheduleExpr(job);
+      job.source = 'container';
+      job.containerName = agent.containerName;
+      if (!job.agentId) job.agentId = agent.agentId;
 
-        jobs.push(job);
-        if (job.id) seen.add(job.id);
-      }
+      if (job.id && seen.has(job.id)) continue;
+
+      jobs.push(job);
+      if (job.id) seen.add(job.id);
     }
   }
 

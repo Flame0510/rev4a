@@ -2,23 +2,42 @@ import { type NextRequest } from "next/server";
 /**
  * Gateway Status API
  *
- * Aggregates live model/provider state from Rev4a agent containers.
- * Only queries containers with AGENT_ID label — no hardcoded container names.
+ * Reports the per-agent model settings the Gateway page needs to render its
+ * agent cards and pre-fill the "edit default model" form. Only containers with
+ * an AGENT_ID label are considered — no hardcoded container names.
  *
  * GET /api/gateway
+ *
+ * This used to shell out to the OpenClaw CLI inside every container, twice:
+ * `openclaw models status --json` (~5.7s) and `openclaw models list --json`
+ * (~4.4s), serially, with execSync — so ~10s per agent with the event loop
+ * frozen throughout, and roughly 70s on a seven-agent host.
+ *
+ * Both were avoidable. `models list` produced a model catalogue and alias map
+ * that no line of the UI ever read: the page takes its model list from
+ * /api/gateway/provider, which reads local files. And `models status` returned,
+ * for the two fields actually used, exactly what sits in the agent's own
+ * openclaw.json — verified field by field against a live agent. So the CLI was
+ * being booted for five seconds to read a file that `cat` returns in 260ms.
+ *
+ * The response shape is unchanged so the page keeps working untouched; the
+ * fields that came only from the discarded CLI output are now reported empty
+ * rather than computed at great cost and thrown away.
  */
 import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { dockerExecNoFail, mapWithConcurrency } from '@/lib/docker-exec';
+
+const execFileAsync = promisify(execFile);
 
 export const dynamic = 'force-dynamic';
 
-interface GatewayModel {
-  key: string;
-  provider: string;
-  model: string;
-  available: boolean;
-}
+/** Agents queried at once. Each is a `docker exec … cat`, cheap but still a process. */
+const AGENT_QUERY_CONCURRENCY = 8;
+
+const AGENT_CONFIG_PATH = '/root/.openclaw/openclaw.json';
 
 interface GatewayProvider {
   provider: string;
@@ -40,93 +59,78 @@ interface GatewayAgentStatus {
   error?: string;
 }
 
-interface ApiKeyStatus {
-  provider: string;
-  configured: boolean;
+interface AgentRef {
+  agentId: string;
+  containerName: string;
+  state: string;
 }
 
-/** Run a command inside a Docker container */
-function dockerExec(container: string, cmd: string, timeout = 15000): string {
+/**
+ * Containers carrying an AGENT_ID label, with the label read straight out of
+ * `docker ps` rather than a follow-up `docker inspect` per container.
+ */
+async function getAgents(): Promise<AgentRef[]> {
   try {
-    return execSync(
-      `docker exec ${container} sh -c ${JSON.stringify(cmd)}`,
-      { timeout, maxBuffer: 1024 * 1024, encoding: 'utf-8' },
-    );
-  } catch {
-    return '';
-  }
-}
+    const { stdout } = await execFileAsync('docker', [
+      'ps', '--filter', 'label=AGENT_ID',
+      '--format', '{{.Label "AGENT_ID"}}\t{{.Names}}\t{{.State}}',
+    ], { encoding: 'utf-8', timeout: 5000 });
 
-/** Get Docker containers with AGENT_ID label — only Rev4a-managed agents */
-function getAgents(): { agentId: string; containerName: string; state: string }[] {
-  try {
-    const raw = execSync(
-      `docker ps --filter "label=AGENT_ID" --format '{{.Label "AGENT_ID"}}|{{.Names}}|{{.State}}'`,
-      { timeout: 5000, maxBuffer: 64 * 1024, encoding: 'utf-8' },
-    ).trim();
-    if (!raw) return [];
-    return raw.split('\n').map((line) => {
-      const [agentId, containerName, state] = line.split('|');
-      return { agentId, containerName, state };
-    });
+    return stdout.trim().split('\n')
+      .map((line) => {
+        const [agentId, containerName, state] = line.split('\t');
+        if (!containerName?.trim()) return null;
+        return {
+          agentId: agentId?.trim() || containerName.trim(),
+          containerName: containerName.trim(),
+          state: state?.trim() || 'unknown',
+        };
+      })
+      .filter(Boolean) as AgentRef[];
   } catch {
     return [];
   }
 }
 
-/** Query an agent container for model status */
-function getAgentStatus(agent: { agentId: string; containerName: string; state: string }): GatewayAgentStatus | null {
-  const raw = dockerExec(agent.containerName, 'openclaw models status --json', 8000);
-  if (!raw) return null;
+/**
+ * Read an agent's model settings out of its openclaw.json.
+ *
+ * `agents.defaults.model` is the same value `openclaw models status` reports as
+ * `defaultModel`/`fallbacks`. The CLI additionally resolves an `imageModel`
+ * default when the config sets none, but the base image defines no such default
+ * (verified: `imageModel: null`), and agent creation always writes an explicit
+ * model — so there is no case where the file and the CLI would disagree.
+ */
+async function readAgentStatus(agent: AgentRef): Promise<GatewayAgentStatus> {
+  const raw = await dockerExecNoFail(
+    agent.containerName,
+    ['cat', AGENT_CONFIG_PATH],
+    { timeoutMs: 8000 },
+  );
+
+  const base: GatewayAgentStatus = {
+    agentId: agent.agentId,
+    containerName: agent.containerName,
+    state: agent.state,
+    defaultModel: '',
+    fallbacks: [],
+    allowed: [],
+    aliases: {},
+    providers: [],
+  };
+
+  if (!raw) return { ...base, error: 'config unreadable' };
+
   try {
-    const data = JSON.parse(raw);
-    const authProviders: Record<string, unknown>[] = data.auth?.providers ?? [];
-    const providers: GatewayProvider[] = authProviders.map((p: Record<string, unknown>) => ({
-      provider: String(p.provider ?? ''),
-      kind: String((p.effective as Record<string, unknown>)?.kind ?? ''),
-      detail: String((p.effective as Record<string, unknown>)?.detail ?? ''),
-      profiles: Number((p.profiles as Record<string, unknown>)?.count ?? 0),
-      labels: (p.profiles as Record<string, unknown>)?.labels as string[] ?? [],
-    }));
-
-    const aliasesRaw = data.aliases ?? {};
-    const aliases: Record<string, string> = {};
-    for (const [k, v] of Object.entries(aliasesRaw)) {
-      aliases[k] = String(v);
-    }
-
+    const config = JSON.parse(raw) as Record<string, any>;
+    const model = config?.agents?.defaults?.model ?? {};
     return {
-      agentId: agent.agentId,
-      containerName: agent.containerName,
-      state: agent.state,
-      defaultModel: String(data.defaultModel ?? ''),
-      fallbacks: (data.fallbacks ?? []).map(String),
-      allowed: (data.allowed ?? []).map(String),
-      aliases,
-      providers,
+      ...base,
+      defaultModel: typeof model.primary === 'string' ? model.primary : '',
+      fallbacks: Array.isArray(model.fallbacks) ? model.fallbacks.map(String) : [],
     };
   } catch {
-    return null;
-  }
-}
-
-/** Get available models from an agent */
-function getAgentModels(container: string): GatewayModel[] {
-  const raw = dockerExec(container, 'openclaw models list --json', 8000);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    const models: Record<string, unknown>[] = parsed.models ?? parsed ?? [];
-    return models
-      .filter((m: Record<string, unknown>) => m.available !== false && !m.missing)
-      .map((m: Record<string, unknown>) => ({
-        key: String(m.key ?? ''),
-        provider: String(m.key ?? '').split('/')[0] || 'unknown',
-        model: String(m.name ?? String(m.key ?? '').split('/').slice(1).join('/')),
-        available: m.available !== false,
-      }));
-  } catch {
-    return [];
+    return { ...base, error: 'config unparseable' };
   }
 }
 
@@ -136,64 +140,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const timestamp = Date.now();
 
-    // Only Rev4a-managed agents (AGENT_ID label)
-    const agentsRaw = getAgents();
-    const agents = agentsRaw
-      .map((a) => getAgentStatus(a))
-      .filter(Boolean) as GatewayAgentStatus[];
-
-    // Aggregate models from all agents (deduplicated by key)
-    const modelMap = new Map<string, GatewayModel>();
-    for (const agent of agents) {
-      for (const m of getAgentModels(agent.containerName)) {
-        if (!modelMap.has(m.key)) modelMap.set(m.key, m);
-      }
-    }
-    const allModels = Array.from(modelMap.values());
-    const availableModels = allModels.filter((m) => m.available);
-
-    // Aggregate aliases from all agents
-    const combinedAliases: Record<string, string[]> = {};
-    for (const agent of agents) {
-      for (const [alias, model] of Object.entries(agent.aliases)) {
-        if (!combinedAliases[alias]) combinedAliases[alias] = [];
-        if (!combinedAliases[alias].includes(model)) {
-          combinedAliases[alias].push(model);
-        }
-      }
-    }
+    const refs = await getAgents();
+    const agents = await mapWithConcurrency(refs, AGENT_QUERY_CONCURRENCY, readAgentStatus);
 
     // First agent is the "primary" for core model settings
     const primaryAgent = agents[0] ?? null;
-
-    // API keys from the first agent's providers
-    const apiKeys: ApiKeyStatus[] = [];
-    if (primaryAgent) {
-      for (const p of primaryAgent.providers) {
-        // We can't query apiKey presence from openclaw models status (it's redacted).
-        // Mark as configured if the provider appears in the auth list.
-        apiKeys.push({
-          provider: p.provider,
-          configured: p.profiles > 0,
-        });
-      }
-    }
-
-    // Models by provider
-    const byProvider = allModels.reduce<Record<string, number>>((acc, m) => {
-      acc[m.provider] = (acc[m.provider] ?? 0) + 1;
-      return acc;
-    }, {});
 
     return NextResponse.json({
       timestamp,
       gateway: 'Rev4a Model Gateway',
       status: 'online',
+      // The model catalogue lives in /api/gateway/provider, which reads the
+      // bundled config plus user overrides. Recomputing it per agent here cost
+      // 4.4s each and was never read.
       models: {
-        total: allModels.length,
-        available: availableModels.length,
-        byProvider: Object.entries(byProvider).map(([provider, count]) => ({ provider, count })),
-        list: allModels,
+        total: 0,
+        available: 0,
+        byProvider: [],
+        list: [],
       },
       agents: {
         total: agents.length,
@@ -207,16 +171,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           providers: a.providers,
         })),
       },
-      aliases: combinedAliases,
+      aliases: {},
       coreModel: primaryAgent
         ? {
             defaultModel: primaryAgent.defaultModel,
             fallbacks: primaryAgent.fallbacks,
           }
         : null,
+      // Provider credential state comes from /api/gateway/provider (`configured`
+      // per provider), which reads provider-keys.json directly.
       apiKeys: {
-        configured: apiKeys.filter((k) => k.configured).map((k) => k.provider),
-        all: apiKeys,
+        configured: [],
+        all: [],
       },
     });
   } catch (e: unknown) {

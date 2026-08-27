@@ -97,6 +97,28 @@ function findContainerById(agentId: string): string | null {
 
 // ── Public API ───────────────────────────────
 
+/**
+ * Read the Telegram channel out of an already-parsed openclaw.json.
+ *
+ * Pure — no container access — so callers that have obtained the config some
+ * other way (in bulk, asynchronously) can share the same interpretation instead
+ * of reimplementing it.
+ */
+export function parseTelegramChannel(config: Record<string, unknown>): TelegramChannel | null {
+  const telegram = (config.channels as Record<string, unknown>)?.telegram as Record<string, unknown> | undefined;
+  if (!telegram || telegram.enabled === false) return null;
+
+  const botToken = (telegram.botToken ?? '') as string;
+  if (typeof botToken !== 'string' || botToken.length === 0) return null;
+
+  return {
+    connected: true,
+    botToken: maskToken(botToken),
+    dmPolicy: (telegram.dmPolicy ?? 'pairing') as string,
+    allowFrom: (Array.isArray(telegram.allowFrom) ? telegram.allowFrom : []) as string[],
+  };
+}
+
 export function getChannels(agentId: string): AgentChannels {
   const container = findContainerById(agentId);
   const result: AgentChannels = { agentId, telegram: null };
@@ -106,22 +128,7 @@ export function getChannels(agentId: string): AgentChannels {
   const config = readConfigJson(container);
   if (!config) return result;
 
-  // ── Telegram ──
-  const telegram = (config.channels as Record<string, unknown>)?.telegram as Record<string, unknown> | undefined;
-  if (telegram && telegram.enabled !== false) {
-    const botToken = (telegram.botToken ?? '') as string;
-    const hasToken = typeof botToken === 'string' && botToken.length > 0;
-
-    if (hasToken) {
-      result.telegram = {
-        connected: true,
-        botToken: maskToken(botToken),
-        dmPolicy: (telegram.dmPolicy ?? 'pairing') as string,
-        allowFrom: (Array.isArray(telegram.allowFrom) ? telegram.allowFrom : []) as string[],
-      };
-    }
-  }
-
+  result.telegram = parseTelegramChannel(config);
   return result;
 }
 
