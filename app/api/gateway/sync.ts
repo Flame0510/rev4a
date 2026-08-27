@@ -79,16 +79,6 @@ function writeContainerJson(container: string, remotePath: string, data: Record<
   );
 }
 
-function restartContainerGateway(container: string): string | null {
-  try {
-    execSync(`docker exec ${container} openclaw gateway restart`, { timeout: 15000, maxBuffer: 64 * 1024 });
-    return null;
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string; message?: string };
-    return err.stderr?.toString().trim() || err.message || 'unknown error';
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Sync functions                                                     */
 /* ------------------------------------------------------------------ */
@@ -181,9 +171,16 @@ function syncContainer(
 
   writeContainerJson(container, remotePath, config);
 
-  const gwError = restartContainerGateway(container);
-  if (gwError) {
-    return `${container}: file updated but gateway restart failed: ${gwError}`;
-  }
-  return `${container}: synced + restarted OK`;
+  // No gateway restart: this only writes models.providers.rev4a, and the Gateway
+  // watches openclaw.json and hot-applies it. OpenClaw's own config tooling says
+  // so out loud — "Change will apply without restarting the gateway" — and its
+  // docs put `models` in the no-restart column, with `gateway.reload` defaulting
+  // to `hybrid`, which additionally restarts by itself for the changes that do
+  // need it. Verified against a live agent: every agent here leaves
+  // `gateway.reload` unset, so they all run that default.
+  //
+  // The restart used to cost ~7.5s per container, serially — roughly 52s of
+  // fully blocked event loop on a seven-agent host, every time a provider key or
+  // model toggle was saved, to do something the Gateway had already done.
+  return `${container}: synced`;
 }

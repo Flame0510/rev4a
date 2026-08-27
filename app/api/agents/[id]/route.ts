@@ -265,7 +265,9 @@ export async function PATCH(
         `docker exec -i ${id} sh -c 'openclaw config patch --stdin'`,
         { timeout: 15000, stdio: 'pipe', input: providerJson },
       );
-      try { execSync(`docker exec ${id} openclaw gateway restart`, { timeout: 15000 }); } catch { /* non-fatal */ }
+      // No gateway restart: `config patch` reports "Change will apply without
+      // restarting the gateway" for a models-only patch, and the Gateway watches
+      // openclaw.json with gateway.reload defaulting to hybrid.
     } catch { /* non-fatal */ }
 
     return NextResponse.json({

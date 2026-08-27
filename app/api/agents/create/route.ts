@@ -442,9 +442,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { timeout: 15000, stdio: 'pipe', input: providerJson },
       );
 
-      try {
-        execSync(`docker exec ${containerName} openclaw gateway restart`, { timeout: 15000 });
-      } catch { /* restart is best-effort */ }
+      // No gateway restart: `config patch` reports "Change will apply without
+      // restarting the gateway" for a models-only patch, and the Gateway watches
+      // openclaw.json with gateway.reload defaulting to hybrid. The earlier
+      // restart in this route stays — that one follows a full-file rewrite that
+      // includes gateway.*, which is the one section that genuinely needs it.
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
       console.error('[agent:create] runtime config patch failed:', (e as Error).message || String(e));

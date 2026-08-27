@@ -126,12 +126,14 @@ export async function PUT(request: NextRequest) {
       { timeout: 15000, maxBuffer: 1024 * 1024, input: newConfig },
     );
 
-    // Restart gateway to pick up the changes
-    try {
-      execSync(`docker exec ${safeContainer} openclaw gateway restart`, { timeout: 15000, maxBuffer: 64 * 1024 });
-    } catch {
-      // restart failure is non-fatal, config was written
-    }
+    // No gateway restart: the Gateway watches openclaw.json and hot-applies this.
+    // Confirmed against a live agent by writing the file exactly the way this
+    // route does — the container logged:
+    //   [reload] config change detected; evaluating reload (agents.defaults.model.primary)
+    //   [reload] config hot reload applied (agents.defaults.model.primary)
+    // OpenClaw's docs put `agents` in the no-restart column, and gateway.reload
+    // defaults to `hybrid`, which restarts on its own for the sections that do
+    // need it. The restart here cost ~7.5s of fully blocked event loop.
 
     // Verify
     const verifyRaw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
