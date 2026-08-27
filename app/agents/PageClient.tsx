@@ -256,6 +256,8 @@ export default function AgentsPageClient() {
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [lifecycleLoading, setLifecycleLoading] = useState<string | null>(null);
   const skipNextPoll = useRef(false);
+  /** Guards the un-awaited channel-summary fetch against out-of-order responses. */
+  const chSummarySeq = useRef(0);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -271,11 +273,23 @@ export default function AgentsPageClient() {
       if (!Array.isArray(data)) throw new Error('Invalid response');
       setAgents(data);
       setError('');
-      // Also load channel summary
-      try {
-        const chRes = await fetch('/api/agents/channels-summary');
-        if (chRes.ok) setChSummary(await chRes.json());
-      } catch { /* */ }
+
+      // Channel summary is deliberately not awaited: it only decorates rows with
+      // a TG badge, and awaiting it here held the whole page behind a second
+      // round trip — the agent list was ready in ~0.25s but stayed hidden for
+      // ~1.15s. It now lands on its own and the badges appear when it does.
+      //
+      // Sequence-guarded: load() also runs on a 15s poll, so several of these can
+      // be in flight at once. Without the check, a slow earlier response landing
+      // after a faster later one would overwrite fresh badges with stale ones.
+      const seq = ++chSummarySeq.current;
+      void (async () => {
+        try {
+          const chRes = await fetch('/api/agents/channels-summary');
+          if (!chRes.ok || seq !== chSummarySeq.current) return;
+          setChSummary(await chRes.json());
+        } catch { /* badges are optional */ }
+      })();
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {

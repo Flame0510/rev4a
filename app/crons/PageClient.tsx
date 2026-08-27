@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useResponsive } from '../design-system';
 import { Button, Pill } from '../components/ui';
-import { SkeletonLines } from '../components/Skeleton';
+import { CronJobsSkeleton, CronRunsSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
@@ -266,9 +266,28 @@ export default function CronsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
-    const t = setInterval(() => { if (!controller.signal.aborted) void load(controller.signal); }, 15_000);
-    return () => { controller.abort(); clearInterval(t); };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Chained setTimeout rather than setInterval, deliberately.
+    //
+    // GET /api/crons runs `openclaw cron list --json` inside every agent
+    // container. That command takes ~5s per agent and the route walks them in
+    // sequence, so the response time scales with the number of agents and is
+    // already well past 15s on a multi-agent host. setInterval fires on schedule
+    // whether or not the previous call has come back, so those requests pile up
+    // — and since the route blocks the server's event loop while it runs, the
+    // whole dashboard stops answering for as long as this page stays open.
+    //
+    // Scheduling the next run only once the current one has settled turns the
+    // delay into a gap between polls instead of a deadline, so the loop can
+    // never outrun the endpoint no matter how slow it gets.
+    const poll = async () => {
+      await load(controller.signal);
+      if (!controller.signal.aborted) timer = setTimeout(poll, 15_000);
+    };
+    void poll();
+
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, []);
 
   return (
@@ -278,7 +297,9 @@ export default function CronsPage() {
         <span className="crons-header__meta">{runs.length} runs loaded</span>
       </div>
 
-      {loading && <SkeletonLines count={4} />}
+      {/* No loader here: the skeleton lives inside each column, so the page keeps
+          its real layout while loading instead of showing a stack of bars above
+          two empty panels. */}
 
       {/* Agent filter bar */}
       {agentFilters.length > 1 && (
@@ -307,9 +328,12 @@ export default function CronsPage() {
         {/* Scheduled jobs */}
         <section style={{ width: isMobile ? '100%' : '40%', borderRight: isMobile ? 'none' : '1px solid var(--border)', display: isMobile && tab !== 'jobs' ? 'none' : 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 10, color: '#555', flexShrink: 0 }}>
-            SCHEDULED JOBS ({filteredJobs.length})
+            {/* Hide the count on the cold load — "(0)" beside a skeleton reads as
+                "no jobs", which is precisely what isn't known yet. */}
+            SCHEDULED JOBS{loading && filteredJobs.length === 0 ? '' : ` (${filteredJobs.length})`}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
+            {loading && filteredJobs.length === 0 && <CronJobsSkeleton />}
             {filteredJobs.length === 0 && !loading && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No scheduled jobs found</div>
             )}
@@ -471,10 +495,11 @@ export default function CronsPage() {
             RUN HISTORY {selectedJob ? `— ${selectedJob.name ?? selectedJob.id?.slice(0, 8) ?? ''}` : ''}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
+            {loading && !selectedJob && <CronRunsSkeleton />}
             {!selectedJob && !loading && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>Select a cron job to view its run history</div>
             )}
-            {selectedJob && runsLoading && <SkeletonLines count={3} />}
+            {selectedJob && runsLoading && <CronRunsSkeleton />}
             {selectedJob && !runsLoading && runsError && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: 'var(--red)' }}>{runsError}</div>
             )}
