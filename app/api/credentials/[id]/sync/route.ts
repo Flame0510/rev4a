@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getProfile, markSynced } from '@/lib/credentials/vault';
+import { getProfile, markSynced, markDesynced } from '@/lib/credentials/vault';
 import { syncProfileToAgents, cleanAgentProviders } from '@/lib/credentials/delivery';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
@@ -48,8 +48,8 @@ export async function DELETE(request: Request,
       return NextResponse.json({ error: 'container is required' }, { status: 400 });
     }
 
-    cleanAgentProviders(container, profile.providerId);
-    markSynced(id, 'active');
+    await cleanAgentProviders(container, profile.providerId);
+    markDesynced(id);
 
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {

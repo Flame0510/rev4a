@@ -1,7 +1,10 @@
-import { execSync } from 'child_process';
-import { getSecret, listProfiles } from './vault';
+import { dockerExecShell, mapWithConcurrency } from '@/lib/docker-exec';
+import { getSecret } from './vault';
 import { getProvider } from './providers';
 import { listAgentContainers as listAgentContainerInfo } from './detect';
+
+/** Containers written to at once. Writes are heavier than reads, so lower. */
+const AGENT_WRITE_CONCURRENCY = 4;
 
 export interface SyncResult {
   container: string;
@@ -12,9 +15,10 @@ export interface SyncResult {
 // ── Container discovery ────────────────────────────────────────────────────
 
 // Container names only, tolerant of docker failures (shared discovery lives in detect.ts).
-function listAgentContainers(): string[] {
+// Async because discovery moved off `execSync`; the only caller is already async.
+async function listAgentContainers(): Promise<string[]> {
   try {
-    return listAgentContainerInfo().map((c) => c.name).filter(Boolean);
+    return (await listAgentContainerInfo()).map((c) => c.name).filter(Boolean);
   } catch {
     return [];
   }
@@ -22,21 +26,75 @@ function listAgentContainers(): string[] {
 
 // ── Exec helpers ───────────────────────────────────────────────────────────
 
-function containerExec(container: string, script: string, timeoutMs = 30000): void {
-  execSync(`docker exec ${container} sh -c ${JSON.stringify(script)}`, {
-    timeout: timeoutMs,
-    stdio: 'pipe',
-  });
+/**
+ * Run a shell snippet inside a container.
+ *
+ * Goes through `dockerExecShell`, which spawns docker with an argv array and no
+ * host shell in between, so `script` reaches `sh -c` inside the container
+ * verbatim. That matters: were the command assembled as one string for a host
+ * shell, a `$(...)` or a backtick anywhere in it — including inside a secret
+ * interpolated into it — would execute on the host, as the user running the
+ * dashboard, before docker was ever invoked.
+ *
+ * Secrets must still never be interpolated into `script`. Pass them via `env` and
+ * reference them as "$KEY": parameter expansion does not re-parse the value for
+ * command substitution. Only the name reaches argv, as `docker exec -e KEY`;
+ * docker forwards the value from its own environment, so it appears neither in
+ * the host process table nor in any rejection built from that argv.
+ */
+async function containerExec(
+  container: string,
+  script: string,
+  timeoutMs = 30000,
+  env?: Record<string, string>,
+): Promise<void> {
+  await dockerExecShell(container, script, { timeoutMs, env });
 }
 
-function containerRead(container: string, path: string): string {
+/** Whether a CLI is on PATH inside the container. Throws if the exec fails. */
+async function cliPresent(container: string, name: string): Promise<boolean> {
+  const out = await dockerExecShell(
+    container,
+    `command -v ${name} >/dev/null 2>&1 && echo ok || echo missing`,
+    { timeoutMs: 5000 },
+  );
+  return out.trim() === 'ok';
+}
+
+/** Printed after the file, so its absence proves the read was cut short. */
+const READ_COMPLETE = '\x04';
+
+/**
+ * Read a file from a container.
+ *
+ * Returns '' when the file is genuinely absent or empty, and null when the read
+ * did not complete. Callers that write the file back MUST treat null as "do not
+ * write": to the rewrite path an unfinished read is indistinguishable from an
+ * empty file, and TOOLS.md's "no block yet" branch replaces the whole file.
+ *
+ * A try/catch alone does not separate the two, which is the trap this function
+ * was already caught in. `docker exec` exits 0 on the SIGTERM a timeout sends,
+ * so a read killed halfway *resolves* with whatever it had printed — no
+ * rejection to catch. `detect.ts` relies on that same behaviour deliberately for
+ * its probe sentinel; here it has to be defended against, and by the same means:
+ * a terminator written last. Present, the content is whole; absent, the process
+ * died before the end and nothing may be concluded from what arrived.
+ *
+ * `;` rather than `|| true`: when the file really is missing `cat` fails, the
+ * terminator is still printed, and the caller correctly gets '' — the case that
+ * must still create TOOLS.md, since an agent from the `custom` template starts
+ * without one until OpenClaw writes it.
+ */
+async function containerRead(container: string, path: string): Promise<string | null> {
   try {
-    return execSync(
-      `docker exec ${container} sh -c ${JSON.stringify(`cat ${path} 2>/dev/null || true`)}`,
-      { timeout: 5000, encoding: 'utf-8', maxBuffer: 512 * 1024 },
-    );
+    const raw = await dockerExecShell(container, `cat ${path} 2>/dev/null; printf '\\4'`, {
+      timeoutMs: 5000,
+      maxBuffer: 512 * 1024,
+    });
+    if (!raw.endsWith(READ_COMPLETE)) return null;
+    return raw.slice(0, -READ_COMPLETE.length);
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -86,18 +144,14 @@ async function discoverVercelScope(token: string): Promise<{ token: string; team
   return { token, teamId };
 }
 
-function deliverGithub(container: string, secret: Record<string, string>): void {
+async function deliverGithub(container: string, secret: Record<string, string>): Promise<void> {
   const { token } = secret;
   if (!token) throw new Error('Missing token');
 
   // Require gh CLI preinstalled in the agent image
-  const hasGh = execSync(
-    `docker exec ${container} sh -c ${JSON.stringify('command -v gh >/dev/null 2>&1 && echo ok || echo missing')}`,
-    { timeout: 5000, encoding: 'utf-8' },
-  ).trim();
-  if (hasGh !== 'ok') throw new Error('gh CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'gh')) throw new Error('gh CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
 
-  containerExec(
+  await containerExec(
     container,
     `echo ${JSON.stringify(b64(token))} | base64 -d | gh auth login --with-token`,
   );
@@ -108,18 +162,14 @@ async function deliverVercel(container: string, secret: Record<string, string>):
   if (!token) throw new Error('Missing token');
 
   // Require vercel CLI preinstalled in the agent image
-  const hasVercel = execSync(
-    `docker exec ${container} sh -c ${JSON.stringify('command -v vercel >/dev/null 2>&1 && echo ok || echo missing')}`,
-    { timeout: 5000, encoding: 'utf-8' },
-  ).trim();
-  if (hasVercel !== 'ok') throw new Error('vercel CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'vercel')) throw new Error('vercel CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
 
   // Validate token and discover team scope via Node fetch (no curl/exec)
   const scope = await discoverVercelScope(token);
 
   // Write auth.json for Vercel CLI auth — same directory as config.json
   const authJson = JSON.stringify({ token });
-  containerExec(
+  await containerExec(
     container,
     `mkdir -p /root/.local/share/com.vercel.cli && echo ${JSON.stringify(b64(authJson))} | base64 -d > /root/.local/share/com.vercel.cli/auth.json && chmod 600 /root/.local/share/com.vercel.cli/auth.json`,
   );
@@ -128,7 +178,7 @@ async function deliverVercel(container: string, secret: Record<string, string>):
   // Both auth.json and config.json MUST be in ~/.local/share/com.vercel.cli/
   if (scope.teamId) {
     const vercelConfig = JSON.stringify({ currentTeam: scope.teamId });
-    containerExec(
+    await containerExec(
       container,
       `echo ${JSON.stringify(b64(vercelConfig))} | base64 -d > /root/.local/share/com.vercel.cli/config.json && chmod 600 /root/.local/share/com.vercel.cli/config.json`,
     );
@@ -136,52 +186,59 @@ async function deliverVercel(container: string, secret: Record<string, string>):
 
 }
 
-function deliverSupabase(container: string, secret: Record<string, string>): void {
+async function deliverSupabase(container: string, secret: Record<string, string>): Promise<void> {
   const { accessToken } = secret;
   if (!accessToken || !accessToken.trim()) throw new Error('Missing Supabase access token');
 
   // Check supabase CLI is available (installed globally in the image)
-  const hasSupabase = execSync(
-    `docker exec ${container} sh -c ${JSON.stringify('command -v supabase >/dev/null 2>&1 && echo ok || echo missing')}`,
-    { timeout: 5000, encoding: 'utf-8' },
-  ).trim();
-  if (hasSupabase !== 'ok') throw new Error('supabase CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'supabase')) throw new Error('supabase CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
 
   // Login with access token — grants access to all projects on the account
   // supabase login --token supports non-interactive auth
-  containerExec(
+  // The token travels through `docker exec -e`, never inside the script text.
+  // Interpolating it here is what let a token containing `$(...)` execute on the
+  // host as root: JSON.stringify escapes quotes but not command substitution,
+  // and execSync handed the result to the host shell before docker saw it.
+  // "$SUPABASE_ACCESS_TOKEN" is expanded by the container's shell, which does
+  // not re-parse the expanded value.
+  await containerExec(
     container,
-    `supabase login --token ${JSON.stringify(accessToken.trim())} --no-browser 2>&1`,
+    'supabase login --token "$SUPABASE_ACCESS_TOKEN" --no-browser 2>&1',
     30000,
+    { SUPABASE_ACCESS_TOKEN: accessToken.trim() },
   );
 }
 
-function deliverTrello(container: string, secret: Record<string, string>): void {
+/**
+ * Trello is delivered for the REST API, not for the CLI.
+ *
+ * The `trello` CLI stays in the base image and can still read a config of this
+ * shape, but it is no longer required: the sync used to abort with "rebuild the
+ * base image" when it was missing, over a tool nothing depends on. The agent is
+ * told to call the API directly — see PROVIDER_ENTRIES and the Authentication
+ * section that TOOLS.md carries.
+ *
+ * The file therefore lives under `~/.config/`, alongside Notion, rather than in
+ * the CLI's own directory.
+ */
+async function deliverTrello(container: string, secret: Record<string, string>): Promise<void> {
   const { apiKey, token } = secret;
   if (!apiKey || !token) throw new Error('Missing Trello API key or token');
 
-  // Require trello CLI preinstalled in the agent image
-  const hasTrello = execSync(
-    `docker exec ${container} sh -c ${JSON.stringify('command -v trello >/dev/null 2>&1 && echo ok || echo missing')}`,
-    { timeout: 5000, encoding: 'utf-8' },
-  ).trim();
-  if (hasTrello !== 'ok') throw new Error('trello CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
-
-  // Write trello-cli config file (same format trello auth would create)
   const config = JSON.stringify({ apiKey, token });
-  containerExec(
+  await containerExec(
     container,
-    `mkdir -p /root/.trello-cli/default && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.trello-cli/default/config.json && chmod 600 /root/.trello-cli/default/config.json`,
+    `mkdir -p /root/.config/trello && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.config/trello/config.json && chmod 600 /root/.config/trello/config.json`,
   );
 }
 
 /** Notion: no CLI, just write a config file (same pattern as Trello). */
-function deliverNotion(container: string, secret: Record<string, string>): void {
+async function deliverNotion(container: string, secret: Record<string, string>): Promise<void> {
   const { token } = secret;
   if (!token) throw new Error('Missing Notion API token');
 
   const config = JSON.stringify({ token });
-  containerExec(
+  await containerExec(
     container,
     `mkdir -p /root/.config/notion && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.config/notion/config.json && chmod 600 /root/.config/notion/config.json`,
   );
@@ -218,13 +275,36 @@ const PROVIDER_ENTRIES: Record<string, IntegrationEntry> = {
   trello: {
     tool: 'trello',
     status: '✓ ready',
-    note: 'Trello CLI — `trello card:list`, `trello card:create`, `trello interactive`',
+    note: 'Trello REST API — boards, lists, cards. See Authentication below',
   },
   notion: {
     tool: 'notion',
     status: '✓ ready',
-    note: 'Notion API — read/write pages, databases, and blocks via REST API',
+    note: 'Notion REST API — pages, databases, blocks. See Authentication below',
   },
+};
+
+/**
+ * How to authenticate, for the providers with no CLI to do it for them.
+ *
+ * These are kept out of the table on purpose. A table cell is one line, and
+ * these instructions have several steps — open a file, read named fields,
+ * assemble a request. The field-name mismatch is the reason they exist at all:
+ * the file Rev4a writes calls it `apiKey`, and Trello's API expects `key`.
+ *
+ * Only the entries for providers actually synced to a container are emitted, so
+ * an agent with only CLI-backed credentials carries none of this.
+ */
+const AUTH_NOTES: Record<string, string> = {
+  trello: [
+    '**Trello** — read `~/.config/trello/config.json`: it holds `apiKey` and `token`.',
+    'Pass them as query parameters, where `apiKey` becomes `key`:',
+    '`https://api.trello.com/1/members/me?key=<apiKey>&token=<token>`',
+  ].join('\n'),
+  notion: [
+    '**Notion** — read `~/.config/notion/config.json`: it holds `token`.',
+    'Send `Authorization: Bearer <token>` and `Notion-Version: 2026-03-11` on every request.',
+  ].join('\n'),
 };
 
 function entryRow(entry: IntegrationEntry): string {
@@ -239,6 +319,10 @@ function buildBlock(integrations: IntegrationEntry[]): string {
   }
 
   const rows = integrations.map((e) => entryRow(e)).join('\n');
+  // Emitted only for the providers present that need it; absent entirely when
+  // every synced credential is CLI-backed.
+  const notes = integrations.map((e) => AUTH_NOTES[e.tool]).filter(Boolean);
+  const auth = notes.length ? `\n\n### Authentication\n\n${notes.join('\n\n')}` : '';
   return `${MARKER_START}
 ## Active Integrations
 
@@ -246,26 +330,9 @@ function buildBlock(integrations: IntegrationEntry[]): string {
 
 | Tool | Status | Notes |
 |---|---|---|
-${rows}
+${rows}${auth}
 
 ${MARKER_END}`;
-}
-
-function collectIntegrations(): IntegrationEntry[] {
-  const profiles = listProfiles();
-  const seen = new Set<string>();
-  const entries: IntegrationEntry[] = [];
-
-  for (const profile of profiles) {
-    if (profile.status !== 'active') continue;
-    if (seen.has(profile.providerId)) continue;
-    seen.add(profile.providerId);
-
-    const entry = PROVIDER_ENTRIES[profile.providerId];
-    if (entry) entries.push(entry);
-  }
-
-  return entries;
 }
 
 /**
@@ -292,21 +359,43 @@ function rowsToEntries(rows: string[]): IntegrationEntry[] {
 }
 
 /**
+ * Write through a temporary file, then rename over the target.
+ *
+ * `> file` truncates before the first byte arrives, so an exec killed mid-write
+ * leaves nothing behind — verified: a redirect interrupted after 1s left a 31
+ * byte file at 0, while this form left it untouched. TOOLS.md carries the
+ * agent's own instructions and is not regenerable, so the window matters here
+ * even though it is small. `mv` on the same filesystem is atomic: the target is
+ * either the old content or the new one, never a prefix of either.
+ *
+ * `lib/channelManager.ts` writes `openclaw.json` the same way.
+ */
+function writeAtomically(content: string, path: string): string {
+  const tmp = `${path}.rev4a.tmp`;
+  return `echo ${JSON.stringify(b64(content))} | base64 -d > ${tmp} && mv ${tmp} ${path}`;
+}
+
+/**
  * Add or remove a single provider's row from the TOOLS.md integration block
  * inside a single agent container (docker exec only, no host filesystem access).
  */
-function toggleProviderRow(
+async function toggleProviderRow(
   container: string,
   providerId: string,
   action: 'add' | 'remove',
-): void {
+): Promise<void> {
   const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
   if (!safe) return;
 
   const entry = PROVIDER_ENTRIES[providerId];
   if (!entry) return;
 
-  const existing = containerRead(safe, TOOLS_MD_PATH);
+  const existing = await containerRead(safe, TOOLS_MD_PATH);
+  // A failed read must not lead to a write. It used to: '' meant both "empty"
+  // and "unreadable", so a transient docker error sent the add path into its
+  // "no block yet" branch, which writes the block plus `existing` — replacing
+  // the whole of TOOLS.md with just the block.
+  if (existing === null) return;
   const row = entryRow(entry);
   const si = existing.indexOf(MARKER_START);
   const ei = existing.indexOf(MARKER_END);
@@ -322,10 +411,7 @@ function toggleProviderRow(
     } else {
       // No block yet — create one with just this row
       const newBlock = buildBlock([entry]);
-      containerExec(
-        safe,
-        `echo ${JSON.stringify(b64(newBlock + '\n' + existing))} | base64 -d > ${TOOLS_MD_PATH}`,
-      );
+      await containerExec(safe, writeAtomically(newBlock + '\n' + existing, TOOLS_MD_PATH));
       return;
     }
   } else {
@@ -336,10 +422,7 @@ function toggleProviderRow(
 
   const newBlock = buildBlock(rowsToEntries(rows));
   const patched = existing.slice(0, si) + newBlock + existing.slice(ei + MARKER_END.length);
-  containerExec(
-    safe,
-    `echo ${JSON.stringify(b64(patched))} | base64 -d > ${TOOLS_MD_PATH}`,
-  );
+  await containerExec(safe, writeAtomically(patched, TOOLS_MD_PATH));
 }
 
 // ── Agent primitives — operate on ONE container ──────────────────────────
@@ -347,25 +430,25 @@ function toggleProviderRow(
 /**
  * Remove credentials for a specific provider from a single agent container.
  */
-function cleanProvider(container: string, providerId: string): void {
+async function cleanProvider(container: string, providerId: string): Promise<void> {
   const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
   if (!safe) return;
 
   switch (providerId) {
     case 'github-pat':
-      try { containerExec(safe, 'rm -rf /root/.config/gh /root/.local/share/gh 2>/dev/null; exit 0', 10000); } catch {}
+      try { await containerExec(safe, 'rm -rf /root/.config/gh /root/.local/share/gh 2>/dev/null; exit 0', 10000); } catch {}
       break;
     case 'vercel':
-      try { containerExec(safe, 'rm -rf /root/.local/share/com.vercel.cli', 10000); } catch {}
+      try { await containerExec(safe, 'rm -rf /root/.local/share/com.vercel.cli', 10000); } catch {}
       break;
     case 'supabase':
-      try { containerExec(safe, 'rm -f /root/.supabase/access-token 2>/dev/null; exit 0', 10000); } catch {}
+      try { await containerExec(safe, 'rm -f /root/.supabase/access-token 2>/dev/null; exit 0', 10000); } catch {}
       break;
     case 'trello':
-      try { containerExec(safe, 'rm -rf /root/.trello-cli', 10000); } catch {}
+      try { await containerExec(safe, 'rm -rf /root/.config/trello', 10000); } catch {}
       break;
     case 'notion':
-      try { containerExec(safe, 'rm -rf /root/.config/notion', 10000); } catch {}
+      try { await containerExec(safe, 'rm -rf /root/.config/notion', 10000); } catch {}
       break;
   }
 }
@@ -379,11 +462,11 @@ async function deliverToAgent(
   secret: Record<string, string>,
 ): Promise<void> {
   switch (providerId) {
-    case 'github-pat': deliverGithub(container, secret); break;
+    case 'github-pat': await deliverGithub(container, secret); break;
     case 'vercel':     await deliverVercel(container, secret); break;
-    case 'supabase':   deliverSupabase(container, secret); break;
-    case 'trello':     deliverTrello(container, secret); break;
-    case 'notion':     deliverNotion(container, secret); break;
+    case 'supabase':   await deliverSupabase(container, secret); break;
+    case 'trello':     await deliverTrello(container, secret); break;
+    case 'notion':     await deliverNotion(container, secret); break;
     default: throw new Error(`No delivery adapter for: ${providerId}`);
   }
 }
@@ -403,34 +486,44 @@ export async function syncProfileToAgents(
   if (!getProvider(providerId)) throw new Error(`Unknown provider: ${providerId}`);
 
   const secret = getSecret(profileId);
-  const selectedTargets = containers ?? listAgentContainers();
+  // Deduplicated: TOOLS.md is edited with a read-modify-write, so the same
+  // container appearing twice would have two passes racing on one file. No
+  // caller sends duplicates today — the UI always passes a single name and
+  // `docker ps` names are unique — but the route forwards `body.containers`
+  // unchecked, so nothing else stops it.
+  const selectedTargets = [...new Set(containers ?? await listAgentContainers())]
+    .map((c) => c.replace(/[^a-zA-Z0-9_.-]/g, ''))
+    .filter(Boolean);
 
-  // Clean the specific provider from selected targets (don't touch other providers)
-  for (const container of selectedTargets) {
-    cleanProvider(container, providerId);
-  }
+  // Three passes, kept sequential relative to each other: every target is
+  // cleaned before any is delivered to, and TOOLS.md is only touched once the
+  // outcome of every delivery is known. Within a pass the containers run
+  // concurrently — each callback handles its own failures, because
+  // mapWithConcurrency is fail-fast and one unreachable container would
+  // otherwise discard the results already computed for the others.
+  await mapWithConcurrency(selectedTargets, AGENT_WRITE_CONCURRENCY, async (container) => {
+    try { await cleanProvider(container, providerId); } catch { /* best-effort, as before */ }
+  });
 
-  // Deliver credentials to selected targets
-  const results: SyncResult[] = [];
-  for (const container of selectedTargets) {
-    const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
-    if (!safe) continue;
+  const results: SyncResult[] = await mapWithConcurrency(
+    selectedTargets,
+    AGENT_WRITE_CONCURRENCY,
+    async (container): Promise<SyncResult> => {
+      try {
+        await deliverToAgent(container, providerId, secret);
+        return { container, status: 'ok' };
+      } catch (e: unknown) {
+        return { container, status: 'error', error: (e as Error).message };
+      }
+    },
+  );
 
+  await mapWithConcurrency(selectedTargets, AGENT_WRITE_CONCURRENCY, async (container, i) => {
+    const wasDelivered = results[i]?.status === 'ok';
     try {
-      await deliverToAgent(safe, providerId, secret);
-      results.push({ container, status: 'ok' });
-    } catch (e: unknown) {
-      results.push({ container, status: 'error', error: (e as Error).message });
-    }
-  }
-
-  // Update TOOLS.md on selected targets only
-  for (const container of selectedTargets) {
-    const wasDelivered = results.some(
-      (r) => r.container === container && r.status === 'ok',
-    );
-    toggleProviderRow(container, providerId, wasDelivered ? 'add' : 'remove');
-  }
+      await toggleProviderRow(container, providerId, wasDelivered ? 'add' : 'remove');
+    } catch { /* TOOLS.md is documentation; a failure here must not fail the sync */ }
+  });
 
   return results;
 }
@@ -439,10 +532,10 @@ export async function syncProfileToAgents(
  * Clean a single provider from a single agent container and update its TOOLS.md.
  * Used by the De-sync button in the UI and by the sync endpoint for initial cleanup.
  */
-export function cleanAgentProviders(container: string, providerId: string): void {
+export async function cleanAgentProviders(container: string, providerId: string): Promise<void> {
   const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
   if (!safe) return;
 
-  cleanProvider(safe, providerId);
-  toggleProviderRow(safe, providerId, 'remove');
+  await cleanProvider(safe, providerId);
+  await toggleProviderRow(safe, providerId, 'remove');
 }

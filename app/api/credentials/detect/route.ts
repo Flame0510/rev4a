@@ -2,16 +2,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { listProfiles, getSecret } from '@/lib/credentials/vault';
 import {
   listAgentContainers,
-  execInContainer,
-  cliInstalled,
+  probeContainer,
   providerTokenHash,
   profileTokenHash,
-  detectTrello,
-  detectNotion,
+  vercelCurrentTeam,
+  supabaseProjectRef,
+  TOKEN_FIELD,
+  type ContainerProbe,
 } from '@/lib/credentials/detect';
+import { mapWithConcurrency } from '@/lib/docker-exec';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
+
+/** Containers probed at once. Each is a single `docker exec`. */
+const AGENT_QUERY_CONCURRENCY = 6;
 
 interface DetectedStatus {
   container: string;
@@ -33,6 +38,12 @@ interface DetectedStatus {
   notionLoggedIn: boolean;
   toolsMdHasMarkers: boolean;
   matchedProfiles: { profileId: string; providerId: string; label: string }[];
+  /**
+   * Providers with a token present in the container, whether or not it belongs
+   * to a stored profile. A provider listed here but absent from
+   * `matchedProfiles` holds a credential nobody in the vault accounts for.
+   */
+  installedProviders: string[];
 }
 
 interface DetectionError {
@@ -41,125 +52,106 @@ interface DetectionError {
   error: string;
 }
 
-function detectSupabase(container: string): { loggedIn: boolean; linked: boolean; projectRef: string } {
-  if (!cliInstalled(container, 'supabase')) {
-    return { loggedIn: false, linked: false, projectRef: '' };
-  }
-
-  // Verify login by calling the Supabase API (analogous to gh auth status / vercel whoami)
-  const raw = execInContainer(
-    container,
-    'supabase projects list --output json 2>&1',
-    (r) => r.trim(),
-    '',
-  );
-
-  // Unauthorized → not logged in
-  if (!raw || raw.includes('Unauthorized')) {
-    return { loggedIn: false, linked: false, projectRef: '' };
-  }
-
-  // Check if a linked project exists in the workspace
-  let linked = false;
-  let projectRef = '';
-  const linkedRef = execInContainer(
-    container,
-    'cat /data/supabase/config.toml 2>/dev/null | grep project_id | head -1 | sed "s/.*= *\"//;s/\".*//"',
-    (r) => r.trim(),
-    '',
-  );
-  if (linkedRef && linkedRef.length > 0) {
-    linked = true;
-    projectRef = linkedRef;
-  }
-
-  return { loggedIn: true, linked, projectRef };
-}
-
-function detectGithub(container: string): { loggedIn: boolean; user: string } {
-  if (!cliInstalled(container, 'gh')) {
-    return { loggedIn: false, user: '' };
-  }
-
-  const raw = execInContainer(
-    container,
-    'gh auth status 2>&1',
-    (r) => r,
-    '',
-  );
-  if (!raw || raw.includes('not logged into any GitHub hosts')) {
-    return { loggedIn: false, user: '' };
-  }
-  const match = raw.match(/Logged in to github\.com as (\S+)/);
-  return { loggedIn: !!match, user: match?.[1] ?? '' };
-}
-
-function detectToolsMd(container: string): boolean {
-  const raw = execInContainer(
-    container,
-    `grep -c 'REV4A:INTEGRATIONS:START' /root/.openclaw/workspace/TOOLS.md 2>/dev/null || echo 0`,
-    (r) => r.trim(),
-    '0',
-  );
-  return raw === '1' || parseInt(raw, 10) > 0;
-}
-
-function detectVercel(container: string): { loggedIn: boolean; user: string; team: string } {
-  if (!cliInstalled(container, 'vercel')) {
-    return { loggedIn: false, user: '', team: '' };
-  }
-
-  const whoami = execInContainer(
-    container,
-    'vercel whoami 2>&1 || true',
-    (r) => r.trim(),
-    '',
-  );
-  if (whoami && !whoami.includes('Error:') && !whoami.includes('Not authorized')) {
-    const teamRaw = execInContainer(
-      container,
-      "cat /root/.local/share/com.vercel.cli/config.json 2>/dev/null | grep 'currentTeam' | head -1 | sed 's/.*: *\"//;s/\".*//'",
-      (r) => r.trim(),
-      '',
-    );
-    return { loggedIn: true, user: extractUsername(whoami), team: teamRaw };
-  }
-
-  return { loggedIn: false, user: '', team: '' };
-}
-
-/**
- * Extract just the username from 'vercel whoami' output (strip header lines).
- */
+/** Last non-empty line of `vercel whoami` — the rest is header noise. */
 function extractUsername(raw: string): string {
-  const lines = raw.split('\n').filter(Boolean);
-  // Return the last non-empty line (the actual username)
-  return lines[lines.length - 1]?.trim() || raw;
+  const lines = raw.split('\n').filter((l) => l.trim());
+  return lines[lines.length - 1]?.trim() || raw.trim();
 }
 
 /**
- * Match detected state to stored credential profiles by comparing token hashes.
- * `hashes` maps a providerId to the hash of the token currently installed in the
- * container. A profile matches when its own token hashes to the same value.
- * Providers whose token cannot be read yield '' and therefore never match.
+ * Stored profiles with their token hashes, computed once per request.
+ *
+ * This used to run inside the per-container loop: `listProfiles()` plus one
+ * `getSecret()` per profile, each opening its own SQLite connection, repeated
+ * for every agent. Nothing in it depends on the container, so it is hoisted.
  */
-function matchProfiles(
-  hashes: Record<string, string>,
-): { profileId: string; providerId: string; label: string }[] {
-  const profiles = listProfiles();
-  const matched: { profileId: string; providerId: string; label: string }[] = [];
+interface HashedProfile {
+  profileId: string;
+  providerId: string;
+  label: string;
+  tokenHash: string;
+}
 
-  for (const profile of profiles) {
-    const installedHash = hashes[profile.providerId];
-    if (!installedHash) continue;
+function loadHashedProfiles(): HashedProfile[] {
+  return listProfiles()
+    .map((p) => ({
+      profileId: p.id,
+      providerId: p.providerId,
+      label: p.label,
+      tokenHash: profileTokenHash(getSecret(p.id), p.providerId),
+    }))
+    .filter((p) => p.tokenHash);
+}
 
-    const storedHash = profileTokenHash(getSecret(profile.id), profile.providerId);
-    if (storedHash && storedHash === installedHash) {
-      matched.push({ profileId: profile.id, providerId: profile.providerId, label: profile.label });
-    }
+/**
+ * Hash of whatever token each provider currently has installed in the container.
+ *
+ * Computed for every provider, not only those with a stored profile. The probe
+ * has already fetched all of these files in its single exec, so the extra work
+ * is a handful of SHA-256 over short strings — and restricting it would hide the
+ * case that matters most: a token present in the container that matches nothing
+ * in the vault, which is what a credential edited after syncing looks like.
+ */
+function installedHashes(probe: ContainerProbe): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const providerId of Object.keys(TOKEN_FIELD)) {
+    const h = providerTokenHash(probe, providerId);
+    if (h) out.set(providerId, h);
   }
+  return out;
+}
 
-  return matched;
+function matchProfiles(installed: Map<string, string>, profiles: HashedProfile[]) {
+  return profiles
+    .filter((p) => installed.get(p.providerId) === p.tokenHash)
+    .map(({ profileId, providerId, label }) => ({ profileId, providerId, label }));
+}
+
+function shape(container: string, agentId: string, probe: ContainerProbe, profiles: HashedProfile[]): DetectedStatus {
+  const installed = installedHashes(probe);
+  // `gh` changed the wording: 2.97 prints "…github.com account <user>", older
+  // builds print "…as <user>". The image installs it unpinned from apt, so both
+  // are accepted rather than tracking whichever one ships today.
+  const ghMatch = /Logged in to github\.com (?:as|account) (\S+)/.exec(probe.ghStatus);
+  const githubLoggedIn =
+    probe.cli.gh && !probe.ghStatus.includes('not logged into any GitHub hosts') && !!ghMatch;
+
+  const whoami = probe.vercelWhoami.trim();
+  const vercelLoggedIn =
+    probe.cli.vercel && !!whoami && !whoami.includes('Error:') && !whoami.includes('Not authorized');
+
+  const projects = probe.supabaseProjects.trim();
+  // The exit status is the signal, not the wording. Matching on 'Unauthorized'
+  // recognised only the one failure whose text happened to say so; a missing
+  // token and an unreachable network both printed something else and passed.
+  const supabaseLoggedIn = probe.cli.supabase && probe.supabaseRc === 0 && !!projects;
+  const projectRef = supabaseLoggedIn ? supabaseProjectRef(probe) : '';
+
+  return {
+    container,
+    agentId,
+    displayName: probe.agentName || undefined,
+    githubLoggedIn,
+    githubUser: ghMatch?.[1] ?? '',
+    githubCliInstalled: probe.cli.gh,
+    vercelLoggedIn,
+    vercelUser: vercelLoggedIn ? extractUsername(probe.vercelWhoami) : '',
+    vercelTeam: vercelLoggedIn ? vercelCurrentTeam(probe) : '',
+    vercelCliInstalled: probe.cli.vercel,
+    supabaseLoggedIn,
+    supabaseLinked: !!projectRef,
+    supabaseProjectRef: projectRef,
+    supabaseCliInstalled: probe.cli.supabase,
+    // Presence of the config file is the login signal for both — neither ships a
+    // status command. An empty file now counts as absent, where `test -f` used
+    // to accept it.
+    trelloLoggedIn: !!probe.files.trelloConfig.trim(),
+    trelloCliInstalled: probe.cli.trello,
+    notionLoggedIn: !!probe.files.notionConfig.trim(),
+    toolsMdHasMarkers: probe.toolsMdMarkers > 0,
+    matchedProfiles: matchProfiles(installed, profiles),
+    installedProviders: [...installed.keys()],
+  };
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -167,8 +159,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(request.url);
     const filterAgent = url.searchParams.get('agent');
-    let containers = listAgentContainers();
 
+    let containers = await listAgentContainers();
     if (filterAgent) {
       containers = containers.filter((c) => c.name === filterAgent);
       if (containers.length === 0) {
@@ -176,70 +168,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const results: (DetectedStatus | DetectionError)[] = [];
+    const profiles = loadHashedProfiles();
 
-    for (const { name, agentId } of containers) {
-      try {
-        const { loggedIn: githubLoggedIn, user: githubUser } = detectGithub(name);
-        const { loggedIn: trelloLoggedIn } = detectTrello(name);
-        const { loggedIn: notionLoggedIn } = detectNotion(name);
-        const { loggedIn: vercelLoggedIn, user: vercelUser, team: vercelTeam } = detectVercel(name);
-        const { loggedIn: supabaseLoggedIn, linked: supabaseLinked, projectRef: supabaseProjectRef } = detectSupabase(name);
+    // The callback swallows its own failures: mapWithConcurrency is fail-fast,
+    // so letting one unreachable container reject would discard the results
+    // already computed for every other agent.
+    const agents = await mapWithConcurrency<{ name: string; agentId: string }, DetectedStatus | DetectionError>(
+      containers,
+      AGENT_QUERY_CONCURRENCY,
+      async ({ name, agentId }) => {
+        try {
+          const probe = await probeContainer(name);
+          if (!probe.ok) {
+            return { container: name, agentId, error: 'Container did not respond' };
+          }
+          return shape(name, agentId, probe, profiles);
+        } catch (e: unknown) {
+          return { container: name, agentId, error: (e as Error).message };
+        }
+      },
+    );
 
-        const githubCliInstalled = cliInstalled(name, 'gh');
-        const vercelCliInstalled = cliInstalled(name, 'vercel');
-        const supabaseCliInstalled = cliInstalled(name, 'supabase');
-        const trelloCliInstalled = cliInstalled(name, 'trello');
-        const toolsMdHasMarkers = detectToolsMd(name);
-
-        // Read AGENT_NAME env for display name (may differ from container name)
-        const displayName = execInContainer(
-          name,
-          'printenv AGENT_NAME',
-          (r) => r.trim(),
-          '',
-        ) || undefined;
-
-        // Precise profile matching by token hash — one source of truth for all providers.
-        const matchedProfiles = matchProfiles({
-          'github-pat': providerTokenHash(name, 'github-pat'),
-          vercel: providerTokenHash(name, 'vercel'),
-          supabase: providerTokenHash(name, 'supabase'),
-          trello: providerTokenHash(name, 'trello'),
-          notion: providerTokenHash(name, 'notion'),
-        });
-
-        results.push({
-          container: name,
-          agentId,
-          displayName,
-          githubLoggedIn,
-          githubUser,
-          githubCliInstalled,
-          vercelLoggedIn,
-          vercelUser,
-          vercelTeam,
-          vercelCliInstalled,
-          supabaseLoggedIn,
-          supabaseLinked,
-          supabaseProjectRef,
-          supabaseCliInstalled,
-          trelloLoggedIn,
-          trelloCliInstalled,
-          notionLoggedIn,
-          toolsMdHasMarkers,
-          matchedProfiles,
-        });
-      } catch (e: unknown) {
-        results.push({
-          container: name,
-          agentId,
-          error: (e as Error).message,
-        });
-      }
-    }
-
-    return NextResponse.json({ agents: results });
+    return NextResponse.json({ agents });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

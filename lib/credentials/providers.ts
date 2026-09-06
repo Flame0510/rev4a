@@ -4,6 +4,15 @@ export interface CredentialField {
   placeholder: string;
   type: 'text' | 'password';
   hint?: string;
+  /**
+   * Where this specific value is created. Rendered as a link next to the field
+   * in the add/edit modal. The provider-level `docsUrl` sits on the card
+   * outside the modal, so without this the form itself offers no way out to go
+   * and fetch the value it is asking for.
+   */
+  docsUrl?: string;
+  /** Link text, minus the trailing arrow the UI adds. Defaults to `docs`. */
+  docsLabel?: string;
 }
 
 export interface CredentialProviderDef {
@@ -30,7 +39,9 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         label: 'Personal Access Token',
         placeholder: 'ghp_...',
         type: 'password',
-        hint: 'Requires repo, read:org scopes at minimum',
+        hint: 'Requires repo, read:org scopes at minimum.',
+        docsUrl: 'https://github.com/settings/tokens',
+        docsLabel: 'Create token',
       },
     ],
     deliveryMethod: 'gh auth login --with-token',
@@ -43,10 +54,24 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
     description: 'API Key and Token for Trello board access',
     authType: 'api-key-pair',
     fields: [
-      { key: 'apiKey', label: 'API Key', placeholder: 'd3c4a0fee...', type: 'password' },
-      { key: 'token', label: 'Token', placeholder: 'ATTA...', type: 'password', hint: 'Click "Generate Trello Token" below to authorize' },
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        placeholder: 'd3c4a0fee...',
+        type: 'password',
+        hint: 'Create a Power-Up, then copy its API key.',
+        docsUrl: 'https://trello.com/power-ups/admin',
+        docsLabel: 'Create API key',
+      },
+      {
+        key: 'token',
+        label: 'Token',
+        placeholder: 'ATTA...',
+        type: 'password',
+        hint: 'Authorize Rev4a with the button below, then paste the token Trello returns.',
+      },
     ],
-    deliveryMethod: 'writes ~/.trello-cli/default/config.json',
+    deliveryMethod: 'writes ~/.config/trello/config.json',
     docsUrl: 'https://trello.com/power-ups/admin',
   },
   {
@@ -61,7 +86,9 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         label: 'Access Token',
         placeholder: 'vcp_...',
         type: 'password',
-        hint: 'Create in Vercel Settings → Tokens',
+        hint: 'Create in Vercel Settings → Tokens.',
+        docsUrl: 'https://vercel.com/account/tokens',
+        docsLabel: 'Create token',
       },
     ],
     deliveryMethod: 'writes ~/.local/share/com.vercel.cli/auth.json',
@@ -79,7 +106,9 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         label: 'Access Token',
         placeholder: 'sbp_...',
         type: 'password',
-        hint: 'Supabase CLI personal access token. Create at supabase.com/dashboard/account/tokens. Grants access to all your projects for migrations, edge functions, and database management.',
+        hint: 'Grants access to every project on the account — migrations, edge functions, database management.',
+        docsUrl: 'https://supabase.com/dashboard/account/tokens',
+        docsLabel: 'Create token',
       },
     ],
     deliveryMethod: 'supabase login --token *** --no-browser',
@@ -97,7 +126,9 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         label: 'API Token (Internal Integration)',
         placeholder: 'ntn_... or secret_...',
         type: 'password',
-        hint: 'Create at notion.so/my-integrations. Grant Read + Insert + Update capabilities.',
+        hint: 'Grant Read + Insert + Update capabilities.',
+        docsUrl: 'https://www.notion.so/my-integrations',
+        docsLabel: 'Create integration',
       },
     ],
     deliveryMethod: 'writes ~/.config/notion/config.json',

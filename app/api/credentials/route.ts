@@ -7,6 +7,9 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // requireAuthJWT was imported for the POST below and never applied here,
+  // leaving this the only unauthenticated route in the credentials feature.
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const profiles = listProfiles();
     return NextResponse.json({ profiles, providers: CREDENTIAL_PROVIDERS });

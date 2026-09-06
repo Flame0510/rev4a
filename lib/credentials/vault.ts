@@ -125,19 +125,47 @@ export function updateProfile(
   const now = Date.now();
   const db = openDb(false);
   try {
-    // Only update secret fields if at least one field has a non-empty value
-    const hasValues = Object.values(secret).some((v) => v && v.trim().length > 0);
+    // Only the fields the form actually filled in. The edit modal opens with
+    // every secret input blank — it never prefills a stored secret — so a blank
+    // field means "leave this one alone", not "clear it".
+    const provided = Object.entries(secret)
+      .filter(([, v]) => v && v.trim().length > 0)
+      .reduce<CredentialSecret>((acc, [k, v]) => { acc[k] = v; return acc; }, {});
 
-    if (hasValues) {
+    if (Object.keys(provided).length > 0) {
       const provider = getProvider(profile.providerId);
       if (!provider) throw new Error(`Unknown provider: ${profile.providerId}`);
 
+      const row = db.prepare(
+        'SELECT payload FROM credential_secrets WHERE profile_id = ?',
+      ).get(id) as { payload: string } | undefined;
+
+      let existing: CredentialSecret = {};
+      try {
+        existing = row ? (JSON.parse(row.payload) as CredentialSecret) : {};
+      } catch {
+        existing = {};
+      }
+
+      // Merged onto what is stored, not substituted for it. Rotating only the
+      // Trello `token` used to write a payload holding that one field, dropping
+      // `apiKey` — and every later sync then failed with "Missing Trello API key
+      // or token". Trello is the only two-field provider, and the move to the
+      // REST endpoint made both fields load-bearing.
+      const merged: CredentialSecret = { ...existing, ...provided };
+      const payload = JSON.stringify(merged);
+      const secretChanged = payload !== (row?.payload ?? '');
+
       const maskKey = firstPasswordField(provider);
-      const secretMasked = mask(maskKey ? (secret[maskKey] ?? '') : '');
-      const payload = JSON.stringify(secret);
+      const secretMasked = mask(maskKey ? (merged[maskKey] ?? '') : '');
 
       db.prepare(
-        'UPDATE credential_profiles SET label = ?, secret_masked = ?, updated_at = ? WHERE id = ?',
+        secretChanged
+          // A stored secret the agents no longer hold has not been delivered, so
+          // the row must stop reading "synced 2d ago" the moment it changes.
+          // detect flags those same agents ◆ on its next pass.
+          ? 'UPDATE credential_profiles SET label = ?, secret_masked = ?, updated_at = ?, last_synced_at = NULL WHERE id = ?'
+          : 'UPDATE credential_profiles SET label = ?, secret_masked = ?, updated_at = ? WHERE id = ?',
       ).run(label, secretMasked, now, id);
 
       db.prepare(
@@ -167,6 +195,30 @@ export function deleteProfile(id: string): void {
   }
 }
 
+/**
+ * Record that a credential was removed from one container.
+ *
+ * `last_synced_at` is deliberately left alone: it means "when this credential
+ * was last delivered", and a removal is not a delivery. The de-sync path used
+ * to call markSynced(), which stamped the removal as a fresh sync — so the row
+ * went on showing a green dot and "synced just now" at the exact moment the
+ * credential stopped being there.
+ *
+ * `status` stays 'active' because de-sync targets a single container: with
+ * several agents the credential is still delivered to the others.
+ */
+export function markDesynced(id: string): void {
+  const db = openDb(false);
+  try {
+    db.prepare(
+      "UPDATE credential_profiles SET status = 'active', updated_at = ? WHERE id = ?",
+    ).run(Date.now(), id);
+    appendAudit(db, 'desync', id, 'ok');
+  } finally {
+    db.close();
+  }
+}
+
 export function markSynced(id: string, status: 'active' | 'error'): void {
   const db = openDb(false);
   try {
@@ -184,12 +236,25 @@ export function markSynced(id: string, status: 'active' | 'error'): void {
  * Use sparingly — every call is logged.
  */
 export function revealSecret(profileId: string): CredentialSecret {
-  const db = openDb(true);
+  const secret = getSecret(profileId);
+
+  // The audit handle must be writable: this used to open the database readonly
+  // and then INSERT through it, so SQLite rejected every write, appendAudit
+  // swallowed the error by design, and not one reveal was ever recorded.
+  //
+  // Wrapped because a writable open does more than the readonly one it replaced
+  // — it also runs migrateV1(), whose DDL has a `finally` but no `catch`, so a
+  // failure there propagates. An audit trail must never be able to break the
+  // operation it records: losing one log line beats refusing to return a secret
+  // the caller is entitled to.
   try {
-    const secret = getSecret(profileId);
-    appendAudit(db, 'reveal', profileId, 'ok');
-    return secret;
-  } finally {
-    db.close();
-  }
+    const db = openDb(false);
+    try {
+      appendAudit(db, 'reveal', profileId, 'ok');
+    } finally {
+      db.close();
+    }
+  } catch { /* audit unavailable; the reveal itself still stands */ }
+
+  return secret;
 }
