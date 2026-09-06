@@ -202,3 +202,135 @@ export function CardRowSkeleton({ count = 3, height = 56 }: { count?: number; he
     </div>
   );
 }
+
+/**
+ * Credential provider cards.
+ *
+ * The credentials page renders one card per entry in CREDENTIAL_PROVIDERS,
+ * which is a static array of five — so the card count here is known, not
+ * guessed, and the grid will not reflow when the data lands.
+ *
+ * Each shape mirrors the real text it stands in for: the label and category
+ * widths track the actual provider names ("Cloud" is short, "Project
+ * Management" is not), and the description line count follows how long each
+ * provider's blurb actually is. That is what keeps the shimmer from jumping
+ * when it is replaced.
+ *
+ * `configuredCards` is the one genuine unknown: whether a provider has stored
+ * profiles is only known once /api/credentials answers. Cards with a profile
+ * are markedly taller, so rendering none would guarantee a jump downward for
+ * anyone who has set some up. Two of five is the middle of the realistic range
+ * and keeps the error small in both directions.
+ */
+export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCards?: number }) {
+  // Ordered as CREDENTIAL_PROVIDERS: GitHub, Trello, Vercel, Supabase, Notion.
+  const cards = [
+    { label: 46, cat: 84, pill: 64, desc: ['100%', '58%'], delivery: '56%' },
+    { label: 44, cat: 98, pill: 54, desc: ['92%'], delivery: '82%' },
+    { label: 44, cat: 34, pill: 64, desc: ['100%', '64%'], delivery: '90%' },
+    { label: 58, cat: 50, pill: 54, desc: ['100%', '86%'], delivery: '78%' },
+    { label: 44, cat: 98, pill: 54, desc: ['100%', '92%'], delivery: '72%' },
+  ];
+
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+        gap: 'clamp(12px, 3vw, 16px)',
+      }}
+    >
+      {cards.map((c, i) => (
+        <div
+          key={i}
+          style={{
+            background: 'var(--bg2)',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {/* Header: provider badge, name over category, status pill */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+            <Skeleton width={28} height={28} accent style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Skeleton width={c.label} height={12} />
+              <Skeleton width={c.cat} height={9} style={{ marginTop: 4 }} />
+            </div>
+            <Skeleton width={c.pill} height={16} style={{ flexShrink: 0 }} />
+          </div>
+
+          {/* Description */}
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+            {c.desc.map((w, j) => (
+              <Skeleton key={j} width={w} height={9} style={{ marginTop: j === 0 ? 0 : 5 }} />
+            ))}
+          </div>
+
+          {/* Delivery method — one mono line */}
+          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
+            <Skeleton width={c.delivery} height={9} />
+          </div>
+
+          {/* A stored profile: label, masked secret + status + sync time, actions,
+              then the per-agent sync rows underneath. */}
+          {i < configuredCards && (
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Skeleton width="52%" height={11} />
+                  <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
+                    <Skeleton width={76} height={9} />
+                    <Skeleton width={8} height={9} />
+                    <Skeleton width={62} height={9} />
+                  </div>
+                </div>
+                <Skeleton width={38} height={22} style={{ flexShrink: 0 }} />
+                <Skeleton width={22} height={22} style={{ flexShrink: 0 }} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 9 }}>
+                <Skeleton width="74%" height={9} />
+                <Skeleton width="66%" height={9} />
+              </div>
+            </div>
+          )}
+
+          {/* Footer action, pinned to the bottom as in the real card */}
+          <div style={{ padding: '10px 14px', marginTop: 'auto' }}>
+            <Skeleton width={i < configuredCards ? 92 : 74} height={26} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Per-agent sync rows inside a credential profile.
+ *
+ * Stands in for the block fed by /api/credentials/detect, which shells into
+ * every agent container and takes seconds. The agent list itself comes from that
+ * same response, so before it lands the count is unknown — three rows is a
+ * placeholder, not a prediction, and the block is deliberately the only thing
+ * that waits: the cards, the stored profiles and the Add buttons all come from
+ * the cheap endpoint and render immediately.
+ *
+ * No Sync/De-sync button is drawn here on purpose. Their label depends on
+ * whether the credential is installed, which is exactly what is still unknown —
+ * a button rendered now would have to guess, and guessing wrong invites a click
+ * that does the opposite of what it says.
+ */
+export function AgentSyncRowsSkeleton({ rows = 3 }: { rows?: number }) {
+  const widths = ['62%', '48%', '55%'];
+  return (
+    <div aria-hidden="true" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Skeleton width={8} height={8} variant="circle" style={{ flexShrink: 0 }} />
+          <Skeleton width={widths[i % widths.length]} height={9} />
+        </div>
+      ))}
+    </div>
+  );
+}
