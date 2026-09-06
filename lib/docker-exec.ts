@@ -6,7 +6,8 @@
  * thread does nothing else — no other request is served, no agent's stream
  * advances. Node's own guidance names `execSync` in a server as a
  * denial-of-service vector, and the numbers here bear that out: a bare
- * `docker exec … echo` costs ~260ms, and the OpenClaw CLI inside a container
+ * `docker exec … echo` costs ~90ms warm and ~225ms on the first call after an
+ * idle period, and the OpenClaw CLI inside a container
  * takes 2.5–6s per invocation because it boots a whole Node process.
  *
  * Routes that walk every agent multiplied that: `/api/crons` measured 19.2s on a
@@ -30,7 +31,12 @@ const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
 export interface DockerExecOptions {
   timeoutMs?: number;
-  /** Extra environment for the command, passed as `-e KEY=VALUE`. */
+  /**
+   * Extra environment for the command. Only the *names* reach argv, as `-e KEY`;
+   * docker then forwards each value from its own environment. A value passed as
+   * `-e KEY=VALUE` would sit in the process table for anyone on the host to read
+   * with `ps`, and in the text of any rejection Node builds from that argv.
+   */
   env?: Record<string, string>;
   maxBuffer?: number;
   signal?: AbortSignal;
@@ -38,9 +44,30 @@ export interface DockerExecOptions {
 
 function baseArgs(container: string, opts?: DockerExecOptions): string[] {
   const args = ['exec'];
-  for (const [k, v] of Object.entries(opts?.env ?? {})) args.push('-e', `${k}=${v}`);
+  for (const k of Object.keys(opts?.env ?? {})) args.push('-e', k);
   args.push(container);
   return args;
+}
+
+/**
+ * Rebuild a failure without the command that produced it.
+ *
+ * Node composes its own message as `Command failed: <argv…>\n<stderr>`, and the
+ * argv holds whatever the caller put in the script. For credential delivery that
+ * is the secret — base64 is encoding, not protection — and the message travels:
+ * `syncProfileToAgents` puts it in `SyncResult.error`, which the sync route
+ * returns to the browser. The most common failure of all, a revoked or expired
+ * token, is exactly the one that triggers it.
+ *
+ * `stderr` is kept because that is the part that actually explains the failure.
+ */
+function execFailure(e: unknown, container: string): Error {
+  const err = e as { stderr?: string; code?: number; killed?: boolean; name?: string };
+  // An abort is the caller's own doing and is matched on elsewhere by name.
+  if (err.name === 'AbortError') return e as Error;
+  const cause = err.killed ? 'timed out' : err.code !== undefined ? `exit ${err.code}` : 'failed';
+  const detail = (err.stderr ?? '').trim();
+  return new Error(`docker exec ${container}: ${cause}${detail ? ` — ${detail}` : ''}`);
 }
 
 /**
@@ -59,17 +86,22 @@ export async function dockerExec(
 ): Promise<string> {
   if (!resolveDockerSocket()) throw new Error('Docker is not available');
 
-  const { stdout } = await execFileAsync(
-    'docker',
-    [...baseArgs(container, opts), ...argv],
-    {
-      encoding: 'utf-8',
-      timeout: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
-      signal: opts?.signal,
-    },
-  );
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      [...baseArgs(container, opts), ...argv],
+      {
+        encoding: 'utf-8',
+        timeout: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
+        signal: opts?.signal,
+        ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
+      },
+    );
+    return stdout;
+  } catch (e) {
+    throw execFailure(e, container);
+  }
 }
 
 /**
@@ -132,6 +164,10 @@ export function dockerExecWithInput(
   return new Promise((resolve, reject) => {
     const child = spawn('docker', ['exec', '-i', ...baseArgs(container, opts).slice(1), ...argv], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // `baseArgs` names the variables but carries no values, so they have to
+      // reach docker through its own environment — without this the container
+      // would be handed empty variables and never say why.
+      ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
     });
 
     let stdout = '';
