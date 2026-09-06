@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-08-09
+> **Last updated:** 2026-09-05
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -107,22 +107,21 @@ When environment variables are saved via the Config page (Save & Restart):
 
 | Route | Description |
 |---|---|
-| `/dashboard` | System overview — containers, resources, quick links |
+| `/` | System overview — containers, resources, quick links |
 | `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard, channel manager (Telegram pairing) |
 | `/containers` | All Docker containers on the host |
-| `/onboarding` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
+| `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
 | `/crons` | Scheduled cron jobs — auto-discovered from the host gateway and every running agent container (Docker containers with `AGENT_ID` label), on/off toggle, run history per job |
-| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase) — JSON vault with audit trail, sync to agent containers via CLI auth (gh, vercel, supabase) or env files (trello) |
+| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion) — SQLite vault, synced into agent containers as CLI config or, for the REST-only providers, as a config file the agent reads |
+| `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |
 | `/plugins` | Plugin manager |
-| `/plugins-skills` | Plugin skills |
 | `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. |
 | `/tools` | Tool configuration |
 | `/gateway` | LLM provider sync + agent model configuration — see [GATEWAY.md](dev/GATEWAY.md) |
 | `/config` | Environment management and server restart |
-| `/vault` | Credential storage (per-agent permissions) — see [PROVIDERS.md](dev/PROVIDERS.md) |
 | `/login` | Authentication page |
 
 ---
@@ -261,19 +260,29 @@ Container workspaces are discovered dynamically — any Docker container with an
 
 ## Features (current)
 
-### Vault (`/vault`)
-Store and manage credentials (API keys, tokens) with per-agent permissions.
+### Credentials (`/credentials`)
+Store third-party service credentials and install them into agent containers.
 
-- **SQLite storage:** `credentials.db` in the data directory
-- **Provider keys:** stored in `data/provider-keys.json`, managed via the Gateway UI
-- **Agent permissions:** each credential can be scoped to specific agents
-- **Service management:** add/remove provider API keys and service tokens via the UI
+- **SQLite storage:** `credentials.db` in the data directory. Secrets are held
+  **unencrypted**; anything that can read the file has them in the clear.
+- **Provider keys** are a separate store — `provider-keys.json`, managed from the
+  Gateway UI.
+- **Five providers.** GitHub, Vercel and Supabase are handed to their CLI —
+  `gh auth login --with-token`, `~/.local/share/com.vercel.cli/auth.json`,
+  `supabase login --token`. Trello and Notion have no CLI in the loop: their
+  credentials are written to `~/.config/trello/config.json` and
+  `~/.config/notion/config.json`, and TOOLS.md tells the agent how to call each
+  REST API with them.
+- **Delivery is explicit.** A credential reaches a container only on sync, and
+  leaves only on de-sync. There is no per-agent permission model: any stored
+  credential can be synced to any container.
+- **Live detection** shows which credentials are actually installed, matching
+  SHA-256 hashes of the tokens found in each container against the stored ones.
 
 ### Container management (`/containers`)
 View all running Docker containers with:
 - Name, image, status, ports, uptime
 - Resource usage (CPU, memory)
-- Per-container logs
 - Quick links to agent control UIs
 
 ### Agent management (`/agents`)

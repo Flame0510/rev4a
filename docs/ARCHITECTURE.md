@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-08-28
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -64,15 +64,15 @@
 
 ---
 
-## 2. Current Architecture (as of 2026-06-24)
+## 2. Current Architecture (as of 2026-08-28)
 
 ### What's already been implemented
 
 **Container separation:** `openclaw-atlas` already runs as a standalone container with `AGENT_ID=atlas`, discovered dynamically by Rev4a. This proves the container-per-agent model works.
 
-**Vault system:** A credentials vault (`/vault` page) stores API keys and service tokens with per-agent permissions. File-backed vault system (removed - sensitive data is env-only).
+**Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and installs them into containers on explicit sync. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
 
-**Container management UI:** The `/containers` page lists all running Docker containers with resource usage, logs, and quick links. Fully functional.
+**Container management UI:** The `/containers` page lists all running Docker containers with resource usage and quick links, and opens a web terminal into any of them. Fully functional.
 
 **Workspace API:** Lazy-loaded file tree explorer with real-time reads (no caching), supports both host and container workspaces via `docker exec`.
 
@@ -80,8 +80,8 @@
 
 | Feature | Status | Notes |
 |---|---|---|
-| Vault (UI + API) | 🟢 Implemented | SQLite + JSON, no encryption yet |
-| Container page | 🟢 Functional | Lists all containers, logs, resources |
+| Credentials (UI + API) | 🟢 Implemented | SQLite, no encryption yet |
+| Container page | 🟢 Functional | Lists all containers, resources, web terminal |
 | Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
 | Provider proxy | 🟢 Implemented | Agents route through Rev4a provider gateway |
 | Shared volumes | 🟢 Implemented | Skills + repos mounted on all agents |
@@ -103,7 +103,7 @@ The central container, running the Next.js dashboard + orchestration API.
 - Centralized credential management
 - Docker socket access for container management
 - SQLite DB for cross-container event monitoring
-- **Onboarding wizard** — first-run setup flow at `/onboarding`, tracks progress in `data/onboarding-progress.json`
+- **First-run wizard** — setup flow at `/wizard`; completion is recorded in `<data dir>/data/wizard.json` and read through `GET /api/wizard/status`
 
 **Volume mounts (target):**
 ```
@@ -119,6 +119,49 @@ The central container, running the Next.js dashboard + orchestration API.
 - Injected into every session via the `bootstrap-extra-files` hook (glob `.rev4a/*.md`)
 - Immutable by agents — enforced by the `:ro` mount
 - See `lib/agent-setup.ts` for the centralized volume + config guarantee logic
+
+**Running commands inside containers** (`lib/docker-exec.ts`):
+
+This module is how a route reaches an agent container. The migration to it is
+not finished — routes predating it still shell out directly — so treat these as
+the rules for anything you touch, not as a description of the whole tree:
+
+- **Never `execSync`/`execFileSync` in a request path.** They block Node's single
+  thread: while one runs, no other request is served and no agent's stream
+  advances. A `docker exec` costs ~90 ms warm and the OpenClaw CLI costs
+  seconds, so a route that walks the fleet freezes the event loop for the sum of
+  all of them. Use `dockerExec` / `dockerExecShell` and their `…NoFail` variants.
+- **`mapWithConcurrency` is fail-fast, like `Promise.all`.** If the mapped
+  function rejects for one item, the whole call rejects and results already
+  computed for other containers are discarded. Fanning out over a fleet requires
+  the `…NoFail` variants, or an explicit per-item try/catch, so one unreachable
+  container cannot blank an entire page. Callers: `app/api/skills/route.js`,
+  `app/api/gateway/route.ts`, `app/api/agents/channels-summary/route.ts`,
+  `lib/openclaw-cron.ts`, `app/api/credentials/detect/route.ts`,
+  `lib/credentials/delivery.ts`.
+- **Never interpolate a secret into a command string.** Pass it through the `env`
+  option and reference it as `"$KEY"`; command substitution inside an
+  interpolated value would otherwise execute on the host. Only the *name* reaches
+  argv, as `docker exec -e KEY` — docker forwards the value from its own
+  environment, so it appears neither in the host process table nor in any
+  rejection built from that argv.
+- **A timeout does not reject.** `docker exec` exits 0 on the SIGTERM Node sends
+  when the deadline passes, so a command killed halfway *resolves* with whatever
+  it had already printed. A `try/catch` therefore cannot tell a truncated read
+  from a complete one. Where that distinction matters, make the script prove it
+  finished — `detect.ts` emits a `probe:complete` sentinel before its slow calls,
+  `containerRead` prints a terminator after the file — and treat its absence as
+  failure. Anything that writes back what it read must refuse to write when the
+  proof is missing.
+- **A rejection carries `stderr`, never the command.** Node's own message is
+  `Command failed: <argv…>`, which reproduces whatever was interpolated into the
+  script. `dockerExec` replaces it with `docker exec <container>: <cause> —
+  <stderr>`, because these messages travel: `syncProfileToAgents` puts one into
+  `SyncResult.error` and the sync route returns it to the browser.
+
+`dockerExecWithInput` uses `spawn` rather than `execFile` because
+`promisify(exec)` silently ignores an `input` option: the process starts, stdin
+is never written, and the command hangs with no error to point at.
 
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
 
@@ -196,30 +239,34 @@ detailed documentation.
 
 ## 4. Credential Management (Vault)
 
-Provider API keys are stored in `data/provider-keys.json`. Third-party service credentials
-(GitHub, Trello, Vercel, Supabase) are stored in `data/credentials.db` (SQLite).
-At agent spawn time, Rev4a injects only the credentials the agent is permitted to use.
+Two separate stores:
 
-```json
-{
-  "providers": {
-    "openai-codex": "sk-...",
-    "anthropic": "sk-ant-...",
-    "groq": "gsk_..."
-  },
-  "services": {
-    "github": { "token": "***", "user": "Flame0510" },
-    "vercel": { "token": "***", "team": "flame0510" }
-  },
-  "agent_permissions": {
-    "argus": ["providers:all", "services:github", "services:vercel"],
-    "atlas": ["providers:openai-codex", "services:github"],
-    "prometheus": ["providers:openai-codex"]
-  }
-}
-```
+- **Provider API keys** — `<data dir>/data/provider-keys.json`, used by the Rev4a
+  provider proxy.
+- **Third-party service credentials** — `<data dir>/data/credentials.db` (SQLite),
+  managed from the Credentials page. Five providers: `github-pat`, `trello`,
+  `vercel`, `supabase`, `notion` (`lib/credentials/providers.ts`).
 
-**Current implementation:** SQLite (`credentials.db`) for services, JSON file (`provider-keys.json`) for provider keys (no encryption yet). Future: encrypted with AES-256-GCM or integrated with HashiCorp Vault / Vaultwarden.
+**Secrets are stored unencrypted.** `credential_secrets.payload` holds raw JSON.
+Anything able to read that file, or to reach `POST /api/credentials/[id]/reveal`
+with a valid session, obtains them in the clear. Encryption (AES-256-GCM, or an
+external vault) is not implemented.
+
+**Delivery is explicit, not automatic.** Creating an agent installs nothing: a
+credential reaches a container only when the user syncs it
+(`POST /api/credentials/[id]/sync`), and leaves only on de-sync
+(`DELETE /api/credentials/[id]/sync`). There is no per-agent permission model —
+any stored credential can be synced to any container. Delivery writes each CLI's
+own config inside the container (`lib/credentials/delivery.ts`); OpenClaw's
+`secrets` subsystem covers only OpenClaw's own configuration credentials and
+offers nothing for third-party CLIs.
+
+`GET /api/credentials/detect` reports which credentials are actually installed,
+by SHA-256 hashing the token found in each container and matching it against the
+stored profiles.
+
+**Planned:** encryption at rest, and a per-agent permission model so a credential
+can be restricted to a subset of agents.
 
 ---
 
@@ -568,7 +615,7 @@ for the full rationale.
 | Database | SQLite (WAL mode) | Current `events.db`, may need to scale |
 | Memory | Per-agent SQLite + central index | New |
 | Config | Generated YAML/JSON | New |
-| Vault | SQLite + JSON | Current: credentials.db + provider-keys.json. Future: encrypted |
+| Credential stores | SQLite + JSON | credentials.db for service tokens, provider-keys.json for provider API keys. Neither is encrypted |
 | Reverse proxy | Traefik | Already in use |
 | Monitoring | Rev4a daemon (extended) | Evolution of current daemon |
 | Version control | Git + GitHub | `github.com/Flame0510/rev4a.git` |

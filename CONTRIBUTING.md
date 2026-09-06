@@ -15,7 +15,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 |---|---|
 | `app/api/gateway/**` | `docs/dev/GATEWAY.md` — Gateway provider sync, agent model config |
 | `app/api/provider/v1/**` | `docs/dev/PROVIDERS.md` — proxy auth, model list, completions |
-| `app/api/vault/**` | `docs/dev/PROVIDERS.md` — key management section |
+| `app/api/credentials/**` | `docs/dev/API-REFERENCE.md` — credential endpoints; `docs/ARCHITECTURE.md` — vault section |
 | `app/gateway/**` | `docs/dev/GATEWAY.md` — Gateway UI, overlay, polling |
 | `app/api/skills/**` | `docs/dev/API-REFERENCE.md` — skills list, save, promote endpoints |
 | `app/api/**` (other) | `docs/dev/API-REFERENCE.md` — add/update endpoint description, params, response shape |

@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-08-28
 
 Rev4a uses a single SQLite file (`events.db`) in WAL mode.
 
@@ -182,7 +182,9 @@ CREATE TABLE credential_secrets (
 );
 ```
 
-Payloads are stored as JSON strings. In a future release they will be AES-256-GCM encrypted.
+`payload` holds the secret as raw JSON — **not encrypted**. Anything that can read
+this file, or reach `POST /api/credentials/[id]/reveal` with a valid session, has
+the secrets in the clear.
 
 ### `credential_audit_log` — append-only audit trail
 
@@ -197,7 +199,10 @@ CREATE TABLE credential_audit_log (
 );
 ```
 
-Actions: `create`, `update`, `delete`, `sync`, `reveal`.
+Actions: `create`, `update`, `delete`, `sync`, `desync`, `reveal`.
+
+Nothing reads `credential_audit_log`: it is written by `appendAudit()` and exposed
+through no route or view.
 
 ---
 

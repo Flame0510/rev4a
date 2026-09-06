@@ -1,14 +1,10 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-07-31
+> **Last updated:** 2026-08-28
 
-This document covers the Rev4a Provider Gateway (proxy),
-the vault key endpoint, and how agent containers authenticate against the
-Rev4a proxy.
-
-> **Note:** The old `/providers` UI page and its API routes (`/api/providers/*`,
-> `/api/agent-providers`) have been removed (2026-07-27). Provider/API-key
-> configuration is now centralized in the [Gateway](../GATEWAY.md) page.
+This document covers the Rev4a Provider Gateway (proxy), the provider key
+endpoints, and how agent containers authenticate against the Rev4a proxy.
+Provider and API-key configuration lives in the [Gateway](GATEWAY.md) page.
 
 ---
 
@@ -130,50 +126,41 @@ The proxy authenticates using the provider's real API key from
 
 ## Vault & Provider Key Endpoints
 
-### `GET /api/vault/provider/key`
+### `GET /api/gateway/provider`
 
-Returns the full API key for a provider. Used by the Providers page SHOW KEY flow.
+Provider state and the model catalogue.
 
 **Query params:**
 
 | Param | Required | Description |
 |---|---|---|
-| `provider` | Yes | Provider identifier (e.g. `openai`, `deepseek`) |
-| `agent` | No | Docker container name for agent-targeted reads; omitting reads the VPS host |
+| `summary` | No | `1` returns only which providers have a key — no models, no pricing. The full response waits on live pricing from OpenRouter, a network round trip costing seconds; callers that need just the boolean must not pay for it. |
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
-**Response (200):**
-```json
-{
-  "provider": "deepseek",
-  "apiKey": "sk-...full-key...",
-  "masked": "sk-...be03",
-  "source": "local"
-}
-```
+### `POST /api/gateway/provider`
 
-**Source values:**
-- `local` — read from `data/provider-keys.json` on the VPS host
-- `container` — read from inside the agent container config
+Store a provider API key, or re-run the sync without changing keys.
 
-**Error (404):** `{ "error": "not_found" }` — provider has no key
+**Body:** `{ "provider": "deepseek", "apiKey": "sk-..." }`, or `{ "_syncOnly": true }`
+to push the current configuration to every agent container without touching any key.
 
-### `POST /api/vault/provider`
+**Response:** `{ "status": "ok", ... }`. Unknown provider names are rejected with
+`400` and the list of known providers.
 
-Add or update a stored provider credential in the vault.
+**Auth:** browser cookie or bearer token
 
-**Body:** `{ "provider": "deepseek", "apiKey": "sk-...", "baseUrl": "https://api.deepseek.com" }`
+### `PUT /api/gateway/provider`
 
-**Response:** `{ "status": "ok", "provider": "deepseek", "masked": "sk-...be03", "updatedAt": 1749200000000 }`
+Enable or disable a single model in the catalogue.
 
-### `DELETE /api/vault/provider`
+**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both fields
+required. Unknown `modelId` returns `404`.
 
-Remove a stored provider credential from the vault.
+**Auth:** browser cookie or bearer token
 
-**Body:** `{ "provider": "deepseek" }`
+There is no `DELETE`: a provider key is cleared by storing an empty one.
 
-**Response:** `{ "status": "removed" }`
 
 ---
 
@@ -218,7 +205,7 @@ Key points:
 
 ## Security Notes
 
-- The `GET /api/vault/provider/key` endpoint calls `requireAuthJWT` directly
+- The `GET /api/gateway/provider` endpoint calls `requireAuthJWT` directly
   (browser cookie or bearer token) — API routes are never covered by `proxy.ts`
   (it explicitly exempts `/api/*`), so each route must guard itself. Only
   authenticated users can reveal keys.

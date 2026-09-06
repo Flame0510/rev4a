@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-07-19
+> **Last updated:** 2026-08-28
 
 ## Layering
 
@@ -41,11 +41,12 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `Page` / `PageHeader` | `Page.tsx` | Full-page layout shell. |
 | `Icons` | `Icons.tsx` | SVG icons (`EyeIcon`, `EyeOffIcon`), 16/20px shared. |
 | `PasswordInput` | `PasswordInput.tsx` | Password input with inline show/hide toggle (`<button type="button">` with `aria-label`). |
-| `OnboardingPageClient` + step components | `app/onboarding/PageClient.tsx` | 4-step wizard (`WelcomeStep`, `ProvidersStep`, `AgentsStep`, `DoneStep`) + `WizardFrame` shell with mobile-first CSS. |
-| `useOnboarding` | `app/onboarding/useOnboarding.ts` | Shared hook: onboarding state, step transitions, provider save, restart. Receives server-side initial state to avoid loading flash. |
-| `OnboardingIcons` | `app/onboarding/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `DockerIcon`, `GatewayIcon`, etc. |
+| `WizardPageClient` + step components | `app/wizard/PageClient.tsx` | Multi-step first-run wizard plus its frame shell, with mobile-first CSS. |
+| `useWizard` | `app/wizard/useWizard.ts` | Shared hook: wizard state, step transitions, provider save, restart. Receives server-side initial state to avoid a loading flash. |
+| Wizard icons | `app/wizard/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `CheckCircleIcon`, `DockerIcon`, `GatewayIcon`, `AgentIcon`, `TemplateIcon`, `LinkIcon`, `ConfigIcon`, `InformationIcon`. |
 | `tokens` | `tokens.ts` | TypeScript types for `Tone` and related token values. |
 | `Badge` | `Badge.tsx` | Inline status tag with tone variants (success, danger, warning, neutral). Used for channel chips, pairing labels, error/success messages. |
+| `Skeleton` + shape helpers | `app/components/Skeleton.tsx` | Shimmer placeholders. `Skeleton` is the primitive; the rest mirror one specific layout each: `TreeSkeleton`, `CodeSkeleton`, `CronJobsSkeleton`, `CronRunsSkeleton`, `CredentialCardsSkeleton`, `AgentSyncRowsSkeleton`, `SkeletonLines`, `SkeletonMetric`, `CardRowSkeleton`. A shape helper must match the real markup it stands in for — same row structure, same paddings, same element count where the count is known — so nothing reflows when data replaces it. |
 
 ### Rules
 
@@ -53,8 +54,12 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 2. **No inline styles on interactive elements.** Buttons, inputs, selects use the `app/components/ui/*` component with component props. Only layout/wrapping containers use inline style.
 3. **No Italian in code, labels, or comments.** UI strings, error messages, aria-labels — all English.
 4. **Clickable/custom interactive elements must be `<button type="button">`.** Not `<span onClick>`, not `<div onClick>`. Always include `aria-label` for icon-only buttons.
+4a. **A control gated on another field stays visible and disabled** — never conditionally unmounted. Rendering it only once its dependency is filled makes it appear out of nowhere, and any hint that references it is pointing at something not on screen. Show it disabled, with the reason beside it, so the shape of the form is stable from the first render.
 5. **Modals inside forms** — close button has `type="button"` to prevent accidental form submission.
-6. **Loading buttons** — set `loading={true}` on `Button`, do not render separate loaders next to the button. The spinner is built-in.
+6. **Loading buttons** — set `loading={true}` on `Button`, do not render separate loaders next to the button. The spinner is built-in. The label must also change for the duration (`Saving…`, `Deleting…`, `Syncing…`).
+6a. **One in-flight mutation, keyed.** Hold a single `busy` string identifying the running action (`delete:<id>`, `sync:<id>:<container>`), plus a `useRef` mirror as the authoritative guard — state is read from the render that produced the click, so two fast clicks would otherwise both pass. `loading` compares against the exact key; `disabled` is set for any busy value, so a control that would be refused looks refused. Never key a mutation on one dimension when the same control is rendered per row of another: a key holding only a container name puts every profile's button for that container into a spinner.
+6b. **Do not hold the lock across a slow refresh.** Release it when the mutation itself completes and refresh derived state afterwards, unawaited. Show the pending state by fading the stale values only — never the buttons, since `opacity` on an ancestor cannot be undone by a child and makes live controls read as disabled.
+6c. **An optimistic update moves every field the render derives from, together.** A row that decides its state by reading two fields against each other flips to a third, wrong state if the update touches only one of them — and holds it until the slow refresh lands. Update the whole set the derivation reads, or none of it.
 7. **New UI component** — add it to `app/components/ui/`, export from `index.ts`, document it here. If it's specific to one page, keep it page-local unless another page needs it.
 
 ## GoF pattern mapping
@@ -108,6 +113,9 @@ For interactive pages that can change view/file/tab quickly:
 2. Guard against stale updates after `await` boundaries.
 3. On navigation/context switch, kill in-flight requests before starting new ones.
 4. Mobile layout changes must not wait on network completion.
+5. After a mutation, refresh the cheap endpoint and await it; fire the expensive one without awaiting. A page that re-reads everything makes the user wait on work their change did not need.
+6. A refresh helper invoked from a mutation must never reject. The mutation has already succeeded by then, so a failed re-read surfacing as the caller's error reports a completed action as failed.
+7. Check `res.ok` before reading the body. An error response is still valid JSON, so `json.items ?? []` silently turns a 401 into an empty result presented as fact.
 
 ## Migration rule
 

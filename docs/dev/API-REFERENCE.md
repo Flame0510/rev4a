@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-07-19
+> **Last updated:** 2026-09-05
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -68,50 +68,81 @@ Delete the `rev4a_token` cookie.
 
 ---
 
-## Onboarding
+### `GET /api/auth/status`
+Whether a password has been configured, in the environment or in the `.env` the
+setup wizard writes. Used by the frontend to choose between the setup wizard and
+the login form.
 
-### `GET /api/onboarding/status`
-Returns per-step onboarding progress.
+**Auth:** none — it reveals only whether setup has happened, never the password
 
-**Auth:** browser cookie
+**Response:** `{ "configured": true }`
 
-**Response:**
-```json
-{
-  "complete": false,
-  "steps": { "welcome": true, "providers": false, "agents": false },
-  "completedAt": null
-}
-```
+---
 
-If no progress file exists, returns all steps as `false`.
+## Setup & wizard
 
-### `POST /api/onboarding/complete`
-Mark a step as completed, complete all steps, or reset the wizard.
+### `GET /api/wizard/status`
+Whether the first-run wizard has been completed.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
-**Body:**
-| Shape | Effect |
-|---|---|
-| `{ "step": "providers" }` | Mark a single step as done |
-| `{}` | Mark all steps as done (complete onboarding) |
-| `{ "reset": true }` | Reset all steps to `false` (restart wizard) |
+**Response:** `{ "done": true }`
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "steps": { "welcome": true, "providers": true, "agents": false },
-  "complete": false
-}
-```
+### `POST /api/wizard/complete`
+Mark the wizard as completed.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "done": true }`
+
+### `POST /api/wizard/reset`
+Reset the wizard so it runs again.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "done": false }`
+
+---
+
+### `POST /api/setup/password`
+Set the dashboard password during first-run setup.
+
+**Auth:** none, and only usable once — returns `409` if a password already exists
+
+**Body:** `{ "password": "..." }` — minimum 8 characters
+
+**Errors:** `400` invalid JSON, missing password, or shorter than 8 characters;
+`409` already configured; `500` the `.env` file could not be written.
+
+**Response:** `{ "status": "ok" }`
+
+### `POST /api/setup/restart`
+Restart the service so a freshly written `.env` takes effect.
+
+**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+
+**Errors:** `500` if the `.env` file is missing, or the restart could not be issued.
+
+### `GET /api/setup/agent-image`
+Whether the `openclaw-agent-base` image is present.
+
+**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+
+**Response:** `{ "exists": true, "imageId": "sha256:..." }`, or `{ "exists": false }`
+when the image is absent **or Docker is unreachable** — the two are not distinguished.
+
+### `POST /api/setup/agent-image`
+Pull or build the agent base image, streaming progress.
+
+**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+
+**Errors:** `409` if a download is already running.
 
 ---
 
 ## Gateway
 
-The Gateway API reads the model catalogue from [`models.config.json`](../models.config.json)
+The Gateway API reads the model catalogue from [`models.config.json`](../../models.config.json)
 (tracked in the repository). Full documentation at [GATEWAY.md](GATEWAY.md) and
 [PROVIDERS.md](PROVIDERS.md).
 
@@ -123,34 +154,57 @@ Returns live gateway status from all agent containers.
 **Response:**
 ```json
 {
+  "timestamp": "2026-08-27T22:00:00.000Z",
+  "gateway": "Rev4a Model Gateway",
+  "status": "online",
+  "models": { "total": 0, "available": 0, "byProvider": [], "list": [] },
   "agents": {
     "total": 1,
     "list": [
       {
-        "containerName": "openclaw-atlas",
         "agentId": "atlas",
-        "agentName": "Atlas",
+        "containerName": "openclaw-atlas",
+        "state": "running",
         "defaultModel": "rev4a/deepseek/deepseek-v4-flash",
-        "configured": true
+        "fallbacks": [],
+        "aliases": {},
+        "providers": []
       }
     ]
-  }
+  },
+  "aliases": {},
+  "coreModel": { "defaultModel": "rev4a/deepseek/deepseek-v4-flash", "fallbacks": [] },
+  "apiKeys": { "configured": [], "all": [] }
 }
 ```
 
+**`models`, the top-level `aliases`, and `apiKeys` are always empty here.** They
+exist only to keep the response shape stable for existing consumers. The model
+catalogue is served by `GET /api/gateway/provider`, which reads the bundled
+config plus user overrides from disk; provider credential state comes from the
+same route (`configured` per provider, out of `provider-keys.json`).
+
+Per-agent values are read from each container's `openclaw.json`, one
+`docker exec … cat` per agent, run concurrently. An agent whose config cannot be
+read is still listed, with an `error` field and empty values, rather than
+failing the whole response.
+
 ### `PUT /api/gateway/provider`
-Trigger a full provider model sync to all agent containers.
+Enable or disable a single model in the catalogue, then sync every agent.
 
-**Auth:** any auth method
+**Auth:** browser cookie or bearer token
 
-**Body:** none (reads current provider state from `models.config.json` and `data/provider-keys.json`)
+**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both
+required. Missing either returns `400`; an unknown `modelId` returns `404`.
 
 **Response:**
 ```json
 {
   "status": "ok",
-  "activeModels": 2,
-  "results": ["Active models: 2 across 1 agent(s)"]
+  "modelId": "deepseek/deepseek-chat",
+  "enabled": true,
+  "provider": "deepseek",
+  "sync": ["Active models: 2 across 1 agent(s)"]
 }
 ```
 
@@ -264,6 +318,55 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 
 ---
 
+### `GET /api/models`
+Models eligible to be used: the catalogue filtered down to those whose provider
+has a key configured.
+
+**Auth:** browser cookie or bearer token
+
+### `GET /api/gateway/provider/balance`
+Remaining credit for one provider.
+
+**Auth:** browser cookie or bearer token
+
+**Query params:** `provider` — one of `deepseek`, `openrouter`, `glm`.
+
+**Errors:** `502` when the provider's API cannot be reached or rejects the call.
+
+### `POST /api/gateway/provider/oauth`
+Run the OAuth device flow for a provider that supports it.
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ "provider": "..." }`
+
+**Errors:** `400` for an unknown provider; the response body carries `available`
+with the providers that do support OAuth.
+
+### `POST /api/aliases/add`
+Add a model alias.
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ "alias": "fast", "model": "deepseek/deepseek-chat" }`
+
+**Response:** `{ "ok": true, "output": "..." }` — `output` is the CLI's stdout.
+
+**Errors:** `400` if `alias` or `model` is missing.
+
+### `POST /api/aliases/remove`
+Remove a model alias.
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ "alias": "fast" }`
+
+**Response:** `{ "ok": true, "output": "..." }`
+
+**Errors:** `400` if `alias` is missing.
+
+---
+
 ## Config
 
 ### `PUT /api/config/env`
@@ -341,6 +444,17 @@ Returns a single session with its events and child sessions.
 ```
 
 **Error:** `400` if `id` missing; `404` if not found.
+
+---
+
+### `GET /api/sessions/[id]`
+One session with its events and any child sessions.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "session": {…}, "events": [...], "children": [...] }`
+
+**Errors:** `404` if the session does not exist.
 
 ---
 
@@ -612,7 +726,12 @@ Create a new agent container from a template.
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
 2. The route waits for the gateway to be fully up (health check poll, up to 60 s)
 3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
-4. Writes `models.providers.rev4a` + extraDirs + update config → single `openclaw.json` write → single `gateway restart`
+4. Writes `models.providers.rev4a` + extraDirs + update config → single `openclaw.json` write
+
+No gateway restart is issued. OpenClaw's `gateway.reload` defaults to `hybrid`:
+it hot-applies changes under `agents`, `models` and `routing`, and restarts only
+for `gateway.*`, `discovery` and `plugins.load`. Restarting here repeated work
+the Gateway already does.
 
 > **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
 
@@ -759,6 +878,21 @@ aligning the volume's state/config to the new binary.
 ```
 
 **Error (500):** `{ "error": "Pre-recreate backup failed, aborting: ..." }`
+
+---
+
+### `POST /api/agents/[id]/lifecycle`
+Start, stop or restart an agent container.
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ "action": "start" | "stop" | "restart" }`
+
+Redundant actions are no-ops: starting a running container, or stopping a stopped
+one, succeeds without touching it.
+
+**Errors:** `400` for a malformed body, an unknown action, or an invalid agent id;
+`404` when no container carries that `AGENT_ID`.
 
 ---
 
@@ -987,7 +1121,10 @@ Update the shared agents gateway token and push it to all running agent containe
 ### `GET /api/agents/image-status`
 Check the status of the `openclaw-agent-base` Docker image.
 
-**Auth:** public (no auth required)
+**Auth:** browser cookie or bearer token
+
+The ghcr.io digest lookup is cached for 10 minutes and de-duplicated while in
+flight, so polling this endpoint does not re-query the registry every time.
 
 **Response:**
 ```json
@@ -1011,7 +1148,7 @@ Starts pulling or building the `openclaw-agent-base:latest` image. Returns 202
 Accepted immediately — the operation runs in the background and writes logs.
 The frontend polls `GET /api/agents/image-status` for progress updates.
 
-**Auth:** public (no auth required)
+**Auth:** browser cookie or bearer token
 
 **Response (202):**
 ```json
@@ -1023,17 +1160,7 @@ The frontend polls `GET /api/agents/image-status` for progress updates.
 { "error": "A download is already in progress" }
 ```
 
-### `DELETE /api/agents/abort-download`
-Kills an in-progress docker pull/build.
-
-**Auth:** public (no auth required)
-
-**Response:**
-```json
-{ "aborted": true }
-```
-
-Image state is managed in `lib/buildAgentImage.ts`:
+Image state is managed in `lib/buildAgentImage.ts` (library functions, not HTTP routes):
 - `downloadAgentImage(opts)` — attempts `docker pull` from registry first, then falls back to `docker build`
   all stdout/stderr to a log file, supports optional `onEvent` callback and `AbortSignal`
 - `abortDownload()` — sends SIGKILL to the child process, releases the download lock
@@ -1361,92 +1488,22 @@ Write content to a workspace file.
 
 ---
 
-## Vault
+## Provider keys and credentials
+
+Provider API keys are read with `GET /api/gateway/provider` and set with
+`POST /api/gateway/provider` — documented in `docs/dev/PROVIDERS.md`, which is the
+only file carrying that endpoint's request bodies. `PUT` toggles a model, not a
+key. The keys are stored in `data/provider-keys.json`.
+Third-party service credentials are managed under `/api/credentials`
+(documented below) and stored in `credentials.db`.
+
+There is no `/api/vault` route, and no per-credential agent scoping: any stored
+credential can be synced to any container.
 
 Full key management documentation at [PROVIDERS.md](PROVIDERS.md).
 
-### `GET /api/vault`
-List all stored credentials (keys masked).
-
-**Auth:** browser cookie
-
-**Response:**
-```json
-{
-  "providers": {
-    "deepseek": { "keyStatus": "present", "scoped": ["atlas"] }
-  },
-  "services": {
-    "github": { "tokenStatus": "present", "user": "Flame0510", "scoped": ["argus", "atlas"] }
-  }
-}
-```
-
-### `GET /api/vault/provider/key`
-Return the full API key for a provider.
-
-**Auth:** browser cookie
-
-**Query params:** `provider` (required), `agent` (optional)
-
-**Response (200):**
-```json
-{
-  "provider": "deepseek",
-  "apiKey": "sk-...full-key...",
-  "masked": "sk-...be03",
-  "source": "local"
-}
-```
-
-**Error:** `400` if `provider` missing; `404` if key not found.
-
-See [PROVIDERS.md](PROVIDERS.md#get-apivaultproviderkey) for full detail.
-
-### `POST /api/vault/provider`
-Add or update a provider API key.
-
-**Auth:** browser cookie
-
-**Body:** `{ "provider": "deepseek", "apiKey": "sk-...", "baseUrl": "https://api.deepseek.com" }`
-
-**Response:** `{ "status": "ok", "provider": "deepseek", "masked": "sk-...be03", "updatedAt": 1749200000000 }`
-
-### `DELETE /api/vault/provider`
-Remove a provider and all its keys.
-
-**Auth:** browser cookie
-
-**Body:** `{ "provider": "deepseek" }`
-
-**Response:** `{ "status": "removed" }`
-
-### `PUT /api/vault/service`
-Add or update a service token.
-
-**Auth:** browser cookie
-
-**Body:** `{ "id": "github", "token": "***", "user": "Flame0510", "scopes": ["atlas"] }`
-
-**Response:** `{ "ok": true }`
-
-### `DELETE /api/vault/service`
-Remove a service.
-
-**Auth:** browser cookie
-
-**Body:** `{ "id": "github" }`
-
-**Response:** `{ "ok": true }`
-
-### `PUT /api/vault/permissions`
-Update agent permissions for a credential.
-
-**Body:** `{ "type": "provider" | "service", "id": "deepseek", "scopes": ["atlas", "argus"] }`
-
-**Response:** `{ "ok": true }`
-
 ---
+
 
 ## Containers
 
@@ -1472,23 +1529,12 @@ List all running Docker containers with resource usage.
 }
 ```
 
-### `GET /api/containers/logs?name=<name>&tail=<lines>`
-Get container logs.
-
-**Auth:** browser cookie
-
-**Query params:** `name` (required), `tail` (default 50)
-
-**Response:** `{ "name": "openclaw-atlas", "logs": "[log lines...]" }`
-
-### `POST /api/containers/action`
-Execute action on a container.
-
-**Body:** `{ "action": "restart" | "stop" | "start", "name": "openclaw-atlas" }`
-
-**Response:** `{ "ok": true, "message": "Container openclaw-atlas restarted" }`
+The container list is the only container route. There is no logs endpoint and no
+action endpoint: logs are read through the terminal WebSocket, and lifecycle
+operations on agent containers go through `/api/agents/[id]/lifecycle`.
 
 ---
+
 
 ## Tools
 
@@ -1522,29 +1568,15 @@ Return the installed OpenClaw CLI version.
 
 **Fallback:** `{ "version": "unknown" }` if the command fails.
 
-### `GET /api/ws`
-Documentation placeholder for WebSocket access.
+### Terminal WebSocket
 
-**Auth:** browser cookie
-
-**Response:** plain text with HTTP `426 Upgrade Required`
-
-Example body:
-```text
-WebSocket endpoint available at ws://HOST/ws. This route is a documentation placeholder and does not upgrade connections.
-```
-
-### `GET /ws`
-Live WebSocket endpoint exposed by the custom server.
-
-**Auth:** same browser session as the dashboard
-
-**Protocol notes:**
-- Hosted on the main HTTP port, not under `/api/`
-- Accepts JSON messages such as `chat.send` and `chat.history`
-- Intended for the dashboard client rather than generic REST consumers
+Not an `/api/` route and not on the dashboard port. `terminal-ws-server.js`
+listens on **`ws://127.0.0.1:3741`** (`TERMINAL_WS_PORT`), bound to the loopback
+interface only, and speaks the PTY protocol described in
+[CONTAINER-TERMINAL.md](../CONTAINER-TERMINAL.md).
 
 ---
+
 
 ## Plugins
 
@@ -1745,10 +1777,18 @@ data: [DONE]
 ### `GET /api/credentials`
 List all stored credential profiles and the provider registry.
 
+**Auth:** browser cookie or bearer token
+
 **Response:** `{ profiles: CredentialProfile[], providers: CredentialProviderDef[] }`
+
+Secrets are never returned here — each profile carries only `secretMasked`.
+
+Each entry in a provider's `fields` may carry `docsUrl` and `docsLabel`, pointing at the page where that specific value is created. The provider-level `docsUrl` is the general one shown on the card; the field-level pair is what the add/edit form renders next to the input it is asking you to fill.
 
 ### `POST /api/credentials`
 Create a new credential profile.
+
+**Auth:** browser cookie or bearer token
 
 **Body:** `{ providerId: string, label: string, secret: Record<string, string> }`
 
@@ -1757,29 +1797,76 @@ Create a new credential profile.
 ### `GET /api/credentials/[id]`
 Get a single credential profile (no secret returned).
 
+**Auth:** browser cookie or bearer token
+
 ### `PATCH /api/credentials/[id]`
 Update label and/or secret of a credential.
 
+**Auth:** browser cookie or bearer token
+
 **Body:** `{ label: string, secret: Record<string, string> }`
+
+Secret fields are **merged** onto the stored payload, not substituted for it:
+only the fields carrying a non-empty value are written, and every blank field
+keeps whatever is already stored. This matters for the one two-field provider,
+Trello, where rotating the `token` alone must leave `apiKey` intact — both are
+required by the REST delivery. An empty `secret` (every field blank) therefore
+updates the label only.
+
+When the merge changes the stored payload, `last_synced_at` is reset to `NULL`:
+the agents still hold the previous value, so the profile reads "synced never"
+until it is delivered again, and `GET /api/credentials/detect` reports those
+agents as holding an unrecognised credential for that provider.
 
 ### `DELETE /api/credentials/[id]`
 Delete a credential and its secret permanently.
 
-### `POST /api/credentials/[id]/sync`
-Sync the credential to all agent containers (or a specified subset).
+**Auth:** browser cookie or bearer token
 
-**Body (optional):** `{ containers?: string[] }` — if omitted or empty, syncs to all agent containers with `AGENT_ID` labels.
+### `POST /api/credentials/[id]/sync`
+Sync the credential to agent containers.
+
+**Auth:** browser cookie or bearer token
+
+**Body (optional):** `{ containers?: string[] }` — if omitted, targets every agent container carrying an `AGENT_ID` label.
 
 **Response:** `{ results: { container: string, status: 'ok'|'error', error?: string }[] }`
 
-Before syncing, **all agent containers are cleaned first** (env files, CLI auth, TOOLS.md integration markers removed).
-Only the selected containers receive the new credential and TOOLS.md section.
-This ensures that deselecting an agent or deleting a profile removes the credential from all agents.
+Each **targeted** container is first cleaned of this provider only — other
+providers on the same container are left alone — and then receives the new
+credential and its TOOLS.md row.
+
+**Containers outside `containers` are not touched.** Syncing is therefore not a
+way to revoke: dropping an agent from the list leaves whatever it already holds
+in place. Use `DELETE` below to remove a credential from a container.
+
+### `DELETE /api/credentials/[id]/sync`
+Remove this credential from a single container ("de-sync").
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ container: string }` — required.
+
+**Response:** `{ ok: true }`
+
+Deletes the provider's CLI auth inside that container and drops its TOOLS.md
+row. `last_synced_at` is deliberately left untouched — it records the last
+delivery, and a removal is not one — and the audit entry is recorded as
+`desync`. The profile stays `active`, because de-sync targets one container and
+the credential may still be delivered to others.
 
 ### `GET /api/credentials/detect`
 Live-detect which credentials are actually present inside agent containers.
 
+**Auth:** browser cookie or bearer token
+
 **Query params (optional):** `?agent=prometheus` — filter to a single container.
+
+Costly: one `docker exec` per container, measured at ~6.5s each. Almost all of
+that is the three CLI calls reaching the network from inside the container, so
+the figure is largely platform-independent — the `docker exec` itself is ~90ms,
+and the local file reads another ~100ms. Callers should treat it as a background
+refresh, not something to block a page render on.
 
 **Response:**
 ```json
@@ -1802,31 +1889,116 @@ Live-detect which credentials are actually present inside agent containers.
       "supabaseCliInstalled": true,
       "trelloLoggedIn": false,
       "trelloCliInstalled": true,
+      "notionLoggedIn": false,
       "toolsMdHasMarkers": true,
       "matchedProfiles": [
         { "profileId": "cred_xxx", "providerId": "github-pat", "label": "GitHub" }
-      ]
+      ],
+      "installedProviders": ["github-pat"]
     }
   ]
 }
 ```
 
-Detection runs `docker exec` inside each container:
-- `gh auth status` for GitHub (token read from `~/.config/gh/hosts.yml`)
-- `vercel whoami` for Vercel (token read from `~/.local/share/com.vercel.cli/auth.json`)
-- `supabase projects list --output json` for Supabase (token read from `~/.supabase/access-token`)
-- `test -f ~/.trello-cli/default/config.json` for Trello
-- TOOLS.md markers at `/root/.openclaw/workspace/TOOLS.md`
+An agent whose probe failed is returned in its place as
+`{ "container", "agentId", "error" }` — none of the fields above are present, so
+consumers must check `error` first.
+
+Each container is read with a **single** `docker exec` running one script that
+emits NUL-delimited key/value pairs; containers are probed concurrently. The
+script reads the credential files directly and the parsing happens in
+JavaScript. Three CLI calls run last and only feed display fields — `githubUser`,
+`vercelUser`, `vercelTeam`, and the `githubLoggedIn` / `vercelLoggedIn` /
+`supabaseLoggedIn` flags, along with `supabaseLinked` and `supabaseProjectRef`,
+which are read only when `supabaseLoggedIn` is true. `supabaseLoggedIn` follows
+the **exit status** of `supabase projects list`, not the text it prints, so a
+failure whose wording is unfamiliar still reads as not logged in.
+`trelloLoggedIn` and `notionLoggedIn` come from the config files instead, and so
+survive a probe cut short. The three calls reach the network from inside the
+container, so a completion sentinel is emitted before them: a probe cut short
+during them still yields valid token matching, with those display fields empty.
+
+Credential files read: `~/.config/gh/hosts.yml`,
+`~/.local/share/com.vercel.cli/auth.json` and `config.json`,
+`~/.supabase/access-token` and `/data/supabase/config.toml`,
+`~/.config/trello/config.json`, `~/.config/notion/config.json`, plus TOOLS.md
+markers at `/root/.openclaw/workspace/TOOLS.md`.
 
 `matchedProfiles` is determined by SHA256-hashing the token installed in the container
 and comparing it against the hashed token of each stored profile in the vault.
 Only exact token matches produce a match — no heuristics, no broad profile-level guesses.
 
+`installedProviders` lists every provider holding a token, matched or not. A
+provider present there but absent from `matchedProfiles` holds a credential no
+stored profile accounts for — an edited-but-not-resynced credential, one
+installed by hand, or the remains of a deleted profile.
+
 ### `POST /api/credentials/[id]/reveal`
-Return the raw secret payload. Every call is logged in the audit trail.
+Return the raw secret payload. Every call is written to `credential_audit_log`, which no route or view reads.
 Use sparingly.
 
+**Auth:** browser cookie or bearer token
+
+Secrets are stored **unencrypted** in `credentials.db` — `credential_secrets.payload`
+holds the raw JSON. Anything that can read that file, or reach this endpoint with a
+valid session, has the secrets in the clear.
+
 **Response:** `{ secret: Record<string, string> }`
+
+---
+
+## Diagnostics
+
+### `GET /api/debug`
+Whether the three auth-related environment variables are set. Booleans only —
+no value, masked or otherwise, is returned.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "hasPassword": true, "hasJwtSecret": true, "hasToken": false }`
+
+### `GET /api/envcheck`
+The process environment, with `REV4A_PASSWORD`, `REV4A_TOKEN`,
+`REV4A_JWT_SECRET` and `PROVIDER_DEEPSEEK_API_KEY` redacted. Every other
+variable is returned **in the clear**, so treat the response as sensitive.
+
+**Auth:** browser cookie or bearer token
+
+### `GET /api/provider-usage`
+Usage and quota state per provider, including live OpenRouter figures.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "providers": [...], "openrouterLive": {…}, "quotas": {…} }`
+
+### `GET /api/update-check`
+Installed version against the latest published one.
+
+**Auth:** browser cookie or bearer token
+
+**Query params:** `check=1` queries the registry; without it the answer comes
+from local state only.
+
+**Response:** `{ "installed": "1.1.15", "latest": "1.1.16", "updateAvailable": true, "package": "@flame0510/project-aether" }`
+
+### `POST /api/update-check`
+Run `rev4a update` as a detached background process. The dashboard restarts
+itself as part of the update, so the connection drops.
+
+**Auth:** browser cookie or bearer token
+
+### `GET /api/alerts/smoke`
+Send a test alert, to verify the Telegram alerting path end to end.
+
+**Auth:** browser cookie or bearer token
+
+**Query params:** `stale=0` skips the staleness check.
+
+**Response:** `{ "ok": true, "stale": true, "result": {…}, "dryRun": false }` —
+`dryRun` is `true` when `REV4A_TELEGRAM_BOT_TOKEN` or `REV4A_TELEGRAM_CHAT_ID`
+is unset, meaning nothing was actually sent.
+
+**Errors:** `403` when smoke alerts are disabled.
 
 ---
 

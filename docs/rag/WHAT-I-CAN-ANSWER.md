@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-08-28
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -10,7 +10,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 
 - "Where do I find the agents page?"
 - "How do I get to the container list?"
-- "Where can I see the onboarding wizard?"
+- "Where can I see the first-run wizard?"
 - "Is there a page for cron jobs?"
 - "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers, models, agent assignments.
 - "How do I create a new agent?"
@@ -34,7 +34,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 
 - "How do I create an agent?"
 - "How do I set up Rev4a for the first time?"
-- "How do I complete the onboarding wizard?"
+- "How do I complete the first-run wizard?"
 - "How do I add an API key for a provider?"
 - "How do I filter agents by status?"
 - "How do I open a terminal for a container?"
@@ -75,8 +75,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "What happens when I recreate an agent?"
 - "How do agent backups work?"
 - "What is an agent persistent volume?"
-- "What is the onboarding wizard?"
-- "What is the difference between Gateway and Providers pages?"
+- "What is the first-run wizard?"
 - "What is the Provider Gateway proxy?"
 - "How does the SSE stream work?"
 - "What is the shared gateway token?"
@@ -92,9 +91,10 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "Why are costs missing for some sessions?"
 - "Why can't I connect to the container terminal?"
 - "Why is the gateway sync not working?"
-- "Why am I seeing an onboarding banner?"
+- "Why am I seeing a setup banner?"
 - "How do I check if the daemon is running?"
 - "Why are credentials not showing in my agent?"
+- "What does the yellow diamond next to an agent mean?"
 - "Why is the agent base image banner showing?"
 - "How do I fix 'image is outdated'?"
 - "What happens if I abort a build?"

@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-07-15
+> **Last updated:** 2026-08-28
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -19,7 +19,7 @@ A small inline label component used for status indicators and channel chips. Sup
 A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `rev4a-backups` Docker volume. Used for restore operations and auto-created before each recreate.
 
 ## Container
-A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.), with CPU/memory metrics, logs, and a web terminal.
+A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.), with CPU/memory metrics and a web terminal.
 
 ## Channel
 A communication channel (Telegram) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect Telegram and manage pairings (approve/reject senders).
@@ -34,13 +34,13 @@ The estimated cost of an agent session in USD, calculated from tokens used and p
 A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice, you can set an override value for that month with an optional note.
 
 ## Credential
-A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. Credentials can be scoped to specific agent containers and synced via CLI auth or config files. Every reveal is logged in the audit trail.
+A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. A credential is installed into a container only when the user syncs it, and removed on de-sync; any credential can be synced to any container. Every reveal is written to an audit table that no route or view reads.
 
 ## Cron / Cron Job
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.
 
 ## Dashboard
-The main page of Rev4a (`/`). Shows live sessions, cost summary, system health metrics (CPU, RAM, disk, load average), and a real-time event feed. A setup banner appears if the onboarding wizard is incomplete.
+The main page of Rev4a (`/`). Shows live sessions, cost summary, system health metrics (CPU, RAM, disk, load average), and a real-time event feed. A setup banner appears if the first-run wizard is incomplete.
 
 ## Event
 A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard and are pushed via SSE every ~3 seconds.
@@ -57,14 +57,14 @@ Files that store an agent's persistent knowledge and personality: MEMORY.md, SOU
 ## Model
 The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 4, DeepSeek V4 Flash. Models are linked to specific providers. The Gateway page manages which models are enabled and which agent uses which model.
 
-## Onboarding
-First-time setup wizard at `/onboarding`. Four steps: Welcome → Providers → First Agent → Ready. Progress is tracked per-step in `data/onboarding-progress.json`. A badge in the sidebar shows remaining steps (e.g. "2/3"). Always accessible from the sidebar or mobile navbar.
+## First-run wizard
+First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar or mobile navbar.
 
 ## Plugin
 An extension that adds new tools and capabilities to agents. Plugins are installed in the workspace and appear in the Plugins page with enable/disable toggles.
 
 ## Provider
-An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway page or via the onboarding wizard.
+An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway page or via the first-run wizard.
 
 ## Provider Gateway
 Rev4a's built-in proxy that gives all agents unified access to configured LLM providers. Agents point to `http://host.docker.internal:3740/api/provider/v1` and Rev4a routes requests to the correct upstream using the stored API keys.
@@ -116,7 +116,7 @@ A record of an agent using a tool during a session. Useful for auditing what an 
 Optional reverse proxy for routing web traffic to agent containers. If configured, an agent gets a public URL. Rev4a itself runs on port 3740 and does not require Traefik.
 
 ## Vault
-Rev4a's credential storage system. Stores provider API keys and third-party service tokens with per-agent permission scoping. Supports reveal (with audit trail), sync to containers, and live detection of installed credentials.
+Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads), sync to and from containers, and live detection of which credentials are actually installed. Secrets are stored unencrypted.
 
 ## Workspace
 The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the VPS host and all agent containers.

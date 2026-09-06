@@ -95,7 +95,7 @@ OpenClaw defaults to merging config models with auto-discovered models.
 
 ### Model Catalogue
 
-The model catalogue lives in [`models.config.json`](../models.config.json) at the project root.
+The model catalogue lives in [`models.config.json`](../../models.config.json) at the project root.
 This file is **tracked in the repository** and serves as the default model configuration
 for anyone cloning the project. It defines all known models across all providers:
 
@@ -184,18 +184,20 @@ via `openclaw models status --json` inside each container.
 
 ### `PUT /api/gateway/provider`
 
-Triggers a full provider model sync to all agent containers. Only writes
-`models.providers.rev4a` — does NOT touch model references.
+Enables or disables a single model in the catalogue, then syncs every agent.
+Only writes `models.providers.rev4a` — does NOT touch model references.
 
-**Body:** none (reads current provider state from `models.config.json` and
-`data/provider-keys.json`)
+**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both
+required. Missing either returns `400`; an unknown `modelId` returns `404`.
 
 **Response:**
 ```json
 {
   "status": "ok",
-  "activeModels": 2,
-  "results": ["Active models: 2 across 1 agent(s)"]
+  "modelId": "deepseek/deepseek-chat",
+  "enabled": true,
+  "provider": "deepseek",
+  "sync": ["Active models: 2 across 1 agent(s)"]
 }
 ```
 

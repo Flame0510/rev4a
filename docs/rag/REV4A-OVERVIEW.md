@@ -1,15 +1,15 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-09-05
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
 ## What can you do in Rev4a?
 
 ### Dashboard (`/`)
-The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk, load average), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made. If the onboarding wizard is incomplete, a banner appears at the top with a link to continue.
+The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk, load average), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made. If the first-run wizard is incomplete, a banner appears at the top with a link to continue.
 
-### Onboarding (`/onboarding`)
+### First-run wizard (`/wizard`)
 First-run setup wizard that guides new users through configuration. Four steps:
 1. **Welcome** — what Rev4a is and what it can do
 2. **Providers** — add API keys for DeepSeek, OpenAI, OpenRouter, or Groq (saved via the Provider Gateway)
@@ -68,7 +68,7 @@ Live web terminal into a Docker container. Run commands, inspect files, debug is
 File explorer for the OpenClaw workspace. Browse, view, and edit files across workspaces: the VPS host workspace and every agent container workspace. Switch between workspaces via a dropdown. Supports binary file preview (images) and text editing with syntax awareness.
 
 ### Credentials (`/credentials`)
-Manage third-party service credentials: GitHub, Trello, Vercel, Supabase, Notion. Each credential can be scoped to specific agent containers. Sync pushes credentials into containers via CLI auth (gh, vercel, supabase) or config files (trello, notion). Live detection shows which credentials are actually installed in each container. Audit trail for every reveal action.
+Manage third-party service credentials: GitHub, Trello, Vercel, Supabase, Notion. Sync installs a credential into the containers you pick — as that CLI's own config for GitHub, Vercel and Supabase, or as a config file the agent reads for Trello and Notion, which are used through their REST API; de-sync removes it from one container. Any credential can be synced to any container — there is no per-agent permission model. Live detection shows which credentials are actually installed in each container: a green tick when the installed token is the profile's own, a yellow diamond marked "unknown credential" when the container holds a token for that provider that no stored profile accounts for — an edited-but-not-resynced credential, one installed by hand, or the remains of a deleted profile. Every reveal is recorded in an audit table, which no route or view reads. Secrets are held unencrypted in `credentials.db`.
 
 ### Crons (`/crons`)
 Scheduled tasks auto-discovered from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`). Filter jobs by agent using the toolbar tabs. Each job shows name, description, cron expression, next run, last run, and last status. Toggle on/off per job. The run history panel shows recent cron run executions for the selected job, loaded on demand from the container's gateway.
@@ -93,14 +93,11 @@ Skill registry showing all skills across three sources:
 
 Filter by source, view and edit SKILL.md content, and **promote** agent-local skills to shared with one click.
 
-### Plugins & Skills (`/plugins-skills`)
-Combined view showing both plugins and skills side by side.
+### Setup (`/setup`)
+First-run password setup. Reachable before a password exists; it sets `REV4A_PASSWORD` and the JWT secret, after which every page requires a session.
 
 ### Login (`/login`)
 Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry).
-
-### Vault (`/vault`)
-Credential storage with per-agent permissions. Store API keys and service tokens, scope them to specific agents, and manage permissions via the UI.
 
 ## What about Pulse?
 
@@ -108,7 +105,7 @@ Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat butt
 
 - Explain what any page does
 - Guide you through features ("how do I create an agent?")
-- Answer questions about agents, providers, costs, sessions, containers, crons, credentials, and onboarding
+- Answer questions about agents, providers, costs, sessions, containers, crons, credentials, and the first-run wizard
 - Give practical tips based on the page you're on
 
 Pulse does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
