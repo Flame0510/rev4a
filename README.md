@@ -12,7 +12,7 @@
 - **Multi-container agent management** — Create, monitor, and manage OpenClaw agents in isolated Docker containers from a single UI
 - **Agent creation wizard** — Pick a template (Atlas, Prometheus, Argus), choose an LLM model, deploy an agent in seconds
 - **Provider sync** — Add API keys once, push them to all agent containers with one click
-- **Model configuration** — Change the primary model per agent, for every major provider (OpenAI, Anthropic, DeepSeek, Gemini, Ollama, etc.)
+- **Model configuration** — Change the primary model and fallbacks per agent, from the detail panel on the Agents page. Providers: OpenAI, Anthropic, Google, DeepSeek, Groq, Kimi, GLM, Qwen, plus OpenRouter as an aggregator.
 - **Shared gateway token** — One token to rule all agents. Manage from the dashboard, sync to all containers
 - **Live event stream** — Real-time session lineage, agent spawning, cost reporting
 - **Workspace browser** — Browse and edit agent files live from the dashboard
@@ -81,6 +81,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
 | `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
+| `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 
 ---
 

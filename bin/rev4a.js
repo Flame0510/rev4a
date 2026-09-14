@@ -10,7 +10,7 @@
  * rev4a serve:
  *   1. Ensures .env exists (auto-generates on first run)
  *   2. Ensures .next build exists (builds if missing)
- *   3. Ensures Docker is installed (installs if missing + root)
+ *   3. Ensures Docker is installed (installs if missing + root) and waits for its daemon
  *   4. Ensures agent base image is built (builds if missing)
  *   5. Starts Next.js + daemon + terminal WS as a single process group
  *
@@ -44,6 +44,17 @@ const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_IMAGE = 'openclaw-agent-base:latest';
 const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
 const DOCKER_NETWORK = 'rev4a-network';
+// How long `serve` waits for the Docker daemon before starting without it. Like
+// REV4A_DATA_DIR it is read from the real process environment (a systemd
+// Environment= line, a shell export), because the .env file is loaded later.
+const DOCKER_WAIT_SECONDS = (() => {
+  const raw = (process.env.REV4A_DOCKER_WAIT_SECONDS || '').trim();
+  if (!raw) return 90;
+  const n = Number(raw);
+  // 0 means a single check. Non-numeric or infinite values fall back to the
+  // default, and the ceiling keeps a typo from holding start-up for hours.
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 600) : 90;
+})();
 
 // Fallback used only when package.json cannot be read — the published npm
 // package name is the single source of truth, so never hardcode it elsewhere.
@@ -97,25 +108,70 @@ function whichDistro() {
   }
 }
 
-// ── Docker auto-install ─────────────────────────────────────────────────────
+// ── Docker auto-install and daemon wait ─────────────────────────────────────
 
+/** Block this thread for `ms` without spawning a process (`sleep` is not on every OS). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Wait until the Docker daemon answers, up to DOCKER_WAIT_SECONDS.
+ *
+ * Finding the `docker` command only proves the CLI is installed. At boot the
+ * daemon can still be starting — on the production host systemd started this
+ * service a second before Docker. Start-up still worked, by accident: the first
+ * `docker` call blocked on docker.socket until the daemon was up. With a daemon
+ * slower than a later call's 10 s timeout, the image check would have concluded
+ * the image was missing and tried to pull and rebuild it. Asking the daemon
+ * directly, with a short per-attempt timeout, makes the wait explicit, bounded
+ * and logged, whatever kind of Docker install this is.
+ */
+function waitForDockerDaemon() {
+  const deadline = Date.now() + DOCKER_WAIT_SECONDS * 1000;
+  let lastError = '';
+  let announced = false;
+  for (;;) {
+    try {
+      const version = execSync('docker info --format "{{.ServerVersion}}"', { stdio: 'pipe', timeout: 10_000 })
+        .toString().trim();
+      if (version) {
+        log('DOCKER', `Docker daemon ready (server ${version})`);
+        return true;
+      }
+    } catch (err) {
+      lastError = ((err.stderr && err.stderr.toString()) || err.message || '').trim().split('\n')[0];
+    }
+    if (Date.now() >= deadline) break;
+    if (!announced) {
+      log('DOCKER', `Waiting for the Docker daemon (up to ${DOCKER_WAIT_SECONDS}s)…`);
+      announced = true;
+    }
+    sleepSync(2000);
+  }
+  log('DOCKER', `⚠ Docker daemon not reachable after ${DOCKER_WAIT_SECONDS}s: ${lastError || 'no answer'}`);
+  log('DOCKER', '  Starting without it. Agents are unavailable and the startup sync reaches none; run Sync All Agents once Docker is up.');
+  return false;
+}
+
+/** True when the Docker daemon is reachable and the Docker-dependent steps can run. */
 function ensureDocker() {
   if (hasCmd('docker')) {
-    log('DOCKER', 'Docker is available');
-    return;
+    log('DOCKER', 'Docker CLI found');
+    return waitForDockerDaemon();
   }
 
   if (!isLinux()) {
     log('DOCKER', '⚠ Docker not found. Rev4a needs Docker to create agent containers.');
     log('DOCKER', '  Install Docker: https://docs.docker.com/get-docker/');
     log('DOCKER', '  Then run: rev4a serve');
-    return;
+    return false;
   }
 
   if (!isRoot()) {
     log('DOCKER', '⚠ Docker not found. Run Rev4a as root to auto-install:');
     log('DOCKER', '  sudo rev4a serve');
-    return;
+    return false;
   }
 
   const distro = whichDistro();
@@ -134,10 +190,12 @@ function ensureDocker() {
     );
 
     log('DOCKER', 'Docker installed successfully');
+    return waitForDockerDaemon();
   } catch (err) {
     log('DOCKER', '⚠ Docker auto-install failed. Install manually:');
     log('DOCKER', '  https://docs.docker.com/engine/install/');
     log('DOCKER', '  Then run: rev4a serve');
+    return false;
   }
 }
 
@@ -414,9 +472,15 @@ function checkVersion() {
 function preflight() {
   log('PREFLIGHT', 'Running pre-flight checks…');
   ensureEnv();
-  ensureDocker();
-  ensureNetwork();
-  ensureAgentImage();
+  // Network and image need the daemon. Without it the image check fails and
+  // would start a pull and then a local build — up to fifteen minutes, before the
+  // dashboard is even up — for an image that is most likely already there.
+  if (ensureDocker()) {
+    ensureNetwork();
+    ensureAgentImage();
+  } else {
+    log('PREFLIGHT', 'Skipping network and agent image checks: Docker daemon not reachable.');
+  }
   ensureRev4aRules();
 
   if (!existsSync(NEXT_DIR)) {
