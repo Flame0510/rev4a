@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { useModels } from '../lib/models-context';
 import {
   isWizardComplete,
   markWizardComplete,
@@ -45,6 +46,9 @@ export function useWizard() {
     // Step tracking is in-memory only; the cookie is the source of truth
   }, []);
 
+  // Saving a key changes which models are offered; the shared list must follow.
+  const { refresh: refreshOfferedModels } = useModels();
+
   const saveProviders = useCallback(async () => {
     const entries = Object.entries(providerKeys).filter(([, v]) => v.trim());
     if (entries.length === 0) {
@@ -60,10 +64,11 @@ export function useWizard() {
           body: JSON.stringify({ provider, apiKey: apiKey.trim() }),
         });
       }
+      refreshOfferedModels();
       markStep('providers');
     } catch { /* API call failed — do not mark step as complete */ }
     setSaving(false);
-  }, [providerKeys, markStep]);
+  }, [providerKeys, markStep, refreshOfferedModels]);
 
   const goNext = useCallback(async () => {
     if (step === 'welcome') { markStep('welcome'); setStep('providers'); }

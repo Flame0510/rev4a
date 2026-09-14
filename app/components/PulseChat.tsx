@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
+import { useModels } from '../lib/models-context';
 import Link from 'next/link';
 
 const STORAGE_KEY = 'rev4a_pulse_chat';
@@ -79,51 +80,36 @@ export default function PulseChat() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
+  // The shared catalogue, not a private copy. It refreshes when the Gateway page
+  // changes what is enabled, so this select cannot go stale mid-session.
+  const { providers: modelGroups, loaded: modelsLoaded } = useModels();
+  const modelsLoading = !modelsLoaded;
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch available models from backend on mount
+  // Keep the choice valid against the current catalogue.
+  //
+  // Runs whenever the shared list changes, which includes the moment a model is
+  // unchecked on the Gateway page: a selection that just became unavailable is
+  // replaced rather than left to fail at send time. The saved preference is only
+  // honoured while it is still on offer.
   useEffect(() => {
-    let cancelled = false;
+    if (!modelsLoaded) return;
+    const allIds = modelGroups.flatMap((g) => g.models.map((m) => m.id));
+    if (allIds.length === 0) { setSelectedModel(''); return; }
+    if (selectedModel && allIds.includes(selectedModel)) return;
 
-    async function fetchModels() {
-      try {
-        const res = await fetch('/api/models');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: ModelGroup[] = await res.json();
-        if (cancelled) return;
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(MODEL_STORAGE_KEY); } catch { /* blocked */ }
+    setSelectedModel(saved && allIds.includes(saved) ? saved : allIds[0]);
+  }, [modelGroups, modelsLoaded, selectedModel]);
 
-        setModelGroups(data);
-
-        const allIds = data.flatMap((g) => g.models.map((m) => m.id));
-
-        // Restore saved model if valid, otherwise pick first
-        try {
-          const saved = localStorage.getItem(MODEL_STORAGE_KEY);
-          if (saved && allIds.includes(saved)) {
-            setSelectedModel(saved);
-          } else if (allIds.length > 0) {
-            setSelectedModel(allIds[0]);
-          }
-        } catch {
-          if (allIds.length > 0) setSelectedModel(allIds[0]);
-        }
-      } catch {
-        // API unavailable — leave selectedModel empty, select stays disabled
-      } finally {
-        if (!cancelled) setModelsLoading(false);
-      }
-    }
-
-    fetchModels();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Save model preference on change
+  // Save model preference on change. Not while empty: on mount the selection is ''
+  // until the list arrives, and saving that erased the preference before it could
+  // be read back.
   useEffect(() => {
+    if (!selectedModel) return;
     try {
       localStorage.setItem(MODEL_STORAGE_KEY, selectedModel);
     } catch {
