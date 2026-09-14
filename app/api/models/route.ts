@@ -1,21 +1,11 @@
 import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
-import { MODELS_CONFIG_FILE } from '@/lib/rev4a-paths';
-import * as fs from 'fs';
-import * as path from 'path';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { loadOfferedModels } from '@/lib/model-catalogue';
+import { getPricing } from '@/lib/model-pricing';
 
 export const dynamic = 'force-dynamic';
-
-interface ModelsConfigEntry {
-  id: string;
-  name: string;
-  provider: string;
-  enabled: boolean;
-}
-
-const CONFIG_PATH = MODELS_CONFIG_FILE;
 
 const PROVIDER_EMOJI: Record<string, string> = {
   deepseek: '🧠',
@@ -37,32 +27,27 @@ const PROVIDER_LABEL: Record<string, string> = {
   rev4a: 'Rev4a',
 };
 
-function loadModelsConfig(): ModelsConfigEntry[] {
-  try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.models)) return parsed.models as ModelsConfigEntry[];
-  } catch {}
-  return [];
-}
-
+/**
+ * Model picker source. Uses the shared catalogue loader so the list offered here
+ * matches what the sync actually writes into agent containers — this route used
+ * to read models.config.json directly and ignore model-overrides.json, so models
+ * switched off on the Gateway page still showed up as selectable.
+ */
 export async function GET(_req: NextRequest): Promise<NextResponse> {
   const request = _req;
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
-  const allModels = loadModelsConfig();
-  const providerKeys = readProviderKeys();
-  const configured = new Set(Object.keys(providerKeys));
+  const eligible = loadOfferedModels();
 
-  const eligible = allModels.filter((m) => {
-    if (!m.enabled) return false;
-    if (configured.has(m.provider)) return true;
-    // rev4a/* aliases resolve to deepseek upstream
-    if (m.provider === 'rev4a' && configured.has('deepseek')) return true;
-    return false;
-  });
-
-  const grouped = new Map<string, { provider: string; emoji: string; models: { id: string; label: string }[] }>();
+  const grouped = new Map<string, {
+    provider: string;
+    emoji: string;
+    models: {
+      id: string; label: string;
+      input: number | null; output: number | null;
+      deprecated: boolean;
+    }[];
+  }>();
 
   for (const model of eligible) {
     if (!grouped.has(model.provider)) {
@@ -72,7 +57,16 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
         models: [],
       });
     }
-    grouped.get(model.provider)!.models.push({ id: model.id, label: model.name });
+    // Price travels with the option so the picker can show cost at the point of
+    // choice, instead of sending the operator to another page to look it up.
+    const price = getPricing(model.id);
+    grouped.get(model.provider)!.models.push({
+      id: model.id,
+      label: model.name,
+      input: price?.input ?? null,
+      output: price?.output ?? null,
+      deprecated: model.deprecated ?? false,
+    });
   }
 
   return NextResponse.json(Array.from(grouped.values()));

@@ -15,8 +15,16 @@ function ensureDir(): void {
   }
 }
 
+/** Best-effort: files written before 0600 was enforced are world-readable. */
+function tightenMode(): void {
+  try {
+    if ((fs.statSync(KEYS_PATH).mode & 0o077) !== 0) fs.chmodSync(KEYS_PATH, 0o600);
+  } catch { /* absent, or not ours to change */ }
+}
+
 export function readProviderKeys(): ProviderKeys {
   ensureDir();
+  tightenMode();
   try {
     const raw = fs.readFileSync(KEYS_PATH, 'utf-8');
     return JSON.parse(raw);
@@ -34,5 +42,9 @@ export function readProviderKeys(): ProviderKeys {
 
 export function writeProviderKeys(keys: ProviderKeys): void {
   ensureDir();
-  fs.writeFileSync(KEYS_PATH, JSON.stringify(keys, null, 2), 'utf-8');
+  // Every upstream credential and the gateway password live here: owner-only, like
+  // the .env file. `mode` applies only when the file is created, so an existing
+  // file is tightened explicitly.
+  fs.writeFileSync(KEYS_PATH, JSON.stringify(keys, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  fs.chmodSync(KEYS_PATH, 0o600);
 }

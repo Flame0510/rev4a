@@ -148,13 +148,6 @@
       "modality": "text->text"
     },
     {
-      "id": "deepseek/deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash",
-      "provider": "deepseek",
-      "enabled": true,
-      "modality": "text->text"
-    },
-    {
       "id": "groq/llama-3.1-8b-instant",
       "name": "Llama 3.1 8B (Groq)",
       "provider": "groq",
@@ -298,14 +291,14 @@
       "id": "openrouter/deepseek/deepseek-v4-flash",
       "name": "DeepSeek V4 Flash (OR)",
       "provider": "openrouter",
-      "enabled": true,
+      "enabled": false,
       "modality": "text->text"
     },
     {
       "id": "openrouter/deepseek/deepseek-v4-pro",
       "name": "DeepSeek V4 Pro (OR)",
       "provider": "openrouter",
-      "enabled": true,
+      "enabled": false,
       "modality": "text->text"
     },
     {
@@ -564,21 +557,21 @@
       "id": "openrouter/nex-agi/nex-n2-pro",
       "name": "Nex AGI N2 Pro (OR)",
       "provider": "openrouter",
-      "enabled": true,
+      "enabled": false,
       "modality": "text+image->text"
     },
     {
       "id": "openrouter/arcee-ai/virtuoso-large",
       "name": "Arcee Virtuoso Large (OR)",
       "provider": "openrouter",
-      "enabled": true,
+      "enabled": false,
       "modality": "text->text"
     },
     {
       "id": "openrouter/deepcogito/cogito-v2.1-671b",
       "name": "DeepCogito V2.1 671B (OR)",
       "provider": "openrouter",
-      "enabled": true,
+      "enabled": false,
       "modality": "text->text"
     },
     {
@@ -839,6 +832,28 @@
       "provider": "openrouter",
       "enabled": false,
       "modality": "text+image->text"
+    },
+    {
+      "id": "deepseek/deepseek-flash",
+      "name": "DeepSeek Flash (V4.1)",
+      "provider": "deepseek",
+      "enabled": true,
+      "modality": "text+image->text"
+    },
+    {
+      "id": "openrouter/deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash (OR)",
+      "provider": "openrouter",
+      "enabled": false,
+      "modality": "text+image->text"
+    },
+    {
+      "id": "openrouter/deepseek/deepseek-v4-flash-vision-exp",
+      "name": "DeepSeek V4 Flash Vision (OR)",
+      "provider": "openrouter",
+      "enabled": false,
+      "modality": "text+image->text",
+      "deprecated": true
     }
   ]
 }

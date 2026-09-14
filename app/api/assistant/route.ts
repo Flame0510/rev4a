@@ -2,8 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 import { extractProviderAndModel, getApiKey, callUpstream } from '@/app/api/provider/upstream';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { isModelOffered, loadOfferedModels } from '@/lib/model-catalogue';
 
-const FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
+// DeepSeek Flash (V4.1). Used only when the client names no model, and refused
+// like any other if it has been unchecked on the Gateway page.
+const FALLBACK_MODEL = 'deepseek/deepseek-flash';
 
 interface PageContext {
   title: string;
@@ -15,27 +18,27 @@ interface PageContext {
 const PAGE_CONTEXT: Record<string, PageContext> = {
   '/': {
     title: 'Dashboard',
-    description: 'Main overview with live session list, cost summary (today, 7 days, 30 days by model), system health metrics (CPU, RAM, disk, load), and a real-time event feed.',
+    description: 'Main overview with live session list, cost summary by model, health cards for Rev4a\'s own runtime, cron and lineage, and a real-time event feed. It shows no CPU, RAM, disk or load average: those are collected by the daemon but no page displays them.',
     actions: ['Click any session row to open the Session Drawer for full details and tool call history', 'View cost breakdown by model and time period', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
     hints: 'The Session Drawer shows you the complete tool call history for any session — just click a row.',
   },
   '/agents': {
     title: 'Agents',
     description: 'List of all Docker containers that run OpenClaw agents. Shows status (running/exited/paused), image, ports, IP, and creation time. Includes a top banner for the agent base image status: yellow warning when outdated or missing, animated progress bar when downloading from registry.',
-    actions: ['Filter by status: all, running, or exited', 'Click an agent to see its details (environment variables, auth token, Traefik URL)', 'Create a new agent using the "Create Agent" button', 'Download the agent base image when the banner shows it missing or outdated'],
+    actions: ['Filter by status: all, running, or exited', 'Click an agent to see its details (environment variables, auth token, backups, Telegram channels, and the Model section that sets its primary model and fallbacks)', 'Create a new agent using the "Create Agent" button', 'Download the agent base image when the banner shows it missing or outdated'],
     hints: 'The status bullet tells you at a glance if an agent is running (green), exited (red), or paused (yellow). The base image banner shows when an updated version is available on the registry — download to pick up CLI updates.',
   },
   '/agents/create': {
     title: 'Create Agent',
-    description: 'Wizard to create a new agent from a template. Choose a template, give it a name, select a model, set environment variables, and configure optional Traefik routing.',
-    actions: ['Browse available agent templates', 'Name your agent and select its AI model', 'Add environment variables (KEY=*** pairs)', 'Optionally enable Traefik routing with a custom subdomain', 'Create the agent and start it immediately'],
-    hints: 'Templates provide pre-built agent configurations. You can customize the image, model, and env vars after selecting a template.',
+    description: 'Two-step wizard to create a new agent from a template. Pick a template, then name it and optionally set a port range and a model.',
+    actions: ['Browse available agent templates', 'Name your agent and select its AI model', 'Set an optional port range (auto-assigned by default)', 'Create the agent and start it immediately'],
+    hints: 'Templates provide pre-built agent configurations. The model can be changed later from the agent\'s detail panel on the Agents page.',
   },
   '/gateway': {
     title: 'Gateway',
-    description: 'Central gateway management page. Shows OpenClaw gateway status, all configured AI providers with their models, and each agent\'s model assignment with fallback models.',
-    actions: ['Toggle models on/off per provider to control availability', 'View which model each agent uses as default', 'See fallback models configured for each agent', 'Check gateway health status and last sync time', 'Sync providers from the gateway configuration'],
-    hints: 'The Gateway is the routing layer that connects agents to AI providers. Use this page to manage which models agents can access.',
+    description: 'Provider configuration: API keys, and which catalogue models this deployment offers. It does not assign models to agents.',
+    actions: ['Add, change or remove a provider API key', 'Toggle individual models on or off to control what the fleet is offered', 'Push the resulting catalogue to every agent container with Sync All Agents'],
+    hints: 'Unchecking a model here removes it everywhere, including for requests that name it directly. To change which model one agent runs, open that agent on the Agents page and use the Model section.',
   },
   '/crons': {
     title: 'Crons',
@@ -45,8 +48,8 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/containers': {
     title: 'Containers',
-    description: 'List of all Docker containers running on the server (not just agents). Shows container ID, name, image, status, state, ports, and IP address.',
-    actions: ['View all running containers with their details', 'Click "Terminal" on any container to open an interactive shell', 'Monitor container status and resource usage'],
+    description: 'List of all Docker containers on the server, running or stopped (not just agents). Shows container ID, name, image, status, state, ports, and IP address.',
+    actions: ['View every container, running or stopped, with its details', 'Click "Terminal" on any container to open an interactive shell', 'Check each container\'s status, image, IP and ports (no CPU or memory figures are shown)'],
     hints: 'Containers marked with an agentId belong to OpenClaw agents. Others are infrastructure containers like databases or reverse proxies.',
   },
   '/containers/terminal/[id]': {
@@ -64,7 +67,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/lineage': {
     title: 'Lineage',
     description: 'Interactive graph showing parent-child relationships between agent sessions. Each node is a session, edges show who spawned whom.',
-    actions: ['View the session hierarchy tree', 'Select a time period (1d/7d/30d) to filter the view', 'Click any session node to inspect its details', 'Zoom and pan through the graph'],
+    actions: ['View the session hierarchy tree', 'Select a time period (1d, 3d, 7d, 15d, 30d or all) to filter the view', 'Click any session node to inspect its details', 'Zoom and pan through the graph'],
     hints: 'When an agent spawns a child agent to do work, that relationship is shown here. Use the period selector to see recent activity.',
   },
   '/memory': {
@@ -81,9 +84,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/tools': {
     title: 'Tools',
-    description: 'Catalog of all tools available to agents — built-in tools, MCP (Model Context Protocol) tools, plugin tools, and audio transcription tools.',
-    actions: ['Browse the full tool catalog', 'See tool name, source package, and description', 'View audio/voice configuration settings', 'Check which MCP servers are connected'],
-    hints: 'Each tool has a source (built-in, plugin, or MCP server). If a tool is missing, check the relevant plugin or MCP connection.',
+    description: 'Curated catalog of the OpenClaw built-in tools available to agents, grouped by area, plus audio and timezone settings. It does not list MCP servers or plugin tools.',
+    actions: ['Browse the full tool catalog', 'See each tool\'s name, description and status (Configured, Available, Coming soon)', 'View the audio transcription and time zone settings'],
+    hints: 'The catalog is a fixed list of OpenClaw built-in tools, not read from the agents. It shows no MCP servers or plugin tools, so a tool missing here says nothing about what an agent has.',
   },
   '/plugins': {
     title: 'Plugins',
@@ -177,6 +180,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   ];
 
   const { provider, model: upstreamModel } = extractProviderAndModel({ model: effectiveModel });
+
+  // The chat panel loads its model list once, at mount, and keeps the choice in
+  // localStorage — so it can name a model that was unchecked on the Gateway page
+  // an hour ago, or one already gone when the preference was saved. Enforce the
+  // catalogue here rather than trusting the client to hold a current list.
+  if (!isModelOffered(provider, upstreamModel)) {
+    const alternative = loadOfferedModels()[0];
+    return NextResponse.json(
+      {
+        error: `Model '${provider}/${upstreamModel}' is not enabled for this deployment.`
+             + (alternative
+                 ? ` Try ${alternative.id}, or enable it on the Gateway page.`
+                 : ' No model is currently enabled — check the Gateway page.'),
+      },
+      { status: 400 },
+    );
+  }
+
   const providerKeys = readProviderKeys();
   const apiKey = getApiKey(provider, providerKeys);
 

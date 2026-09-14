@@ -57,7 +57,7 @@ export const PROVIDER_ENVS: Record<string, ProviderEnvConfig> = {
 
 /** Map rev4a/ model aliases to upstream provider/model pairs. */
 export const MODEL_ALIASES: Record<string, { provider: string; model: string }> = {
-  'rev4a/deepseek-v4-flash': { provider: 'deepseek', model: 'deepseek-v4-flash' },
+  'rev4a/deepseek-flash': { provider: 'deepseek', model: 'deepseek-flash' },
   'rev4a/deepseek-v4-pro': { provider: 'deepseek', model: 'deepseek-v4-pro' },
 };
 
@@ -76,7 +76,7 @@ export function extractProviderAndModel(request: UpstreamRequest): { provider: s
   if (request.provider) {
     return { provider: request.provider, model: modelStr };
   }
-  // Check aliases first (rev4a/deepseek-v4-flash -> deepseek/deepseek-v4-flash)
+  // Check aliases first (rev4a/deepseek-flash -> deepseek/deepseek-flash)
   if (modelStr && MODEL_ALIASES[modelStr]) {
     return { ...MODEL_ALIASES[modelStr] };
   }
@@ -114,6 +114,13 @@ export async function callUpstream(
 
   const upstreamBody: Record<string, unknown> = { ...body, model: model || undefined };
   delete upstreamBody.provider;
+  // `model` has been checked against the catalogue; these fields let the upstream
+  // pick a different one. OpenRouter serves a fallback from `models` when the
+  // primary fails, and `route`/`preset` can redirect the request, so forwarding them
+  // would let a client get a model the catalogue does not offer.
+  delete upstreamBody.models;
+  delete upstreamBody.route;
+  delete upstreamBody.preset;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 

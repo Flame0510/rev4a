@@ -1,7 +1,8 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DB_FILE, AGENTS_TOKEN_FILE, MODELS_CONFIG_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
+import { DB_FILE, AGENTS_TOKEN_FILE, templatesDir } from '@/lib/rev4a-paths';
+import { loadOfferedModels } from '@/lib/model-catalogue';
 import CreatePageClient from './PageClient';
 
 export const dynamic = 'force-dynamic';
@@ -33,26 +34,12 @@ async function getTemplates(): Promise<TemplateInfo[]> {
 }
 
 async function getModels(): Promise<ModelInfo[]> {
-  try {
-    const raw = fs.readFileSync(MODELS_CONFIG_FILE, 'utf-8');
-    const config = JSON.parse(raw);
-    const allModels: ModelInfo[] = (config.models || []).filter((m: { enabled: boolean }) => m.enabled !== false);
-
-    let configuredProviders: string[] = [];
-    try {
-      const keysRaw = fs.readFileSync(PROVIDER_KEYS_FILE, 'utf-8');
-      configuredProviders = Object.keys(JSON.parse(keysRaw));
-    } catch { /* no keys configured yet */ }
-
-    if (configuredProviders.length > 0) {
-      return allModels.filter((m) => configuredProviders.includes(m.provider));
-    }
-
-    // No providers configured — show no models
-    return [];
-  } catch {
-    return [];
-  }
+  // Through the shared definition, not a raw file read. Reading the bundle
+  // directly skipped model-overrides.json, so a model the operator had switched
+  // off on the Gateway page was still offered here — and one they had switched
+  // on was missing. On the production host that was 58 models listed against 62
+  // correct: two offered that should not be, six absent that should be.
+  return loadOfferedModels().map((m) => ({ id: m.id, name: m.name, provider: m.provider }));
 }
 
 async function getUsedNames(): Promise<string[]> {

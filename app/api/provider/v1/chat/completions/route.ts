@@ -4,11 +4,14 @@
  * OpenAI-compatible chat completions endpoint.
  * POST /api/provider/v1/chat/completions
  *
- * Authentication uses provider keys stored in data/provider-keys.json.
- * The Authorization Bearer token must match a configured provider key.
- * The rev4a master key (REV4A_API_KEY env var) unlocks all providers.
+ * Authentication is the `rev4a` entry of provider-keys.json, or REV4A_API_KEY.
+ * See `app/api/provider/auth.ts` — in particular why the other entries in that
+ * file, which are upstream credentials rather than passwords, must not be
+ * accepted here.
  */
 import { NextRequest } from 'next/server';
+import { isGatewayClient } from '@/app/api/provider/auth';
+import { isModelOffered } from '@/lib/model-catalogue';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 import {
   extractProviderAndModel,
@@ -50,19 +53,7 @@ export async function POST(request: NextRequest) {
   const start = Date.now();
 
   try {
-    // Resolve provider from Authorization token
-    const authHeader = request.headers.get('Authorization') || '';
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    const providerKeys = readProviderKeys();
-
-    // Check if token matches any stored key
-    const isAuthenticated = Object.values(providerKeys).some((key) => token === key);
-
-    // Also accept the rev4a master API key env var
-    const rev4aMasterKey = process.env.REV4A_API_KEY;
-    const isMasterAuth = !!rev4aMasterKey && token === rev4aMasterKey;
-
-    if (!isAuthenticated && !isMasterAuth) {
+    if (!isGatewayClient(request)) {
       return errorResponse(
         'Invalid API key. Use your Rev4a API key from the Gateway page via Authorization: Bearer <key>.',
         'authentication_error',
@@ -73,6 +64,21 @@ export async function POST(request: NextRequest) {
     const body: ProviderV1Request = await request.json();
     const { provider, model } = extractProviderAndModel(body);
 
+    // The catalogue is policy, and policy has to be enforced where the money is
+    // spent, not only where the pickers are drawn. Without this, unchecking a
+    // model on the Gateway page hid it from every list and still served every
+    // client that already held the id.
+    if (!isModelOffered(provider, model)) {
+      return errorResponse(
+        `Model '${provider}/${model}' is not enabled for this deployment. ` +
+        'Enable it on the Gateway page, or pick one that is.',
+        'invalid_request_error',
+        400,
+      );
+    }
+
+    // Upstream credentials, distinct from the token that opened this door.
+    const providerKeys = readProviderKeys();
     const apiKey = getApiKey(provider, providerKeys);
     if (!apiKey) {
       return errorResponse(

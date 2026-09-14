@@ -58,27 +58,6 @@ export const SHARED_SKILLS_DIR = path.join(REV4A_DATA, 'shared', 'shared-skills'
 /** Rev4a system rules injected into every agent workspace, mounted read-only. */
 export const REV4A_RULES_DIR = path.join(REV4A_DATA, 'shared', 'rev4a-rules');
 
-/**
- * Model catalogue — read-only, shipped with the package.
- * Resolved at module load from the package root (alongside bin/rev4a.js).
- */
-function resolvePackageFile(filename: string): string {
-  // cwd in dev (workspace checkout)
-  const cwdPath = path.join(process.cwd(), filename);
-  if (fs.existsSync(cwdPath)) return cwdPath;
-
-  // Installed package: this file is at <pkgRoot>/lib/rev4a-paths.js
-  const pkgRoot = path.resolve(__dirname, '..');
-  const pkgPath = path.join(pkgRoot, filename);
-  if (fs.existsSync(pkgPath)) return pkgPath;
-
-  // Last resort: accept that it may not exist (will throw at read time)
-  return cwdPath;
-}
-
-/** Static model catalogue — read-only, inside the package repo */
-export const MODELS_CONFIG_FILE = resolvePackageFile('models.config.json');
-
 /** Top-level .next build directory (kept inside npm package for now — built by rev4a serve) */
 export function nextDir(pkgRoot: string): string {
   return path.join(pkgRoot, '.next');

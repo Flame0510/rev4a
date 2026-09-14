@@ -3,143 +3,36 @@
  *
  * GET /api/provider/v1/models
  *
- * Returns models available through the Rev4a Gateway
- * in OpenAI-compatible format, filtered by the provider
- * identified from the Authorization token.
+ * Returns the models available through the Rev4a Gateway, in OpenAI-compatible
+ * format. This is the endpoint agent containers call to discover what they can
+ * ask for, so it must agree with what `gateway/sync.ts` writes into their config.
  *
- * The model list is read from models.config.json in the project root.
- * If the file doesn't exist, falls back to provider env config + static defaults.
+ * It did not. This route used to carry its own copy of the catalogue and its own
+ * loader, and the two diverged in ways that mattered:
+ *
+ *  - **User toggles were ignored here.** Disabling a model from the Gateway page
+ *    writes to `model-overrides.json`, which `loadModelsConfig()` applies. This
+ *    route read `models.config.json` raw, so a model switched off in the UI was
+ *    still advertised to agents.
+ *  - **A read failure overwrote the catalogue.** If the file was missing or
+ *    momentarily unparseable, the `catch` wrote a hardcoded 30-model default over
+ *    it — replacing the real catalogue, user overrides included.
+ *
+ * Both are gone: the catalogue now comes from `lib/model-catalogue`, the single
+ * loader shared with the create route, the provider page and the sync.
  */
 import { NextResponse, NextRequest } from 'next/server';
-import { MODELS_CONFIG_FILE } from '@/lib/rev4a-paths';
-import * as fs from 'fs';
-import * as path from 'path';
-import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import { isGatewayClient } from '@/app/api/provider/auth';
+import { loadOfferedModels } from '@/lib/model-catalogue';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-interface ModelEntry {
-  id: string;
-  object: string;
-  created: number;
-  owned_by: string;
-  permission: string[];
-  root: string;
-}
-
-interface ModelsConfigEntry {
-  id: string;
-  name: string;
-  provider: string;
-  enabled: boolean;
-}
-
-const CONFIG_PATH = MODELS_CONFIG_FILE;
-
-/** Default model catalogue (known models for each provider) */
-const DEFAULT_CATALOGUE: ModelsConfigEntry[] = [
-  // OpenAI
-  { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'openai', enabled: true },
-  { id: 'openai/gpt-5.6-terra', name: 'GPT-5.6 Terra', provider: 'openai', enabled: true },
-  { id: 'openai/gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'openai', enabled: true },
-  { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'openai', enabled: true },
-  { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'openai', enabled: true },
-  { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', enabled: true },
-  // Anthropic
-  { id: 'anthropic/claude-fable-5', name: 'Claude Fable 5', provider: 'anthropic', enabled: false },
-  { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5', provider: 'anthropic', enabled: false },
-  { id: 'anthropic/claude-sonnet-5', name: 'Claude Sonnet 5', provider: 'anthropic', enabled: false },
-  { id: 'anthropic/claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', enabled: false },
-  // DeepSeek
-  { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', enabled: true },
-  { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', enabled: true },
-  // OpenRouter
-  { id: 'openrouter/auto', name: 'OpenRouter Auto', provider: 'openrouter', enabled: true },
-  { id: 'openrouter/deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash (OR)', provider: 'openrouter', enabled: true },
-  { id: 'openrouter/google/gemini-2.5-flash', name: 'Gemini 2.5 Flash (OR)', provider: 'openrouter', enabled: true },
-  { id: 'openrouter/google/gemini-2.5-pro', name: 'Gemini 2.5 Pro (OR)', provider: 'openrouter', enabled: true },
-  { id: 'openrouter/anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6 (OR)', provider: 'openrouter', enabled: false },
-  { id: 'openrouter/deepseek/deepseek-r1-0528', name: 'DeepSeek R1 0528 (OR)', provider: 'openrouter', enabled: false },
-  // Groq
-  { id: 'groq/llama-3.1-8b-instant', name: 'Llama 3.1 8B (Groq)', provider: 'groq', enabled: false },
-  { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Groq)', provider: 'groq', enabled: false },
-  // Kimi
-  { id: 'kimi/kimi-k3', name: 'Kimi K3', provider: 'kimi', enabled: true },
-  { id: 'kimi/kimi-k2.7-code', name: 'Kimi K2.7 Code', provider: 'kimi', enabled: false },
-  { id: 'kimi/kimi-k2.7-code-highspeed', name: 'Kimi K2.7 Code HighSpeed', provider: 'kimi', enabled: false },
-  { id: 'kimi/kimi-k2.6', name: 'Kimi K2.6', provider: 'kimi', enabled: false },
-  // GLM
-  { id: 'glm/glm-5.2', name: 'GLM-5.2', provider: 'glm', enabled: false },
-  { id: 'glm/glm-5.1', name: 'GLM-5.1', provider: 'glm', enabled: false },
-  { id: 'glm/glm-5', name: 'GLM-5', provider: 'glm', enabled: false },
-  { id: 'glm/glm-4.7', name: 'GLM-4.7', provider: 'glm', enabled: false },
-  { id: 'glm/glm-4.7-flash', name: 'GLM-4.7 Flash', provider: 'glm', enabled: false },
-  { id: 'glm/glm-4.7-flashx', name: 'GLM-4.7 FlashX', provider: 'glm', enabled: false },
-  { id: 'glm/glm-5v-turbo', name: 'GLM-5V Turbo', provider: 'glm', enabled: false },
-  { id: 'glm/glm-4.6v-flash', name: 'GLM-4.6V Flash', provider: 'glm', enabled: false },
-  // Qwen
-  { id: 'qwen/qwen3.7-max', name: 'Qwen 3.7 Max', provider: 'qwen', enabled: false },
-  { id: 'qwen/qwen3.7-plus', name: 'Qwen 3.7 Plus', provider: 'qwen', enabled: true },
-  { id: 'qwen/qwen3.7-flash', name: 'Qwen 3.7 Flash', provider: 'qwen', enabled: false },
-  { id: 'qwen/qwen3-coder-plus', name: 'Qwen 3 Coder Plus', provider: 'qwen', enabled: false },
-  { id: 'qwen/qwen-long', name: 'Qwen Long', provider: 'qwen', enabled: false },
-  // Rev4a aliases (convenience models for the Rev4a proxy)
-  { id: 'rev4a/deepseek-v4-flash', name: 'DeepSeek V4 Flash (Rev4a)', provider: 'rev4a', enabled: true },
-  { id: 'rev4a/deepseek-v4-pro', name: 'DeepSeek V4 Pro (Rev4a)', provider: 'rev4a', enabled: true },
-  { id: 'rev4a/fast', name: 'Rev4a Fast', provider: 'rev4a', enabled: false },
-  { id: 'rev4a/code', name: 'Rev4a Code', provider: 'rev4a', enabled: false },
-  { id: 'rev4a/reason', name: 'Rev4a Reason', provider: 'rev4a', enabled: false },
-  { id: 'rev4a/fallback-general', name: 'Rev4a Fallback General', provider: 'rev4a', enabled: false },
-];
-
-/** Load the models config from file, or create from defaults */
-function loadConfig(): ModelsConfigEntry[] {
-  try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.models)) {
-      return parsed.models as ModelsConfigEntry[];
-    }
-    return DEFAULT_CATALOGUE;
-  } catch {
-    // File doesn't exist or invalid — write defaults
-    try {
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify({ models: DEFAULT_CATALOGUE }, null, 2), 'utf-8');
-    } catch {
-      // Can't write, fall back to defaults in memory
-    }
-    return DEFAULT_CATALOGUE;
-  }
-}
-
-/** Resolve the provider from the Authorization token by matching against provider-keys.json */
-function resolveProviderFromToken(authHeader: string): string | null {
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  if (!token) return null;
-
-  const providerKeys = readProviderKeys();
-
-  // Match the token value against stored provider keys
-  for (const [, key] of Object.entries(providerKeys)) {
-    if (token === key) return 'authenticated';
-  }
-
-  // Also try matching the rev4a API key env var (legacy compat)
-  if (token === process.env.REV4A_API_KEY) return 'all';
-
-  return null;
-}
-
 export async function GET(request: NextRequest) {
-  const allModels = loadConfig();
-
-  // Determine provider from Authorization token
-  const authHeader = request.headers.get('Authorization') || '';
-  const provider = resolveProviderFromToken(authHeader);
-
-  if (!provider) {
-    // No valid token — return empty list to avoid leaking model info
+  if (!isGatewayClient(request)) {
+    // An empty list rather than a 401: this endpoint should not confirm the
+    // catalogue to a caller that cannot use it. The cost is that a container
+    // configured with the wrong key sees "no models" instead of an auth error.
     return NextResponse.json({
       object: 'list',
       total: 0,
@@ -147,10 +40,10 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  let activeModels: ModelsConfigEntry[];
-
-  // Token authenticated — return all enabled models
-  activeModels = allModels.filter((m) => m.enabled);
+  // Same set as gateway/sync.ts writes into the containers, so what an agent can
+  // discover matches what it was actually given. This route used to skip the
+  // provider-key half of that test and advertise models nobody could be billed for.
+  const activeModels = loadOfferedModels();
 
   return NextResponse.json({
     object: 'list',
