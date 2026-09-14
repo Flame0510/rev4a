@@ -70,7 +70,7 @@ access to them.
 
 | Skill | Description |
 |---|---|
-| `rev4a-deep-review` | Deep code review via 4 parallel sub-agents (regressions, edge-cases, security, docs&lang) |
+| `rev4a-deep-review` | Deep anti-regression review: 4 parallel read-only reviewers (regressions, failure modes, security, docs & language), every finding validated against code and a running instance |
 
 ---
 
