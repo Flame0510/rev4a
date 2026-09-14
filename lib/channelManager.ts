@@ -21,7 +21,7 @@
  *     - gateway/config-channels.md
  *     - concepts/multi-agent.md (bindings)
  */
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 
 // ── Types ────────────────────────────────────
 
@@ -232,7 +232,7 @@ export function removeTelegram(agentId: string): { success: boolean; error?: str
  * The agentId in the binding MUST be "main" (OpenClaw's default agent)
  * so that sessions are created as `agent:main:main`.
  * Using the container name as agentId would create sessions like
- * `agent:NOMEAGENTE:main` which breaks model bindings that target
+ * `agent:<AGENT_NAME>:main` which breaks model bindings that target
  * `agent:main:*`.
  *
  * Per multi-agent.md: bindings route (channel, accountId) to agentId.
@@ -360,33 +360,75 @@ export function approvePairing(agentId: string, code: string, channel: string = 
   }
 }
 
-/** Revoke an approved sender from the allowlist */
+/**
+ * Script run inside the container to drop one sender from the allowlist file.
+ *
+ * The sender id arrives as `process.argv[1]`, never interpolated into the source.
+ * The previous version built this string by substitution, applying shell-style
+ * escaping to a value that lands inside a JavaScript string literal: an id
+ * containing an apostrophe closed the literal and the rest ran as code.
+ *
+ * It prints one of three sentinels so the caller can tell the outcomes apart —
+ * `docker exec` exits 0 even when killed by the timeout, so an empty result
+ * cannot be read as success (see docs/ARCHITECTURE.md §3.1).
+ */
+const REVOKE_SCRIPT = `
+const fs = require('fs');
+const [p, target] = [process.argv[1], process.argv[2]];
+try {
+  if (!fs.existsSync(p)) { console.log('revoke:no-store'); process.exit(0); }
+  const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+  const before = (d.allowFrom || []).length;
+  d.allowFrom = (d.allowFrom || []).filter((e) => String(e) !== target);
+  if (d.allowFrom.length === before) { console.log('revoke:absent'); process.exit(0); }
+  fs.writeFileSync(p, JSON.stringify(d, null, 2), 'utf8');
+  console.log('revoke:ok');
+} catch (e) {
+  console.log('revoke:error ' + e.message);
+}
+`;
+
+/**
+ * Revoke an approved sender from the allowlist.
+ *
+ * There is no CLI for this. `openclaw pairing` exposes only `approve`, `list` and
+ * `help` — verified on both 2026.7.1-2 and 2026.9.3 — so the allowlist store has
+ * to be edited directly.
+ *
+ * The previous implementation tried `openclaw pairing revoke` first and treated
+ * any output that lacked "Unknown command" or "not found" as success. OpenClaw
+ * actually answers `OpenClaw does not know the command "revoke".`, which contains
+ * neither, so every revocation reported success, changed nothing, and never
+ * reached the fallback.
+ *
+ * On 2026.9.x this store moved into SQLite and the file is gone. Rather than
+ * silently doing nothing again, that case now fails loudly. Revocation against 9.x's SQLite store is not
+ * implemented yet.
+ */
 export function revokePairing(agentId: string, senderId: string, channel: string = 'telegram'): { success: boolean; error?: string } {
   const container = findContainerById(agentId);
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
 
   try {
-    // Try native revoke command first, fall back to direct file manipulation
-    const nativeOut = containerExecNoFail(
-      container,
-      `openclaw pairing revoke ${channel} ${escapeShellArg(senderId)} 2>&1`,
-    );
+    // execFileSync, not a shell: argv is passed through untouched, so nothing in
+    // `senderId` can be read as syntax.
+    const out = execFileSync(
+      'docker',
+      ['exec', container, 'node', '-e', REVOKE_SCRIPT, pairingAllowFile(channel), senderId],
+      { encoding: 'utf-8', timeout: 15000, maxBuffer: 1024 * 1024 },
+    ).trim();
 
-    if (nativeOut && !nativeOut.includes('Unknown command') && !nativeOut.includes('not found')) {
-      return { success: true };
+    if (out.includes('revoke:ok')) return { success: true };
+    if (out.includes('revoke:absent')) return { success: true }; // already gone — the desired state
+    if (out.includes('revoke:no-store')) {
+      return {
+        success: false,
+        error: 'No allowlist file in this container: nobody has been approved on this '
+             + 'channel yet, or the agent runs OpenClaw 9.x, whose pairing store is in '
+             + 'SQLite and cannot be revoked from here yet.',
+      };
     }
-
-    // Fallback: remove from credentials file directly
-    const filePath = pairingAllowFile(channel);
-    const fallbackOut = containerExecNoFail(
-      container,
-      `node -e "const p='${filePath}';try{const d=JSON.parse(require('fs').readFileSync(p,'utf8'));d.allowFrom=(d.allowFrom||[]).filter(e=>e!=='${senderId.replace(/'/g, "'\\''")}');require('fs').writeFileSync(p,JSON.stringify(d,null,2),'utf8')}catch(e){console.error('revoke fallback error:',e.message)}"`,
-    );
-    if (fallbackOut && fallbackOut.includes('revoke fallback error:')) {
-      return { success: false, error: fallbackOut };
-    }
-
-    return { success: true };
+    return { success: false, error: out || 'revoke produced no output' };
   } catch (e) {
     return { success: false, error: (e as Error).message };
   }
