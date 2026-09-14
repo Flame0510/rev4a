@@ -5,7 +5,7 @@
  * Uses base64-safe write — no heredoc shell escaping issues.
  *
  * Body:
- *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-v4-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
+ *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
@@ -56,6 +56,21 @@ function readFileFromContainer(container: string, remotePath: string): string {
   }
 }
 
+/**
+ * Fallbacks already on a model entry, for a request that did not send any.
+ *
+ * `fallbacks` omitted and `fallbacks: []` are different requests. The first means
+ * "leave them alone", the second "clear them". This route used to treat both as
+ * `[]`, so any caller that sent only `model` silently erased the list.
+ */
+function existingFallbacks(model: unknown): string[] {
+  if (model && typeof model === 'object') {
+    const f = (model as { fallbacks?: unknown }).fallbacks;
+    if (Array.isArray(f)) return f.filter((x): x is string => typeof x === 'string');
+  }
+  return [];
+}
+
 export async function PUT(request: NextRequest) {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
@@ -99,8 +114,8 @@ export async function PUT(request: NextRequest) {
     const mainAgent = list.find((a) => a.id === 'main');
     if (mainAgent) {
       const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks || []));
-      // Remove the primary model dai fallback
+      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks ?? existingFallbacks(mainAgent.model)));
+      // The primary never doubles as its own fallback.
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       mainAgent.model = {
         primary,
@@ -111,7 +126,7 @@ export async function PUT(request: NextRequest) {
     const defaults = (agents.defaults || {}) as Record<string, unknown>;
     {
       const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks || []));
+      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks ?? existingFallbacks(defaults.model)));
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       defaults.model = {
         primary,
@@ -144,8 +159,10 @@ export async function PUT(request: NextRequest) {
       status: 'ok',
       agent: safeContainer,
       model: {
-        primary: body.model,
-        fallbacks: body.fallbacks || [],
+        // Report what was written, not what was asked: both prefixed, and the
+        // fallbacks as preserved or replaced.
+        primary: (defaults.model as { primary: string }).primary,
+        fallbacks: (defaults.model as { fallbacks: string[] }).fallbacks,
       },
       verify: { ok: verifyOk, bytes: verifyBytes },
     });

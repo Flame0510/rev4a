@@ -7,6 +7,7 @@ import { Button, ListItem, Badge, ConfirmModal, Input, type Tone } from '../comp
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
+import ModelSection from './ModelSection';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
@@ -174,6 +175,7 @@ function AgentListItem({
   loading,
   selected,
   channelSummary,
+  modelSummary,
   onClick,
   onLifecycle,
 }: {
@@ -181,6 +183,7 @@ function AgentListItem({
   loading: boolean;
   selected?: boolean;
   channelSummary: Record<string, { telegram: boolean }>;
+  modelSummary: Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>;
   onClick: () => void;
   onLifecycle: () => void;
 }) {
@@ -221,6 +224,41 @@ function AgentListItem({
         {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
         {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
       </div>
+      {(() => {
+        const m = modelSummary[agent.agentId];
+        if (!m || !m.primary) return null;
+        // Tone follows what the operator has to do about it: red means the agent
+        // will fail on its next turn, amber means it still works on a retired name.
+        // The red states differ in remedy — pick another model for the first two,
+        // run Sync All on the Gateway page for OUT OF SYNC.
+        const failing = m.health === 'missing' || m.health === 'disabled' || m.health === 'out-of-sync';
+        const tone = failing ? 'danger' : m.health === 'deprecated' ? 'warning' : undefined;
+        const chip = m.health === 'missing' ? 'NOT IN CATALOGUE'
+                   : m.health === 'disabled' ? 'NOT ENABLED'
+                   : m.health === 'out-of-sync' ? 'OUT OF SYNC'
+                   : m.health === 'deprecated' ? 'DEPRECATED'
+                   : m.fallbackCount === 0 ? 'NO FALLBACK' : null;
+        return (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>
+              {m.primary.replace(/^rev4a\//, '')}
+              {/* Only the first fallback: a list here would drown the row, and the
+                  full set is editable in the detail panel anyway. */}
+              {m.firstFallback && (
+                <span style={{ color: '#666' }}>
+                  {' ↳ '}{m.firstFallback.replace(/^rev4a\//, '')}
+                  {m.fallbackCount > 1 && ` +${m.fallbackCount - 1}`}
+                </span>
+              )}
+            </span>
+            {chip && (
+              <Badge tone={(tone ?? 'neutral') as Tone}>
+                <span style={{ fontSize: 8, padding: '1px 6px' }}>{chip}</span>
+              </Badge>
+            )}
+          </div>
+        );
+      })()}
       {channelSummary[agent.agentId]?.telegram && (
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
           <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
@@ -245,6 +283,7 @@ export default function AgentsPageClient() {
   const [isMobile, setIsMobile] = useState(false);
   const [showList, setShowList] = useState(true);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
+  const [mdSummary, setMdSummary] = useState<Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>>({});
   const [imageReady, setImageReady] = useState(true);
   // null = not checked yet. Keeping "unknown" distinct from "none configured" is
   // the whole point: `false` as the initial value makes an unanswered check look
@@ -258,6 +297,28 @@ export default function AgentsPageClient() {
   const skipNextPoll = useRef(false);
   /** Guards the un-awaited channel-summary fetch against out-of-order responses. */
   const chSummarySeq = useRef(0);
+  const mdSummarySeq = useRef(0);
+
+  /**
+   * Refresh the per-agent model rows that feed the card chips.
+   *
+   * Shared by the 15s poll and by a save in the detail panel: without the second
+   * caller the chip kept showing the previous model until the next poll, which
+   * reads as "the save did not work".
+   *
+   * Sequence-guarded because several can overlap; the last one issued wins.
+   */
+  const refreshModelSummary = useCallback(async () => {
+    const seq = ++mdSummarySeq.current;
+    try {
+      const res = await fetch('/api/agents/models-summary');
+      if (!res.ok || seq !== mdSummarySeq.current) return;
+      const payload = await res.json();
+      const byId: Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }> = {};
+      for (const row of payload.agents ?? []) byId[row.agentId] = row;
+      setMdSummary(byId);
+    } catch { /* badges are optional */ }
+  }, []);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -290,6 +351,10 @@ export default function AgentsPageClient() {
           setChSummary(await chRes.json());
         } catch { /* badges are optional */ }
       })();
+
+      // Same treatment for the model summary: it decorates rows, so it must not
+      // hold the list, and a slow earlier response must not overwrite a newer one.
+      void refreshModelSummary();
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {
@@ -511,13 +576,13 @@ export default function AgentsPageClient() {
         {providersConfigured === false && <NoProviderBanner />}
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} />
+            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} />
           </div>
         </div>
       );
     }
 
-    // Mobile: lista
+    // Mobile: list
     return (
       <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -545,6 +610,7 @@ export default function AgentsPageClient() {
               agent={agent}
               loading={lifecycleLoading === agent.agentId}
               channelSummary={chSummary}
+              modelSummary={mdSummary}
               onClick={() => selectAgent(agent)}
               onLifecycle={() => handleLifecycle(agent)}
             />
@@ -590,6 +656,7 @@ export default function AgentsPageClient() {
                 agent={agent}
                 loading={lifecycleLoading === agent.agentId}
                 channelSummary={chSummary}
+                modelSummary={mdSummary}
                 selected={isSelected}
                 onClick={() => setSelectedId(agent.agentId)}
                 onLifecycle={() => handleLifecycle(agent)}
@@ -604,7 +671,7 @@ export default function AgentsPageClient() {
             // key: without it React reuses one DetailPanel instance across
             // selections, so in-flight state (deleting, recreating, restarting,
             // toasts, open confirms) leaks onto the next agent you click.
-            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} />
+            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} />
           )}
         </div>
       </div>
@@ -768,12 +835,18 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
 }
 
 // ─── Detail panel (shared between mobile & desktop) ───
-function DetailPanel({ agent, onDeleted, onChanged }: {
+function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
   agent: Agent;
   /** The agent is gone — the parent drops it from the list. */
   onDeleted: (agentId: string) => void;
   /** The agent changed in place (renamed, recreated) — refetch the list. */
   onChanged: () => void;
+  /**
+   * The model changed. Narrower than `onChanged` on purpose: only the card chip
+   * needs refreshing, so this avoids refetching the whole list plus the channel
+   * summary for a field the parent already knows how to reload on its own.
+   */
+  onModelSaved: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -855,6 +928,12 @@ function DetailPanel({ agent, onDeleted, onChanged }: {
 
       {/* Channels - Telegram */}
       <ChannelSection agentId={agent.agentId} agentName={agent.name} />
+
+      {/* Model - primary + fallbacks (moved here from the Gateway page) */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<BracesIcon size={12} />} label="MODEL" />
+        <ModelSection agentId={agent.agentId} onSaved={onModelSaved} />
+      </div>
 
       {/* Config - View openclaw.json */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>

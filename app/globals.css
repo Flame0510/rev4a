@@ -1296,6 +1296,14 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   background: rgba(var(--red-rgb,239,68,68),0.1);
   color: var(--red);
 }
+/* Saved, but not fully applied — e.g. a change stored while an agent sync failed. */
+.msg-warning {
+  padding: 8px 12px;
+  border-radius: 0;
+  font-size: 12px;
+  background: rgba(245,158,11,0.1);
+  color: var(--yellow);
+}
 
 /* --- Mobile Bottom Navigation --- */
 .mobile-bottom-nav {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Page, PageHeader, Button, Modal, Input, Pill } from '@/app/components/ui';
+import { Page, PageHeader, Button, Modal, Input, Pill, RemoveButton } from '@/app/components/ui';
 import { CredentialCardsSkeleton, AgentSyncRowsSkeleton } from '@/app/components/Skeleton';
 import type { CredentialProfile } from '@/lib/credentials/vault';
 import type { CredentialProviderDef } from '@/lib/credentials/providers';
@@ -499,7 +499,7 @@ export default function CredentialsPageClient() {
                             && !detectFailed
                             && !detectData.some((d) => d.error)
                             && !detectData.some((d) => d.matchedProfiles?.some((m) => m.profileId === p.id)) && (
-                            <Button type="button" variant="danger" size="sm" disabled={!!busy} onClick={() => setDeleteId(p.id)}>×</Button>
+                            <RemoveButton label={p.label ?? p.id} disabled={!!busy} onClick={() => setDeleteId(p.id)} />
                           )}
                         </div>
                       </div>

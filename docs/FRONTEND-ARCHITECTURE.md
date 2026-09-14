@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-14
 
 ## Layering
 
@@ -24,7 +24,8 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 |-----------|------|---------|
 | `Button` | `Button.tsx` | Action button, 5 variants (`primary`, `secondary`, `danger`, `ghost`, `success`), 2 sizes (`sm`, `md`), loading spinner. |
 | `Input` | `Input.tsx` | Text input with label, error state, placeholder. |
-| `Select` | `Select.tsx` | Native select with typed options, label, error state. |
+| `Select` | `Select.tsx` | Native select with typed options, label, error state. An option can be `disabled`, to display a current value that may not be chosen again. |
+| `RemoveButton` | `RemoveButton.tsx` | The `×` that removes an item from a list — one `danger` style everywhere. Whether the removal is immediate or pending goes in `title`, not in the colour. Not for dismissing dialogs — see rule 8. |
 | `Modal` | `Modal.tsx` | Overlay modal, Escape-to-close, maxWidth prop, `type="button"` on close. |
 | `Toast` | `Toast.tsx` | Lightweight toast notification with auto-dismiss (4s), `success` / `error` variants. |
 | `LoadingSpinner` | `LoadingSpinner.tsx` | Inline or fullscreen spinner. |
@@ -41,6 +42,8 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `Page` / `PageHeader` | `Page.tsx` | Full-page layout shell. |
 | `Icons` | `Icons.tsx` | SVG icons (`EyeIcon`, `EyeOffIcon`), 16/20px shared. |
 | `PasswordInput` | `PasswordInput.tsx` | Password input with inline show/hide toggle (`<button type="button">` with `aria-label`). |
+| `ModelSection` | `app/agents/ModelSection.tsx` | Primary model and fallbacks for one agent, in its detail panel. Explicit save, no restart. The model is a property of the agent, not of the gateway. Tags models the catalogue marks `deprecated`. |
+| `ModelsProvider` / `useModels` | `app/lib/models-context.tsx` | The client's single model list, from `/api/models`. Whatever changes what is offered calls `refresh()`: the Gateway page after a toggle, a key save or removal, or a sync, and the first-run wizard after saving keys. Everything else only reads, PulseChat included. |
 | `WizardPageClient` + step components | `app/wizard/PageClient.tsx` | Multi-step first-run wizard plus its frame shell, with mobile-first CSS. |
 | `useWizard` | `app/wizard/useWizard.ts` | Shared hook: wizard state, step transitions, provider save, restart. Receives server-side initial state to avoid a loading flash. |
 | Wizard icons | `app/wizard/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `CheckCircleIcon`, `DockerIcon`, `GatewayIcon`, `AgentIcon`, `TemplateIcon`, `LinkIcon`, `ConfigIcon`, `InformationIcon`. |
@@ -61,6 +64,25 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 6b. **Do not hold the lock across a slow refresh.** Release it when the mutation itself completes and refresh derived state afterwards, unawaited. Show the pending state by fading the stale values only — never the buttons, since `opacity` on an ancestor cannot be undone by a child and makes live controls read as disabled.
 6c. **An optimistic update moves every field the render derives from, together.** A row that decides its state by reading two fields against each other flips to a third, wrong state if the update touches only one of them — and holds it until the slow refresh lands. Update the whole set the derivation reads, or none of it.
 7. **New UI component** — add it to `app/components/ui/`, export from `index.ts`, document it here. If it's specific to one page, keep it page-local unless another page needs it.
+
+8. **`×` means remove, `✕` means dismiss.** They look alike and are not the same
+    action. Removing an item from a list uses `RemoveButton`; dismissing a dialog
+    is the `Modal` component's own close control. Do not build a third variant of
+    either, and do not reuse one for the other.
+
+    *Outstanding:* four dialogs predate the shared `Modal` and roll their own close
+    control — the edit dialog and the `openclaw.json` dialog in
+    `app/agents/PageClient.tsx` (both a `ghost` Button with `✕`), the drawer in
+    `app/components/SessionDrawer.tsx` (a bare `<button>`), and
+    `app/components/ModelPickerModal.tsx` (`model-picker__close`, which compounds
+    the problem by using `×`, the *remove* glyph, to dismiss, and omits
+    `type="button"`). The fix is to move them onto `Modal`, not to extract a
+    `CloseButton`: they also reimplement Escape-to-close and overlay behaviour.
+    `ModelPickerModal` has no importers at all, so deleting it is the cheaper fix
+    there.
+
+    Separately, `app/agents/PageClient.tsx` has a raw `×` delete-backup button with
+    no accessible name that should be `RemoveButton`.
 
 ## GoF pattern mapping
 
