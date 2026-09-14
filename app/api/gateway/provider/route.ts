@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { readProviderKeys, writeProviderKeys } from './keys';
-import { syncAllAgents } from '../sync';
+import { dockerUnreachableReason, syncAllAgents, type SyncOutcome } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 import { getPricing } from '@/lib/model-pricing';
 import { loadModelsConfig, toggleModelOverride, type ModelConfigEntry } from '@/lib/model-catalogue';
@@ -192,6 +192,20 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ providers });
 }
 
+/**
+ * Run the sync without letting an unexpected throw turn a committed change into a
+ * 500. `syncAllAgents` already reports Docker and per-container failures as data;
+ * this only guards the rest.
+ */
+function runSync(): SyncOutcome {
+  try {
+    return syncAllAgents();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, activeModels: 0, total: 0, synced: [], stopped: [], failed: [], configError: msg, summary: `Not applied to any agent: ${msg}.` };
+  }
+}
+
 export async function POST(request: NextRequest) {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
@@ -199,8 +213,12 @@ export async function POST(request: NextRequest) {
     const body: { provider?: string; apiKey?: string; _syncOnly?: boolean } = await request.json();
 
     if (body._syncOnly) {
-      const syncResults = syncAllAgents();
-      return NextResponse.json({ status: 'ok', sync: syncResults });
+      // Here the sync *is* the operation, so its outcome is the status.
+      const sync = runSync();
+      return NextResponse.json(
+        sync.ok ? { status: 'ok', sync } : { status: 'error', error: sync.summary, sync },
+        { status: sync.ok ? 200 : 502 },
+      );
     }
 
     const providerName = body.provider;
@@ -210,15 +228,11 @@ export async function POST(request: NextRequest) {
     const apiKeyValue = body.apiKey;
     const isRemove = !apiKeyValue || apiKeyValue.trim() === '';
     setProviderApiKey(providerName, isRemove ? null : apiKeyValue!.trim());
-    let syncResults: string[] = [];
-    try {
-      syncResults = syncAllAgents();
-    } catch (se) {
-      syncResults = [`Sync error: ${se instanceof Error ? se.message : String(se)}`];
-    }
+    // The key is saved whatever the sync does next; report the two separately.
+    const sync = runSync();
     return NextResponse.json({
       status: 'ok', provider: providerName, configured: !isRemove,
-      sync: syncResults,
+      sync,
     });
   } catch (e: unknown) {
     return NextResponse.json({ status: 'error', error: e instanceof Error ? e.message : String(e) }, { status: 500 });
@@ -238,9 +252,26 @@ export async function PUT(request: NextRequest) {
     const idx = models.findIndex((m) => m.id === modelId);
     if (idx === -1) return NextResponse.json({ status: 'error', error: `Model not found: ${modelId}` }, { status: 404 });
 
+    // Refuse up front when the sync cannot happen at all. Saving anyway would leave
+    // the checkbox on /gateway saying one thing and every agent holding another.
+    // Only a whole-fleet outage is refused this way: once Docker answers, a container
+    // that fails individually is reported in `sync`, because undoing the override
+    // would not undo the containers that did receive it. Provider key saves are not
+    // gated like this — the first-run wizard saves keys without reading the response
+    // and may run before Docker is up, so a refusal there would be silent.
+    const unreachable = dockerUnreachableReason();
+    if (unreachable) {
+      return NextResponse.json({
+        status: 'error',
+        error: `Not changed: Docker is unreachable (${unreachable}). Nothing was saved, so the Gateway still matches the agents.`,
+      }, { status: 503 });
+    }
+
     toggleModelOverride(modelId, enabled);
-    const syncResults = syncAllAgents();
-    return NextResponse.json({ status: 'ok', modelId, enabled, provider: models[idx].provider, sync: syncResults });
+    // `status` is the toggle, committed at this point. `sync` is whether the fleet
+    // got it — reported alongside, not folded into `status`.
+    const sync = runSync();
+    return NextResponse.json({ status: 'ok', modelId, enabled, provider: models[idx].provider, sync });
   } catch (e: unknown) {
     return NextResponse.json({ status: 'error', error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
