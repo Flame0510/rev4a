@@ -3,10 +3,11 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
-import { buildRev4aProviderConfig } from '@/app/api/gateway/sync';
+import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { DB_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { waitForGatewayReady } from '@/lib/agent-readiness';
 
 const BACKUP_VOLUME = 'rev4a-backups';
 
@@ -84,21 +85,6 @@ export async function DELETE(request: Request,
       { status: 500 },
     );
   }
-}
-
-function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      execSync(
-        `docker exec ${name} sh -c 'curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1 || wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1'`,
-        { timeout: 5000 },
-      );
-      return true;
-    } catch { /* not ready */ }
-    execSync('sleep 2', { timeout: 3000 });
-  }
-  return false;
 }
 
 function shellQuote(value: string): string {
@@ -247,11 +233,11 @@ export async function PATCH(
 
     execSync(cmd, { timeout: 60000, encoding: 'utf-8' });
 
-    // Wait for healthy
-    const ready = waitForContainerReady(id);
+    // Wait for startup to complete — /startupz, not /health
+    const ready = await waitForGatewayReady(id);
     if (!ready) {
       return NextResponse.json(
-        { error: 'Container started but gateway did not become healthy within 60s.' },
+        { error: 'Container started but its gateway did not finish starting within 60s.' },
         { status: 500 },
       );
     }
@@ -259,16 +245,11 @@ export async function PATCH(
     // Apply runtime config
     try {
       applyRuntimeConfig(id);
-      const providerConfig = buildRev4aProviderConfig();
-      const providerJson = JSON.stringify({ models: { providers: { rev4a: providerConfig } } });
-      execSync(
-        `docker exec -i ${id} sh -c 'openclaw config patch --stdin'`,
-        { timeout: 15000, stdio: 'pipe', input: providerJson },
-      );
-      // No gateway restart: `config patch` reports "Change will apply without
-      // restarting the gateway" for a models-only patch, and the Gateway watches
-      // openclaw.json with gateway.reload defaulting to hybrid.
-    } catch { /* non-fatal */ }
+      patchRev4aProvider(id);
+    } catch (e) {
+      // non-fatal, but a skipped patch must show up in the log
+      console.error('[agent:update] runtime config patch failed:', (e as Error).message);
+    }
 
     return NextResponse.json({
       success: true,

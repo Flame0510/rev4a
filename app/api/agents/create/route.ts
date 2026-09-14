@@ -1,37 +1,15 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { buildRev4aProviderConfig } from '../../gateway/sync';
+import { patchRev4aProvider } from '../../gateway/sync';
+import { extractProviderAndModel } from '@/app/api/provider/upstream';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
-import { loadModelsConfig } from '@/lib/model-catalogue';
+import { isModelOffered } from '@/lib/model-catalogue';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-
-/**
- * Wait for a Docker container gateway to be ready.
- * Checks that the gateway is responding on port 3000 inside the container.
- * Polls every 2s, gives up after timeoutMs.
- * Returns true if the gateway is reachable, false on timeout.
- */
-function waitForContainerReady(name: string, timeoutMs = 60000): boolean {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      execSync(
-        `docker exec ${name} sh -c 'curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1 || wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1'`,
-        { timeout: 5000 },
-      );
-      return true;
-    } catch {
-      // gateway not ready yet
-    }
-    // Sleep 2s
-    execSync('sleep 2', { timeout: 3000 });
-  }
-  return false;
-}
+import { waitForGatewayReady } from '@/lib/agent-readiness';
 
 
 
@@ -107,11 +85,17 @@ function validatePortInput(input: string): { valid: true; isBlock: boolean; star
 }
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 180; // docker run (60s) + health check (60s) + seeding (60s)
+export const maxDuration = 180; // docker run (60s) + startup wait (60s) + seeding (60s)
 
 const TEMPLATES_DIR = templatesDir(process.cwd());
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
 const DEFAULT_NETWORK = 'rev4a-network';
+
+/**
+ * Used when the request names no model. The full id: the agent cards compare the
+ * primary against catalogue ids, and the two-segment alias matches none of them.
+ */
+const DEFAULT_MODEL = 'rev4a/deepseek/deepseek-flash';
 
 function isDockerCompatibleName(name: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
@@ -191,9 +175,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Validate model (if provided) exists in models.config.json
-    if (model && !isValidModel(model)) {
+    // A request without a model used to create an agent with no primary at all —
+    // the config write below was skipped — while the event log recorded a default
+    // the agent never had. The default is now applied for real, and validated like
+    // any other model, so it cannot produce an agent the proxy refuses.
+    const effectiveModel: string = typeof model === 'string' && model ? model : DEFAULT_MODEL;
+    if (!isValidModel(effectiveModel)) {
       return NextResponse.json(
-        { success: false, error: `Model '${model}' not found in models.config.json` },
+        { success: false, error: `Model '${effectiveModel}' is not offered by this deployment: it is not in the catalogue, is disabled, or its provider has no API key.` },
         { status: 400 },
       );
     }
@@ -247,6 +236,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 400 },
       );
     }
+
+    // `rev4a serve` creates this network at start-up, but skips it when Docker was
+    // not ready yet; without it `docker run --network` fails. Idempotent.
+    ensureNetworkExists(network);
 
     // Every agent gets a host port range for direct access. The URL is composed
     // by the browser from `port` + `controlToken` in the response — only the
@@ -310,7 +303,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           port: portStart,
           portEnd,
           isBlock,
-          model: model || 'rev4a/deepseek-v4-flash',
+          model: effectiveModel,
           fallbacks,
           containerId,
           containerName,
@@ -321,14 +314,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // DB logging is optional, ignore failures
     }
 
-    // Wait for container to be ready (HTTP health check, up to 60s).
-    // If it doesn't come up, remove the container and return an error —
-    // a zombie agent with no config is worse than an explicit failure.
-    const ready = waitForContainerReady(containerName);
+    // Wait for startup to complete (/startupz, up to 60s). Not /health, which
+    // answers as soon as the HTTP server listens. If it does not come up, remove
+    // the container: a zombie agent with no config is worse than an explicit failure.
+    const ready = await waitForGatewayReady(containerName);
     if (!ready) {
       try { execSync(`docker rm -f ${containerName}`, { timeout: 10000 }); } catch { /* best-effort */ }
       return NextResponse.json(
-        { success: false, error: `Container started but gateway did not become healthy within 60s. Container removed — try again.` },
+        { success: false, error: `Container started but its gateway did not finish starting within 60s. Container removed — try again.` },
         { status: 500 },
       );
     }
@@ -388,11 +381,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       config.gateway = gatewaySection;
 
       // Model reference (primary + fallbacks)
-      if (model) {
-        const modelRef = model.startsWith('rev4a/') ? model : `rev4a/${model}`;
-        const fallbackRefs = (fallbacks || []).map((fb: string) =>
-          fb.startsWith('rev4a/') ? fb : `rev4a/${fb}`,
-        );
+      {
+        // Always the canonical `rev4a/<provider>/<model>`: the Agents chips and the
+        // Model panel look the primary up by catalogue id, so the alias form
+        // (`rev4a/deepseek-flash`) or a bare name would show as not in the catalogue.
+        const modelRef = toRev4aRef(effectiveModel);
+        const fallbackRefs = (fallbacks || []).map((fb: string) => toRev4aRef(fb));
         const agents = (config.agents || {}) as Record<string, unknown>;
         const defaults = (agents.defaults || {}) as Record<string, unknown>;
         defaults.model = {
@@ -434,19 +428,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       applyRuntimeConfig(containerName);
 
-      // Also guarantee models.providers.rev4a (host-dependent, not in base image)
-      const providerConfig = buildRev4aProviderConfig();
-      const providerJson = JSON.stringify({ models: { providers: { rev4a: providerConfig } } });
-      execSync(
-        `docker exec -i ${containerName} sh -c 'openclaw config patch --stdin'`,
-        { timeout: 15000, stdio: 'pipe', input: providerJson },
-      );
-
-      // No gateway restart: `config patch` reports "Change will apply without
-      // restarting the gateway" for a models-only patch, and the Gateway watches
-      // openclaw.json with gateway.reload defaulting to hybrid. The earlier
-      // restart in this route stays — that one follows a full-file rewrite that
-      // includes gateway.*, which is the one section that genuinely needs it.
+      // Also guarantee models.providers.rev4a (host-dependent, not in base image).
+      // This patch needs no restart; the earlier one follows a full-file rewrite
+      // that includes gateway.*, the one section that genuinely needs it.
+      patchRev4aProvider(containerName);
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
       console.error('[agent:create] runtime config patch failed:', (e as Error).message || String(e));
@@ -474,6 +459,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 }
 
+/** `rev4a/<provider>/<model>`, whatever form the request used. */
+function toRev4aRef(modelId: string): string {
+  const { provider, model } = extractProviderAndModel({ model: modelId });
+  return `rev4a/${provider}/${model}`;
+}
+
 function getAvailableTemplates(): string[] {
   try {
     return fs.readdirSync(TEMPLATES_DIR).filter((f) => {
@@ -485,12 +476,23 @@ function getAvailableTemplates(): string[] {
   }
 }
 
+/**
+ * The model must be one this deployment offers, in any form the proxy accepts.
+ * Checking the raw catalogue let the API create an agent on a disabled model, or
+ * one whose provider has no key, which the proxy then refuses on its first turn.
+ */
 function isValidModel(modelId: string): boolean {
+  const { provider, model } = extractProviderAndModel({ model: modelId });
+  return isModelOffered(provider, model);
+}
+
+function ensureNetworkExists(name: string): void {
   try {
-    const config = loadModelsConfig();
-    return config.some((m) => m.id === modelId);
+    execFileSync('docker', ['network', 'inspect', name], { stdio: 'ignore', timeout: 5000 });
   } catch {
-    return true; // skip on errors
+    try {
+      execFileSync('docker', ['network', 'create', name], { stdio: 'ignore', timeout: 10000 });
+    } catch { /* let docker run report it */ }
   }
 }
 
