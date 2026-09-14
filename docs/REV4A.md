@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-09-05
+> **Last updated:** 2026-09-14
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -120,7 +120,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/plugins` | Plugin manager |
 | `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. |
 | `/tools` | Tool configuration |
-| `/gateway` | LLM provider sync + agent model configuration — see [GATEWAY.md](dev/GATEWAY.md) |
+| `/gateway` | LLM provider keys, model catalogue and sync — see [GATEWAY.md](dev/GATEWAY.md) |
 | `/config` | Environment management and server restart |
 | `/login` | Authentication page |
 
@@ -187,6 +187,18 @@ sudo systemctl status rev4a.service
 # Logs (follow)
 sudo journalctl -u rev4a -f
 ```
+
+### Start-up and Docker
+
+`rev4a serve` waits for the Docker daemon before its Docker-dependent steps, up to
+`REV4A_DOCKER_WAIT_SECONDS` (default 90, capped at 600; `0` checks once without
+waiting; a negative or non-numeric value means 90). It asks the daemon itself with
+`docker info`, so the wait works the same on any Docker install. The variable is
+read from the process environment, not from the `.env` file.
+
+If the daemon never answers, `serve` starts anyway, skips the network and image
+checks, and says so in the log. The startup sync then reaches no agent, and logs
+that too; run Sync All Agents once Docker is up.
 
 ### Systemd environment override
 
@@ -311,14 +323,15 @@ Available templates:
 **Post-creation pipeline:**
 1. The container boots with the **openclaw-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
-3. The route waits for the gateway to be fully ready (health check poll, up to 60 s).
+3. The route waits for the gateway to finish starting with `waitForGatewayReady()`, up
+   to 60 s. On OpenClaw 9.x it waits for `/startupz` to report `started`. The
+   2026.7.1-2 image has no `/startupz`, so there it waits for `/health`, which only
+   shows the server is listening.
 4. Once ready, the route writes:
    - `gateway.controlUi.allowedOrigins` — Rev4a dashboard URL + Traefik hostname (required for browser Control UI access)
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
-5. `syncAgent(name)` writes `models.providers.rev4a` into the container.
+5. The route builds `models.providers.rev4a` with `buildRev4aProviderConfig()` and writes it with `openclaw config patch --stdin`.
 6. The agent's control UI is immediately accessible at `https://<name>.<your-domain>.com#token=<gateway-token>`.
-
-**Key difference from the old pipeline:** the entrypoint no longer generates `openclaw.json`. The bootstrap config (including `controlUi.allowedOrigins`) is written by the create route after the gateway has already started. This eliminates the race condition where the entrypoint would overwrite synced provider config on boot.
 
 ---
 
@@ -385,23 +398,33 @@ repo. The copy is skipped when the workspace is already populated (see
 
 ## Gateway Page (`/gateway`)
 
-Two panels:
+One job: provider configuration. API keys, which catalogue models this deployment
+offers, and pushing that catalogue to every agent.
 
-### Provider Sync
-- Reads active models from `models.config.json` (file-based model catalogue)
-- Scans providers with keys in `data/provider-keys.json`
-- `PUT /api/gateway/provider` runs `syncAllAgents()` which writes `models.providers.rev4a` to every agent container
-- **Does NOT touch** `agents.defaults.model` or `agents.list[].model` — model references are managed per-container from the Agents Tab
+- Reads the model catalogue from `models.config.json`, merged with user toggles in
+  `<data dir>/model-overrides.json`
+- Scans providers with keys in `<data dir>/provider-keys.json`
+- `PUT /api/gateway/provider` runs `syncAllAgents()`, which writes
+  `models.providers.rev4a` into every agent container
+- **Does NOT touch** `agents.defaults.model` or `agents.list[].model` — those are
+  per-agent settings
 
-### Agent Model Config
-- Select a container and set its primary model
-- `PUT /api/gateway/agent` writes the model ref (`primary`, `fallbacks`) directly into the container's `openclaw.json`
-- Does NOT restart the gateway — writes are live via file write
+### Per-agent model, elsewhere
+
+Choosing which model one agent runs is not on this page. It lives in the Model
+section of that agent's detail panel on the Agents page
+(`app/agents/ModelSection.tsx`), which calls `PUT /api/gateway/agent` to write the
+model ref into that container's `openclaw.json`. No gateway restart: OpenClaw
+watches the file and hot-applies the change.
+
+The model is a property of the agent, not of the gateway. See
+[GATEWAY.md](dev/GATEWAY.md) for the write semantics: omitting `fallbacks` keeps the
+agent's current list, `[]` clears it.
 
 ### Model Catalogue (`models.config.json`)
 File-based, tracked in git. Each entry:
 ```json
-{ "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "provider": "deepseek", "enabled": true }
+{ "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "provider": "deepseek", "enabled": true }
 ```
 Models with `enabled: false` are ignored.
 Only models whose provider has a key in `data/provider-keys.json` are synced.

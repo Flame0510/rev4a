@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-09-05
+> **Last updated:** 2026-09-14
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -146,76 +146,56 @@ The Gateway API reads the model catalogue from [`models.config.json`](../../mode
 (tracked in the repository). Full documentation at [GATEWAY.md](GATEWAY.md) and
 [PROVIDERS.md](PROVIDERS.md).
 
-### `GET /api/gateway`
-Returns live gateway status from all agent containers.
-
-**Auth:** any auth method
-
-**Response:**
-```json
-{
-  "timestamp": "2026-08-27T22:00:00.000Z",
-  "gateway": "Rev4a Model Gateway",
-  "status": "online",
-  "models": { "total": 0, "available": 0, "byProvider": [], "list": [] },
-  "agents": {
-    "total": 1,
-    "list": [
-      {
-        "agentId": "atlas",
-        "containerName": "openclaw-atlas",
-        "state": "running",
-        "defaultModel": "rev4a/deepseek/deepseek-v4-flash",
-        "fallbacks": [],
-        "aliases": {},
-        "providers": []
-      }
-    ]
-  },
-  "aliases": {},
-  "coreModel": { "defaultModel": "rev4a/deepseek/deepseek-v4-flash", "fallbacks": [] },
-  "apiKeys": { "configured": [], "all": [] }
-}
-```
-
-**`models`, the top-level `aliases`, and `apiKeys` are always empty here.** They
-exist only to keep the response shape stable for existing consumers. The model
-catalogue is served by `GET /api/gateway/provider`, which reads the bundled
-config plus user overrides from disk; provider credential state comes from the
-same route (`configured` per provider, out of `provider-keys.json`).
-
-Per-agent values are read from each container's `openclaw.json`, one
-`docker exec … cat` per agent, run concurrently. An agent whose config cannot be
-read is still listed, with an `error` field and empty values, rather than
-failing the whole response.
-
 ### `PUT /api/gateway/provider`
 Enable or disable a single model in the catalogue, then sync every agent.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both
+**Body:** `{ "modelId": "deepseek/deepseek-flash", "enabled": true }` — both
 required. Missing either returns `400`; an unknown `modelId` returns `404`.
+If Docker cannot be reached the toggle is refused with `503` and nothing is saved,
+so a whole-fleet outage never leaves the checkboxes out of step with the agents.
 
-**Response:**
+**Response:** `status` is the toggle, which is saved before the sync runs. `sync`
+reports separately whether the agents received it.
 ```json
 {
   "status": "ok",
-  "modelId": "deepseek/deepseek-chat",
+  "modelId": "deepseek/deepseek-flash",
   "enabled": true,
   "provider": "deepseek",
-  "sync": ["Active models: 2 across 1 agent(s)"]
+  "sync": {
+    "ok": true,
+    "activeModels": 3,
+    "total": 2,
+    "synced": ["agent_2a3c3a07", "agent_9253eee3"],
+    "stopped": [],
+    "failed": [],
+    "summary": "Synced 2 of 2 agent(s)."
+  }
 }
 ```
+
+`sync.ok` is true only when every agent container received the catalogue; zero
+agents counts as ok. "Every" includes agents that are not running (stopped, paused,
+created): they are written through `docker cp`, listed in `stopped` as well as
+`synced`, and apply the change when started or resumed. A container whose config
+cannot be read is listed in `failed` and left untouched — the sync never writes a
+config it did not read. When Docker cannot be reached, `total` is `0`, `dockerError`
+carries the cause and `ok` is false. For this toggle that case is refused up front
+with `503`, so it appears here only if Docker drops between the check and the sync;
+on a provider key save (`POST`) it is reported, not refused. `configError` is set,
+and nothing is attempted, when the gateway key is missing or `models.config.json`
+could not be read.
 
 **Side effects:**
 - Writes `models.providers.rev4a` to each agent container's `openclaw.json`
 - Cleans up stale `models.json` and `auth-profiles.json` inside containers
-- **Does NOT touch `agents.defaults.model` or `agents.list[].model`** — model references are managed per-container via the Agents Tab (`PUT /api/gateway/agent`)
+- **Does NOT touch `agents.defaults.model` or `agents.list[].model`** — model references are managed per-container from the agent detail panel (`PUT /api/gateway/agent`)
 - Does NOT restart the gateway (config is written live to the file)
 
 ### `PUT /api/gateway/agent`
-Update model config for a single agent container.
+Update the primary model and fallbacks of a single agent container.
 
 **Auth:** any auth method
 
@@ -223,28 +203,38 @@ Update model config for a single agent container.
 ```json
 {
   "containerName": "openclaw-atlas",
-  "model": "deepseek/deepseek-v4-flash",
-  "fallbacks": []
+  "model": "deepseek/deepseek-flash",
+  "fallbacks": ["deepseek/deepseek-v4-pro"]
 }
 ```
-If `fallbacks` is omitted or empty, no fallback models are set.
+`fallbacks` omitted and `fallbacks: []` are different requests. Omitted leaves the
+container's existing fallbacks untouched; `[]` clears them.
 
-**Response:**
+`containerName` is used verbatim as the `docker exec` target, not resolved from the
+`AGENT_ID` label. Every container's name currently equals its label, so an agent id
+works.
+
+**Response:** reports what was written, with the `rev4a/` prefix applied.
 ```json
 {
   "status": "ok",
   "agent": "openclaw-atlas",
   "model": {
-    "primary": "rev4a/deepseek/deepseek-v4-flash"
+    "primary": "rev4a/deepseek/deepseek-flash",
+    "fallbacks": ["rev4a/deepseek/deepseek-v4-pro"]
   },
   "verify": { "ok": true, "bytes": 2058 }
 }
 ```
 
 **Behaviour:**
-- Writes `agents.defaults.model.primary` and `agents.list[0].model.primary` with format `rev4a/<provider>/<model>`
-- No restart — writes are live via `docker exec node -e`
-- Does NOT set fallbacks unless explicitly provided
+- Writes `agents.defaults.model`, and the entry in `agents.list` whose `id` is
+  `main` (skipped if there is none), both as `{ primary, fallbacks }`. The primary is
+  removed from its own fallback list.
+- Rewrites the whole `openclaw.json` with `docker exec … cat >`. No gateway restart:
+  OpenClaw hot-applies the change.
+- Does not check the model against the catalogue. The proxy does that when the model
+  is used, so a model saved here while disabled is refused at request time.
 
 ### `GET /api/gateway/provider`
 Returns current provider configuration state.
@@ -267,7 +257,7 @@ Returns current provider configuration state.
       "baseUrl": "https://api.deepseek.com",
       "docsUrl": "https://platform.deepseek.com/api_keys",
       "models": [
-        { "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "enabled": true },
+        { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "enabled": true },
         { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "enabled": true }
       ]
     }
@@ -277,7 +267,8 @@ Returns current provider configuration state.
 
 ### `GET /api/provider/v1/models`
 
-Rev4a Provider Gateway — returns available models filtered by auth token.
+Rev4a Provider Gateway — returns the models this deployment offers (enabled after
+overrides, provider has a key). A missing or wrong token gets an empty list, not a 401.
 
 **Auth:** Bearer token (must match `rev4a` key in `data/provider-keys.json`)
 
@@ -287,7 +278,7 @@ Rev4a Provider Gateway — returns available models filtered by auth token.
   "object": "list",
   "total": 9,
   "data": [
-    { "id": "deepseek/deepseek-v4-flash", "object": "model", "created": 1700000000, "owned_by": "deepseek", "permission": [], "root": "deepseek/deepseek-v4-flash" }
+    { "id": "deepseek/deepseek-flash", "object": "model", "created": 1700000000, "owned_by": "deepseek", "permission": [], "root": "deepseek/deepseek-flash" }
   ]
 }
 ```
@@ -299,6 +290,10 @@ Rev4a Provider Gateway — returns available models filtered by auth token.
 
 ### `POST /api/provider/v1/chat/completions`
 
+A model the deployment does not offer is refused with `400` before anything reaches
+upstream. Routing fields that would let the upstream choose another model — `models`,
+`route`, `preset` — are removed from the body before forwarding.
+
 Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 
 **Auth:** Bearer token (must match `rev4a` key in `data/provider-keys.json`)
@@ -306,7 +301,7 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 **Body:**
 ```json
 {
-  "model": "rev4a/deepseek-v4-flash",
+  "model": "rev4a/deepseek-flash",
   "messages": [{"role": "user", "content": "Hello"}]
 }
 ```
@@ -319,10 +314,34 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 ---
 
 ### `GET /api/models`
-Models eligible to be used: the catalogue filtered down to those whose provider
-has a key configured.
+Models eligible to be used: the catalogue filtered down to models that are enabled
+(after overrides) and whose provider has a key configured, grouped by provider. Feeds the model pickers in the agent's
+Model panel.
 
 **Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+[
+  {
+    "provider": "DeepSeek",
+    "emoji": "🧠",
+    "models": [
+      {
+        "id": "deepseek/deepseek-flash",
+        "label": "DeepSeek Flash (V4.1)",
+        "input": 0.3,
+        "output": 1.2,
+        "deprecated": false
+      }
+    ]
+  }
+]
+```
+
+`input` and `output` are USD per 1M tokens, `null` when unpriced. `deprecated`
+marks a name upstream has retired; it stays selectable and the pickers tag it.
+See [GATEWAY.md](GATEWAY.md) for the deprecation lifecycle.
 
 ### `GET /api/gateway/provider/balance`
 Remaining credit for one provider.
@@ -667,6 +686,7 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "controlPort": "3033"
   }
 ]
+```
 
 **Notes:**
 - The URL is always `http://<host-ip>:<port>#token=...` (every agent gets a host port mapping)
@@ -675,6 +695,77 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 - Template is inferred from the container image name + agent ID directory match in `agent-templates/`
 
 ---
+
+### `GET /api/agents/models-summary`
+One row per agent container, running or not: the model it runs and whether that
+model is still in good standing. Feeds the model chip on the agent cards. Running
+agents are read with `docker exec`, others with `docker cp`. If Docker cannot be
+reached the route answers `503` with an `error`, not an empty list.
+
+**Auth:** any auth method
+
+**Response:**
+```json
+{
+  "agents": [
+    {
+      "agentId": "atlas",
+      "containerName": "openclaw-atlas",
+      "primary": "rev4a/deepseek/deepseek-flash",
+      "fallbackCount": 0,
+      "firstFallback": null,
+      "health": "ok"
+    }
+  ]
+}
+```
+
+`health`, ordered by the remedy each needs:
+
+| value | meaning | remedy |
+|---|---|---|
+| `missing` | the primary is not in the catalogue at all | pick another model |
+| `disabled` | in the catalogue but not offered — unchecked, or its provider has no key; the proxy refuses it | pick another model |
+| `out-of-sync` | offered by the gateway, absent from this container's synced copy | Sync All Agents |
+| `deprecated` | works, on a name upstream has retired | switch when convenient |
+| `ok` | usable | — |
+| `unset` | no primary configured | — |
+| `unknown` | the container did not answer | — |
+
+### `GET /api/agents/[id]/model`
+The model configuration of one agent, read from that container alone rather than
+by walking the fleet. Writes still go to `PUT /api/gateway/agent`.
+
+**Auth:** any auth method
+
+**Response:**
+```json
+{
+  "agentId": "atlas",
+  "reachable": true,
+  "primary": "rev4a/deepseek/deepseek-flash",
+  "fallbacks": [],
+  "resolvable": true,
+  "catalogueSize": 41,
+  "primaryStatus": "offered"
+}
+```
+
+`resolvable` is tri-state. `false` means the primary is absent from the catalogue
+synced into that container, usually because the model was disabled on the Gateway
+page while this agent still pointed at it. `true` means it is present. `null` means
+the question does not apply: either the container did not answer, or no primary is
+set.
+
+When `reachable` is `false` the container did not answer, `primary` and `fallbacks`
+come back empty rather than read, and **`catalogueSize` is omitted entirely** — it
+is present only on the reachable branch.
+
+`primaryStatus`, also reachable branch only, says why the primary would fail
+regardless of this container: `offered`, `disabled` (unchecked, or its provider has
+no key) or `missing` (no longer in the catalogue). `null` when no primary is set.
+`resolvable` answers a different question — whether *this container's* synced copy
+has it — so `offered` with `resolvable: false` means the container is out of sync.
 
 ### `POST /api/agents/create`
 Create a new agent container from a template.
@@ -687,7 +778,7 @@ Create a new agent container from a template.
   "name": "my-agent",
   "template": "prometheus",
   "portRange": "3700-3709",
-  "model": "deepseek/deepseek-v4-flash",
+  "model": "deepseek/deepseek-flash",
   "fallbacks": []
 }
 ```
@@ -697,7 +788,7 @@ Create a new agent container from a template.
 | `name` | yes | Container name, also becomes `AGENT_ID` and subdomain |
 | `template` | yes | Template name (directory in `agent-templates/`) |
 | `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block |
-| `model` | no | Primary model ID from `models.config.json` |
+| `model` | no | Primary model id. Must be offered by this deployment (in the catalogue, enabled, provider has a key), in any form the proxy accepts; otherwise `400`. Defaults to `rev4a/deepseek/deepseek-flash`, validated the same way |
 | `fallbacks` | no | Array of fallback model IDs |
 
 **Every agent is created with a host port mapping:**
@@ -724,16 +815,16 @@ Create a new agent container from a template.
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
-2. The route waits for the gateway to be fully up (health check poll, up to 60 s)
-3. Once ready, writes `gateway.controlUi.allowedOrigins` + `agents.defaults.model.primary` + fallbacks
-4. Writes `models.providers.rev4a` + extraDirs + update config → single `openclaw.json` write
+2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 60 s)
+3. Once ready, rewrites `openclaw.json` in one write — `gateway.controlUi`,
+   `agents.defaults.model` (primary and fallbacks, always as `rev4a/<provider>/<model>`)
+   and `update` — then runs `openclaw gateway restart`
+4. Applies the runtime config (hooks, shared skills) and writes `models.providers.rev4a`
+   with `openclaw config patch --stdin`. No restart for this step: `gateway.reload`
+   defaults to `hybrid`, which hot-applies changes under `agents`, `models` and
+   `routing`. If the catalogue cannot be read the provider patch is skipped and logged
 
-No gateway restart is issued. OpenClaw's `gateway.reload` defaults to `hybrid`:
-it hot-applies changes under `agents`, `models` and `routing`, and restarts only
-for `gateway.*`, `discovery` and `plugins.load`. Restarting here repeated work
-the Gateway already does.
-
-> **Note:** The entrypoint no longer generates `openclaw.json`. All post-creation config is written by the create route after gateway readiness, eliminating the race condition where the entrypoint would overwrite synced provider config.
+Failures in steps 3 and 4 do not fail the request.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are copied into the container workspace via `docker cp`
@@ -1069,7 +1160,7 @@ Useful for inspecting the container config without SSH or terminal.
   "name": "my-agent",
   "config": {
     "gateway": { "controlUi": { "allowedOrigins": ["..."], "dangerouslyDisableDeviceAuth": true } },
-    "agents": { "defaults": { "model": { "primary": "rev4a/deepseek/deepseek-v4-flash", "fallbacks": [] } } },
+    "agents": { "defaults": { "model": { "primary": "rev4a/deepseek/deepseek-flash", "fallbacks": [] } } },
     "models": { "providers": { "rev4a": { "baseUrl": "...", "apiKey": "***", "models": [...] } } }
   }
 }
@@ -1401,7 +1492,7 @@ Run history for a specific cron job. Queries the container's gateway via `opencl
       "error": "Channel is required ...",
       "runAtMs": 1784820025581,
       "durationMs": 11046,
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "deepseek/deepseek-flash",
       "usage": { "input_tokens": 15872, "output_tokens": 597 }
     }
   ]
@@ -1739,7 +1830,7 @@ Chat with the built-in AI assistant (PULSE).
 {
   "message": "What can I do on the Agents page?",
   "page": "/agents",
-  "model": "deepseek/deepseek-v4-flash",
+  "model": "deepseek/deepseek-flash",
   "history": []
 }
 ```
@@ -1748,7 +1839,7 @@ Chat with the built-in AI assistant (PULSE).
 |-----------|-------------------------|----------|--------------------------------------------------|
 | `message` | string                  | yes      | The user's question                              |
 | `page`    | string                  | no       | Current page path (used for contextual prompts)  |
-| `model`   | string                  | no       | AI model to use (e.g. `deepseek/deepseek-v4-flash`) |
+| `model`   | string                  | no       | AI model to use (e.g. `deepseek/deepseek-flash`) |
 | `history` | `{role, content}[]`     | no       | Recent conversation history (up to 10 messages)  |
 
 **Response:** `text/event-stream` (Server-Sent Events)

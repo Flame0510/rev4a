@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-14
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -10,16 +10,16 @@ Terms you'll encounter while using the Rev4a dashboard.
 An AI assistant configured with a specific role, AI model, and workspace. Each agent has a name (e.g. "Argus") and can run multiple sessions over time. Agents are deployed as Docker containers with persistent data volumes.
 
 ## Agent Template
-A pre-built configuration used when creating a new agent. Templates include default files (AGENTS.md, SOUL.md, MEMORY.md, IDENTITY.md, TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md) and settings. Located in `agent-templates/`. Available templates: **Atlas** (general dev), **Argus** (security/audit), **Prometheus** (client-facing), and **Custom** (blank slate — bootstraps identity interactively on first run).
+A pre-built configuration used when creating a new agent. Each template ships its own set of files. Atlas has AGENTS.md, SOUL.md, IDENTITY.md, TOOLS.md, MEMORY.md and HEARTBEAT.md; Argus and Prometheus have the same minus HEARTBEAT.md; Custom has only AGENTS.md, MEMORY.md and BOOTSTRAP.md. Located in `agent-templates/`. Available templates: **Atlas** (general dev), **Argus** (security/audit), **Prometheus** (client-facing), and **Custom** (blank slate — bootstraps identity interactively on first run).
 
 ## Badge
-A small inline label component used for status indicators and channel chips. Supports success, danger, warning, and neutral tones. Used for TG/WA chips on the agent list and pairing status in the Channel Manager.
+A small inline label component used for status indicators and channel chips. Six tones: neutral, accent, success, warning, danger, info. Used for the Telegram chip on the agent list and pairing status in the Channel Manager. There is no WhatsApp support anywhere in Rev4a.
 
 ## Backup (Agent)
 A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `rev4a-backups` Docker volume. Used for restore operations and auto-created before each recreate.
 
 ## Container
-A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones (databases, reverse proxies, etc.), with CPU/memory metrics and a web terminal.
+A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones such as databases and reverse proxies, with a web terminal link. It shows no CPU or memory metrics.
 
 ## Channel
 A communication channel (Telegram) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect Telegram and manage pairings (approve/reject senders).
@@ -31,7 +31,7 @@ Modal in the agent detail panel for configuring Telegram channels. Connect with 
 The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Rev4a shows cost by today, 7 days, 30 days, all-time, and by model.
 
 ## Cost Override
-A manual correction for a month's total cost. If the automatic calculation doesn't match the actual invoice, you can set an override value for that month with an optional note.
+A manual correction for a month's total cost, stored through `/api/cost-override`. There is currently no screen for it: no page in the dashboard reads or writes an override, so it can only be set by calling the API directly.
 
 ## Credential
 A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. A credential is installed into a container only when the user syncs it, and removed on de-sync; any credential can be synced to any container. Every reveal is written to an audit table that no route or view reads.
@@ -40,25 +40,25 @@ A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase 
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.
 
 ## Dashboard
-The main page of Rev4a (`/`). Shows live sessions, cost summary, system health metrics (CPU, RAM, disk, load average), and a real-time event feed. A setup banner appears if the first-run wizard is incomplete.
+The main page of Rev4a (`/`). Shows live sessions, cost summary, health cards for Rev4a's runtime, cron and lineage, and a real-time event feed. It shows no CPU, RAM, disk or load average, and there is no setup banner: an incomplete wizard redirects to `/wizard`.
 
 ## Event
-A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard and are pushed via SSE every ~3 seconds.
+A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
 
 ## Gateway
-The routing layer that connects agents to AI providers. The Gateway page has two panels: Provider Sync (push the model catalogue to all agents) and Agent Model Config (set each agent's primary model and fallbacks).
+The routing layer that connects agents to AI providers. The Gateway page manages provider API keys and the model catalogue, and pushes that catalogue to every agent. Which model a given agent runs is set elsewhere, in the Model section of that agent's detail panel.
 
 ## Lineage
-The parent-child relationship tree between sessions. When an agent spawns another agent to do work, that relationship is shown as an interactive graph on the Lineage page. Configurable time periods: 1d, 7d, 30d.
+The parent-child relationship tree between sessions. When an agent spawns another agent to do work, that relationship is shown as an interactive graph on the Lineage page. Configurable time periods: 1d, 3d, 7d, 15d, 30d and all.
 
 ## Memory
-Files that store an agent's persistent knowledge and personality: MEMORY.md, SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md, HEARTBEAT.md. Editing them changes how an agent behaves. The Memory page shows all files with size and budget tracking.
+Files that store an agent's persistent knowledge and personality. The tracked set is USER.md, MEMORY.md, AGENTS.md, SOUL.md and HEARTBEAT.md. Editing them changes how an agent behaves. The Memory page shows these with size and budget tracking. A template may also ship IDENTITY.md or TOOLS.md, which are not tracked.
 
 ## Model
-The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 4, DeepSeek V4 Flash. Models are linked to specific providers. The Gateway page manages which models are enabled and which agent uses which model.
+The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 5, DeepSeek Flash. Models are linked to specific providers. The Gateway page controls which models are enabled for the whole deployment; the agent detail panel sets which one a given agent runs, plus its fallbacks. A model whose name the provider has retired is tagged `deprecated` on the agent card and in that panel. The Gateway page does not show it.
 
 ## First-run wizard
-First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar or mobile navbar.
+First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar. The mobile bottom navigation has five entries — Home, Agents, Workspace, Gateway, Containers — and the wizard is not one of them.
 
 ## Plugin
 An extension that adds new tools and capabilities to agents. Plugins are installed in the workspace and appear in the Plugins page with enable/disable toggles.
@@ -119,7 +119,9 @@ Optional reverse proxy for routing web traffic to agent containers. If configure
 Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads), sync to and from containers, and live detection of which credentials are actually installed. Secrets are stored unencrypted.
 
 ## Workspace
-The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the VPS host and all agent containers.
+The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the host workspace, which appears as `Local`, and all agent containers.
 
 ## System Health
-Hardware metrics shown on the Dashboard: CPU usage (%), RAM used/total (MB), disk used/total (GB), system load average (1m). The System Health API (`/api/system-health`) also generates recommendations (e.g. "Consider archiving old sessions to reduce disk usage"). Status can be `ok`, `warn`, or `error`.
+A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, feed ingestion freshness, errors in the last 24 hours, today's usage-based cost, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
+
+It reports no CPU, RAM, disk or load average. Those metrics are collected by the daemon and stored for 30 days, and are served by `/api/metrics`, but no page displays them.

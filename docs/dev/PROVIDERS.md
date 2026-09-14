@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-14
 
 This document covers the Rev4a Provider Gateway (proxy), the provider key
 endpoints, and how agent containers authenticate against the Rev4a proxy.
@@ -19,7 +19,7 @@ Agent Container          Rev4a Gateway              Upstream API
      │                         │                         │
      │ Authorization: Bearer <rev4a-key>               │
      │ POST /api/provider/v1/chat/completions            │
-     │ model: rev4a/deepseek-deepseek-v4-flash         │
+     │ model: rev4a/deepseek/deepseek-flash         │
      │────────────────────────>│                         │
      │                         │ POST https://api.deepseek.com/v1/chat/completions
      │                         │ Authorization: Bearer <deepseek-key>
@@ -67,7 +67,7 @@ not by auto-discovery.
   "total": 9,
   "data": [
     {
-      "id": "deepseek/deepseek-v4-flash",
+      "id": "deepseek/deepseek-flash",
       "object": "model",
       "created": 1700000000,
       "owned_by": "deepseek"
@@ -95,11 +95,15 @@ name is parsed to extract the provider and model ID.
 
 | Model alias | Upstream provider | Upstream model |
 |---|---|---|
-| `rev4a/deepseek-v4-flash` | `deepseek` | `deepseek-v4-flash` |
+| `rev4a/deepseek-flash` | `deepseek` | `deepseek-flash` |
 | `rev4a/deepseek-v4-pro` | `deepseek` | `deepseek-v4-pro` |
-| `rev4a/kimi-k3` | `kimi` | `kimi-k3` |
-| `rev4a/glm-5.2` | `glm` | `glm-5.2` |
-| `rev4a/qwen3.7-plus` | `qwen` | `qwen3.7-plus` |
+
+This map is a short list of two-segment shortcuts, not the general mechanism.
+Every other model resolves through step 3 below, from its three-segment id:
+`rev4a/kimi/kimi-k3` resolves to provider `kimi`, model `kimi-k3`. A two-segment
+`rev4a/kimi-k3` is **not** an alias and does not resolve — `rev4a` is not a
+provider key, so it falls through to the `deepseek` default with an unusable
+model string.
 
 **Model parsing fallback:**
 1. Check `request.provider` field
@@ -114,7 +118,7 @@ The upstream module (`app/api/provider/upstream.ts`) handles this via a per-prov
 **Request body** (OpenAI-compatible):
 ```json
 {
-  "model": "rev4a/deepseek-v4-flash",
+  "model": "rev4a/deepseek-flash",
   "messages": [{"role": "user", "content": "Hello"}]
 }
 ```
@@ -145,8 +149,13 @@ Store a provider API key, or re-run the sync without changing keys.
 **Body:** `{ "provider": "deepseek", "apiKey": "sk-..." }`, or `{ "_syncOnly": true }`
 to push the current configuration to every agent container without touching any key.
 
-**Response:** `{ "status": "ok", ... }`. Unknown provider names are rejected with
-`400` and the list of known providers.
+**Response:** `{ "status": "ok", "provider": "...", "configured": true, "sync": { ... } }`.
+The key is saved before the sync runs, so `status` reports the save and `sync`
+reports whether every agent received it; its shape is documented under
+`PUT /api/gateway/provider` in [API-REFERENCE.md](API-REFERENCE.md). With
+`_syncOnly` the sync *is* the operation: a failed or partial sync returns `502` with
+`status: "error"` and `error` set to the summary. Unknown provider names are
+rejected with `400` and the list of known providers.
 
 **Auth:** browser cookie or bearer token
 
@@ -154,8 +163,12 @@ to push the current configuration to every agent container without touching any 
 
 Enable or disable a single model in the catalogue.
 
-**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both fields
+**Body:** `{ "modelId": "deepseek/deepseek-flash", "enabled": true }` — both fields
 required. Unknown `modelId` returns `404`.
+
+**Response:** as for the key save — `status` for the toggle, `sync` for whether
+the agents received it. If Docker cannot be reached the toggle is refused with `503` and
+nothing is saved; a key save in the same situation is saved and the failure reported.
 
 **Auth:** browser cookie or bearer token
 
@@ -177,7 +190,7 @@ Inside each agent container, the `openclaw.json` file has this structure for the
         "api": "openai-completions",
         "apiKey": "<gateway-token>",
         "models": [
-          { "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash" },
+          { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash" },
           { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
         ]
       }
@@ -186,7 +199,7 @@ Inside each agent container, the `openclaw.json` file has this structure for the
   "agents": {
     "defaults": {
       "model": {
-        "primary": "rev4a/deepseek/deepseek-v4-flash"
+        "primary": "rev4a/deepseek/deepseek-flash"
       }
     }
   }

@@ -13,10 +13,10 @@ If you are an AI agent working on this repo: read this file before closing any t
 
 | What you changed | What you must update |
 |---|---|
-| `app/api/gateway/**` | `docs/dev/GATEWAY.md` — Gateway provider sync, agent model config |
+| `app/api/gateway/**` | `docs/dev/GATEWAY.md` — Gateway provider sync, catalogue, sync outcome |
 | `app/api/provider/v1/**` | `docs/dev/PROVIDERS.md` — proxy auth, model list, completions |
 | `app/api/credentials/**` | `docs/dev/API-REFERENCE.md` — credential endpoints; `docs/ARCHITECTURE.md` — vault section |
-| `app/gateway/**` | `docs/dev/GATEWAY.md` — Gateway UI, overlay, polling |
+| `app/gateway/**` | `docs/dev/GATEWAY.md` — Gateway UI, provider cards, overlay |
 | `app/api/skills/**` | `docs/dev/API-REFERENCE.md` — skills list, save, promote endpoints |
 | `app/api/**` (other) | `docs/dev/API-REFERENCE.md` — add/update endpoint description, params, response shape |
 | `daemon.js` | (no dedicated doc — update `docs/ARCHITECTURE.md` if needed) |
@@ -25,6 +25,9 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `app/components/ui/**` (new/modified primitive) | `docs/FRONTEND-ARCHITECTURE.md` — UI catalog table |
 | `app/globals.css` (tokens, visual language) | `docs/DESIGN-SYSTEM.md` — color tokens, shape rules |
 | `scripts/**` | `docs/ARCHITECTURE.md` |
+| `bin/**` (CLI, `rev4a serve` start-up) | `docs/REV4A.md` — Service Management; `README.md` — env vars |
+| `instrumentation.ts` | `docs/dev/GATEWAY.md` — Sync Flow |
+| `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |
 | Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section |
@@ -40,7 +43,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 docs/
 ├── dev/                     # Developer reference (technical depth)
 │   ├── API-REFERENCE.md     # All /api/* endpoints
-│   ├── GATEWAY.md           # Gateway page: provider sync, agent model config
+│   ├── GATEWAY.md           # Gateway page: provider sync and model catalogue
 │   ├── PROVIDERS.md         # Provider key management, proxy auth
 │   ├── WORKSPACE.md         # Workspace API file explorer
 │   ├── DATABASE.md          # SQLite schema, WAL, backup

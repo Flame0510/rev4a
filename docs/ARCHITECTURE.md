@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-14
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -119,6 +119,17 @@ The central container, running the Next.js dashboard + orchestration API.
 - Injected into every session via the `bootstrap-extra-files` hook (glob `.rev4a/*.md`)
 - Immutable by agents — enforced by the `:ro` mount
 - See `lib/agent-setup.ts` for the centralized volume + config guarantee logic
+- **Waiting for a new container** is `waitForGatewayReady()` in
+  `lib/agent-readiness.ts`, used by create, recreate and the agent route. On
+  OpenClaw 9.x it waits for `/startupz` to report `started` (503 while starting).
+  The 2026.7.1-2 image has no `/startupz` — its gateway serves the web UI with 200
+  for unknown paths — so there it falls back to `/health`, which only shows the
+  server is listening. Do not reimplement the wait in a route.
+- **The model catalogue** is read only through `lib/model-catalogue.ts`:
+  `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
+  a key), `isModelOffered()` (enforced by the proxy and the assistant) and
+  `catalogueStatus()`. A failed read of `models.config.json` falls back to the last
+  good copy and never deletes overrides.
 
 **Running commands inside containers** (`lib/docker-exec.ts`):
 
@@ -136,7 +147,8 @@ the rules for anything you touch, not as a description of the whole tree:
   computed for other containers are discarded. Fanning out over a fleet requires
   the `…NoFail` variants, or an explicit per-item try/catch, so one unreachable
   container cannot blank an entire page. Callers: `app/api/skills/route.js`,
-  `app/api/gateway/route.ts`, `app/api/agents/channels-summary/route.ts`,
+  `app/api/agents/models-summary/route.ts`,
+  `app/api/agents/channels-summary/route.ts`,
   `lib/openclaw-cron.ts`, `app/api/credentials/detect/route.ts`,
   `lib/credentials/delivery.ts`.
 - **Never interpolate a secret into a command string.** Pass it through the `env`
@@ -207,7 +219,7 @@ Agent Container          Rev4a Gateway              Provider API
      │                         │                         │
      │ Authorization: Bearer <gateway-token>             │
      │ POST /api/provider/v1/chat/completions            │
-     │ model: rev4a/deepseek-v4-flash                  │
+     │ model: rev4a/deepseek-flash                     │
      │────────────────────────>│                         │
      │                         │ POST /v1/chat/completions│
      │                         │ Authorization: Bearer <real-key>
@@ -526,7 +538,7 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 ### Phase 2 — Provider Gateway
 - [x] Implement proxy API on Rev4a (`/api/provider/v1/`)
 - [x] Gateway Page (`/gateway`) for provider key management
-- [x] Agent model configuration via Gateway Agents tab
+- [x] Agent model configuration in the agent detail panel
 - [x] Provider sync to agent containers (`PUT /api/gateway/provider`)
 - [x] Auth via rev4a token in `data/provider-keys.json`
 - [ ] Rate limiting per agent

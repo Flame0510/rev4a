@@ -1,9 +1,10 @@
 # Gateway Page
 
-> **Last updated:** 2026-07-31
+> **Last updated:** 2026-09-14
 
-The Gateway page (`/gateway`) is the central control panel for managing provider
-configurations and agent model assignments across all Docker containers.
+The Gateway page (`/gateway`) is the control panel for provider configuration:
+API keys and the model catalogue offered to every agent container. It does not
+assign models to agents.
 
 The Gateway aggregates multiple upstream AI providers (DeepSeek, OpenAI, Anthropic,
 Kimi, GLM, Qwen, and others) behind a single Rev4a provider. Agent containers see
@@ -15,17 +16,21 @@ at `/api/provider/v1/`.
 ## Overview
 
 ```
-Gateway Page
-├── Provider Tab    → Manage provider API keys, enable/disable models, push sync
-└── Agents Tab      → Change primary model per agent container
+Gateway Page  → Manage provider API keys, enable/disable models, push sync
+Agent detail  → Change the primary model and fallbacks of one agent
 ```
+
+The Gateway page is system configuration: which providers are wired up and which
+models the fleet is offered. Assigning a model to one agent is that agent's
+configuration, so it lives in the agent's detail panel (`app/agents/ModelSection.tsx`)
+and not here.
 
 The Gateway talks to each agent container directly via `docker exec`, reading and
 writing to `/root/.openclaw/openclaw.json` inside the container.
 
 ---
 
-## Provider Tab
+## Providers
 
 Lists all AI providers from `models.config.json` in the project root. Each provider
 row shows:
@@ -37,13 +42,25 @@ row shows:
 
 ### Provider Key Storage
 
+> **Where these files actually live.** Both sit under the Rev4a data directory,
+> `REV4A_DATA`, which defaults to `~/.config/rev4a/` and moves with
+> `REV4A_DATA_DIR`. Neither is in the repository. They are nested differently and
+> this catches people out, including while writing this document:
+>
+> | file | full path |
+> |---|---|
+> | provider keys | `REV4A_DATA/data/provider-keys.json` |
+> | model overrides | `REV4A_DATA/model-overrides.json` |
+>
+> Paths written below as `data/provider-keys.json` mean the first row.
+
 Provider API keys are stored in `data/provider-keys.json`:
 
 ```json
 {
   "deepseek": "sk-...",
   "openrouter": "sk-...",
-  "rev4a": "ciao"
+  "rev4a": "<gateway key>"
 }
 ```
 
@@ -52,19 +69,28 @@ against the Rev4a provider proxy using this token. See [`PROVIDERS.md`](PROVIDER
 
 ### Sync Flow
 
-When a provider key is saved or a model toggle is changed, the Gateway:
+When a provider key is saved, a model toggle is changed, Sync All is pressed, or
+Rev4a starts, the Gateway:
 
-1. **Reads** `models.config.json` to get the full model catalogue
-2. **Filters** enabled models for providers that have a configured API key
-3. **Builds** a `models.providers.rev4a` config block (without `rev4a/` prefix
-   on model IDs)
-4. **Writes** the block into `/root/.openclaw/openclaw.json` on every agent container
-   (containers with `AGENT_ID` Docker label)
-5. **Cleans up** stale `models.json` and `auth-profiles.json` files inside each
-   container
-6. **Writes** the block into `/root/.openclaw/openclaw.json` on every agent container
-   — **does NOT touch** `agents.defaults.model` or `agents.list[].model`
-7. **Does NOT restart** the gateway — writes are live via file write
+1. **Reads** `models.config.json` and the overrides, and keeps the models that are
+   enabled and whose provider has a key. If the file cannot be read and no earlier
+   read succeeded, the sync stops here and reports `configError`
+2. **Builds** a `models.providers.rev4a` config block (without `rev4a/` prefix on
+   model IDs)
+3. **Lists** every container with the `AGENT_ID` Docker label, **running or
+   not**. Stopped agents are included so that starting one later does not bring
+   back an old catalogue
+4. **Reads** each container's `/root/.openclaw/openclaw.json` — through
+   `docker exec` when running, through `docker cp` otherwise (stopped, paused, created), since `exec`
+   cannot reach them. A read that fails, or returns an empty object, stops
+   there: **nothing is written** and the container is reported in `sync.failed`
+5. **Cleans up** stale `models.json` and `auth-profiles.json` — running containers
+   only, since it needs `exec`
+6. **Writes** the file back with only `models.providers.rev4a` replaced — **does NOT
+   touch** `agents.defaults.model` or `agents.list[].model`. Running containers get
+   it through `docker exec` and hot-apply it; the others through `docker cp`, with
+   the file's original mode, and apply it when started or resumed
+7. **Does NOT restart** the gateway
 
 ### Model ID Convention
 
@@ -80,7 +106,7 @@ Inside `models.providers.rev4a.models`, model IDs are stored **without** the
         "api": "openai-completions",
         "apiKey": "***",
         "models": [
-          { "id": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash" },
+          { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash" },
           { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
         ]
       }
@@ -90,7 +116,7 @@ Inside `models.providers.rev4a.models`, model IDs are stored **without** the
 ```
 
 OpenClaw automatically prefixes model IDs with the provider name at runtime,
-producing `rev4a/deepseek/deepseek-v4-flash`. The `mode` field is **not** set —
+producing `rev4a/deepseek/deepseek-flash`. The `mode` field is **not** set —
 OpenClaw defaults to merging config models with auto-discovered models.
 
 ### Model Catalogue
@@ -124,106 +150,112 @@ containers.
 
 ---
 
-## Agents Tab
+## Per-agent model assignment
 
-Lists all agent containers discovered from Docker (containers with `AGENT_ID`
-label). Each agent row shows:
+Lives in the agent detail panel, not on this page. `app/agents/ModelSection.tsx`
+reads `GET /api/agents/[id]/model` for the current primary and fallbacks, and the
+enabled catalogue from `GET /api/models`, which returns only models whose provider
+has a configured API key in `<data dir>/provider-keys.json`. Note this page does
+**not** apply that filter — `GET /api/gateway/provider` returns the whole catalogue
+so you can add a key and enable its models in one pass. The filter is applied by
+`/api/models` and by the sync.
 
-- Agent name and container name
-- Current primary model
-- "Change Model" button
+Saving calls `PUT /api/gateway/agent`, which writes the container's
+`openclaw.json`:
 
-### Change Model Flow
+- `agents.defaults.model`, and the entry in `agents.list` whose `id` is `main` —
+  found by id, not by position, and skipped entirely if no such entry exists. The
+  primary is stored as `rev4a/<provider>/<model>`
+- `fallbacks` omitted and `fallbacks: []` are different requests: omitted leaves the
+  container's existing list untouched, `[]` clears it. The Model panel is the only
+  UI that sets them; the create wizard does not
+- **no restart** — `agents` is in OpenClaw's hot-reload column, so the write
+  applies on the agent's next turn
 
-Clicking "Change Model" opens an inline form with:
+The agent list shows each agent's current model as a chip, fed by
+`GET /api/agents/models-summary`. The red states are split by remedy, because they
+look alike and need different actions:
 
-1. **Primary model select** — dropdown of all enabled models (filtered to
-   configured providers only)
+- `NOT IN CATALOGUE` — the id is gone from the catalogue: pick another model;
+- `NOT ENABLED` — it exists but is not offered, and the proxy refuses it: pick another model;
+- `OUT OF SYNC` — the gateway offers the agent's primary, but this container's synced
+  copy does not have it: run Sync All.
 
-On save:
-
-1. **PUT /api/gateway/agent** writes the model config to the container's
-   `openclaw.json`:
-   - `agents.defaults.model.primary` and `agents.list[0].model.primary` written
-     with format `rev4a/<provider>/<model>`
-   - No fallbacks are set unless explicitly provided
-2. **No restart** — writes are live via `docker exec node -e`
-
-### Model Select Filtering
-
-The model select in the Agents tab only shows models whose provider has a
-configured API key in `data/provider-keys.json`. This ensures users can only
-select models that are actually available.
+Amber `DEPRECATED` marks a working model on a retired name. All of these describe the
+primary model; a neutral `NO FALLBACK` is the one chip about the fallback list, shown
+when it is empty. Every agent gets them, stopped ones included (read from the volume
+with `docker cp`). The agent's Model panel repeats the red and amber distinction in
+its warning.
 
 ---
 
 ## API Endpoints
-
-### `GET /api/gateway`
-
-Returns live Gateway status from all agent containers. Reads agent model configs
-via `openclaw models status --json` inside each container.
-
-**Response:**
-```json
-{
-  "agents": {
-    "total": 1,
-    "list": [
-      {
-        "containerName": "openclaw-atlas",
-        "agentId": "atlas",
-        "agentName": "Atlas",
-        "defaultModel": "rev4a/deepseek/deepseek-v4-flash",
-        "configured": true
-      }
-    ]
-  }
-}
-```
 
 ### `PUT /api/gateway/provider`
 
 Enables or disables a single model in the catalogue, then syncs every agent.
 Only writes `models.providers.rev4a` — does NOT touch model references.
 
-**Body:** `{ "modelId": "deepseek/deepseek-chat", "enabled": true }` — both
+**Body:** `{ "modelId": "deepseek/deepseek-flash", "enabled": true }` — both
 required. Missing either returns `400`; an unknown `modelId` returns `404`.
+If Docker cannot be reached the toggle is refused with `503` and nothing is saved.
 
-**Response:**
+**Response:** `status` reports the toggle, saved before the sync runs; `sync`
+reports whether every agent received it.
 ```json
 {
   "status": "ok",
-  "modelId": "deepseek/deepseek-chat",
-  "enabled": true,
+  "modelId": "deepseek/deepseek-flash",
+  "enabled": false,
   "provider": "deepseek",
-  "sync": ["Active models: 2 across 1 agent(s)"]
+  "sync": { "ok": true, "activeModels": 2, "total": 2,
+            "synced": ["agent_2a3c3a07", "agent_9253eee3"], "stopped": [], "failed": [],
+            "summary": "Synced 2 of 2 agent(s)." }
 }
 ```
 
+Two failures, handled differently on purpose:
+
+- **Docker unreachable** — refused before anything is written: `503`, nothing saved,
+  the checkbox does not move, so the checkboxes never disagree with every agent.
+- **Some containers fail once Docker answers** — the toggle stands and `sync.failed`
+  lists them; the page shows it in amber, and an agent whose primary is affected shows
+  `OUT OF SYNC`. Rolling
+  the override back would not restore consistency, because the containers that did
+  receive the change would keep it.
+
+Full shape in
+[API-REFERENCE.md](API-REFERENCE.md).
+
 ### `PUT /api/gateway/agent`
 
-Updates model config for a single agent container (primary model only).
+Updates the primary model and fallbacks of a single agent container.
 
 **Body:**
 ```json
 {
   "containerName": "openclaw-atlas",
-  "model": "deepseek/deepseek-v4-flash"
+  "model": "deepseek/deepseek-flash",
+  "fallbacks": ["deepseek/deepseek-v4-pro"]
 }
 ```
 
-**Response:**
+Omit `fallbacks` to keep the container's current list; send `[]` to clear it.
+
+**Response:** what was written, prefixed.
 ```json
 {
   "status": "ok",
   "agent": "openclaw-atlas",
   "model": {
-    "primary": "rev4a/deepseek/deepseek-v4-flash"
+    "primary": "rev4a/deepseek/deepseek-flash",
+    "fallbacks": ["rev4a/deepseek/deepseek-v4-pro"]
   },
   "verify": { "ok": true, "bytes": 2058 }
 }
 ```
+
+Full semantics in [API-REFERENCE.md](API-REFERENCE.md).
 
 ### `GET /api/gateway/provider`
 
@@ -245,8 +277,8 @@ OpenRouter to find out.
       "baseUrl": "https://api.deepseek.com",
       "models": [
         {
-          "id": "deepseek/deepseek-v4-flash",
-          "name": "DeepSeek V4 Flash",
+          "id": "deepseek/deepseek-flash",
+          "name": "DeepSeek Flash",
           "enabled": true,
           "pricing": { "input": 0.05, "output": 0.10 },
           "pricingLive": true,
@@ -337,7 +369,117 @@ Restart the Rev4a server (via systemd).
    (tracked in `/root/.openclaw/.last-version`) — safe migrations only, no restart.
 
 6. **Model ref written after gateway readiness** — When the wizard creates an agent,
-   the create route waits for gateway health check, then writes
+   the create route waits for the gateway to finish starting (`waitForGatewayReady`), then writes
    `agents.defaults.model.primary` + fallbacks and `gateway.controlUi.allowedOrigins`,
-   then calls `syncAgent(name)`. The Gateway sync (`PUT /api/gateway/provider`)
+   then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. The Gateway sync (`PUT /api/gateway/provider`)
    never touches model references — only `models.providers` is synced.
+
+---
+
+## Maintaining the model catalogue
+
+Two files, both tracked in the repo, both maintained by hand:
+
+| File | Holds |
+|---|---|
+| `models.config.json` | the catalogue: id, name, provider, `enabled`, `modality`, deprecation flags |
+| `model-pricing.json` | price per 1M tokens, keyed by the same ids |
+
+They drift, because upstream catalogues change without telling anyone. Refresh
+them on a schedule that suits you, and always before shipping a release.
+
+### Where the truth lives
+
+Do not copy figures from blog posts or search results — they go stale and
+contradict each other. Two sources answer authoritatively:
+
+```bash
+# OpenRouter: ids, prices and input modalities for every model, no auth
+curl -s https://openrouter.ai/api/v1/models
+
+# DeepSeek: the definitive list of callable model names
+curl -s https://api.deepseek.com/models -H "Authorization: Bearer $DEEPSEEK_KEY"
+```
+
+The OpenRouter payload carries `pricing.prompt`, `pricing.completion`,
+`pricing.input_cache_read` (multiply by 1e6 for per-million figures) and
+`architecture.input_modalities`, so prices and modalities can be checked in the
+same pass.
+
+For direct-provider prices, use the provider's own pricing page. DeepSeek's is
+at `api-docs.deepseek.com/quick_start/pricing`, and note it charges **peak and
+off-peak rates** (peak: 01:00–04:00 and 06:00–10:00 UTC, Mon–Fri; off-peak is
+half). `model-pricing.json` holds one figure per model and cannot express that,
+nor cache-hit rates — **record the peak rate**, so the dashboard overstates
+spend rather than understating it.
+
+### What to check, in order
+
+1. **Models that no longer exist upstream.** Set `enabled: false`; do not delete
+   an id an agent might still be configured with — see below.
+2. **Prices that drifted.** Compare every `openrouter/*` entry against the live
+   API; direct providers against their pricing page.
+3. **Modalities.** `architecture.input_modalities` is authoritative. Compare the
+   *set*, not the string: `text+image` and `image+text` are the same thing, and
+   rewriting one into the other produces a diff full of noise.
+4. **New models worth carrying.** Add with `enabled` reflecting policy, not
+   availability — see the DeepSeek rule below.
+5. **Retired names.** Mark them, do not remove them yet.
+
+### The deprecation lifecycle
+
+Upstream sometimes retires a model *name* while keeping it working, redirected to
+a successor and billed at the successor's rates.
+
+Handle it in two releases:
+
+```json5
+// release N — flag it. It still works, and it stays selectable.
+{ "id": "provider/retired-model", "deprecated": true }
+
+// release N+1 — remove it. Agents still on it show NOT IN CATALOGUE, in red.
+```
+
+The gap between the two releases is what gives anyone using it a chance to move.
+Removing in one step turns a warning into an outage.
+
+`deprecated` surfaces in two places: a `DEPRECATED` chip on the agent card, and a
+`(deprecated)` tag on the option in the primary and fallback pickers of the
+agent's Model panel. The tag rides on the option label, so a native select keeps
+showing it once the model is chosen.
+
+There is no field for the successor: the redirect is the provider's, and nothing here
+acts on it. Where the successor matters, say so in prose.
+
+Do **not** encode deprecation in `name`. The name is the model's name; the flag
+renders itself, and putting it in both produces `DeepSeek V4 Flash (legacy →
+Flash) (deprecated)`.
+
+**Never remove an id in the same release you deprecate it**, and never remove one
+without checking who uses it: an agent whose primary model leaves the catalogue
+fails on its next turn, and with an empty fallback list it fails hard. The agent
+cards surface this — `NOT IN CATALOGUE` in red — but only after the fact.
+
+### Policy vs availability
+
+`enabled` expresses **what this deployment should offer**, not what exists. Both
+DeepSeek direct and OpenRouter carry the DeepSeek models; this deployment uses
+the direct provider, so the OpenRouter copies ship disabled.
+
+User toggles live separately in `<data dir>/model-overrides.json` and win over
+`enabled`. When a default changes to match an existing override,
+`toggleModelOverride` drops the now-redundant key on the next interaction, so the
+overrides file stays limited to genuine divergence.
+
+### After editing
+
+- both files must stay valid JSON, and every `enabled` model needs a price entry
+- remove pricing rows for ids you removed from the catalogue — orphans accumulate
+- read the catalogue only through `lib/model-catalogue.ts`: `loadModelsConfig()` for
+  the catalogue with overrides, `loadOfferedModels()` for what the deployment offers,
+  `isModelOffered()` to decide whether to serve a request. Nothing else in the app
+  reads `models.config.json`; `scripts/refresh-model-pricing.mjs` rewrites it offline,
+  and the backup and restore scripts copy it
+- if the file cannot be read, the last copy this process read successfully is used;
+  with no earlier copy the sync refuses to push. Orphan overrides are pruned only
+  when a toggle is saved against a freshly read catalogue

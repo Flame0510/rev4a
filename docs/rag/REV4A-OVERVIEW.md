@@ -1,13 +1,15 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-05
+> **Last updated:** 2026-09-13
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
 ## What can you do in Rev4a?
 
 ### Dashboard (`/`)
-The main page. See live sessions (who's working right now), cost summary by model and time period (today, 7 days, 30 days), system health (CPU, RAM, disk, load average), and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made. If the first-run wizard is incomplete, a banner appears at the top with a link to continue.
+The main page. See live sessions (who's working right now), cost summary, an overall health indicator, and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made.
+
+The health cards cover Rev4a's own runtime, cron and watchdog, and lineage. They do **not** show CPU, RAM, disk, or load average: those metrics are collected and stored, but no page displays them. There is no wizard banner on the dashboard; an incomplete setup redirects to `/wizard` instead.
 
 ### First-run wizard (`/wizard`)
 First-run setup wizard that guides new users through configuration. Four steps:
@@ -16,7 +18,7 @@ First-run setup wizard that guides new users through configuration. Four steps:
 3. **First Agent** — understand how agents work and what you need to create one
 4. **Ready** — site map of key sections with quick links
 
-The wizard is always accessible from the sidebar. A progress badge (e.g. "1/3") shows how many steps are complete. Once finished, the badge disappears and the dashboard banner goes away.
+The wizard is always accessible from the sidebar. There is no progress badge on that entry and no banner elsewhere.
 
 ### Agents (`/agents`)
 Manage Docker containers running OpenClaw agents. See which agents are running, stopped, or errored. Filter by status, view agent details (environment variables, ports, auth tokens, backups, Telegram channels), and create new agents. Each agent card shows its template, status, TG channel chip, and a direct link to its Control UI.
@@ -32,34 +34,29 @@ Manage Docker containers running OpenClaw agents. See which agents are running, 
 
 The agent list also shows a compact TG chip next to each agent name (green = connected, hidden if not configured).
 
-The Agents page includes a banner for the **agent base image** (`openclaw-agent-base:latest`):
-- Green: image is up-to-date (no banner shown)
-- Yellow: image is outdated or missing — click "Rebuild Image" to start a build
-- Copper: a build is running in the background — click "View Progress" to open
-  the build modal
+The Agents page includes a banner for the **agent base image**
+(`openclaw-agent-base:latest`). It is hidden when the image is present and current.
+When the image is missing or outdated it appears with one button, labelled
+**Download Image** or **Download Update**.
 
-The build modal shows live Docker build logs (polled every 2s). You can:
-- **Run in Background** — close the modal, build continues on the server
-- **Abort** — kill the build process; the existing image stays intact
-- **Refresh / re-enter** — opening the modal again resumes log streaming
-  from the last seen line
-
-The build writes logs to `/tmp/rev4a-build-<timestamp>.log` so they survive
-page refreshes and modal closes.
+That button runs a `docker pull` from the registry. It is a download, not a build.
+While it runs the banner shows an indeterminate animated bar with no percentage and
+no log output; there is no modal, no "View Progress", no "Run in Background", and
+no way to abort from the UI. Status is polled every 2 seconds.
 
 ### Create Agent (`/agents/create`)
 Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional port range (default: auto-assigned 10-port block, e.g. 3700-3709). The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.
 
 ### Lineage (`/lineage?period=7d`)
-Interactive graph showing session family trees — which agent spawned which child agent, across configurable time periods (1d, 7d, 30d). Click any node to inspect. Includes a live feed side panel.
+Interactive graph showing session family trees — which agent spawned which child agent, across configurable time periods: 1d, 3d, 7d, 15d, 30d, and all. Click any node to inspect. Includes a live feed side panel.
 
 ### Gateway (`/gateway`)
-Central hub connecting agents to AI providers. Two panels:
-- **Provider Sync** — reads the model catalogue from `models.config.json`, discovers which providers have API keys, and syncs the full model list to every agent container
-- **Agent Model Config** — set each agent's primary model and fallback models via `PUT /api/gateway/agent`
+Connects agents to AI providers. Add and remove provider API keys, enable or disable individual models in the catalogue read from `models.config.json`, and push the resulting model list to every agent container. It does not assign models to agents: choosing which model an agent runs is done per agent, in the Model section of the agent's detail panel on the Agents page.
 
 ### Containers (`/containers`)
-Full list of all Docker containers on the server. See name, image, status, ports, IP, CPU%, and memory usage. Click "Terminal" on any container to open an interactive shell. Use Start/Stop/Restart buttons to manage lifecycle.
+Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container.
+
+The page shows no CPU or memory figures and has no start, stop, or restart buttons: it is read-only apart from the terminal link. Container lifecycle is managed from the Agents page.
 
 ### Container Terminal (`/containers/terminal/[id]`)
 Live web terminal into a Docker container. Run commands, inspect files, debug issues — like SSH but in the browser.
@@ -74,13 +71,15 @@ Manage third-party service credentials: GitHub, Trello, Vercel, Supabase, Notion
 Scheduled tasks auto-discovered from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`). Filter jobs by agent using the toolbar tabs. Each job shows name, description, cron expression, next run, last run, and last status. Toggle on/off per job. The run history panel shows recent cron run executions for the selected job, loaded on demand from the container's gateway.
 
 ### Memory / Context (`/memory`)
-Browse agent memory files — MEMORY.md, SOUL.md, IDENTITY.md, USER.md, AGENTS.md, TOOLS.md, HEARTBEAT.md. These files define how agents behave, what they know, and their personality. Also shows total memory budget vs usage.
+Browse agent memory files. The tracked set is USER.md, MEMORY.md, AGENTS.md, SOUL.md and HEARTBEAT.md. These files define how agents behave, what they know, and their personality. Also shows total memory budget vs usage.
+
+A template may ship other files, such as IDENTITY.md or TOOLS.md, but those are not part of the tracked context set.
 
 ### Config (`/config`)
 Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered.
 
 ### Tools (`/tools`)
-Catalog of every tool available to agents — built-in commands, MCP server tools, plugin tools, and audio/TTS configuration. Includes timezone settings.
+Catalog of the OpenClaw built-in tools available to agents, grouped by area: file and code, shell, web, messaging, sessions, media, and others. The list is curated in the app, not discovered at runtime, so it covers built-ins only and does not enumerate MCP servers or plugin tools. The page also holds audio/TTS and timezone settings.
 
 ### Plugins (`/plugins`)
 Browse installed OpenClaw plugins. Enable/disable toggle per plugin. Plugins extend agent capabilities with new tools and integrations.
@@ -101,7 +100,7 @@ Password-protected access to the dashboard. Enter the Rev4a password to authenti
 
 ## What about Pulse?
 
-Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat button in the bottom-right corner of every page. She can:
+Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat button in the bottom-right corner, on every page except login, setup and the first-run wizard. She can:
 
 - Explain what any page does
 - Guide you through features ("how do I create an agent?")

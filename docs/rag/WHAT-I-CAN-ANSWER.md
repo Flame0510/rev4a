@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-14
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -12,7 +12,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I get to the container list?"
 - "Where can I see the first-run wizard?"
 - "Is there a page for cron jobs?"
-- "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers, models, agent assignments.
+- "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers and the model catalogue. Which model an agent runs is on the Agents page, in that agent's detail panel.
 - "How do I create a new agent?"
 - "What templates are available?"
 - "What is the Custom template?"
@@ -52,10 +52,10 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I delete an agent?"
 - "How do I restart the Rev4a server?"
 - "How do I change environment variables?"
-- "How do I add a cost override?"
+- "How do I add a cost override?" — There is no screen for it. The endpoint exists, but nothing in the dashboard calls it.
 - "How do I see the session lineage?"
 - "How do I log in to an agent's control UI?"
-- "How do I register a new provider via OAuth?"
+- "How do I register a new provider via OAuth?" — The endpoint exists but no page uses it. Providers are added by pasting an API key on the Gateway page.
 - "How do I manage agent model fallbacks?"
 - "How do I connect an agent to Telegram?"
 - "How do I approve a pairing code?"
@@ -97,9 +97,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "What does the yellow diamond next to an agent mean?"
 - "Why is the agent base image banner showing?"
 - "How do I fix 'image is outdated'?"
-- "What happens if I abort a build?"
-- "Can I close the build modal while it's running?"
-- "How do agent image rebuilds work?"
+- "How do agent image updates work?" — The banner on the Agents page runs a `docker pull`. It is a download, not a build: there is no modal, no live log, and no way to abort from the UI.
 - "Why is my Telegram bot not connecting?"
 - "Why can't I approve a pairing code?"
 - "Why is the TG badge missing from my agent?"
