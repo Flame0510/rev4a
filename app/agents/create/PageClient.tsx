@@ -60,6 +60,20 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [agentName, setAgentName] = useState('');
   const [portRange, setPortRange] = useState<string>('');
+  // The server render seeds this; the same endpoint the Edit panel uses refreshes it, so
+  // both flows validate against the same numbers (every container, running or stopped).
+  const [usedPorts, setUsedPorts] = useState<number[]>(initialUsedPorts);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/agents/ports', { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ports?: number[] } | null) => {
+        if (data && Array.isArray(data.ports)) setUsedPorts(data.ports);
+      })
+      .catch(() => { /* the server still validates on submit */ });
+    return () => controller.abort();
+  }, []);
   const [selectedModel, setSelectedModel] = useState<string>(
     models.length > 0 ? models[0].id : ''
   );
@@ -73,11 +87,11 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
     setSelectedTemplate(id);
     setAgentName('');
     // Auto-assign port block: find first free 10-port block
-    if (initialUsedPorts.length === 0) {
+    if (usedPorts.length === 0) {
       setPortRange('3700-3709');
     } else {
-      // Simple client-side block finder
-      const block = initialUsedPorts.length ? findAvailablePortBlock(new Set(initialUsedPorts)) : null;
+      // Same block finder as the server: the first free 10-port block.
+      const block = findAvailablePortBlock(new Set(usedPorts));
       setPortRange(block ? `${block}-${block + 9}` : '');
     }
   };
@@ -91,9 +105,9 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
   const portError = useMemo(() => {
     if (!portRange.trim()) return '';
-    const res = validatePortInput(portRange, new Set(initialUsedPorts));
+    const res = validatePortInput(portRange, new Set(usedPorts));
     return res.valid ? '' : res.error;
-  }, [portRange, initialUsedPorts]);
+  }, [portRange, usedPorts]);
 
   const canProceed = (): boolean => {
     if (step === 'template') return selectedTemplate !== '';

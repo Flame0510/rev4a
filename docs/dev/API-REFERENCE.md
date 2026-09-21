@@ -704,6 +704,27 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 
 ---
 
+### `GET /api/agents/ports`
+The host ports held by any container, running or stopped: the set the validators in
+`lib/agent-ports.ts` take, sorted ascending. Backed by the shared lookup
+(`getUsedHostPorts()`, `lib/agent-ports-server.ts`), which reads every container's
+`HostConfig.PortBindings` — a stopped container keeps its block while `docker ps -a` and
+the API's container list report nothing for it.
+
+**Auth:** `rev4a_token` cookie or `Authorization: Bearer <REV4A_TOKEN>`
+
+**Response:**
+```json
+{ "ports": [3700, 3701, 3710, 3711, 3741, 5555] }
+```
+
+The Edit panel fetches it when it opens and the create form refreshes it on mount (the
+page also receives it as a prop), so both validate a range as the operator types, against
+the same numbers and with the same messages, and both disable their action while the range
+is refused.
+
+---
+
 ### `GET /api/agents/models-summary`
 One row per agent container, running or not: the model it runs and whether that
 model is still in good standing. Feeds the model chip on the agent cards. Running

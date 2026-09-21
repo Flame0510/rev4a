@@ -770,6 +770,14 @@ function currentPortRange(ports: string): string {
   return min === max ? `${min}` : `${min}-${max}`;
 }
 
+/** The agent's own published host ports, from the `3700:3000, 3701:3001` string. */
+function ownHostPorts(ports: string): number[] {
+  return (ports || '')
+    .split(',')
+    .map((p) => parseInt(p.trim().split(':')[0] ?? '', 10))
+    .filter((n) => Number.isInteger(n));
+}
+
 function EditAgentModal({ agent, onClose, onSaved, onStarted }: {
   agent: Agent;
   onClose: () => void;
@@ -780,20 +788,37 @@ function EditAgentModal({ agent, onClose, onSaved, onStarted }: {
 }) {
   const initialName = agent.displayName || agent.name;
   const initialPorts = currentPortRange(agent.ports);
+  const ownPorts = useMemo(() => ownHostPorts(agent.ports), [agent.ports]);
   const [displayName, setDisplayName] = useState(initialName);
   const [portRange, setPortRange] = useState(initialPorts);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // The ports other containers hold, fetched when the panel opens: the same set the
+  // create form gets as a page prop, from the same lookup (`GET /api/agents/ports`).
+  const [usedPorts, setUsedPorts] = useState<Set<number> | null>(null);
 
-  // Client-side shape checks (the same messages as the API). Whether a port is already
-  // published by another agent is checked by the server, which knows every container
-  // and excludes this agent's own block.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/agents/ports', { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ports?: number[] } | null) => {
+        if (data && Array.isArray(data.ports)) setUsedPorts(new Set(data.ports));
+      })
+      .catch((e: unknown) => { if ((e as Error)?.name !== 'AbortError') setUsedPorts(null); });
+    return () => controller.abort();
+  }, []);
+
+  // The same rules and messages as agent creation (lib/agent-ports.ts). This agent's own
+  // block is excluded, so keeping or shifting it is not a conflict with itself; every
+  // other container counts, running or stopped.
   const nameError = displayName.trim() ? '' : 'Display name must not be empty';
   const portError = useMemo(() => {
     if (!portRange.trim()) return '';
-    const r = validatePortInput(portRange);
+    const others = new Set(usedPorts ?? []);
+    for (const p of ownPorts) others.delete(p);
+    const r = validatePortInput(portRange, others);
     return r.valid ? '' : r.error;
-  }, [portRange]);
+  }, [portRange, usedPorts, ownPorts]);
 
   const nameChanged = displayName.trim() !== initialName;
   const portsChanged = portRange.trim() !== initialPorts;
@@ -882,7 +907,7 @@ function EditAgentModal({ agent, onClose, onSaved, onStarted }: {
             {error && <div style={{ fontSize: 11, color: '#ef4444' }}>{error}</div>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
+              <Button variant="primary" size="sm" onClick={handleSave} disabled={saving || !!nameError || !!portError}>
                 {saving ? 'Saving...' : 'Save & Recreate'}
               </Button>
             </div>

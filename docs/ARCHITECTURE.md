@@ -189,6 +189,10 @@ The central container, running the Next.js dashboard + orchestration API.
   `recreateAgentContainer()` refuses such a clash **before** removing anything, naming the
   container that holds each port, so the agent stays up and the operator changes the range
   from the Edit panel; a failed `docker run` no longer leaves a container behind.
+  The two forms validate a range **as it is typed** against that same set — the create
+  wizard through its page prop plus `GET /api/agents/ports`, the Edit panel through the
+  endpoint when it opens — so both show the same message and disable their action while
+  the range is refused, instead of letting the server refuse it on submit.
 - **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
   (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
   applied by rebuilding the container on the image it already runs — **no backup**, the
