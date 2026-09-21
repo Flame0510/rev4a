@@ -170,13 +170,25 @@ The central container, running the Next.js dashboard + orchestration API.
   `prerecreate` archives are pruned to the newest two. The same `recreateAgentContainer()`
   serves the edit route (`PATCH` → 202, no backup) and the Update action.
   `agentBusyReason()` (`lib/agent-busy.ts`) covers it for every route that changes an agent.
-- **Host ports** are shared between creation and the edit flow by `lib/agent-ports.ts`
-  (pure: `validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`) and
-  `lib/agent-ports-server.ts` (`getUsedHostPorts()`, the Docker lookup, server-only since
-  client components cannot import `child_process`). One block maps to the container's
-  gateway port 3000 (`3700-3709` → `3700-3709:3000-3009`); both flows produce the same
-  validation messages, and the edit excludes the agent's own ports so its block never
-  conflicts with itself.
+- **Host ports** have one source of truth: `lib/agent-ports.ts` holds the pure rules
+  (`validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`,
+  `hostPortsFromBindings`, `hostPortsFromArgs`) and `lib/agent-ports-server.ts` answers
+  which ports are taken (`getHostPortHolders()`, `getUsedHostPorts()`; server-only, it
+  talks to the Docker socket). Creation, the create form, the edit flow and every
+  container rebuild (update, recreate, rollback) read their numbers from there. One block
+  maps to the container's gateway port 3000 (`3700-3709` → `3700-3709:3000-3009`); all
+  flows produce the same validation messages, and a flow rebuilding a container excludes
+  that container's own ports, so its block never conflicts with itself.
+  **A stopped container still holds its block**, but neither `docker ps -a --format
+  '{{.Ports}}'` nor the Docker API's container list reports its ports (verified on Docker
+  29: both return nothing). The lookup therefore reads each container's
+  `HostConfig.PortBindings` — the only source covering the stopped ones. Without that, a
+  new agent could be handed the block of a stopped agent, and the clash only surfaced
+  later, when that agent was started again (`Bind for 0.0.0.0:3730 failed: port is
+  already allocated`), after the container it was replacing had been removed.
+  `recreateAgentContainer()` refuses such a clash **before** removing anything, naming the
+  container that holds each port, so the agent stays up and the operator changes the range
+  from the Edit panel; a failed `docker run` no longer leaves a container behind.
 - **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
   (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
   applied by rebuilding the container on the image it already runs — **no backup**, the

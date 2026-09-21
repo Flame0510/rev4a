@@ -123,25 +123,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Check if name is already in use by a running container
+    // Check if name is already in use by a container, running or not: a stopped agent
+    // keeps its name and its port block, so both would clash on start.
     const existing = execSync(
-      `docker ps --filter "label=AGENT_ID=${containerName}" --format '{{.Names}}'`,
+      `docker ps -a --filter "label=AGENT_ID=${containerName}" --format '{{.Names}}'`,
       { encoding: 'utf-8', timeout: 5000 },
     ).trim();
     if (existing) {
       return NextResponse.json(
-        { success: false, error: `Agent '${displayName}' is already running (container: ${existing})` },
+        { success: false, error: `Agent '${displayName}' already exists (container: ${existing})` },
         { status: 409 },
       );
     }
 
-    // Resolve port range
+    // Resolve port range. One lookup, shared by both paths below.
+    const usedPorts = await getUsedHostPorts();
     let isBlock = false;
     let portStart: number = 0;
     let portEnd: number = 0;
 
     if (portInput) {
-      const v = validatePortInput(portInput, getUsedHostPorts());
+      const v = validatePortInput(portInput, usedPorts);
       if (!v.valid) {
         return NextResponse.json(
           { success: false, error: v.error },
@@ -152,7 +154,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portStart = v.start;
       portEnd = v.end;
     } else {
-      portStart = findAvailablePortBlock(getUsedHostPorts());
+      portStart = findAvailablePortBlock(usedPorts);
       portEnd = portStart + DEFAULT_BLOCK_SIZE - 1;
       isBlock = true;
     }

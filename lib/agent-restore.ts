@@ -10,7 +10,7 @@
 import { isValidAgentId } from '@/lib/container';
 import { runDocker } from '@/lib/agent-images';
 import { BACKUP_VOLUME } from '@/lib/cold-backup';
-import { inspectAgentContainer } from '@/lib/agent-recreate';
+import { inspectAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
 import { activeRestoreAgentIds, insertRestore, isRestoreActive, latestRestore, markInterruptedRestores, updateRestoreRow, type AgentRestoreRow } from '@/lib/agent-restore-state';
 import { agentBusyReason } from '@/lib/agent-busy';
 
@@ -60,6 +60,7 @@ export async function startAgentRestore(agentId: string, file: string): Promise<
 async function runRestore(id: number, agentId: string, file: string): Promise<void> {
   const container = await inspectAgentContainer(agentId).catch(() => null);
   const name = container?.Name?.replace(/^\//, '');
+  let failure: string | null = null;
   try {
     if (name && container?.State?.Running) {
       await runDocker(['stop', '-t', '30', name], { timeoutMs: 45_000 }).catch(() => {});
@@ -77,16 +78,21 @@ async function runRestore(id: number, agentId: string, file: string): Promise<vo
       ],
       { timeoutMs: EXTRACT_TIMEOUT_MS, env: { FILE: file } },
     );
-
-    updateRestoreRow(id, { status: 'done' });
   } catch (e) {
-    updateRestoreRow(id, { status: 'failed', error: (e as Error)?.message ?? String(e) });
+    failure = (e as Error)?.message ?? String(e);
   } finally {
     // The container is started again even when the extract failed, so the agent never
-    // stays down. A volume with no container (volume-only agent) has nothing to start.
+    // stays down. The row is only `done` when it really came back: a container can
+    // report running while its network never attached, which is not a usable agent.
     if (name) {
-      await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
+      const started = await startAndVerifyContainer(agentId, name);
+      if (!started.ok) {
+        const note = `the container did not come back: ${started.error}`;
+        failure = failure ? `${failure}; ${note}` : `the volume was restored, but ${note}`;
+      }
     }
+    if (failure) updateRestoreRow(id, { status: 'failed', error: failure });
+    else updateRestoreRow(id, { status: 'done' });
   }
 }
 
@@ -127,9 +133,9 @@ export async function recoverInterruptedRestores(): Promise<number> {
   for (const agentId of ids) {
     const container = await inspectAgentContainer(agentId).catch(() => null);
     const name = container?.Name?.replace(/^\//, '');
-    if (name && !container?.State?.Running) {
-      await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
-    }
+    if (!name || container?.State?.Running) continue;
+    const started = await startAndVerifyContainer(agentId, name);
+    if (!started.ok) console.warn(`[agent:restore] ${agentId} did not come back after an interrupted restore: ${started.error}`);
   }
   return interrupted;
 }

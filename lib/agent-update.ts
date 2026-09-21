@@ -32,7 +32,7 @@ import {
   runDocker,
 } from '@/lib/agent-images';
 import { BACKUP_VOLUME, coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
-import { inspectAgentContainer, recreateAgentContainer, type AgentContainerInspect } from '@/lib/agent-recreate';
+import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer, type AgentContainerInspect } from '@/lib/agent-recreate';
 import { applyRuntimeConfig } from '@/lib/agent-setup';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
@@ -251,12 +251,20 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
       .catch((err: unknown) => console.warn('[agent:update] image cleanup failed:', (err as Error).message));
   } catch (e) {
     // A failure before the recreate leaves the old container stopped by the backup:
-    // start it again, so a failed update never leaves the agent down.
+    // start it again, so a failed update never leaves the agent down. When it does not
+    // come back the failure text says so — a container that is "running" with no network
+    // is not an agent the operator can use.
     if (stopped) {
       const container = await inspectAgentContainer(agentId).catch(() => null);
       const containerName = container?.Name?.replace(/^\//, '');
       if (containerName && !container?.State?.Running) {
-        await runDocker(['start', containerName], { timeoutMs: 60_000 }).catch(() => {});
+        const started = await startAndVerifyContainer(agentId, containerName);
+        if (!started.ok) {
+          const note = `the previous container did not come back: ${started.error}`;
+          const message = shortError(e);
+          updateRow(id, { status: 'failed', error: `${message}; ${note}` });
+          return;
+        }
       }
     }
     updateRow(id, { status: 'failed', error: shortError(e) });
@@ -285,9 +293,9 @@ export async function recoverInterruptedUpdates(): Promise<number> {
   for (const agentId of ids) {
     const container = await inspectAgentContainer(agentId).catch(() => null);
     const name = container?.Name?.replace(/^\//, '');
-    if (name && !container?.State?.Running) {
-      await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
-    }
+    if (!name || container?.State?.Running) continue;
+    const started = await startAndVerifyContainer(agentId, name);
+    if (!started.ok) console.warn(`[agent:update] ${agentId} did not come back after an interrupted update: ${started.error}`);
   }
   return interrupted;
 }

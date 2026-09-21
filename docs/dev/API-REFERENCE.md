@@ -795,7 +795,7 @@ Create a new agent container from a template.
 |---|---|---|
 | `name` | yes | Display name (`AGENT_NAME`); the container name and `AGENT_ID` are generated (`agent_<hex>`) |
 | `template` | yes | Template name (directory in `agent-templates/`) |
-| `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block |
+| `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block, chosen by `findAvailablePortBlock()` |
 | `model` | no | Primary model id. Must be offered by this deployment (in the catalogue, enabled, provider has a key), in any form the proxy accepts; otherwise `400`. Defaults to `rev4a/deepseek/deepseek-flash`, validated the same way |
 | `fallbacks` | no | Array of fallback model IDs |
 
@@ -804,6 +804,9 @@ Create a new agent container from a template.
 - Single port: `-p <port>:3000` — maps a single host port to container port 3000
 - Control UI: the wizard's Open button goes through `GET /api/agents/[id]/open-control-ui`, like the Agents page
 - Port 3740 is reserved for Rev4a
+- A port held by any container, running or stopped, is refused (`400`): the shared lookup
+  reads every container's bindings (`lib/agent-ports-server.ts`), because a stopped
+  container keeps its allocation while `docker ps -a` and the API's list report none
 - Image: `openclaw-agent-base:<version>`, the newest supported OpenClaw version downloaded here; `409` when none is
 
 **Response:**
@@ -886,11 +889,22 @@ touch the agent answers `409`.
 
 `portRange` is `"<start>"` or `"<start>-<end>"`, mapped onto the gateway port 3000
 (`3700-3709` → `3700-3709:3000-3009`). It is validated with the same rules and messages as
-agent creation (`lib/agent-ports.ts`): a range that holds Rev4a's port `3740`, an invalid
-format, or a port already published by **another** agent answers `400`
+agent creation (`lib/agent-ports.ts`) against the shared lookup
+(`getUsedHostPorts()`, `lib/agent-ports-server.ts`): a range that holds Rev4a's port
+`3740`, an invalid format, or a port already held by **another** container answers `400`
 (`Ports already in use: 3711, 3712`) before anything is rebuilt. The agent's own published
 ports are excluded, so keeping or shifting its block is not a conflict with itself.
+A port held by a **stopped** container counts as in use: the lookup reads every
+container's `HostConfig.PortBindings`, because both `docker ps -a --format '{{.Ports}}'`
+and the API's container list report nothing for a container that is not running.
 At least one field is required; an empty `displayName` is rejected.
+
+The rebuild itself (`recreateAgentContainer()`) re-checks the ports it is about to
+publish against every other container and refuses **before removing anything** when one
+is taken, naming the holder: `Port 3700 is already published by agent_a0000004 (Night
+Shift). Change this agent's port range in the Edit panel, then retry: nothing was
+changed.` The row lands in `failed` with that message and the agent keeps running. The
+same guard protects Update and Rollback, whose rows record the same text.
 
 **Response (202):**
 ```json

@@ -12,6 +12,8 @@
  */
 import { dockerFetch } from '@/lib/docker-socket';
 import { runDocker, resolveRecreateImage } from '@/lib/agent-images';
+import { hostPortsFromArgs } from '@/lib/agent-ports';
+import { getHostPortHolders, describeHolder, type HostPortHolder } from '@/lib/agent-ports-server';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { isValidAgentId } from '@/lib/container';
 import { BACKUP_VOLUME, coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
@@ -30,12 +32,13 @@ const RECREATE_READY_TIMEOUT_MS = 5 * 60 * 1000;
 const COLD_BACKUP_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface AgentContainerInspect {
+  Id?: string;
   Name?: string;
   Image?: string;
   Config?: { Image?: string; Env?: string[]; Labels?: Record<string, string> };
   State?: { Running?: boolean; Status?: string };
   HostConfig?: { NetworkMode?: string; PortBindings?: Record<string, { HostPort?: string }[] | null> };
-  NetworkSettings?: { Networks?: Record<string, unknown> };
+  NetworkSettings?: { Networks?: Record<string, unknown>; Ports?: Record<string, unknown> };
 }
 
 /** The container carrying `AGENT_ID=<agentId>`, inspected; null when there is none. */
@@ -46,6 +49,31 @@ export async function inspectAgentContainer(agentId: string): Promise<AgentConta
   if (!id) return null;
   const info = await dockerFetch<AgentContainerInspect & { Id?: string }>('GET', `/containers/${id}/json`);
   return typeof info?.Id === 'string' ? info : null;
+}
+
+/**
+ * Start the container and confirm it really came back. A container can report
+ * `running` while its network endpoint failed to attach — the state a failed port bind
+ * leaves behind — which would otherwise pass as a successful start.
+ */
+export async function startAndVerifyContainer(agentId: string, name: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await runDocker(['start', name], { timeoutMs: 60_000 });
+  } catch (e) {
+    return { ok: false, error: shortDockerError(e) };
+  }
+  const after = await inspectAgentContainer(agentId).catch(() => null);
+  if (!after?.State?.Running) return { ok: false, error: 'the container is not running' };
+  if (Object.keys(after.NetworkSettings?.Networks ?? {}).length === 0) {
+    return { ok: false, error: 'the container came up without a network (one of its ports is taken by another container)' };
+  }
+  return { ok: true };
+}
+
+/** A docker failure carries a whole stack trace; the first line is the useful part. */
+function shortDockerError(e: unknown): string {
+  const message = (e as Error)?.message ?? String(e);
+  return message.split('\n').map((l) => l.trim()).filter(Boolean)[0] ?? message;
 }
 
 /**
@@ -88,6 +116,23 @@ export async function recreateAgentContainer(
     return ['-p', `${hostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`];
   });
 
+  // Refuse on a port clash before anything is removed: the old container is the
+  // fallback the caller restarts, so a recreate refused here leaves the agent up. A
+  // clash cannot be recovered from by retrying, so it must not reach `docker run`.
+  const wanted = hostPortsFromArgs(portArgs);
+  if (wanted.length && container.Id) {
+    const held = await getHostPortHolders({ excludeContainerId: container.Id }).catch(() => new Map<number, HostPortHolder>());
+    const conflicts = wanted.filter((p) => held.has(p));
+    if (conflicts.length) {
+      const holders = [...new Set(conflicts.map((p) => describeHolder(held.get(p)!)))];
+      const many = conflicts.length > 1;
+      throw new Error(
+        `${many ? 'Ports' : 'Port'} ${conflicts.join(', ')} ${many ? 'are' : 'is'} already published by ${holders.join(', ')}. `
+        + 'Change this agent\'s port range in the Edit panel, then retry: nothing was changed.',
+      );
+    }
+  }
+
   const oldName = (container.Name ?? '').replace(/^\//, '') || agentId;
   await runDocker(['rm', '-f', oldName], { timeoutMs: 60_000 });
 
@@ -115,7 +160,16 @@ export async function recreateAgentContainer(
     console.warn(`[agent:recreate] docker run failed for ${agentId}, retrying:`, (first as Error).message);
     await runDocker(['rm', '-f', agentId], { timeoutMs: 60_000 }).catch(() => {});
     const retryImage = await resolveRecreateImage(container).catch(() => image);
-    await runDocker(runArgs(retryImage), { timeoutMs: 120_000, env });
+    try {
+      await runDocker(runArgs(retryImage), { timeoutMs: 120_000, env });
+    } catch (second) {
+      // `docker run` creates the container before its network step, so a failed start
+      // leaves a container behind — one that reports `running` with no network and
+      // would be picked up as if it were the agent. Remove it, so the state the caller
+      // reports matches reality.
+      await runDocker(['rm', '-f', agentId], { timeoutMs: 60_000 }).catch(() => {});
+      throw second;
+    }
   }
 }
 
@@ -267,9 +321,9 @@ async function finishInterruptedRecreate(agentId: string): Promise<void> {
   if (running) await waitForColdBackup(agentId).catch(() => null);
   const container = await inspectAgentContainer(agentId).catch(() => null);
   const name = container?.Name?.replace(/^\//, '');
-  if (name && !container?.State?.Running) {
-    await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
-  }
+  if (!name || container?.State?.Running) return;
+  const started = await startAndVerifyContainer(agentId, name);
+  if (!started.ok) console.warn(`[agent:recreate] ${agentId} did not come back after an interrupted recreate: ${started.error}`);
 }
 
 // ── Prerecreate retention ────────────────────────────────────────────────────

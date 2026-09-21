@@ -8,10 +8,10 @@
  * cannot start on top of the first (lib/agent-busy.ts answers 409 while one runs).
  */
 import { isValidAgentId } from '@/lib/container';
-import { portMappingArgs, validatePortInput } from '@/lib/agent-ports';
+import { hostPortsFromBindings, portMappingArgs, validatePortInput } from '@/lib/agent-ports';
 import { getUsedHostPorts } from '@/lib/agent-ports-server';
-import { resolveRecreateImage, runDocker } from '@/lib/agent-images';
-import { inspectAgentContainer, recreateAgentContainer } from '@/lib/agent-recreate';
+import { resolveRecreateImage } from '@/lib/agent-images';
+import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { applyRuntimeConfig } from '@/lib/agent-setup';
@@ -29,20 +29,12 @@ export class EditRefusedError extends Error {}
  * with itself — while a conflict with another agent still fails **before** the container
  * is removed.
  */
-function parsePortArgs(portRange: string, ownPorts: number[]): string[] {
-  const used = getUsedHostPorts();
+async function parsePortArgs(portRange: string, ownPorts: number[]): Promise<string[]> {
+  const used = await getUsedHostPorts();
   for (const p of ownPorts) used.delete(p);
   const result = validatePortInput(portRange, used);
   if (!result.valid) throw new EditRefusedError(result.error);
   return portMappingArgs(result.start, result.end);
-}
-
-/** The agent's own published host ports, from its container inspect. */
-function ownHostPorts(container: { HostConfig?: { PortBindings?: Record<string, { HostPort?: string }[] | null> } }): number[] {
-  return Object.values(container.HostConfig?.PortBindings ?? {})
-    .flatMap((bindings) => bindings ?? [])
-    .map((b) => Number(b?.HostPort))
-    .filter((n) => Number.isInteger(n));
 }
 
 /** Edit jobs running in this process, so a second start for the same agent is refused. */
@@ -74,7 +66,7 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
     if (!container) throw new EditRefusedError(`No container found with AGENT_ID '${agentId}'`);
     // A bad range is refused before any state is written, and before the container is
     // removed — the only failure mode that could leave the agent without one.
-    const portArgs = opts.portRange ? parsePortArgs(opts.portRange, ownHostPorts(container)) : undefined;
+    const portArgs = opts.portRange ? await parsePortArgs(opts.portRange, hostPortsFromBindings(container)) : undefined;
 
     const id = insertEdit(agentId, displayName ?? null, portRange);
     void runEdit(id, agentId, container, displayName ?? null, portArgs).finally(() => running.delete(agentId));
@@ -149,9 +141,9 @@ export async function recoverInterruptedEdits(): Promise<number> {
   for (const agentId of ids) {
     const container = await inspectAgentContainer(agentId).catch(() => null);
     const name = container?.Name?.replace(/^\//, '');
-    if (name && !container?.State?.Running) {
-      await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
-    }
+    if (!name || container?.State?.Running) continue;
+    const started = await startAndVerifyContainer(agentId, name);
+    if (!started.ok) console.warn(`[agent:edit] ${agentId} did not come back after an interrupted edit: ${started.error}`);
   }
   return interrupted;
 }

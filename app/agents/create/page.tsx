@@ -2,6 +2,8 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DB_FILE, AGENTS_TOKEN_FILE, templatesDir } from '@/lib/rev4a-paths';
+import { REV4A_PORT } from '@/lib/agent-ports';
+import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import CreatePageClient from './PageClient';
 
@@ -45,19 +47,21 @@ async function getModels(): Promise<ModelInfo[]> {
 async function getUsedNames(): Promise<string[]> {
   try {
     const raw = execSync(
-      `docker ps --filter "label=AGENT_ID" --format '{{.Names}}'`,
+      `docker ps -a --filter "label=AGENT_ID" --format '{{.Names}}'`,
       { encoding: 'utf-8', timeout: 5000 },
     ).trim();
     if (!raw) return [];
 
-    // Read AGENT_NAME env from each container (display name)
+    // Read AGENT_NAME from each container's inspect: a stopped agent still owns its
+    // display name, and `docker exec` cannot reach a stopped container.
     const names: string[] = [];
     for (const name of raw.split('\n').filter(Boolean)) {
       try {
-        const displayName = execSync(
-          `docker exec ${name} sh -c 'echo $AGENT_NAME'`,
+        const env = execSync(
+          `docker inspect ${name} --format '{{range .Config.Env}}{{println .}}{{end}}'`,
           { encoding: 'utf-8', timeout: 3000 },
-        ).trim();
+        );
+        const displayName = env.match(/^AGENT_NAME=(.*)$/m)?.[1]?.trim();
         if (displayName) names.push(displayName);
       } catch { /* skip */ }
     }
@@ -68,29 +72,11 @@ async function getUsedNames(): Promise<string[]> {
 }
 
 async function getUsedPorts(): Promise<number[]> {
-  try {
-    const raw = execSync(
-      `docker ps --format '{{.Ports}}'`,
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-    const ports: number[] = [];
-    if (raw) {
-      for (const line of raw.split('\n')) {
-        const matches = line.match(/(\d+)->/g);
-        if (matches) {
-          matches.forEach((m) => {
-            const p = parseInt(m.replace('->', ''), 10);
-            if (!isNaN(p)) ports.push(p);
-          });
-        }
-      }
-    }
-    // Add Rev4a port as reserved so the client won't suggest it
-    ports.push(3740);
-    return [...new Set(ports)];
-  } catch {
-    return [3740];
-  }
+  // One source for port occupancy (lib/agent-ports-server.ts): it reads every
+  // container's bindings, so the block of a stopped agent is offered to nobody.
+  const ports = await getUsedHostPorts();
+  ports.add(REV4A_PORT);
+  return [...ports];
 }
 
 export default async function CreateAgentPage() {
