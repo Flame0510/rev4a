@@ -18,7 +18,7 @@ export async function PUT(
       return NextResponse.json({ error: 'botToken is required' }, { status: 400 });
     }
 
-    const result = setTelegramConfig(id, {
+    const result = await setTelegramConfig(id, {
       botToken: body.botToken.trim(),
       dmPolicy: body.dmPolicy,
       allowFrom: body.allowFrom,
@@ -40,7 +40,7 @@ export async function DELETE(request: NextRequest,
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { id } = await params;
 
-  const result = removeTelegram(id);
+  const result = await removeTelegram(id);
 
   if (!result.success) {
     return NextResponse.json({ error: result.error }, { status: 404 });

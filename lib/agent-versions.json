@@ -1,0 +1,14 @@
+{
+  "localRepository": "openclaw-agent-base",
+  "registryRepository": "ghcr.io/flame0510/rev4a/openclaw-agent-base",
+  "supported": [
+    {
+      "version": "2026.9.3",
+      "modelInput": ["text", "image", "audio", "video"]
+    },
+    {
+      "version": "2026.7.1-2",
+      "modelInput": ["text", "image"]
+    }
+  ]
+}

@@ -149,7 +149,7 @@ async function deliverGithub(container: string, secret: Record<string, string>):
   if (!token) throw new Error('Missing token');
 
   // Require gh CLI preinstalled in the agent image
-  if (!await cliPresent(container, 'gh')) throw new Error('gh CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'gh')) throw new Error('gh CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
 
   await containerExec(
     container,
@@ -162,7 +162,7 @@ async function deliverVercel(container: string, secret: Record<string, string>):
   if (!token) throw new Error('Missing token');
 
   // Require vercel CLI preinstalled in the agent image
-  if (!await cliPresent(container, 'vercel')) throw new Error('vercel CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'vercel')) throw new Error('vercel CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
 
   // Validate token and discover team scope via Node fetch (no curl/exec)
   const scope = await discoverVercelScope(token);
@@ -191,7 +191,7 @@ async function deliverSupabase(container: string, secret: Record<string, string>
   if (!accessToken || !accessToken.trim()) throw new Error('Missing Supabase access token');
 
   // Check supabase CLI is available (installed globally in the image)
-  if (!await cliPresent(container, 'supabase')) throw new Error('supabase CLI not installed in this container. Rebuild the base image: docker build -t openclaw-agent-base:latest agent-templates/base-image/');
+  if (!await cliPresent(container, 'supabase')) throw new Error('supabase CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
 
   // Login with access token — grants access to all projects on the account
   // supabase login --token supports non-interactive auth

@@ -3,11 +3,10 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
-import { patchRev4aProvider } from '@/app/api/gateway/sync';
-import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
+import { agentBusyReason } from '@/lib/agent-busy';
+import { agentEditView, EditRefusedError, startAgentEdit } from '@/lib/agent-edit';
 import { DB_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { waitForGatewayReady } from '@/lib/agent-readiness';
 
 const BACKUP_VOLUME = 'rev4a-backups';
 
@@ -29,6 +28,9 @@ export async function DELETE(request: Request,
     if (!isValidAgentId(id)) {
       return NextResponse.json({ success: false, error: 'Invalid agent id' }, { status: 400 });
     }
+
+    const busy = await agentBusyReason(id);
+    if (busy) return NextResponse.json({ error: busy }, { status: 409 });
 
     // Only allow deletion of containers that have a matching AGENT_ID label
     const containerName = resolveAgentedContainer(id);
@@ -87,16 +89,14 @@ export async function DELETE(request: Request,
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * PATCH /api/agents/[id]
  *
- * Update agent settings (display name, ports — future).
- * Recreates the container with updated env vars while preserving the
- * persistent volume, workspace, sessions, and all data.
+ * Edit an agent's display name and/or port range. The container is rebuilt on the image
+ * it already runs — **no backup**, the persistent volume is never touched — and the job
+ * runs in the background (`lib/agent-edit.ts`): `202` once it has started, then
+ * `GET /api/agents/[id]` reports the running or last edit so the panel can resume.
+ * While it runs, anything else that would touch the agent answers `409`.
  */
 export async function PATCH(
   request: Request,
@@ -115,149 +115,37 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const { displayName, portRange } = body;
-    if (!displayName && !portRange) {
-      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
-    }
-
-    if (displayName !== undefined && (!displayName || displayName.trim().length < 1)) {
-      return NextResponse.json({ error: 'Display name must not be empty' }, { status: 400 });
-    }
-
-    // Resolve the container
-    const containerName = resolveAgentedContainer(id);
-    if (!containerName) {
-      return NextResponse.json({ error: `No container found with AGENT_ID '${id}'` }, { status: 404 });
-    }
-
-    // Inspect existing container
-    let inspect: string;
-    try {
-      inspect = execSync(`docker inspect ${containerName}`, { timeout: 10000, encoding: 'utf-8' }).trim();
-    } catch {
-      return NextResponse.json({ error: `Container '${containerName}' not found` }, { status: 404 });
-    }
-
-    const info = JSON.parse(inspect);
-    const [container] = info;
-    const image = container.Config?.Image || 'openclaw-agent-base:latest';
-    const currentEnv: string[] = container.Config?.Env || [];
-
-    // Update AGENT_NAME in env vars
-    let env = [...currentEnv];
-    if (displayName) {
-      const idx = env.findIndex((e: string) => e.startsWith('AGENT_NAME='));
-      const newEntry = `AGENT_NAME=${displayName.trim()}`;
-      if (idx >= 0) {
-        env[idx] = newEntry;
-      } else {
-        env.push(newEntry);
-      }
-    }
-
-    // Keep only relevant env vars
-    const keepPrefixes = ['AGENT_', 'MODEL_', 'OPENCLAW_', 'TZ='];
-    const envOpts = env
-      .filter((e: string) => keepPrefixes.some((p) => e.startsWith(p)))
-      .map((e: string) => `-e ${shellQuote(e)}`)
-      .join(' ');
-
-    // Labels
-    const labels = container.Config?.Labels || {};
-    const keepLabelKeys = ['AGENT_ID', 'traefik.', 'description', 'maintainer'];
-    const labelOpts = Object.entries(labels)
-      .filter(([k]) => keepLabelKeys.some((p) => k === p || k.startsWith(p)))
-      .map(([k, v]) => `-l ${shellQuote(`${k}=${v}`)}`)
-      .join(' ');
-
-    // Network
-    const networks = container.NetworkSettings?.Networks || {};
-    const network = Object.keys(networks)[0];
-    if (!network) {
-      return NextResponse.json({ error: 'Cannot determine network' }, { status: 500 });
-    }
-
-    // Port mappings
-    const portBindings = (container.HostConfig?.PortBindings || {}) as Record<string, { HostPort: string }[]>;
-    let portOpts = Object.entries(portBindings)
-      .map(([containerPort, bindings]) => {
-        const hostPort = bindings[0]?.HostPort;
-        if (!hostPort) return '';
-        const proto = containerPort.includes('/udp') ? '/udp' : '';
-        return `-p ${hostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`;
-      })
-      .filter(Boolean)
-      .join(' ');
-
-    // If portRange is provided, replace the port mapping
-    if (portRange) {
-      const parts = portRange.trim().split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : start;
-      if (isNaN(start) || isNaN(end) || start < 1 || end > 65535 || end < start) {
-        return NextResponse.json({ error: 'Invalid port range' }, { status: 400 });
-      }
-      if (end === start) {
-        portOpts = `-p ${start}:3000`;
-      } else {
-        portOpts = `-p ${start}-${end}:3000-${3000 + (end - start)}`;
-      }
-    }
-
-    const volumeName = `agent-${id}-data`;
-
-    // Stop & remove old container (keep volume)
-    try {
-      execSync(`docker rm -f ${containerName}`, { timeout: 15000 });
-    } catch (rmErr) {
-      return NextResponse.json(
-        { error: `Failed to remove old container: ${(rmErr as Error).message}` },
-        { status: 500 },
-      );
-    }
-
-    // Run new container with same volume
-    const cmd = [
-      `docker run -d`,
-      `--name "${id}"`,
-      `--network "${network}"`,
-      `--restart unless-stopped`,
-      `--add-host host.docker.internal:host-gateway`,
-      `-v ${volumeName}:/root`,
-      ...getMountFlags(),
-      labelOpts,
-      envOpts,
-      portOpts,
-      `"${image}"`,
-    ].filter(Boolean).join(' \\\n  ');
-
-    execSync(cmd, { timeout: 60000, encoding: 'utf-8' });
-
-    // Wait for startup to complete — /startupz, not /health
-    const ready = await waitForGatewayReady(id);
-    if (!ready) {
-      return NextResponse.json(
-        { error: 'Container started but its gateway did not finish starting within 60s.' },
-        { status: 500 },
-      );
-    }
-
-    // Apply runtime config
-    try {
-      applyRuntimeConfig(id);
-      patchRev4aProvider(id);
-    } catch (e) {
-      // non-fatal, but a skipped patch must show up in the log
-      console.error('[agent:update] runtime config patch failed:', (e as Error).message);
-    }
-
-    return NextResponse.json({
-      success: true,
-      displayName: displayName?.trim() || null,
-    });
+    const rowId = await startAgentEdit(id, { displayName: body.displayName, portRange: body.portRange });
+    return NextResponse.json({ started: true, id: rowId }, { status: 202 });
   } catch (e: unknown) {
+    if (e instanceof EditRefusedError) {
+      const message = e.message;
+      // The shared port validator's messages (lib/agent-ports.ts) are validation errors:
+      // they answer 400, like the create route. Everything else is a busy refusal (409).
+      const status = /Invalid agent id|Display name must not be empty|No fields to update|Invalid format|Ports must be between|End port must be greater|reserved for Rev4a|already in use|Use a number/.test(message)
+        ? 400
+        : 409;
+      return NextResponse.json({ error: message }, { status });
+    }
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }
+
+/**
+ * GET /api/agents/[id]
+ *
+ * The running or last edit of an agent (`null` when it was never edited): what the edit
+ * panel polls to resume after a reload.
+ */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  const { id } = await params;
+  if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
+  return NextResponse.json({ edit: agentEditView(id) }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 
 

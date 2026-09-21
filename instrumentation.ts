@@ -22,5 +22,48 @@ export async function register() {
       // Best-effort — don't block startup if sync fails
       console.warn('[rev4a] Failed to sync agents on startup');
     }
+    // Updates cut off by the restart: no job runs in a fresh process, so any update
+    // still marked active becomes `interrupted` and waits for the operator.
+    try {
+      const { recoverInterruptedUpdates } = await import('./lib/agent-update');
+      const interrupted = await recoverInterruptedUpdates();
+      if (interrupted) console.warn(`[rev4a] ${interrupted} agent update(s) were interrupted by the restart`);
+    } catch {
+      console.warn('[rev4a] Could not check agent updates on startup');
+    }
+    // Recreates cut off by the restart: the row becomes `interrupted` and an agent the
+    // backup had stopped is started again, so nothing stays down.
+    try {
+      const { recoverInterruptedRecreates } = await import('./lib/agent-recreate');
+      const interrupted = await recoverInterruptedRecreates();
+      if (interrupted) console.warn(`[rev4a] ${interrupted} agent recreate(s) were interrupted by the restart`);
+    } catch {
+      console.warn('[rev4a] Could not check agent recreates on startup');
+    }
+    // Restores cut off by the restart: same treatment — the row becomes `interrupted`
+    // and a container left stopped is started again.
+    try {
+      const { recoverInterruptedRestores } = await import('./lib/agent-restore');
+      const interrupted = await recoverInterruptedRestores();
+      if (interrupted) console.warn(`[rev4a] ${interrupted} agent restore(s) were interrupted by the restart`);
+    } catch {
+      console.warn('[rev4a] Could not check agent restores on startup');
+    }
+    // Edits cut off by the restart: same treatment.
+    try {
+      const { recoverInterruptedEdits } = await import('./lib/agent-edit');
+      const interrupted = await recoverInterruptedEdits();
+      if (interrupted) console.warn(`[rev4a] ${interrupted} agent edit(s) were interrupted by the restart`);
+    } catch {
+      console.warn('[rev4a] Could not check agent edits on startup');
+    }
+    // Cold backups whose helper outlived a Rev4a restart: finish the exited ones (the
+    // agent is started again if it was running) and keep watching the rest.
+    try {
+      const { reconcileColdBackups } = await import('./lib/cold-backup');
+      await reconcileColdBackups();
+    } catch {
+      console.warn('[rev4a] Could not reconcile cold backups on startup');
+    }
   }
 }

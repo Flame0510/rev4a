@@ -8,9 +8,9 @@
  * one-file change.
  */
 
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
+import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
@@ -103,27 +103,76 @@ const GUARANTEED_CONFIG_PATCHES: object[] = [
   },
 ];
 
+const CONFIG_PATCH_TIMEOUT_MS = 15_000;
+
+/** Exactly `["*"]`: the allow-all list earlier Rev4a versions wrote. */
+function isWildcardOnly(value: unknown): boolean {
+  return Array.isArray(value) && value.length === 1 && value[0] === '*';
+}
+
 /**
- * Apply all guaranteed config patches to a running container.
- * Uses `openclaw config patch --stdin` (deep-merge) so existing
- * user customizations are never overwritten.
+ * `gateway.controlUi` with Rev4a's browser-origin policy applied.
+ *
+ * The Host-header fallback accepts a Control UI page served from the host the
+ * browser connected to — whatever address the agent is reached on — and refuses
+ * pages from any other origin. Without it, a public IP is refused; loopback and
+ * private hosts are accepted either way. An `allowedOrigins: ["*"]` list, which
+ * accepts every origin, is dropped; any other list an operator set is kept. The
+ * retired `dangerouslyDisableDeviceAuth` is dropped too.
  */
-export function applyRuntimeConfig(containerName: string): void {
-  for (const patch of GUARANTEED_CONFIG_PATCHES) {
-    const json = JSON.stringify(patch);
-    try {
-      execSync(
-        `docker exec -i ${escapeShell(containerName)} sh -c 'openclaw config patch --stdin'`,
-        { timeout: 15_000, stdio: 'pipe', input: json },
-      );
-    } catch {
-      // config patch is best-effort — the image may already have it
-    }
+export function withControlUiPolicy(current: unknown): Record<string, unknown> {
+  const next: Record<string, unknown> = {
+    ...(current && typeof current === 'object' ? (current as Record<string, unknown>) : {}),
+  };
+  next.dangerouslyAllowHostHeaderOriginFallback = true;
+  delete next.dangerouslyDisableDeviceAuth;
+  if (isWildcardOnly(next.allowedOrigins)) delete next.allowedOrigins;
+  return next;
+}
+
+async function patchConfig(containerName: string, patch: object): Promise<void> {
+  await dockerExecWithInput(containerName, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify(patch), {
+    timeoutMs: CONFIG_PATCH_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Apply the origin policy to a running container through merge patches.
+ *
+ * The fallback and the removal of `["*"]` go in one patch, so the Gateway reloads
+ * both together. The retired `dangerouslyDisableDeviceAuth` goes in a second patch:
+ * if the Gateway refuses it, the policy the Control UI needs is already in place.
+ */
+async function applyControlUiPolicy(containerName: string): Promise<void> {
+  const raw = await dockerExec(containerName, ['cat', '/root/.openclaw/openclaw.json'], { timeoutMs: CONFIG_PATCH_TIMEOUT_MS });
+  const current = (JSON.parse(raw) as { gateway?: { controlUi?: Record<string, unknown> } })?.gateway?.controlUi ?? {};
+
+  const policy: Record<string, unknown> = { dangerouslyAllowHostHeaderOriginFallback: true };
+  if (isWildcardOnly(current.allowedOrigins)) policy.allowedOrigins = null;
+  await patchConfig(containerName, { gateway: { controlUi: policy } });
+
+  if ('dangerouslyDisableDeviceAuth' in current) {
+    await patchConfig(containerName, { gateway: { controlUi: { dangerouslyDisableDeviceAuth: null } } });
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-export function escapeShell(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+/**
+ * Apply all guaranteed config patches to a running container, then the origin policy.
+ * Uses `openclaw config patch --stdin` (deep-merge) so existing
+ * user customizations are never overwritten. Best-effort: a failed patch is logged
+ * and the others still run.
+ */
+export async function applyRuntimeConfig(containerName: string): Promise<void> {
+  for (const patch of GUARANTEED_CONFIG_PATCHES) {
+    try {
+      await patchConfig(containerName, patch);
+    } catch (e) {
+      console.warn(`[agent-setup] config patch failed on ${containerName}:`, (e as Error).message);
+    }
+  }
+  try {
+    await applyControlUiPolicy(containerName);
+  } catch (e) {
+    console.warn(`[agent-setup] Control UI origin policy not applied on ${containerName}:`, (e as Error).message);
+  }
 }

@@ -32,7 +32,7 @@ export default function DashboardToolbar({ filter, onChange, agents = ['all'] }:
         className={`agent-btn ${filter.showOnlyActive ? 'active' : ''}`}
         onClick={() => onChange({ showOnlyActive: !filter.showOnlyActive })}
       >
-        solo attivi
+        active only
       </button>
 
       <button

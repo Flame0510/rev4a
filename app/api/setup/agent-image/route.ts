@@ -1,60 +1,36 @@
 /**
  * GET /api/setup/agent-image
  *
- * Checks if openclaw-agent-base:latest exists locally or needs downloading.
- * Returns status and a hint for the UI.
+ * Whether a supported OpenClaw version of the agent base image is downloaded.
+ * Returns `{ exists, version }`, the version being the newest one present.
  *
  * POST /api/setup/agent-image
  *
- * Downloads openclaw-agent-base:latest from ghcr.io (public registry).
- * Streams progress via SSE so the setup wizard can show a live progress bar.
+ * Downloads the newest supported version the registry publishes, and streams
+ * progress via SSE so the setup wizard can show a live progress bar. Nothing is
+ * downloaded when that version is already here.
  *
  * Only one download at a time — returns 409 if already running.
- * Cleans up the docker process if the client disconnects.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
-import { execSync } from 'child_process';
 import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
+import { dockerAvailable } from '@/lib/docker-socket';
+import { listLocalAgentImages, newestLocalSupportedVersion } from '@/lib/agent-images';
 
 export const dynamic = 'force-dynamic';
-
-function dockerOk(): boolean {
-  try {
-    execSync('docker version --format "{{.Client.Version}}" 2>/dev/null', {
-      encoding: 'utf-8',
-      timeout: 2000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthIfConfigured(request);
   if (denied) return denied;
-  if (!dockerOk()) {
-    return NextResponse.json({ exists: false });
+  if (!dockerAvailable()) {
+    return NextResponse.json({ exists: false, version: null });
   }
   try {
-    const { exec } = await import('child_process');
-    const result = await new Promise<string>((resolve, reject) => {
-      exec(
-        'docker image inspect openclaw-agent-base:latest --format "{{.ID}}" 2>/dev/null',
-        { timeout: 5000 },
-        (err, stdout) => {
-          if (err) return reject(err);
-          resolve(stdout.trim());
-        },
-      );
-    });
-    if (result) {
-      return NextResponse.json({ exists: true, imageId: result });
-    }
-    return NextResponse.json({ exists: false });
+    const version = newestLocalSupportedVersion(await listLocalAgentImages());
+    return NextResponse.json({ exists: version !== null, version });
   } catch {
-    return NextResponse.json({ exists: false });
+    return NextResponse.json({ exists: false, version: null });
   }
 }
 
@@ -81,11 +57,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       const ctrl = controller as ReadableStreamDefaultController & { signal?: AbortSignal };
 
       try {
-        await downloadAgentImage({
-          force: false, // setup: skip if already exists
-          onEvent: send,
-          signal: ctrl.signal,
-        });
+        await downloadAgentImage({ onEvent: send, signal: ctrl.signal });
       } catch (e: unknown) {
         send(JSON.stringify({
           type: 'error',
@@ -94,7 +66,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
       controller.close();
     },
-    cancel() { /* downloadAgentImage handles cleanup via signal */ },
+    cancel() { /* downloadAgentImage stops the docker process through the signal */ },
   });
 
   return new Response(stream, {

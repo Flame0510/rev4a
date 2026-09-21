@@ -27,14 +27,15 @@ interface ChannelsData {
 
 interface Props {
   agentId: string;
-  agentName: string;
+  /** What to call the agent in the UI: its display name, falling back to the container name. */
+  displayName: string;
   open: boolean;
   onClose: () => void;
 }
 
 const PAIRING_POLL_MS = 5000;
 
-export default function ChannelManager({ agentId, agentName, open, onClose }: Props) {
+export default function ChannelManager({ agentId, displayName, open, onClose }: Props) {
   const [channels, setChannels] = useState<ChannelsData | null>(null);
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [pairingsLoading, setPairingsLoading] = useState(true);
@@ -51,7 +52,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
 
   const [pending, setPending] = useState<PendingPairing[]>([]);
   const [approved, setApproved] = useState<ApprovedPairing[]>([]);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pairingsAbortRef = useRef<AbortController | null>(null);
   const channelsAbortRef = useRef<AbortController | null>(null);
 
@@ -120,14 +121,21 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
     }
   }, [channelsLoading, channels?.telegram?.connected, fetchPairings]);
 
-  // Poll pairings when on the active tab and connected/linked
+  // Poll pairings when on the active tab and connected/linked. One request at a time:
+  // each reads the OpenClaw pairing store inside the container and can take seconds on a
+  // slow agent, so the next tick waits for the previous response instead of stacking.
   useEffect(() => {
-    if (open && channels?.telegram?.connected) {
-      pollRef.current = setInterval(pollPairings, PAIRING_POLL_MS);
-    } else {
-      if (pollRef.current) clearInterval(pollRef.current);
-    }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    if (!open || !channels?.telegram?.connected) return;
+    let alive = true;
+    const tick = async () => {
+      await pollPairings();
+      if (alive) pollRef.current = setTimeout(() => { void tick(); }, PAIRING_POLL_MS);
+    };
+    pollRef.current = setTimeout(() => { void tick(); }, PAIRING_POLL_MS);
+    return () => {
+      alive = false;
+      if (pollRef.current) clearTimeout(pollRef.current);
+    };
   }, [open, channels?.telegram?.connected, pollPairings]);
 
   const handleTelegramConnect = async () => {
@@ -232,7 +240,7 @@ export default function ChannelManager({ agentId, agentName, open, onClose }: Pr
   const tg = channels?.telegram;
 
   return (
-    <Modal open={open} onClose={onClose} title={`Channel Manager: ${agentName}`} maxWidth={520}>
+    <Modal open={open} onClose={onClose} title={`Channel Manager: ${displayName}`} maxWidth={520}>
 
       {error && <div style={{ margin: '8px 0' }}><Badge tone="danger">{error}</Badge></div>}
       {success && <div style={{ margin: '8px 0' }}><Badge tone="success">{success}</Badge></div>}

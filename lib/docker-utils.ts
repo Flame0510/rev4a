@@ -19,9 +19,9 @@
  *     user's browser open", not "what is this machine's WAN address". Those
  *     differ behind NAT, behind a reverse proxy, and over a tunnel.
  *
- * Agent URLs are now composed in the browser from the port returned by the API
- * plus `window.location.hostname` — a hostname already proven to reach this
- * server, since the dashboard is being served over it.
+ * Agent Control UI links are now built from the host the request reached Rev4a on
+ * (`hostnameFromHostHeader()` in `lib/agent-devices.ts`) — a hostname already
+ * proven to reach this server, since the dashboard is being served over it.
  */
 
 /**

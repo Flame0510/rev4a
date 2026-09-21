@@ -41,8 +41,8 @@ const DATA_DIR = join(CONFIG_DIR, 'data');
 const ENV_SOURCE = join(CONFIG_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
-const AGENT_IMAGE = 'openclaw-agent-base:latest';
-const AGENT_IMAGE_REGISTRY = 'ghcr.io/flame0510/rev4a/openclaw-agent-base:latest';
+// Supported OpenClaw versions and image repositories, shared with the server.
+const AGENT_VERSIONS = require(join(ROOT, 'lib', 'agent-versions.json'));
 const DOCKER_NETWORK = 'rev4a-network';
 // How long `serve` waits for the Docker daemon before starting without it. Like
 // REV4A_DATA_DIR it is read from the real process environment (a systemd
@@ -204,55 +204,57 @@ function ensureDocker() {
 function ensureAgentImage() {
   if (!hasCmd('docker')) return; // Docker not available — skip, warn later
 
-  // Check if image already exists locally
+  // The newest OpenClaw version this release supports, kept under its version tag.
+  // `:latest` is never used: an agent's version decides its data schema.
+  const version = AGENT_VERSIONS.supported[0].version;
+  const localRef = `${AGENT_VERSIONS.localRepository}:${version}`;
+  const registry = (process.env.REV4A_AGENT_IMAGE_REGISTRY || '').trim() || AGENT_VERSIONS.registryRepository;
+  const remoteRef = `${registry}:${version}`;
+
   try {
-    const r = execSync(
-      `docker image inspect ${AGENT_IMAGE} --format '{{.Id}}'`,
-      { stdio: 'pipe', timeout: 10_000 },
-    );
+    const r = execSync(`docker image inspect ${localRef} --format '{{.Id}}'`, { stdio: 'pipe', timeout: 10_000 });
     if (r.toString().trim()) {
-      log('IMAGE', `Agent base image ${AGENT_IMAGE} already exists`);
+      log('IMAGE', `Agent base image ${localRef} already exists`);
       return;
     }
   } catch {
-    // Image doesn't exist locally
+    // Not downloaded yet
   }
 
-  log('IMAGE', `Pulling agent base image from ${AGENT_IMAGE_REGISTRY}…`);
-
+  log('IMAGE', `Pulling agent base image ${remoteRef}…`);
   try {
-    execSync(`docker pull ${AGENT_IMAGE_REGISTRY}`, {
-      stdio: 'inherit',
-      timeout: 300_000, // 5 min timeout
-    });
-    // Tag locally for Rev4a internal use
-    execSync(`docker tag ${AGENT_IMAGE_REGISTRY} ${AGENT_IMAGE}`, {
-      stdio: 'inherit',
-      timeout: 10_000,
-    });
-    log('IMAGE', `Agent base image pulled and tagged as ${AGENT_IMAGE}`);
-  } catch {
-    log('IMAGE', `⚠ Pull from registry failed — attempting local build as fallback…`);
-
-    if (!existsSync(DOCKERFILE)) {
-      log('IMAGE', `⚠ Agent base image Dockerfile not found at ${DOCKERFILE}`);
-      log('IMAGE', '  Agent creation will be unavailable until the image is available.');
-      return;
-    }
-
-    log('IMAGE', `Building agent base image ${AGENT_IMAGE} (this will take a few minutes)…`);
-    log('IMAGE', '  → pulling node:24-bookworm-slim + installing OpenClaw + tooling');
-
+    execSync(`docker pull ${remoteRef}`, { stdio: 'inherit', timeout: 1_800_000 });
+    execSync(`docker tag ${remoteRef} ${localRef}`, { stdio: 'inherit', timeout: 10_000 });
     try {
-      execSync(`docker build -t ${AGENT_IMAGE} -f "${DOCKERFILE}" "${join(DOCKERFILE, '..')}"`, {
-        stdio: 'inherit',
-        timeout: 600_000, // 10 min timeout
-      });
-      log('IMAGE', `Agent base image built successfully`);
-    } catch {
-      log('IMAGE', '⚠ Agent base image build failed. Agent creation will be unavailable.');
-      log('IMAGE', '  Pull the image manually: docker pull ' + AGENT_IMAGE_REGISTRY);
-    }
+      execSync(`docker rmi ${remoteRef}`, { stdio: 'pipe', timeout: 30_000 }); // untag; the layers stay
+    } catch { /* keeping the registry reference is harmless */ }
+    log('IMAGE', `Agent base image pulled and tagged as ${localRef}`);
+    return;
+  } catch {
+    log('IMAGE', '⚠ Pull from registry failed');
+  }
+
+  // A local build is only the same image when this Dockerfile builds that version.
+  const dockerfileVersion = existsSync(DOCKERFILE)
+    ? (/^ARG OPENCLAW_VERSION=(\S+)/m.exec(readFileSync(DOCKERFILE, 'utf-8')) || [])[1] || null
+    : null;
+  if (dockerfileVersion !== version) {
+    log('IMAGE', `  The Dockerfile here builds ${dockerfileVersion || 'no version'}, not ${version}: no local build.`);
+    log('IMAGE', '  Agent creation will be unavailable until the image is downloaded from the Agents page.');
+    return;
+  }
+
+  log('IMAGE', `Building agent base image ${localRef} (this will take a few minutes)…`);
+  log('IMAGE', '  → pulling node:24-bookworm-slim + installing OpenClaw + tooling');
+  try {
+    execSync(
+      `docker build --build-arg OPENCLAW_VERSION=${version} -t ${localRef} -f "${DOCKERFILE}" "${join(DOCKERFILE, '..')}"`,
+      { stdio: 'inherit', timeout: 3_600_000 },
+    );
+    log('IMAGE', 'Agent base image built successfully');
+  } catch {
+    log('IMAGE', '⚠ Agent base image build failed. Agent creation will be unavailable.');
+    log('IMAGE', `  Pull it manually: docker pull ${remoteRef} && docker tag ${remoteRef} ${localRef}`);
   }
 }
 
@@ -639,7 +641,7 @@ EXAMPLES:
 On first run, rev4a serve automatically:
   • Generates .env (JWT secret + API token)
   • Installs Docker if missing (requires root)
-  • Builds the agent base image (openclaw-agent-base:latest)
+  • Downloads the agent base image for the newest supported OpenClaw version
   • Builds the Next.js app if no build is found
   • Starts Next.js, daemon, and terminal WebSocket as a single process group
   • Cleanly stops all services on Ctrl+C / SIGTERM

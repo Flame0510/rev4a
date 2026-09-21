@@ -88,7 +88,7 @@ export default function GatewayPageClient() {
   const [modelSearch, setModelSearch] = useState<Record<string, string>>({});
 
   // Balance fetch state (per provider)
-  const [balances, setBalances] = useState<Record<string, { balance: string; label?: string; loading?: boolean; error?: string } | null>>({});
+  const [balances, setBalances] = useState<Record<string, { balance: string; label?: string; loading?: boolean; error?: string; unsupported?: boolean } | null>>({});
   const [fetchingBalance, setFetchingBalance] = useState<Record<string, boolean>>({});
 
   // Accordion state — which provider cards are expanded
@@ -135,6 +135,9 @@ export default function GatewayPageClient() {
             const bJson = await bRes.json();
             if (bRes.ok && bJson.balance) {
               setBalances((prev) => ({ ...prev, [bp]: { balance: bJson.balance, label: bJson.label } }));
+            } else if (bJson.reason === 'no-balance-api') {
+              // Permanent: this provider has no balance API for the account — hide the badge.
+              setBalances((prev) => ({ ...prev, [bp]: { balance: '', unsupported: true } }));
             } else {
               setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: bJson.error || 'Failed' } }));
             }
@@ -198,6 +201,8 @@ export default function GatewayPageClient() {
       const json = await res.json();
       if (res.ok && json.balance) {
         setBalances((prev) => ({ ...prev, [provider]: { balance: json.balance, label: json.label } }));
+      } else if (json.reason === 'no-balance-api') {
+        setBalances((prev) => ({ ...prev, [provider]: { balance: '', unsupported: true } }));
       } else {
         setBalances((prev) => ({ ...prev, [provider]: { balance: '—', error: json.error || 'Failed' } }));
       }
@@ -519,43 +524,33 @@ export default function GatewayPageClient() {
                 <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-dim)' }}>
                   {p.models.length} models
                 </span>
-                {/* Balance badge — auto-loaded for supported providers with configured key */}
-                {p.configured && ['deepseek','openrouter','glm'].includes(p.provider) && (
-                  balances[p.provider] && !balances[p.provider]?.error ? (
-                    <span
-                      title={balances[p.provider]?.label || ''}
-                      onClick={(e) => { e.stopPropagation(); fetchBalance(p.provider); }}
-                      style={{
-                        fontSize: 11, fontWeight: 600,
-                        color: 'var(--green)',
-                        background: 'rgba(var(--green-rgb,34,197,94),0.1)',
-                        padding: '2px 8px', borderRadius: 0,
-                        border: '1px solid rgba(var(--green-rgb,34,197,94),0.2)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {balances[p.provider]!.balance}
-                    </span>
-                  ) : (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); fetchBalance(p.provider); }}
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--text-dim)',
-                        opacity: 0.5,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {fetchingBalance[p.provider] ? '…' : '…'}
-                    </span>
-                  )
+                {/* Balance badge — auto-loaded for supported providers with configured key.
+                    Same squared chip in every state: "..." while loading, "—" (dimmed, tooltip) on error.
+                    Hidden entirely when the provider has no balance API for the account (permanent). */}
+                {p.configured && ['deepseek','openrouter','glm'].includes(p.provider) && !balances[p.provider]?.unsupported && (
+                  <button
+                    type="button"
+                    title={balances[p.provider]?.error || balances[p.provider]?.label || ''}
+                    onClick={(e) => { e.stopPropagation(); fetchBalance(p.provider); }}
+                    style={{
+                      fontSize: 11, fontWeight: 600,
+                      color: 'var(--green)',
+                      background: 'rgba(var(--green-rgb,34,197,94),0.1)',
+                      padding: '2px 8px', borderRadius: 0,
+                      border: '1px solid rgba(var(--green-rgb,34,197,94),0.2)',
+                      cursor: 'pointer',
+                      opacity: balances[p.provider]?.error ? 0.5 : 1,
+                    }}
+                  >
+                    {balances[p.provider] && !balances[p.provider]?.error ? balances[p.provider]!.balance : balances[p.provider]?.error ? '—' : '...'}
+                  </button>
                 )}
               </div>
 
               {/* Accordion body — expandable */}
               {isExpanded && (
                 <div style={{ padding: '0 18px 16px 18px', display: 'grid', gap: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-                  {/* API Key input con show/hide integrato */}
+                  {/* API Key input with an inline show/hide toggle */}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <PasswordInput
                       value={apiKeyInputs[p.provider] ?? ''}

@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Agent base image banner on the Agents page.
+ *
+ * Shown when no supported OpenClaw version of the agent image is downloaded, when
+ * the registry publishes a newer supported version, and while a download runs.
+ * Downloading touches no agent: each agent keeps its OpenClaw version until it is
+ * updated on its own.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '../components/ui';
 
@@ -7,16 +15,23 @@ interface ImageStatus {
   exists: boolean;
   needsUpdate: boolean;
   downloading: boolean;
+  downloadingVersion: string | null;
+  localVersions: string[];
+  newestLocal: string | null;
+  /** Newest supported version on the registry that is not downloaded yet. */
+  available: string | null;
 }
 
 const POLL_MS = 2000;
 
 export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: () => void }) {
-  const [status, setStatus] = useState<ImageStatus>({ exists: true, needsUpdate: false, downloading: false });
+  const [status, setStatus] = useState<ImageStatus>({
+    exists: true, needsUpdate: false, downloading: false, downloadingVersion: null, localVersions: [], newestLocal: null, available: null,
+  });
   const [error, setError] = useState<string | null>(null);
-  const [justCompleted, setJustCompleted] = useState(false);
+  const [justCompleted, setJustCompleted] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
-  const wasDownloadingRef = useRef(false);
+  const wasDownloadingRef = useRef<string | null>(null);
   const completedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -32,15 +47,20 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
 
         if (data.downloading) {
           setError(null);
+          wasDownloadingRef.current = data.downloadingVersion ?? wasDownloadingRef.current ?? 'image';
         } else if (wasDownloadingRef.current) {
-          setJustCompleted(true);
+          const finished = wasDownloadingRef.current;
+          wasDownloadingRef.current = null;
           setActionLoading(false);
-          onImageReady?.();
-          if (completedTimerRef.current) clearTimeout(completedTimerRef.current);
-          completedTimerRef.current = setTimeout(() => setJustCompleted(false), 3000);
+          if (data.localVersions?.includes(finished)) {
+            setJustCompleted(finished);
+            onImageReady?.();
+            if (completedTimerRef.current) clearTimeout(completedTimerRef.current);
+            completedTimerRef.current = setTimeout(() => setJustCompleted(null), 3000);
+          } else {
+            setError(`The OpenClaw ${finished} download did not complete. Check the Docker connection and try again.`);
+          }
         }
-
-        wasDownloadingRef.current = data.downloading;
       } catch { /* ignore */ }
 
       if (active) setTimeout(tick, POLL_MS);
@@ -56,16 +76,23 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
     };
   }, []);
 
-  const handleDownload = useCallback(async () => {
+  const handleDownload = useCallback(async (version: string | null) => {
     setActionLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/agents/download-image', { method: 'POST' });
+      const res = await fetch('/api/agents/download-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(version ? { version } : {}),
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to start download' }));
         setError(data.error || 'Failed to start download');
         setActionLoading(false);
+        return;
       }
+      const data = await res.json().catch(() => ({})) as { version?: string };
+      wasDownloadingRef.current = data.version ?? version ?? 'image';
     } catch (e: unknown) {
       setError((e as Error).message || 'Download failed');
       setActionLoading(false);
@@ -79,6 +106,7 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
 
   // ─── Downloading ───
   if (isDownloading) {
+    const version = status.downloadingVersion ?? status.available;
     return (
       <Banner downloading>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
@@ -89,7 +117,9 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
             animation: 'pulse 1.5s ease-in-out infinite',
             flexShrink: 0,
           }} />
-          <span style={{ color: 'var(--violet)', fontWeight: 500 }}>Downloading agent base image…</span>
+          <span style={{ color: 'var(--violet)', fontWeight: 500 }}>
+            {version ? `Downloading the OpenClaw ${version} agent image…` : 'Downloading the agent image…'}
+          </span>
         </div>
         <div style={{
           flex: 1, maxWidth: 120, height: 3,
@@ -107,11 +137,11 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
   }
 
   // ─── Just completed ───
-  if (justCompleted && !isDownloading) {
+  if (justCompleted) {
     return (
       <Banner success>
         <div style={{ flex: 1 }}>
-          <span style={{ color: '#22c55e', fontWeight: 500 }}>✓ Agent base image ready</span>
+          <span style={{ color: '#22c55e', fontWeight: 500 }}>✓ OpenClaw {justCompleted} agent image ready</span>
         </div>
       </Banner>
     );
@@ -122,16 +152,20 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
     <Banner warning>
       <div style={{ flex: 1 }}>
         <strong style={{ color: '#fbbf24' }}>
-          {status.exists ? '⚠ Agent base image is outdated.' : '⚠ Agent base image not found.'}
+          {status.exists
+            ? `⚠ OpenClaw ${status.available} is available.`
+            : '⚠ Agent base image not found.'}
         </strong>
         {' '}{status.exists
-          ? 'A newer version is available on the registry.'
+          ? 'Download it for new agents; existing agents keep their version until they are updated.'
           : 'Download it to create agent containers.'}
         {error && <div style={{ color: '#ef4444', fontSize: 11, marginTop: 4 }}>{error}</div>}
       </div>
-      <Button variant="primary" size="sm" onClick={handleDownload} loading={actionLoading}>
-        {actionLoading ? 'Starting…' : status.exists ? 'Download Update' : 'Download Image'}
-      </Button>
+      {(status.exists ? status.available : true) && (
+        <Button variant="primary" size="sm" onClick={() => { void handleDownload(status.available); }} loading={actionLoading}>
+          {actionLoading ? 'Starting…' : status.exists ? `Download ${status.available}` : 'Download Image'}
+        </Button>
+      )}
     </Banner>
   );
 }

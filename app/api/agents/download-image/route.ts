@@ -2,15 +2,16 @@ import { type NextRequest } from "next/server";
 /**
  * POST /api/agents/download-image
  *
- * Triggers a fresh download (pull) of the openclaw-agent-base image.
- * Returns 202 Accepted immediately — the operation runs in the background.
- * Poll GET /api/agents/download-progress and
- * GET /api/agents/image-status for completion.
+ * Downloads one OpenClaw version of the agent base image in the background.
+ * Body (optional): `{ "version": "2026.9.3" }` — a supported version; without it, the
+ * newest supported version the registry publishes. Returns 202 with the version;
+ * poll GET /api/agents/image-status for completion.
  *
- * Requires auth. Returns 409 if a download is already running.
+ * Requires auth. 400 for an unsupported version, 409 if a download is already running.
  */
 import { NextResponse } from 'next/server';
-import { downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
+import { defaultDownloadVersion, downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
+import { isSupportedVersion } from '@/lib/agent-versions';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -25,10 +26,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const body = (await request.json().catch(() => null)) as { version?: unknown } | null;
+  if (body?.version !== undefined && !isSupportedVersion(body.version)) {
+    return NextResponse.json({ error: 'version must be an OpenClaw version this Rev4a supports' }, { status: 400 });
+  }
+  const version = (body?.version as string | undefined) ?? (await defaultDownloadVersion());
+
   // Start download in background — fire and forget
-  downloadAgentImage({ force: true }).catch(() => {
-    // Errors are logged to the download log file
+  downloadAgentImage({ version }).catch((e: unknown) => {
+    console.error(`[download-image] OpenClaw ${version}:`, (e as Error).message);
   });
 
-  return NextResponse.json({ started: true }, { status: 202 });
+  return NextResponse.json({ started: true, version }, { status: 202 });
 }

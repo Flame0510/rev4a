@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId, isLifecycleCoolingDown, markLifecycleCooldown } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { agentBusyReason } from '@/lib/agent-busy';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,8 @@ export async function POST(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: 'Agent ID required' }, { status: 400 });
     if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
+    const busy = await agentBusyReason(id);
+    if (busy) return NextResponse.json({ error: busy }, { status: 409 });
 
     const containerName = resolveAgentedContainer(id);
     if (!containerName) {

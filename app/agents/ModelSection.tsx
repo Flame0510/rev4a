@@ -68,10 +68,13 @@ function optionLabel(m: ModelOption): string {
 export default function ModelSection({
   agentId,
   onSaved,
+  agentBusy,
 }: {
   agentId: string;
   /** Called after a successful save so the agent list can refresh its chip. */
   onSaved?: () => void;
+  /** A long operation is running on this agent: saving would race it. */
+  agentBusy?: boolean;
 }) {
   const [groups, setGroups] = useState<ProviderGroup[]>([]);
   const [current, setCurrent] = useState<AgentModel | null>(null);
@@ -293,7 +296,7 @@ export default function ModelSection({
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Button variant="primary" size="sm" loading={saving} disabled={!dirty || !primary || primaryUnavailable} onClick={save}>
+            <Button variant="primary" size="sm" loading={saving} disabled={!dirty || !primary || primaryUnavailable || !!agentBusy} onClick={save}>
               {saving ? 'Saving…' : 'Save model'}
             </Button>
             {dirty && !saving && (

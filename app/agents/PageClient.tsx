@@ -8,6 +8,9 @@ import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import ModelSection from './ModelSection';
+import BrowserAccessSection, { OpenControlUiButton } from './BrowserAccessSection';
+import UpdateSection from './UpdateSection';
+import { validatePortInput } from '@/lib/agent-ports';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
@@ -44,27 +47,10 @@ interface Agent {
   created: string | null;
   env: string[];
   controlPort: string | null;
-  authToken: string | null;
-  imageOutdated?: boolean;
-}
-
-/**
- * URL of the agent's OpenClaw Control UI.
- *
- * Composed here rather than on the server on purpose. The hostname the dashboard
- * is currently being reached on is, by definition, one that resolves and routes
- * for this user — `localhost` on a dev machine, a LAN address from a phone, the
- * VPS IP, or a domain. The server can only guess, and it guessed badly: it shelled
- * out to `curl icanhazip.com` on every call and, on macOS, ended up returning the
- * machine's `.local` mDNS name.
- *
- * Returns null when the agent has no published port (nothing to link to) or when
- * called during a server render, where `window` doesn't exist.
- */
-function agentControlUrl(agent: Agent): string | null {
-  if (!agent.controlPort || typeof window === 'undefined') return null;
-  const base = `http://${window.location.hostname}:${agent.controlPort}`;
-  return agent.authToken ? `${base}#token=${encodeURIComponent(agent.authToken)}` : base;
+  /** OpenClaw version the agent runs; null when it cannot be read (stopped agent on an unlabelled image). */
+  openclawVersion?: string | null;
+  /** A newer supported OpenClaw version is downloaded. */
+  updateAvailable?: boolean;
 }
 
 type FilterState = 'all' | 'running' | 'exited';
@@ -176,6 +162,9 @@ function AgentListItem({
   selected,
   channelSummary,
   modelSummary,
+  deviceSummary,
+  backupSummary,
+  busy,
   onClick,
   onLifecycle,
 }: {
@@ -184,6 +173,13 @@ function AgentListItem({
   selected?: boolean;
   channelSummary: Record<string, { telegram: boolean }>;
   modelSummary: Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>;
+  /** Browsers waiting for approval, per agent. */
+  deviceSummary: Record<string, { pending: number }>;
+  /** Cold backup currently running, per agent (chip on the card). */
+  /** The long operation in progress, per agent (chip on the card). */
+  backupSummary: Record<string, { kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit'; file?: string | null; version?: string | null; percent?: number | null }>;
+  /** Any long operation running on this agent: the lifecycle toggle is disabled. */
+  busy?: boolean;
   onClick: () => void;
   onLifecycle: () => void;
 }) {
@@ -192,7 +188,7 @@ function AgentListItem({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <ToggleSwitch
           checked={agent.state === 'running'}
-          disabled={loading || agent.state === 'unknown'}
+          disabled={loading || agent.state === 'unknown' || !!busy}
           onChange={() => { void onLifecycle(); }}
           ariaLabel={agent.state === 'running' ? 'Stop container' : 'Start container'}
         />
@@ -203,20 +199,7 @@ function AgentListItem({
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           {loading && <span style={{ fontSize: 10, color: '#888' }}>...</span>}
           {agent.state === 'running' && agent.controlPort && (
-            <Button
-              variant="primary"
-              size="sm"
-              // Gate on the port, resolve the URL on click: the condition stays
-              // safe to evaluate during a server render, the URL never is.
-              onClick={(e) => {
-                e.stopPropagation();
-                const url = agentControlUrl(agent);
-                if (url) window.open(url, '_blank');
-              }}
-              title="Open agent Control UI"
-            >
-              Open ↗
-            </Button>
+            <OpenControlUiButton agentId={agent.agentId} stopPropagation />
           )}
         </div>
       </div>
@@ -264,11 +247,37 @@ function AgentListItem({
           <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
         </div>
       )}
-      {agent.imageOutdated && (
+      {(deviceSummary[agent.agentId]?.pending ?? 0) > 0 && (
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>OUTDATED</span></Badge>
+          <Badge tone="warning">
+            <span style={{ fontSize: 8, padding: '1px 6px' }}>
+              {deviceSummary[agent.agentId].pending === 1 ? 'BROWSER WAITING' : `${deviceSummary[agent.agentId].pending} BROWSERS WAITING`}
+            </span>
+          </Badge>
         </div>
       )}
+      {agent.updateAvailable && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>UPDATE AVAILABLE</span></Badge>
+        </div>
+      )}
+      {(() => {
+        const b = backupSummary[agent.agentId];
+        if (!b) return null;
+        const label =
+          b.kind === 'backup' ? (b.percent !== null && b.percent !== undefined ? `BACKUP ${b.percent}%` : 'BACKUP…')
+          : b.kind === 'restore' ? 'RESTORING'
+          : b.kind === 'recreate' ? 'RECREATING'
+          : b.kind === 'edit' ? 'EDITING'
+          : 'UPDATING';
+        return (
+          <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+            <Badge tone="neutral">
+              <span style={{ fontSize: 8, padding: '1px 6px' }}>{label}</span>
+            </Badge>
+          </div>
+        );
+      })()}
     </ListItem>
   );
 }
@@ -284,6 +293,8 @@ export default function AgentsPageClient() {
   const [showList, setShowList] = useState(true);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
   const [mdSummary, setMdSummary] = useState<Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>>({});
+  const [dvSummary, setDvSummary] = useState<Record<string, { pending: number }>>({});
+  const [bkSummary, setBkSummary] = useState<Record<string, { kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit'; file?: string | null; version?: string | null; percent?: number | null }>>({});
   const [imageReady, setImageReady] = useState(true);
   // null = not checked yet. Keeping "unknown" distinct from "none configured" is
   // the whole point: `false` as the initial value makes an unanswered check look
@@ -298,6 +309,8 @@ export default function AgentsPageClient() {
   /** Guards the un-awaited channel-summary fetch against out-of-order responses. */
   const chSummarySeq = useRef(0);
   const mdSummarySeq = useRef(0);
+  const dvSummarySeq = useRef(0);
+  const bkSummarySeq = useRef(0);
 
   /**
    * Refresh the per-agent model rows that feed the card chips.
@@ -319,6 +332,56 @@ export default function AgentsPageClient() {
       setMdSummary(byId);
     } catch { /* badges are optional */ }
   }, []);
+
+  /**
+   * Refresh the "browser waiting" badges. Shared by the poll and by an approve,
+   * reject or revoke in the detail panel, and sequence-guarded like the model rows.
+   */
+  const refreshDeviceSummary = useCallback(async () => {
+    const seq = ++dvSummarySeq.current;
+    try {
+      const res = await fetch('/api/agents/devices-summary');
+      if (!res.ok || seq !== dvSummarySeq.current) return;
+      const payload = await res.json();
+      const byId: Record<string, { pending: number }> = {};
+      for (const row of payload.agents ?? []) byId[row.agentId] = { pending: row.pending ?? 0 };
+      setDvSummary(byId);
+    } catch { /* badges are optional */ }
+  }, []);
+
+  /**
+   * Refresh the activity chips (`BACKUP nn%`, `RESTORING`, `RECREATING`, `EDITING`, `UPDATING`)
+   * from `/api/agents/activity-summary`. Sequence-guarded like the other summaries.
+   */
+  const refreshBackupSummary = useCallback(async () => {
+    const seq = ++bkSummarySeq.current;
+    try {
+      const res = await fetch('/api/agents/activity-summary');
+      if (!res.ok || seq !== bkSummarySeq.current) return;
+      const payload = await res.json();
+      const byId: Record<string, { kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit'; file?: string | null; version?: string | null; percent?: number | null }> = {};
+      for (const row of payload.agents ?? []) byId[row.agentId] = row;
+      setBkSummary(byId);
+    } catch { /* badges are optional */ }
+  }, []);
+
+  /**
+   * A long job just started from the detail panel. Shows its chip at once instead of
+   * waiting for the next list poll, then lets `refreshBackupSummary()` confirm it.
+   */
+  const notifyActivity = useCallback((agentId: string, kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit') => {
+    setBkSummary((prev) => ({ ...prev, [agentId]: { kind } }));
+    void refreshBackupSummary();
+  }, [refreshBackupSummary]);
+
+  // While any backup runs the chips follow the live percent at 2s; when none
+  // runs the dedicated timer stops and the summary only rides the 15s poll.
+  const anyBackupRunning = Object.keys(bkSummary).length > 0;
+  useEffect(() => {
+    if (!anyBackupRunning) return;
+    const i = setInterval(() => { void refreshBackupSummary(); }, 2000);
+    return () => clearInterval(i);
+  }, [anyBackupRunning, refreshBackupSummary]);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -355,6 +418,8 @@ export default function AgentsPageClient() {
       // Same treatment for the model summary: it decorates rows, so it must not
       // hold the list, and a slow earlier response must not overwrite a newer one.
       void refreshModelSummary();
+      void refreshDeviceSummary();
+      void refreshBackupSummary();
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {
@@ -467,7 +532,7 @@ export default function AgentsPageClient() {
   }, [agents, filter]);
 
   // Derive the selected agent from the live list rather than holding a snapshot.
-  // A snapshot goes stale on every 15s poll (status, ports, imageOutdated) and
+  // A snapshot goes stale on every 15s poll (status, ports, version) and
   // survives deletion; deriving means a rename shows up on the next load() and a
   // deleted agent can't leave a detail panel pointing at something that's gone.
   const selected = useMemo(
@@ -576,7 +641,7 @@ export default function AgentsPageClient() {
         {providersConfigured === false && <NoProviderBanner />}
           {/* Scrollable content */}
           <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} />
+            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} />
           </div>
         </div>
       );
@@ -611,6 +676,9 @@ export default function AgentsPageClient() {
               loading={lifecycleLoading === agent.agentId}
               channelSummary={chSummary}
               modelSummary={mdSummary}
+              deviceSummary={dvSummary}
+              backupSummary={bkSummary}
+              busy={!!bkSummary[agent.agentId]}
               onClick={() => selectAgent(agent)}
               onLifecycle={() => handleLifecycle(agent)}
             />
@@ -657,6 +725,9 @@ export default function AgentsPageClient() {
                 loading={lifecycleLoading === agent.agentId}
                 channelSummary={chSummary}
                 modelSummary={mdSummary}
+                deviceSummary={dvSummary}
+                backupSummary={bkSummary}
+                busy={!!bkSummary[agent.agentId]}
                 selected={isSelected}
                 onClick={() => setSelectedId(agent.agentId)}
                 onLifecycle={() => handleLifecycle(agent)}
@@ -671,7 +742,7 @@ export default function AgentsPageClient() {
             // key: without it React reuses one DetailPanel instance across
             // selections, so in-flight state (deleting, recreating, restarting,
             // toasts, open confirms) leaks onto the next agent you click.
-            <DetailPanel key={selected.agentId} agent={selected} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} />
+            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} />
           )}
         </div>
       </div>
@@ -680,37 +751,79 @@ export default function AgentsPageClient() {
 }
 
 // ─── Edit Agent modal ───
-function EditAgentModal({ agent, onClose, onSaved }: {
+
+/** The host range an agent publishes for its gateway (container ports 3000+), e.g. "3710-3719". */
+function currentPortRange(ports: string): string {
+  const hosts = (ports || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => {
+      const [host, container] = p.split(':');
+      const c = parseInt((container || '').replace(/\/.*$/, ''), 10);
+      return Number.isInteger(c) && c >= 3000 ? parseInt(host, 10) : NaN;
+    })
+    .filter((n): n is number => Number.isInteger(n));
+  if (hosts.length === 0) return '';
+  const min = Math.min(...hosts);
+  const max = Math.max(...hosts);
+  return min === max ? `${min}` : `${min}-${max}`;
+}
+
+function EditAgentModal({ agent, onClose, onSaved, onStarted }: {
   agent: Agent;
   onClose: () => void;
   /** Rename succeeded — the parent refetches so the new name propagates. */
   onSaved: () => void;
+  /** The edit job started — show the EDITING chip at once. */
+  onStarted?: () => void;
 }) {
-  const [displayName, setDisplayName] = useState(agent.displayName || agent.name);
+  const initialName = agent.displayName || agent.name;
+  const initialPorts = currentPortRange(agent.ports);
+  const [displayName, setDisplayName] = useState(initialName);
+  const [portRange, setPortRange] = useState(initialPorts);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Client-side shape checks (the same messages as the API). Whether a port is already
+  // published by another agent is checked by the server, which knows every container
+  // and excludes this agent's own block.
+  const nameError = displayName.trim() ? '' : 'Display name must not be empty';
+  const portError = useMemo(() => {
+    if (!portRange.trim()) return '';
+    const r = validatePortInput(portRange);
+    return r.valid ? '' : r.error;
+  }, [portRange]);
+
+  const nameChanged = displayName.trim() !== initialName;
+  const portsChanged = portRange.trim() !== initialPorts;
+  const nothingChanged = !nameChanged && !portsChanged;
+
   const handleSave = async () => {
-    const trimmed = displayName.trim();
-    if (!trimmed) {
-      setError('Display name must not be empty');
+    if (nothingChanged) {
+      setError('Nothing to change');
       return;
     }
-    if (trimmed === (agent.displayName || agent.name)) {
-      onClose();
+    if (nameError || portError) {
+      setError('');
       return;
     }
     setSaving(true);
     setError('');
     try {
+      const body: { displayName?: string; portRange?: string } = {};
+      if (nameChanged) body.displayName = displayName.trim();
+      if (portsChanged) body.portRange = portRange.trim();
       const res = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: trimmed }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update');
-      // Refetch the list so the new display name propagates — no full reload.
+      // The job is async (202): show the chip now, and refetch the list so the new
+      // display name propagates once the rebuild finishes.
+      onStarted?.();
       onSaved();
       onClose();
     } catch (e: unknown) {
@@ -746,13 +859,27 @@ function EditAgentModal({ agent, onClose, onSaved }: {
                 value={displayName}
                 onChange={(e) => { setDisplayName(e.target.value); setError(''); }}
                 placeholder="My Agent 🚀"
-                error={error}
+                error={nameError}
+                disabled={saving}
+              />
+            </div>
+            <div>
+              <Input
+                label="Host Port"
+                value={portRange}
+                onChange={(e) => { setPortRange(e.target.value.replace(/[^0-9-]/g, '').slice(0, 11)); setError(''); }}
+                placeholder="3700-3709"
+                error={portError}
                 disabled={saving}
               />
               <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>
-                Container: {agent.name} · This will recreate the container. Sessions and workspace are preserved.
+                Port range (e.g. 3700-3709) or single port (e.g. 3700). Maps onto the container's port 3000; the Control UI URL changes with it.
               </div>
             </div>
+            <div style={{ fontSize: 10, color: '#666' }}>
+              Container: {agent.name} · This recreates the container without a backup. Sessions and workspace are preserved.
+            </div>
+            {error && <div style={{ fontSize: 11, color: '#ef4444' }}>{error}</div>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
               <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
@@ -835,7 +962,77 @@ function ConfigModal({ agent, onClose }: { agent: Agent; onClose: () => void }) 
 }
 
 // ─── Detail panel (shared between mobile & desktop) ───
-function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
+/* ─── Edit banner - shown while a rename/port change rebuilds the container ─── */
+
+interface EditJob {
+  status: 'rebuilding' | 'done' | 'failed' | 'interrupted';
+  displayName: string | null;
+  portRange: string | null;
+  error: string | null;
+}
+
+/**
+ * Visible while `PATCH /api/agents/[id]` is rebuilding the container, and resumed on
+ * mount so a reload or a navigation shows the running edit instead of allowing a second.
+ * The server answers 409 to any new edit anyway.
+ */
+function EditBanner({ agentId, onChanged, ping }: { agentId: string; onChanged: () => void; ping: number }) {
+  const [job, setJob] = useState<EditJob | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  // Held in a ref: calling it must not re-run the effect (the parent may hand a new one
+  // every render), which would restart the poll on every render.
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+
+  useEffect(() => {
+    let alive = true;
+    let shown = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const cur: EditJob | null = data.edit ?? null;
+        if (cur?.status === 'rebuilding') { shown = true; setJob(cur); return; }
+        if (shown) {
+          shown = false;
+          setJob(null);
+          if (cur && (cur.status === 'done' || cur.status === 'failed')) onChangedRef.current();
+        }
+      } catch { /* aborted or transient — the next tick retries */ }
+    };
+    // `ping` changes when an edit is started here, so the banner appears at once; the
+    // 5 s poll then keeps it fresh and clears it when the job finishes.
+    void tick();
+    const timer = setInterval(() => { if (alive) void tick(); }, 5000);
+    return () => { alive = false; clearInterval(timer); controller.abort(); };
+  }, [agentId, ping]);
+
+  if (!job) return null;
+  return (
+    <div style={{
+      padding: '8px 12px',
+      fontSize: 11,
+      fontFamily: 'var(--font-mono)',
+      color: 'var(--violet)',
+      background: 'rgba(146,91,252,0.08)',
+      border: '1px solid rgba(146,91,252,0.25)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    }}>
+      <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--violet)', animation: 'pulse 1s infinite', flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+        Rebuilding the container{job.displayName ? ` as ${job.displayName}` : ''}
+        <span style={{ whiteSpace: 'nowrap' }}> (the agent restarts when done)</span>
+      </span>
+    </div>
+  );
+}
+
+function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccessChanged, onActivity }: {
   agent: Agent;
   /** The agent is gone — the parent drops it from the list. */
   onDeleted: (agentId: string) => void;
@@ -847,17 +1044,24 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
    * summary for a field the parent already knows how to reload on its own.
    */
   onModelSaved: () => void;
+  /** A browser was approved, rejected or revoked — refresh the list badges. */
+  onAccessChanged: () => void;
+  /** A long job started here — show its chip at once (page-level notifyActivity). */
+  onActivity: (agentId: string, kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit') => void;
+  /** This agent has a long operation running: its actions are disabled. */
+  busy: boolean;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  /** Bumped when an edit starts here, so the banner refetches at once. */
+  const [editPing, setEditPing] = useState(0);
 
   // Safe to resolve during render: this panel only mounts once the agent list has
   // been fetched client-side, so it never runs in a server render. The helper
   // guards for a missing `window` regardless.
-  const controlUrl = agentControlUrl(agent);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -889,7 +1093,7 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 16, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
-              <Button variant="primary" size="sm" onClick={() => setShowEdit(true)} title="Edit agent settings">
+              <Button variant="primary" size="sm" disabled={busy} onClick={() => setShowEdit(true)} title={busy ? 'An operation is running on this agent' : 'Edit agent settings'}>
                 ✎
               </Button>
             </div>
@@ -904,6 +1108,9 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
         </div>
       </div>
 
+      {/* Rename / ports rebuild, resumed on mount */}
+      <EditBanner agentId={agent.agentId} onChanged={onChanged} ping={editPing} />
+
       {/* Properties */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<InfoIcon size={12} />} label="PROPERTIES" />
@@ -913,6 +1120,7 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
           ['Container', agent.name],
           ['Image', agent.image],
           ['Tag', agent.imageTag],
+          ['OpenClaw', agent.openclawVersion || 'unknown'],
           ['Template', agent.template || '-'],
           ['State', agent.state],
           ['Ports', agent.ports || '-'],
@@ -927,12 +1135,25 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
       </div>
 
       {/* Channels - Telegram */}
-      <ChannelSection agentId={agent.agentId} agentName={agent.name} />
+      <ChannelSection agentId={agent.agentId} displayName={agent.displayName || agent.name} />
+
+      {/* Browser access - open the Control UI, approve and revoke browsers */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<KeyIcon size={12} />} label="BROWSER ACCESS" />
+        <div style={{ padding: '12px 14px' }}>
+          {agent.state === 'running' && agent.controlPort && (
+            <div style={{ marginBottom: 8 }}>
+              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" />
+            </div>
+          )}
+          <BrowserAccessSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onAccessChanged} />
+        </div>
+      </div>
 
       {/* Model - primary + fallbacks (moved here from the Gateway page) */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="MODEL" />
-        <ModelSection agentId={agent.agentId} onSaved={onModelSaved} />
+        <ModelSection agentId={agent.agentId} onSaved={onModelSaved} agentBusy={busy} />
       </div>
 
       {/* Config - View openclaw.json */}
@@ -952,30 +1173,16 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
       <IntegrationSection agentName={agent.name} />
 
       {/* Restart */}
-      <RestartSection agentName={agent.name} />
+      <RestartSection agentName={agent.name} agentBusy={busy} />
 
       {/* Backup - persistent volume backup & restore */}
-      <BackupSection agentName={agent.name} />
-
-      {/* Access - agent Control UI URL (token inline in link) */}
-      {controlUrl && (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
-          <SectionHeader icon={<KeyIcon size={12} />} label="ACCESS" />
-          <div style={{ padding: '7px 14px', fontSize: 12 }}>
-            <div style={{ color: '#888', marginBottom: 2 }}>Control UI</div>
-            <a href={controlUrl} target="_blank" rel="noopener noreferrer"
-              style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: 12, wordBreak: 'break-all' }}
-            >{controlUrl}</a>
-
-          </div>
-        </div>
-      )}
+      <BackupSection agentName={agent.name} agentBusy={busy} onStarted={(kind) => onActivity(agent.agentId, kind)} />
 
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
 
       {/* Edit agent modal */}
-      {showEdit && <EditAgentModal agent={agent} onClose={() => setShowEdit(false)} onSaved={onChanged} />}
+      {showEdit && <EditAgentModal agent={agent} onClose={() => setShowEdit(false)} onSaved={onChanged} onStarted={() => { setEditPing(Date.now()); onActivity(agent.agentId, 'edit'); }} />}
 
       {/* Delete confirmation */}
       <ConfirmModal
@@ -990,15 +1197,14 @@ function DetailPanel({ agent, onDeleted, onChanged, onModelSaved }: {
       />
 
       {/* Recreate */}
-      {agent.imageOutdated && (
-        <div style={{ marginBottom: 12, border: '1px solid rgba(234,179,8,0.3)', borderRadius: 0, padding: '10px 14px', background: 'rgba(234,179,8,0.06)' }}>
-          <div style={{ fontSize: 11, color: 'var(--yellow)', marginBottom: 4, fontWeight: 500 }}>⚠ Container Outdated</div>
-          <div style={{ fontSize: 11, color: '#888' }}>
-            This container is running an older image. Recreate it to pick up the latest version.
-          </div>
+      {/* OpenClaw version and the Update action */}
+      <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<RotateIcon size={12} />} label="OPENCLAW VERSION" />
+        <div style={{ padding: '12px 14px' }}>
+          <UpdateSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
         </div>
-      )}
-      <RecreateSection agentName={agent.name} onRecreated={onChanged} />
+      </div>
+      <RecreateSection agentName={agent.name} agentBusy={busy} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1094,98 +1300,221 @@ function IntegrationSection({ agentName }: { agentName: string }) {
   );
 }
 
-/* ─── Backup section - persistent volume backup & restore ─── */
+/* ─── Backup section - persistent volume backup & restore (cold backup) ─── */
 
-function BackupSection({ agentName }: { agentName: string }) {
+interface ColdBackupJob {
+  status: 'running' | 'succeeded' | 'failed';
+  file: string;
+  kind?: string;
+  percent: number | null;
+  error: string | null;
+}
+
+interface RestoreJob {
+  status: 'restoring' | 'done' | 'failed' | 'interrupted';
+  file: string | null;
+  error: string | null;
+}
+
+function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string; agentBusy?: boolean; onStarted?: (kind: 'backup' | 'restore') => void }) {
   const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<{ type: 'backup' | 'restore'; label: string } | null>(null);
+  const [backup, setBackup] = useState<ColdBackupJob | null>(null);
+  const [restore, setRestore] = useState<RestoreJob | null>(null);
+  /** The one action in flight, and the file it is working on (keyed busy state). */
+  const [busy, setBusy] = useState<{ kind: 'starting' | 'cancelling' | 'restoring' | 'deleting'; file?: string } | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   };
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
   const loadBackups = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     try {
-      const res = await fetch(`/api/agents/${agentName}/backup`);
+      const res = await fetch(`/api/agents/${agentName}/backup`, { signal: controller.signal });
       if (res.ok) {
         const data: { backups: { name: string; size: string; date: string }[] } = await res.json();
         setBackups(data.backups ?? []);
       }
-    } catch { /* ignore */ }
+    } catch { /* aborted or transient — the list stays as it is */ }
     setLoading(false);
   }, [agentName]);
 
-  useEffect(() => { void loadBackups(); }, [loadBackups]);
+  /* Poll a running job every 2s until it finishes; the job lives in Docker
+     (a detached helper container), so this resumes cleanly after a reload. */
+  const startPolling = useCallback(() => {
+    stopPolling();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/agents/${agentName}/cold-backup`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const job: ColdBackupJob | null = data.backup ?? null;
+        if (job?.status === 'running') {
+          setBackup(job);
+          return;
+        }
+        stopPolling();
+        setBackup(null);
+        if (job?.status === 'succeeded') showToast('Backup completed: ' + job.file);
+        else if (job?.status === 'failed') showToast('Backup failed: ' + (job.error ?? 'unknown error'), 'error');
+        await loadBackups();
+      } catch { /* aborted or transient network error — the next tick retries */ }
+    }, 2000);
+  }, [agentName, loadBackups, stopPolling]);
+
+  /* Poll a running restore every 2s; the job is recorded server-side, so this resumes
+     after a reload and a second restore cannot start meanwhile (the server answers 409). */
+  const startRestorePolling = useCallback(() => {
+    stopPolling();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/agents/${agentName}/restore`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const job: RestoreJob | null = data.restore ?? null;
+        if (job?.status === 'restoring') {
+          setRestore(job);
+          return;
+        }
+        stopPolling();
+        setRestore(null);
+        if (job?.status === 'done') showToast('Restored from ' + (job.file ?? 'the backup'));
+        else if (job?.status === 'failed') showToast('Restore failed: ' + (job.error ?? 'unknown error'), 'error');
+        await loadBackups();
+      } catch { /* aborted or transient network error — the next tick retries */ }
+    }, 2000);
+  }, [agentName, loadBackups, stopPolling]);
+
+  /* On mount: load the archive list and pick up a backup or restore already running. */
+  useEffect(() => {
+    let alive = true;
+    void loadBackups();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/agents/${agentName}/cold-backup`);
+        if (res.ok && alive) {
+          const data = await res.json();
+          if (data.backup?.status === 'running') {
+            setBackup(data.backup);
+            startPolling();
+            return;
+          }
+        }
+        const rRes = await fetch(`/api/agents/${agentName}/restore`);
+        if (rRes.ok && alive) {
+          const rData = await rRes.json();
+          if (rData.restore?.status === 'restoring') {
+            setRestore(rData.restore);
+            startRestorePolling();
+          }
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; stopPolling(); };
+  }, [agentName, startPolling, startRestorePolling, stopPolling, loadBackups]);
 
   const handleBackup = async () => {
-    setStatus({ type: 'backup', label: 'Creating backup...' });
-    setBackups([]);
+    setBusy({ kind: 'starting' });
     try {
-      const res = await fetch(`/api/agents/${agentName}/backup`, { method: 'POST' });
+      const res = await fetch(`/api/agents/${agentName}/cold-backup`, { method: 'POST' });
       const data = await res.json();
-      if (data.success) {
-        showToast('Backup created: ' + data.file);
-        await loadBackups();
+      if (res.status === 202 && data.started) {
+        setBackup({ status: 'running', file: data.file, percent: null, error: null });
+        onStarted?.('backup');
+        startPolling();
       } else {
-        showToast(data.error || 'Backup failed', 'error');
+        showToast(data.error || 'Backup failed to start', 'error');
       }
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
     }
-    setStatus(null);
+    setBusy(null);
   };
 
-  const handleRestore = async (file: string) => {
-    setRestoreConfirm(file);
+  const handleCancelBackup = async () => {
+    setBusy({ kind: 'cancelling' });
+    try {
+      const res = await fetch(`/api/agents/${agentName}/cold-backup`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || 'Cancel failed', 'error');
+      } else {
+        stopPolling();
+        setBackup(null);
+        showToast('Backup cancelled');
+        await loadBackups();
+      }
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    }
+    setBusy(null);
   };
 
   const executeRestore = async () => {
     const file = restoreConfirm;
     if (!file) return;
     setRestoreConfirm(null);
-    setStatus({ type: 'restore', label: `Restoring from ${file}... (container will restart)` });
-    setBackups([]);
+    setBusy({ kind: 'restoring', file });
     try {
       const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
       const data = await res.json();
-      if (data.success) {
-        showToast('Restored from ' + file);
-        await loadBackups();
+      if (res.status === 202 && data.started) {
+        setRestore({ status: 'restoring', file, error: null });
+        onStarted?.('restore');
+        startRestorePolling();
       } else {
-        showToast(data.error || 'Restore failed', 'error');
+        showToast(data.error || 'Restore failed to start', 'error');
       }
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
     }
-    setStatus(null);
+    setBusy(null);
   };
 
   const handleDeleteBackup = async (file: string) => {
-    setStatus({ type: 'backup', label: `Deleting ${file}...` });
+    setBusy({ kind: 'deleting', file });
     try {
       const res = await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         showToast(data.error || 'Delete failed', 'error');
       }
-      setBackups([]);
       await loadBackups();
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
     }
-    setStatus(null);
+    setBusy(null);
   };
+
+  const running = backup?.status === 'running';
+  const restoring = restore?.status === 'restoring';
+  const actionsLocked = running || restoring || busy !== null || !!agentBusy;
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <SectionHeader icon={<ArchiveIcon size={12} />} label="BACKUP" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {status && (
+        {running && (
           <div style={{
             padding: '8px 12px',
             fontSize: 11,
@@ -1203,50 +1532,99 @@ function BackupSection({ agentName }: { agentName: string }) {
               borderRadius: '50%',
               background: 'var(--violet)',
               animation: 'pulse 1s infinite',
+              flexShrink: 0,
             }} />
-            {status.label}
+            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+              Backing up {backup?.file}
+              {/* Inline and nowrap: the file name may break, but the percentage and the
+                  note move to the next line as one piece instead of splitting "5" / "3%". */}
+              <span style={{ whiteSpace: 'nowrap' }}>
+                {' '}{backup?.percent !== null && backup?.percent !== undefined ? `— ${backup.percent}% ` : ''}(the agent restarts when done)
+              </span>
+            </span>
+            <span style={{ flexShrink: 0 }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={busy?.kind === 'cancelling'}
+                disabled={busy !== null}
+                onClick={handleCancelBackup}
+              >
+                {busy?.kind === 'cancelling' ? 'Cancelling…' : 'Cancel'}
+              </Button>
+            </span>
           </div>
         )}
-        {!status && (
-          <>
-            {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading...</div>}
-            {!loading && backups.length === 0 && (
-              <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
-            )}
-            {backups.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {backups.map((b) => (
-                  <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
-                    <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
-                    <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{b.size}</span>
-                    <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{b.date}</span>
-                    <button
-                      type="button"
-                      disabled={!!status}
-                      onClick={() => handleRestore(b.name)}
-                      style={{ background: 'none', border: '1px solid var(--violet)', color: 'var(--violet)', cursor: 'pointer', fontSize: 10, padding: '2px 6px', opacity: status ? 0.5 : 1 }}
-                    >
-                      Restore
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!!status}
-                      onClick={() => handleDeleteBackup(b.name)}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '2px', opacity: status ? 0.5 : 1 }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="secondary" size="sm" disabled={!!status} onClick={handleBackup}>
-                Backup Now
-              </Button>
-            </div>
-          </>
+        {restoring && (
+          <div style={{
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--violet)',
+            background: 'rgba(146,91,252,0.08)',
+            border: '1px solid rgba(146,91,252,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: 'var(--violet)',
+              animation: 'pulse 1s infinite',
+              flexShrink: 0,
+            }} />
+            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+              Restoring {restore?.file}
+              <span style={{ whiteSpace: 'nowrap' }}> (the agent restarts when done)</span>
+            </span>
+          </div>
         )}
+        {loading && backups.length === 0 && <div style={{ fontSize: 11, color: '#888' }}>Loading...</div>}
+        {!loading && backups.length === 0 && (
+          <div style={{ fontSize: 11, color: '#888' }}>No backups yet.</div>
+        )}
+        {backups.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {backups.map((b) => (
+              // Wraps instead of crushing the name: the name asks for a 220px basis and
+              // grows; when the row can no longer fit size, date and the buttons beside
+              // it, they move to a second line rather than squeezing the name to one
+              // character per line.
+              <div key={b.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '4px 0' }}>
+                <span style={{ flex: '1 1 220px', minWidth: 0, color: 'var(--text)', wordBreak: 'break-all' }}>{b.name}</span>
+                <span style={{ color: '#888', whiteSpace: 'nowrap', flexShrink: 0 }}>{b.size}</span>
+                <span style={{ color: '#666', whiteSpace: 'nowrap', flexShrink: 0 }}>{b.date}</span>
+                <span style={{ display: 'flex', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={actionsLocked}
+                    loading={busy?.kind === 'restoring' && busy.file === b.name}
+                    onClick={() => setRestoreConfirm(b.name)}
+                  >
+                    Restore
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={actionsLocked}
+                    loading={busy?.kind === 'deleting' && busy.file === b.name}
+                    onClick={() => handleDeleteBackup(b.name)}
+                  >
+                    Delete
+                  </Button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="secondary" size="sm" disabled={actionsLocked} onClick={handleBackup}>
+            {busy?.kind === 'starting' ? 'Starting…' : 'Backup Now'}
+          </Button>
+        </div>
       </div>
       {toast && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: toast.type === 'success' ? '#22c55e' : '#ef4444' }}>
@@ -1269,7 +1647,7 @@ function BackupSection({ agentName }: { agentName: string }) {
 
 /* ─── Restart section - simple container restart ─── */
 
-function RestartSection({ agentName }: { agentName: string }) {
+function RestartSection({ agentName, agentBusy }: { agentName: string; agentBusy?: boolean }) {
   const [restarting, setRestarting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -1301,7 +1679,7 @@ function RestartSection({ agentName }: { agentName: string }) {
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Restart the container without losing any data.
         </div>
-        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting} onClick={handleRestart}>
+        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting || !!agentBusy} onClick={handleRestart}>
           {restarting ? 'Restarting...' : 'Restart Container'}
         </Button>
       </div>
@@ -1316,47 +1694,121 @@ function RestartSection({ agentName }: { agentName: string }) {
 
 /* ─── Recreate section - rebuild container from same image while keeping volume ─── */
 
-function RecreateSection({ agentName, onRecreated }: {
+interface RecreateJob {
+  status: 'backing_up' | 'recreating' | 'done' | 'failed' | 'interrupted';
+  image: string | null;
+  backupFile: string | null;
+  backupPercent: number | null;
+  error: string | null;
+}
+
+function RecreateSection({ agentName, agentBusy, onRecreated, onStarted }: {
   agentName: string;
+  /** A long operation is running on this agent. */
+  agentBusy?: boolean;
   /** The container was rebuilt — the parent refetches (new id, fresh image). */
   onRecreated: () => void;
+  /** The recreate job started — show the RECREATING chip at once. */
+  onStarted?: () => void;
 }) {
-  const [recreating, setRecreating] = useState(false);
+  const [job, setJob] = useState<RecreateJob | null>(null);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const seenDone = useRef(false);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 5000);
   };
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  /* Poll the job every 2s while it runs. The job is recorded in `agent_recreates`
+     and the steps run in the Rev4a process, so a reload resumes from the row. */
+  const startPolling = useCallback(() => {
+    stopPolling();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/agents/${agentName}/recreate`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const current: RecreateJob | null = data.recreate ?? null;
+        if (current && (current.status === 'backing_up' || current.status === 'recreating')) {
+          setJob(current);
+          return;
+        }
+        stopPolling();
+        setJob(null);
+        if (current?.status === 'done') {
+          if (!seenDone.current) {
+            seenDone.current = true;
+            showToast('Container recreated successfully');
+            onRecreated();
+          }
+        } else if (current?.status === 'failed' || current?.status === 'interrupted') {
+          setError(current.error || 'Recreate failed');
+        }
+      } catch { /* aborted or transient network error — the next tick retries */ }
+    }, 2000);
+  }, [agentName, onRecreated, stopPolling]);
+
+  /* On mount: pick up a recreate that is already running. */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/agents/${agentName}/recreate`);
+        if (res.ok && alive) {
+          const data = await res.json();
+          if (data.recreate && (data.recreate.status === 'backing_up' || data.recreate.status === 'recreating')) {
+            setJob(data.recreate);
+            startPolling();
+          }
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; stopPolling(); };
+  }, [agentName, startPolling, stopPolling]);
+
   const handleRecreate = async () => {
     setShowConfirm(false);
-    setRecreating(true);
+    setStarting(true);
     setError('');
     try {
       const res = await fetch(`/api/agents/${agentName}/recreate`, { method: 'POST' });
       const data = await res.json();
-      if (data.success) {
-        showToast(data.backup ? `Recreated (backup: ${data.backup})` : 'Container recreated successfully');
-        // Refetch instead of reloading: the toast stays readable and the panel
-        // keeps its scroll position while the new container id comes in.
-        onRecreated();
+      if (res.status === 202 && data.started) {
+        seenDone.current = false;
+        setJob({ status: 'backing_up', image: null, backupFile: null, backupPercent: null, error: null });
+        onStarted?.();
+        startPolling();
       } else {
         setError(data.error || 'Recreate failed');
       }
     } catch (e: unknown) {
       setError((e as Error).message || 'Network error');
     }
-    setRecreating(false);
+    setStarting(false);
   };
+
+  const running = job !== null;
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <SectionHeader icon={<PackageIcon size={12} />} label="RECREATE" />
       <div style={{ padding: '12px 14px' }}>
-        {recreating && (
+        {running && (
           <div style={{
             padding: '8px 12px',
             fontSize: 11,
@@ -1375,15 +1827,25 @@ function RecreateSection({ agentName, onRecreated }: {
               borderRadius: '50%',
               background: 'var(--violet)',
               animation: 'pulse 1s infinite',
+              flexShrink: 0,
             }} />
-            Recreating container...
+            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+              {job.status === 'backing_up' ? (
+                <>
+                  Backing up {job.backupFile ?? '…'}
+                  <span style={{ whiteSpace: 'nowrap' }}>
+                    {' '}{job.backupPercent !== null ? `— ${job.backupPercent}% ` : ''}(the agent restarts when done)
+                  </span>
+                </>
+              ) : 'Recreating container…'}
+            </span>
           </div>
         )}
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-          Takes an automatic backup, then rebuilds the container from the latest image - keeping workspace, config, credentials, and state intact. Use this to pick up image/OpenClaw updates.
+          Takes an automatic cold backup — the agent stops for it — then rebuilds the container on the same OpenClaw version, keeping workspace, config, credentials and state. To move to a newer OpenClaw version, use Update above.
         </div>
-        <Button variant="secondary" size="sm" loading={recreating} disabled={recreating} onClick={() => setShowConfirm(true)}>
-          {recreating ? 'Recreating...' : 'Recreate Container'}
+        <Button variant="secondary" size="sm" disabled={running || starting || !!agentBusy} onClick={() => setShowConfirm(true)}>
+          {starting ? 'Starting…' : running ? 'Recreating…' : 'Recreate Container'}
         </Button>
         {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
       </div>
@@ -1397,7 +1859,7 @@ function RecreateSection({ agentName, onRecreated }: {
         onClose={() => setShowConfirm(false)}
         onConfirm={handleRecreate}
         title="Recreate Container"
-        message={`Recreate container "${agentName}"?\n\nAn automatic backup is taken first, then the container is rebuilt from the latest image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted.`}
+        message={`Recreate container "${agentName}"?\n\nAn automatic cold backup is taken first — the agent stops for it — then the container is rebuilt on the same image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted and the agent is started again.`}
         confirmLabel="Recreate"
         cancelLabel="Cancel"
         tone="warning"
@@ -1408,7 +1870,7 @@ function RecreateSection({ agentName, onRecreated }: {
 
 /* ─── Channel section - Telegram ─── */
 
-function ChannelSection({ agentId, agentName }: { agentId: string; agentName: string }) {
+function ChannelSection({ agentId, displayName }: { agentId: string; displayName: string }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<{ telegram: boolean } | null>(null);
   const previewAbortRef = useRef<AbortController | null>(null);
@@ -1460,7 +1922,7 @@ function ChannelSection({ agentId, agentName }: { agentId: string; agentName: st
       </div>
       <ChannelManager
         agentId={agentId}
-        agentName={agentName}
+        displayName={displayName}
         open={open}
         onClose={() => { setOpen(false); doFetchPreview(); }}
       />

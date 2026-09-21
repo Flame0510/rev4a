@@ -19,6 +19,11 @@ import { readProviderKeys } from './provider/keys';
 import { bundledCatalogueStatus, loadOfferedModels, type ModelConfigEntry } from '@/lib/model-catalogue';
 import { singleFileFromTar } from '@/lib/container-file';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
+import { isSupportedVersion, modelInputFor, parseOpenClawVersion } from '@/lib/agent-versions';
+import { activeUpdateAgentIds } from '@/lib/agent-update-state';
+import { activeRecreateAgentIds } from '@/lib/agent-recreate-state';
+import { activeRestoreAgentIds } from '@/lib/agent-restore-state';
+import { activeEditAgentIds } from '@/lib/agent-edit-state';
 
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
@@ -31,19 +36,57 @@ const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
  * OpenClaw `input` array. Filters out values not in the allowed set
  * (text | image | video | audio).
  */
-const ALLOWED_INPUT = new Set(['text', 'image', 'video', 'audio']);
-
-function modalityToInput(modality: string): string[] {
+/**
+ * Model `input` values an agent's OpenClaw version accepts. The list is per version
+ * (lib/agent-versions.json): 7.1-2 knows only `text | image`, and one value it does not
+ * know invalidates the whole generated catalogue ("model catalog load issue").
+ */
+function modalityToInput(modality: string, version?: string | null): string[] {
+  const allowed = new Set(modelInputFor(version));
   const arrowIdx = modality.indexOf('->');
   const left = arrowIdx >= 0 ? modality.slice(0, arrowIdx) : modality;
-  return left.split('+').map((s) => s.trim()).filter((s) => ALLOWED_INPUT.has(s));
+  return left.split('+').map((s) => s.trim()).filter((s) => allowed.has(s));
 }
 
-function getActiveRev4aModels(): { id: string; name: string; input?: string[] }[] {
+/** Where the image entrypoint records the version an agent last started on. */
+const LAST_VERSION_PATH = '/root/.openclaw/.last-version';
+
+/**
+ * The OpenClaw version a container runs, for its model `input` list. Best-effort and
+ * synchronous: the image tag when it names a version, else the `.last-version` file the
+ * entrypoint writes (through `docker exec` when running, `docker cp` when stopped).
+ * Null when nothing says — the caller then falls back to the newest version's list.
+ */
+function containerVersionSync(name: string): string | null {
+  try {
+    const image = execFileSync('docker', ['inspect', '--format', '{{.Config.Image}}', name], {
+      timeout: 5000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    const fromTag = parseOpenClawVersion(image);
+    if (fromTag && isSupportedVersion(fromTag)) return fromTag;
+  } catch { /* no such container or no image: fall through */ }
+  try {
+    const raw = execFileSync('docker', ['exec', name, 'cat', LAST_VERSION_PATH], {
+      timeout: 5000, maxBuffer: 64 * 1024, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const running = parseOpenClawVersion(raw);
+    if (running && isSupportedVersion(running)) return running;
+  } catch { /* not running or no file: try the stopped path */ }
+  try {
+    const file = singleFileFromTar(execFileSync('docker', ['cp', `${name}:${LAST_VERSION_PATH}`, '-'], {
+      timeout: 5000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    }));
+    const stopped = parseOpenClawVersion(file.body.toString('utf-8'));
+    if (stopped && isSupportedVersion(stopped)) return stopped;
+  } catch { /* nothing to read */ }
+  return null;
+}
+
+function getActiveRev4aModels(version?: string | null): { id: string; name: string; input?: string[] }[] {
   return loadOfferedModels()
     .map((m) => {
       const entry: { id: string; name: string; input?: string[] } = { id: m.id, name: m.name };
-      if (m.modality) entry.input = modalityToInput(m.modality);
+      if (m.modality) entry.input = modalityToInput(m.modality, version);
       return entry;
     });
 }
@@ -56,7 +99,23 @@ function firstLine(e: unknown): string {
 }
 
 /** A container carrying an AGENT_ID label, and whether it is running. */
-interface AgentContainer { name: string; running: boolean }
+interface AgentContainer { name: string; running: boolean; agentId: string }
+
+/**
+ * AGENT_IDs whose volume is being archived by a cold backup (lib/cold-backup.ts). Their
+ * config must not change while tar reads the volume; the next sync catches them up.
+ */
+function agentsUnderBackup(): Set<string> {
+  try {
+    const raw = execSync(
+      `docker ps --filter "label=rev4a.backup.agent" --format '{{.Label "rev4a.backup.agent"}}'`,
+      { timeout: 5000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+    return new Set(raw ? raw.split('\n').map((s) => s.trim()).filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
 
 /**
  * Every container carrying an AGENT_ID label, running or stopped.
@@ -74,7 +133,7 @@ function getAgentContainers(): AgentContainer[] {
   let raw: string;
   try {
     raw = execSync(
-      `docker ps -a --filter "label=AGENT_ID" --format '{{.Names}}\t{{.State}}'`,
+      `docker ps -a --filter "label=AGENT_ID" --format '{{.Names}}\t{{.State}}\t{{.Label "AGENT_ID"}}'`,
       { timeout: 5000, maxBuffer: 64 * 1024, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
   } catch (e) {
@@ -83,8 +142,8 @@ function getAgentContainers(): AgentContainer[] {
   if (!raw) return [];
   return raw.split('\n')
     .map((line) => {
-      const [name, state] = line.split('\t');
-      return { name: (name ?? '').trim(), running: (state ?? '').trim() === 'running' };
+      const [name, state, agentId] = line.split('\t');
+      return { name: (name ?? '').trim(), running: (state ?? '').trim() === 'running', agentId: (agentId ?? '').trim() };
     })
     .filter((c) => c.name);
 }
@@ -184,10 +243,10 @@ function writeContainerJson(container: AgentContainer, remotePath: string, data:
  * Shared between the create route and syncAllAgents — single source of truth
  * for the provider block injected into every agent container.
  */
-export function buildRev4aProviderConfig(): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string; input?: string[] }[] } {
+export function buildRev4aProviderConfig(version?: string | null): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string; input?: string[] }[] } {
   const providerKeys = readProviderKeys();
   const rev4aApiKey = providerKeys['rev4a'] || '';
-  const activeModels = getActiveRev4aModels();
+  const activeModels = getActiveRev4aModels(version);
   return {
     baseUrl: PROVIDER_GATEWAY_BASE_URL,
     apiKey: rev4aApiKey,
@@ -211,7 +270,8 @@ export function patchRev4aProvider(container: string): void {
   if (bundledCatalogueStatus() === 'unavailable') {
     throw new Error('models.config.json could not be read; models.providers.rev4a left unchanged');
   }
-  const input = JSON.stringify({ models: { providers: { rev4a: buildRev4aProviderConfig() } } });
+  // The agent's own version: an older release rejects `input` values it does not know.
+  const input = JSON.stringify({ models: { providers: { rev4a: buildRev4aProviderConfig(containerVersionSync(container)) } } });
   execFileSync('docker', ['exec', '-i', container, 'sh', '-c', 'openclaw config patch --stdin'], {
     timeout: 15000,
     stdio: 'pipe',
@@ -293,9 +353,32 @@ export function syncAllAgents(): SyncOutcome {
   }
 
   outcome.total = containers.length;
+  const underBackup = agentsUnderBackup();
+  // Any long operation replaces or rewrites the container/config: skip the agent.
+  let busyAgents = new Set<string>();
+  try {
+    busyAgents = new Set([
+      ...activeUpdateAgentIds(),
+      ...activeRecreateAgentIds(),
+      ...activeRestoreAgentIds(),
+      ...activeEditAgentIds(),
+    ]);
+  } catch {
+    // No operation state readable: nothing to skip on that account.
+  }
   for (const container of containers) {
+    if (busyAgents.has(container.agentId)) {
+      outcome.failed.push({ container: container.name, error: 'an operation of this agent is running; it applies Rev4a config itself' });
+      continue;
+    }
+    if (underBackup.has(container.agentId)) {
+      outcome.failed.push({ container: container.name, error: 'a cold backup of this agent is running; sync again once it finishes' });
+      continue;
+    }
     try {
-      syncContainer(container, rev4aProviderConfig);
+      // Per agent: the `input` list follows the version that agent runs, so a 7.x
+      // release never receives a modality value it would reject.
+      syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name)));
       outcome.synced.push(container.name);
       if (!container.running) outcome.stopped.push(container.name);
     } catch (e: unknown) {

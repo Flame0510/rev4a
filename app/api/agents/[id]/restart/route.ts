@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { agentBusyReason } from '@/lib/agent-busy';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,10 @@ export async function POST(request: Request,
     if (!containerName) {
       return NextResponse.json({ error: `No container found with AGENT_ID '${id}'` }, { status: 404 });
     }
+
+    // A restart during an update, recreate, restore, edit or backup would cut it in half.
+    const busy = await agentBusyReason(id);
+    if (busy) return NextResponse.json({ error: busy }, { status: 409 });
 
     execSync(`docker restart ${containerName}`, { timeout: 30000 });
 

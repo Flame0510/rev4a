@@ -7,7 +7,7 @@
  * Supported providers: deepseek, openrouter, glm
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchProviderBalance, type BalanceProvider } from '@/lib/provider-balance';
+import { fetchProviderBalance, BalanceUnsupportedError, type BalanceProvider } from '@/lib/provider-balance';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +33,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ provider, ...result });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ provider, error: message }, { status: 502 });
+    // A permanent "no balance API for this account" is reported distinctly, so
+    // the UI can hide the badge instead of offering a retry that never works.
+    const reason = e instanceof BalanceUnsupportedError ? 'no-balance-api' : undefined;
+    return NextResponse.json({ provider, error: message, ...(reason && { reason }) }, { status: 502 });
   }
 }

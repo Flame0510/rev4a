@@ -27,6 +27,9 @@ interface BalanceInfo {
   granted_balance?: string;
 }
 
+/** Thrown when the provider has no balance API for this account type (permanent, not transient). */
+export class BalanceUnsupportedError extends Error {}
+
 /* ------------------------------------------------------------------ */
 /*  DeepSeek                                                            */
 /* ------------------------------------------------------------------ */
@@ -99,7 +102,21 @@ async function fetchZAIBalance(apiKey: string): Promise<BalanceResult> {
   if (!resp.ok) {
     throw new Error(`Z.AI quota API returned ${resp.status}`);
   }
-  const json = await resp.json() as { limits?: ZAILimit[] };
+  const json = await resp.json() as {
+    success?: boolean;
+    msg?: string;
+    limits?: ZAILimit[];
+  };
+
+  // The endpoint only serves GLM Coding Plan subscriptions. A pay-as-you-go
+  // account gets HTTP 200 with success:false and no limits; Z.AI exposes no
+  // balance API for it (no undocumented endpoint either, verified 2026-09-16),
+  // so this is permanent, not transient: the UI hides the badge entirely.
+  if (json.success === false) {
+    throw new BalanceUnsupportedError(
+      `Z.AI exposes no balance API for pay-as-you-go accounts (the token-quota endpoint requires a Coding Plan)`,
+    );
+  }
 
   const tokenLimit = json.limits?.find((l) => l.limitType === 'TOKENS_LIMIT');
   if (tokenLimit) {
@@ -116,17 +133,21 @@ async function fetchZAIBalance(apiKey: string): Promise<BalanceResult> {
     };
   }
 
-  // Fallback: sum all limits
-  const totalRemaining = (json.limits ?? []).reduce(
-    (sum, l) => sum + (l.remaining ?? l.limitValue - l.usage),
-    0,
-  );
-  return {
-    balance: `${(totalRemaining / 1_000_000).toFixed(1)}M tokens`,
-    currency: 'TOKENS',
-    value: totalRemaining,
-    label: 'Remaining',
-  };
+  // Fallback: sum all limits, only when the API actually returned some.
+  if ((json.limits ?? []).length > 0) {
+    const totalRemaining = (json.limits ?? []).reduce(
+      (sum, l) => sum + (l.remaining ?? l.limitValue - l.usage),
+      0,
+    );
+    return {
+      balance: `${(totalRemaining / 1_000_000).toFixed(1)}M tokens`,
+      currency: 'TOKENS',
+      value: totalRemaining,
+      label: 'Remaining',
+    };
+  }
+
+  throw new Error('Z.AI returned no quota limits');
 }
 
 /* ------------------------------------------------------------------ */

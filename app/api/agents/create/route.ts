@@ -6,83 +6,19 @@ import * as path from 'path';
 import { patchRev4aProvider } from '../../gateway/sync';
 import { extractProviderAndModel } from '@/app/api/provider/upstream';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
-import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
+import { getMountFlags, applyRuntimeConfig, withControlUiPolicy } from '@/lib/agent-setup';
+import { listLocalAgentImages, newestLocalSupportedVersion } from '@/lib/agent-images';
+import { localImageRef } from '@/lib/agent-versions';
 import { isModelOffered } from '@/lib/model-catalogue';
+import { findAvailablePortBlock, portMappingArgs, validatePortInput, DEFAULT_BLOCK_SIZE } from '@/lib/agent-ports';
+import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 
 
 
-/**
- * Find an available host port block starting from 3700.
- */
-const REV4A_PORT = 3740;
-const DEFAULT_BLOCK_SIZE = 10;
-
-function getUsedHostPorts(): Set<number> {
-  try {
-    // Parse host ports in JS rather than piping through grep. The previous
-    // form used `grep -oP '\d+(?=->)'` inside a template literal, where \d
-    // loses its backslash — the shell received `d+(?=->)`, which never
-    // matches Docker's `0.0.0.0:3700->3000/tcp`, so this always returned an
-    // empty set and every agent was offered port 3700. `grep -P` is also
-    // GNU-only and absent on macOS. This mirrors the client-side parser in
-    // app/agents/create/page.tsx.
-    const raw = execSync(
-      `docker ps --format '{{.Ports}}'`,
-      { encoding: 'utf-8', timeout: 3000 },
-    );
-    const used = new Set<number>();
-    for (const [, port] of raw.matchAll(/(\d+)->/g)) {
-      const n = Number(port);
-      if (Number.isInteger(n)) used.add(n);
-    }
-    return used;
-  } catch {
-    return new Set();
-  }
-}
-
-function findAvailablePortBlock(blockSize = DEFAULT_BLOCK_SIZE): number {
-  const usedPorts = getUsedHostPorts();
-  for (let base = 3700; base + blockSize - 1 <= 3799; base += DEFAULT_BLOCK_SIZE) {
-    if (base <= REV4A_PORT && REV4A_PORT <= base + blockSize - 1) continue;
-    const block = Array.from({ length: blockSize }, (_, i) => base + i);
-    if (block.every((p) => !usedPorts.has(p))) return base;
-  }
-  let base = 3800;
-  while (true) {
-    const block = Array.from({ length: blockSize }, (_, i) => base + i);
-    if (block.every((p) => !usedPorts.has(p))) return base;
-    base += DEFAULT_BLOCK_SIZE;
-  }
-}
-
-function validatePortInput(input: string): { valid: true; isBlock: boolean; start: number; end: number } | { valid: false; error: string } {
-  const trimmed = input.trim();
-  if (trimmed.includes('-')) {
-    const m = trimmed.match(/^(\d{1,5})-(\d{1,5})$/);
-    if (!m) return { valid: false, error: 'Invalid format. Use e.g. 3700-3709' };
-    const start = parseInt(m[1], 10);
-    const end = parseInt(m[2], 10);
-    if (start < 1 || end > 65535) return { valid: false, error: 'Ports must be between 1 and 65535' };
-    if (end <= start) return { valid: false, error: 'End port must be greater than start port' };
-    if (start <= REV4A_PORT && REV4A_PORT <= end) return { valid: false, error: `Port ${REV4A_PORT} is reserved for Rev4a` };
-    const usedPorts = getUsedHostPorts();
-    const conflicts: number[] = [];
-    for (let p = start; p <= end; p++) { if (usedPorts.has(p)) conflicts.push(p); }
-    if (conflicts.length > 0) return { valid: false, error: `Ports already in use: ${conflicts.join(', ')}` };
-    return { valid: true, isBlock: true, start, end };
-  }
-  const m = trimmed.match(/^(\d{1,5})$/);
-  if (!m) return { valid: false, error: 'Use a number (e.g. 3700) or a range (e.g. 3700-3709)' };
-  const port = parseInt(m[1], 10);
-  if (port < 1 || port > 65535) return { valid: false, error: 'Port must be between 1 and 65535' };
-  if (port === REV4A_PORT) return { valid: false, error: `Port ${REV4A_PORT} is reserved for Rev4a` };
-  const usedPorts = getUsedHostPorts();
-  if (usedPorts.has(port)) return { valid: false, error: `Port ${port} is already in use` };
-  return { valid: true, isBlock: false, start: port, end: port };
-}
+// Port block discovery and validation are shared with the edit (rename/ports) flow, so
+// both offer the same ranges and the same error messages (lib/agent-ports.ts).
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // docker run (60s) + startup wait (60s) + seeding (60s)
@@ -205,7 +141,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let portEnd: number = 0;
 
     if (portInput) {
-      const v = validatePortInput(portInput);
+      const v = validatePortInput(portInput, getUsedHostPorts());
       if (!v.valid) {
         return NextResponse.json(
           { success: false, error: v.error },
@@ -216,7 +152,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portStart = v.start;
       portEnd = v.end;
     } else {
-      portStart = findAvailablePortBlock();
+      portStart = findAvailablePortBlock(getUsedHostPorts());
       portEnd = portStart + DEFAULT_BLOCK_SIZE - 1;
       isBlock = true;
     }
@@ -225,7 +161,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const mountFlags = getMountFlags();
 
     // Build docker run command
-    const image = 'openclaw-agent-base:latest';
+    // The newest supported OpenClaw version downloaded here (lib/agent-images.ts).
+    let newestLocal: string | null = null;
+    try {
+      newestLocal = newestLocalSupportedVersion(await listLocalAgentImages());
+    } catch {
+      // Docker listed nothing usable: handled below as no image.
+    }
+    if (!newestLocal) {
+      return NextResponse.json(
+        { success: false, error: 'No supported agent image is downloaded. Download it from the Agents page first.' },
+        { status: 409 },
+      );
+    }
+    const image = localImageRef(newestLocal);
     const network = getNetwork();
 
     // Read agents token for new containers
@@ -241,9 +190,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // not ready yet; without it `docker run --network` fails. Idempotent.
     ensureNetworkExists(network);
 
-    // Every agent gets a host port range for direct access. The URL is composed
-    // by the browser from `port` + `controlToken` in the response — only the
-    // browser knows a hostname that actually reaches this machine.
+    // Every agent gets a host port range for direct access. The Control UI link
+    // is built per click by /api/agents/[id]/open-control-ui, from the host the
+    // dashboard is reached on.
     //
     // There used to be an AGENT_HOSTNAME env var here, holding `<detected-ip>:<port>`.
     // Nothing ever read it: verified across this repo and across the whole
@@ -263,9 +212,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    const portOpt = isBlock
-      ? `-p ${portStart}-${portEnd}:3000-${3000 + (portEnd - portStart)}`
-      : `-p ${portStart}:3000`;
+    const portOpt = portMappingArgs(portStart, portEnd).join(' ');
 
     // Template files that will be copied into the container workspace.
     // Files that don't exist in the template dir are silently skipped —
@@ -370,14 +317,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Merge all required sections in one pass (single write, single restart)
 
-      // controlUi — allow browser Control UI access.
-      // deviceAuth is disabled because agent containers are only reachable
-      // on the internal Docker network; the gateway token is the sole auth barrier.
+      // controlUi — keep what the image and OpenClaw wrote, and apply the browser-origin
+      // policy so the Control UI opens on whatever host the agent is reached on.
+      // Recreate re-applies the same policy through applyRuntimeConfig.
       const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
-      gatewaySection.controlUi = {
-        allowedOrigins: ['*'],
-        dangerouslyDisableDeviceAuth: true,
-      };
+      gatewaySection.controlUi = withControlUiPolicy(gatewaySection.controlUi);
       config.gateway = gatewaySection;
 
       // Model reference (primary + fallbacks)
@@ -426,7 +370,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // create-specific config so they're always present regardless of
     // what was in the persistent volume.
     try {
-      applyRuntimeConfig(containerName);
+      await applyRuntimeConfig(containerName);
 
       // Also guarantee models.providers.rev4a (host-dependent, not in base image).
       // This patch needs no restart; the earlier one follows a full-file rewrite

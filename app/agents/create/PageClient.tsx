@@ -3,6 +3,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, TemplateOption } from '../../components/ui';
+import { OpenControlUiButton } from '../BrowserAccessSection';
+import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
 
 interface TemplateInfo {
   id: string;
@@ -26,19 +28,6 @@ type Step = 'template' | 'config' | 'creating' | 'done' | 'error';
 
 const REV4A_PORT = 3740;
 
-function findFirstFreeBlock(usedPorts: number[]): number | null {
-  const used = new Set(usedPorts);
-  for (let base = 3700; base + 9 <= 3799; base += 10) {
-    if (base <= REV4A_PORT && REV4A_PORT <= base + 9) continue;
-    const block = Array.from({ length: 10 }, (_, i) => base + i);
-    if (block.every((p) => !used.has(p))) return base;
-  }
-  // Fallback beyond range
-  for (let base = 3800; ; base += 10) {
-    const block = Array.from({ length: 10 }, (_, i) => base + i);
-    if (block.every((p) => !used.has(p))) return base;
-  }
-}
 
 // ─── Toast ───
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
@@ -77,15 +66,8 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [fallbacks] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [result, setResult] = useState<{ name: string; containerId: string; port: number; controlToken: string } | null>(null);
+  const [result, setResult] = useState<{ containerName: string; displayName: string; containerId: string; port: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  // The agent's Control UI URL, composed here rather than server-side: whatever
-  // hostname reached this dashboard is one that resolves and routes for this
-  // user, which the server can only guess at. Null until the create succeeds.
-  const controlUrl = result && typeof window !== 'undefined'
-    ? `http://${window.location.hostname}:${result.port}#token=${encodeURIComponent(result.controlToken)}`
-    : null;
 
   const handleSelectTemplate = (id: string) => {
     setSelectedTemplate(id);
@@ -95,7 +77,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       setPortRange('3700-3709');
     } else {
       // Simple client-side block finder
-      let block = findFirstFreeBlock(initialUsedPorts);
+      const block = initialUsedPorts.length ? findAvailablePortBlock(new Set(initialUsedPorts)) : null;
       setPortRange(block ? `${block}-${block + 9}` : '');
     }
   };
@@ -108,26 +90,9 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   }, [agentName, usedNames]);
 
   const portError = useMemo(() => {
-    const v = portRange.trim();
-    if (!v) return '';
-    if (v.includes('-')) {
-      const m = v.match(/^(\d{1,5})-(\d{1,5})$/);
-      if (!m) return 'Use format: 3700-3709';
-      const start = parseInt(m[1], 10);
-      const end = parseInt(m[2], 10);
-      if (start < 1 || end > 65535) return 'Ports 1-65535';
-      if (end <= start) return 'End port must be greater than start';
-      for (let p = start; p <= end; p++) {
-        if (initialUsedPorts.includes(p)) return `Port ${p} is already in use`;
-        if (p === 3740) return 'Port 3740 is reserved';
-      }
-      return '';
-    }
-    const p = parseInt(v, 10);
-    if (isNaN(p) || p < 1 || p > 65535) return 'Port must be between 1 and 65535';
-    if (p === 3740) return 'Port 3740 is reserved';
-    if (initialUsedPorts.includes(p)) return 'Port is already in use';
-    return '';
+    if (!portRange.trim()) return '';
+    const res = validatePortInput(portRange, new Set(initialUsedPorts));
+    return res.valid ? '' : res.error;
   }, [portRange, initialUsedPorts]);
 
   const canProceed = (): boolean => {
@@ -394,14 +359,11 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               Container: <span style={{ color: 'var(--text)', fontFamily: 'var(--font-mono-stack)' }}>{result.containerId}</span>
             </div>
             <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
-              Name: <span style={{ color: 'var(--text)' }}>{result.name}</span>
+              Name: <span style={{ color: 'var(--text)' }}>{result.displayName || result.containerName}</span>
             </div>
-            {controlUrl && (
-              <div style={{ fontSize: 13, color: '#888' }}>
-                Access: <a href={controlUrl} target="_blank" rel="noopener noreferrer"
-                  style={{ color: '#60a5fa', textDecoration: 'underline' }}>{controlUrl}</a>
-              </div>
-            )}
+            <div style={{ marginTop: 8 }}>
+              <OpenControlUiButton agentId={result.containerName} label="Open Control UI ↗" />
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <Button variant="ghost" size="md" onClick={() => { setToast(null); router.push('/agents'); }} style={{ flex: 1 }}>

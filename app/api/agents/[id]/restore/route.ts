@@ -1,81 +1,51 @@
-import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
-import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
+/**
+ * Restore one agent's volume from a backup archive (lib/agent-restore.ts).
+ *
+ *   POST ?file=…  start: the container is stopped, the volume cleared and the archive
+ *                 extracted (up to 30 minutes), then the container is started again even
+ *                 when the extract failed. 202 once the job has started; the steps
+ *                 continue in the background and are recorded in `agent_restores`.
+ *   GET           `{ restore }`: the running or last job; null when none.
+ *
+ * While it runs, anything else that would touch the agent answers 409 (lib/agent-busy.ts).
+ */
+import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { isValidAgentId } from '@/lib/container';
+import { agentRestoreView, RestoreRefusedError, startAgentRestore } from '@/lib/agent-restore';
 
 export const dynamic = 'force-dynamic';
 
-const BACKUP_VOLUME = 'rev4a-backups';
+type Ctx = { params: Promise<{ id: string }> };
 
-/**
- * POST /api/agents/[id]/restore?file=agent-xxx-2026-07-11_2115.tar.gz
- * Restore an agent's persistent volume from a backup.
- * Stops the container, restores the volume, then restarts.
- */
-export async function POST(request: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<NextResponse> {
-  const denied = await requireAuthJWT(request); if (denied) return denied as any;
+async function agentId(ctx: Ctx): Promise<string | NextResponse> {
+  const { id } = await ctx.params;
+  return isValidAgentId(id) ? id : NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
+}
+
+export async function POST(request: NextRequest, ctx: Ctx): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as NextResponse;
+  const id = await agentId(ctx);
+  if (id instanceof NextResponse) return id;
+
+  const file = new URL(request.url).searchParams.get('file');
+  if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
+
   try {
-    const { id } = await params;
-    if (!id) return NextResponse.json({ error: 'Agent name required' }, { status: 400 });
-    if (!isValidAgentId(id)) return NextResponse.json({ error: 'Invalid agent id' }, { status: 400 });
-
-    const url = new URL(request.url);
-    const file = url.searchParams.get('file');
-    if (!file) return NextResponse.json({ error: 'file query param required' }, { status: 400 });
-
-    // Safety: only allow restoring agent-specific files, reject path traversal
-    if (!file.startsWith(`agent-${id}-`) || !file.endsWith('.tar.gz') || file.includes('/') || file.includes('..')) {
-      return NextResponse.json({ error: 'Invalid backup file name' }, { status: 400 });
-    }
-
-    const volume = `agent-${id}-data`;
-
-    // Resolve the actual container name via AGENT_ID label
-    const containerName = resolveAgentedContainer(id);
-
-    // Check backup exists
-    const check = execSync(
-      `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'test -f /backup/${file} && echo ok || true'`,
-      { timeout: 10000, encoding: 'utf-8' },
-    ).trim();
-    if (check !== 'ok') {
-      return NextResponse.json({ error: `Backup file '${file}' not found` }, { status: 404 });
-    }
-
-    // Stop the container if running
-    if (containerName) {
-      execSync(`docker stop ${containerName} 2>/dev/null; exit 0`, { timeout: 15000 });
-    }
-
-    // Clear the volume and restore from backup.
-    // Run a temporary container with the volume, delete ALL contents (including
-    // dotfiles/dotdirs like .openclaw, .config, .local — the .[!.]* glob is
-    // required, otherwise the restore only merges on top of stale state), then
-    // extract the backup. Always restart the container afterwards, even on failure.
-    try {
-      execSync(
-        `docker run --rm ` +
-        `-v ${volume}:/target ` +
-        `-v ${BACKUP_VOLUME}:/backup ` +
-        `alpine sh -c 'rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf /backup/${file} -C /target'`,
-        { timeout: 30000, stdio: 'pipe' },
-      );
-    } finally {
-      // Restart the container regardless of extract outcome so it never stays down.
-      if (containerName) {
-        try {
-          execSync(`docker start ${containerName}`, { timeout: 15000, stdio: 'pipe' });
-        } catch {
-          // container start failure is surfaced separately; nothing else to do here
-        }
-      }
-    }
-
-    return NextResponse.json({ success: true, container: containerName || id });
-  } catch (e: unknown) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    const rowId = await startAgentRestore(id, file);
+    return NextResponse.json({ started: true, id: rowId }, { status: 202 });
+  } catch (e) {
+    const message = (e as Error).message;
+    const status = e instanceof RestoreRefusedError
+      ? (/Invalid backup file name|Invalid agent id/.test(message) ? 400 : /not found/.test(message) ? 404 : 409)
+      : 500;
+    return NextResponse.json({ error: (e as Error).message }, { status });
   }
 }
 
+export async function GET(request: NextRequest, ctx: Ctx): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request); if (denied) return denied as NextResponse;
+  const id = await agentId(ctx);
+  if (id instanceof NextResponse) return id;
+  return NextResponse.json({ restore: agentRestoreView(id) }, { headers: { 'Cache-Control': 'no-store' } });
+}

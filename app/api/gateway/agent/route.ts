@@ -8,6 +8,7 @@
  *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { agentBusyReason } from '@/lib/agent-busy';
 import { execSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
@@ -89,6 +90,19 @@ export async function PUT(request: NextRequest) {
     if (!body.model) {
       return NextResponse.json({ status: 'error', error: 'model is required' }, { status: 400 });
     }
+
+    // Refuse while a long operation is running on this agent: the write would race the
+    // recreate/migration that is replacing the container underneath it.
+    try {
+      const agentId = execSync(
+        `docker inspect --format '{{index .Config.Labels "AGENT_ID"}}' ${safeContainer}`,
+        { encoding: 'utf-8', timeout: 5000 },
+      ).trim();
+      if (agentId) {
+        const busy = await agentBusyReason(agentId);
+        if (busy) return NextResponse.json({ status: 'error', error: busy }, { status: 409 });
+      }
+    } catch { /* no container or no label: the rest of the route reports it */ }
 
     // Read current config
     const raw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');

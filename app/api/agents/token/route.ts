@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { NextResponse, type NextRequest } from 'next/server';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { agentBusyReason } from '@/lib/agent-busy';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,37 +58,59 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     fs.writeFileSync(AGENTS_TOKEN_FILE, JSON.stringify(payload, null, 2));
 
     let containersUpdated = 0;
-    let containerNames: string[] = [];
+    /** Containers left alone because an operation is running on them. */
+    const skipped: string[] = [];
+    /** Containers that could not be updated, with the reason. */
+    const failed: { container: string; error: string }[] = [];
+    let containers: { name: string; agentId: string }[] = [];
 
     try {
       const raw = execSync(
-        `docker ps --filter "label=AGENT_ID" --format "{{.Names}}"`,
+        `docker ps --filter "label=AGENT_ID" --format '{{.Names}} {{.Label "AGENT_ID"}}'`,
         { encoding: 'utf-8', timeout: 5000 },
       ).trim();
-      containerNames = raw ? raw.split('\n').map((name) => name.trim()).filter(Boolean) : [];
+      containers = raw
+        ? raw.split('\n').map((line) => {
+          const [name, agentId] = line.trim().split(/\s+/);
+          return { name: (name ?? '').trim(), agentId: (agentId ?? '').trim() };
+        }).filter((c) => c.name)
+        : [];
     } catch {
-      containerNames = [];
+      containers = [];
     }
 
-    for (const containerName of containerNames) {
+    for (const { name, agentId } of containers) {
       try {
+        // Restarting an agent mid-update, mid-recreate, mid-restore or mid-edit would cut
+        // the operation in half: leave it and say so.
+        if (agentId && (await agentBusyReason(agentId))) {
+          skipped.push(name);
+          continue;
+        }
         // Write token to /root/.agent-token (entrypoint reads this, overrides env var)
         execSync(
-          `docker exec ${shellQuote(containerName)} sh -c 'echo ${shellQuote(token)} > /root/.agent-token'`,
+          `docker exec ${shellQuote(name)} sh -c 'echo ${shellQuote(token)} > /root/.agent-token'`,
           { encoding: 'utf-8', timeout: 10000 },
         );
         // Restart to pick up new token
-        execSync(`docker restart ${shellQuote(containerName)}`, {
+        execSync(`docker restart ${shellQuote(name)}`, {
           encoding: 'utf-8',
           timeout: 20000,
         });
         containersUpdated += 1;
-      } catch {
-        // Skip failed containers and continue syncing the rest.
+      } catch (e) {
+        // Report the failure instead of swallowing it: a token that reached only some
+        // agents used to look like a full success.
+        failed.push({ container: name, error: (e as Error)?.message ?? String(e) });
       }
     }
 
-    return NextResponse.json({ success: true, containersUpdated });
+    return NextResponse.json({
+      success: failed.length === 0,
+      containersUpdated,
+      ...(skipped.length ? { skipped } : {}),
+      ...(failed.length ? { failed } : {}),
+    });
   } catch (e: unknown) {
     return NextResponse.json(
       { success: false, error: (e as Error).message || 'Unknown error' },
