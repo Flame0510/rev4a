@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -170,7 +170,10 @@ Saving calls `PUT /api/gateway/agent`, which writes the container's
   container's existing list untouched, `[]` clears it. The Model panel is the only
   UI that sets them; the create wizard does not
 - **no restart** — `agents` is in OpenClaw's hot-reload column, so the write
-  applies on the agent's next turn
+  applies on the agent's next turn. Exception on OpenClaw 2026.7.1-2: a Telegram
+  channel keeps the configuration it had when it started, so Telegram replies stay on
+  the old model until the container is restarted. The Control UI picks the change up
+  at once. OpenClaw 9.x reads the configuration per message
 
 The agent list shows each agent's current model as a chip, fed by
 `GET /api/agents/models-summary`. The red states are split by remedy, because they
@@ -218,6 +221,9 @@ Two failures, handled differently on purpose:
 
 - **Docker unreachable** — refused before anything is written: `503`, nothing saved,
   the checkbox does not move, so the checkboxes never disagree with every agent.
+- **An agent under a cold backup** is skipped: writing its config while tar reads the
+  volume would put a half-changed file in the archive. It is listed in `sync.failed`
+  with the reason; the next sync catches it up.
 - **Some containers fail once Docker answers** — the toggle stands and `sync.failed`
   lists them; the page shows it in amber, and an agent whose primary is affected shows
   `OUT OF SYNC`. Rolling
@@ -359,18 +365,27 @@ Restart the Rev4a server (via systemd).
 4. **No gateway restart after model sync** — The sync module writes `models.providers`
    to the file directly without restarting the gateway.
 
+   The model `input` list follows each agent's OpenClaw version
+   (`lib/agent-versions.json`, resolved by `containerVersionSync()`): the newest release
+   accepts `text | image | audio | video`, while `2026.7.1-2` accepts only `text | image`,
+   and one unknown value makes it discard the whole generated catalogue
+   (`model catalog load issue`). That is why the previous version stays in the table
+   while agents still run it.
+
 5. **Entrypoint does not generate openclaw.json** — The entrypoint resolves the
    auth token and starts the gateway with `--allow-unconfigured`; OpenClaw
    generates its own default config on first boot. All post-creation config
    (controlUi, model refs, providers) is written by the create route
    (`POST /api/agents/create`) after the gateway is fully ready.
-   The entrypoint also runs `openclaw doctor --non-interactive` **before** the
-   gateway, but only when the OpenClaw version changed since last boot
-   (tracked in `/root/.openclaw/.last-version`) — safe migrations only, no restart.
+   Before the gateway starts, the entrypoint runs `openclaw doctor --fix --non-interactive`
+   when the OpenClaw version changed since the last successful run (tracked in
+   `/root/.openclaw/.last-version`), and fills in the image defaults that are missing:
+   plugin load path, web search provider, heartbeat off. See
+   [REV4A.md](../REV4A.md#agent-templates).
 
 6. **Model ref written after gateway readiness** — When the wizard creates an agent,
    the create route waits for the gateway to finish starting (`waitForGatewayReady`), then writes
-   `agents.defaults.model.primary` + fallbacks and `gateway.controlUi.allowedOrigins`,
+   `agents.defaults.model.primary` + fallbacks and the Control UI origin policy (`gateway.controlUi`),
    then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. The Gateway sync (`PUT /api/gateway/provider`)
    never touches model references — only `models.providers` is synced.
 

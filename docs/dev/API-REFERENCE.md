@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -124,15 +124,18 @@ Restart the service so a freshly written `.env` takes effect.
 **Errors:** `500` if the `.env` file is missing, or the restart could not be issued.
 
 ### `GET /api/setup/agent-image`
-Whether the `openclaw-agent-base` image is present.
+Whether a supported OpenClaw version of the agent image is downloaded.
 
 **Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
-**Response:** `{ "exists": true, "imageId": "sha256:..." }`, or `{ "exists": false }`
-when the image is absent **or Docker is unreachable** — the two are not distinguished.
+**Response:** `{ "exists": true, "version": "2026.9.3" }` (the newest one present), or
+`{ "exists": false, "version": null }` when none is **or Docker is unreachable** — the two
+are not distinguished.
 
 ### `POST /api/setup/agent-image`
-Pull or build the agent base image, streaming progress.
+Download the newest supported version the registry publishes, streaming progress as SSE
+(`status`, `progress`, `step`, `log`, `complete`, `error`). Nothing is downloaded when
+that version is already here.
 
 **Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
@@ -350,7 +353,7 @@ Remaining credit for one provider.
 
 **Query params:** `provider` — one of `deepseek`, `openrouter`, `glm`.
 
-**Errors:** `502` when the provider's API cannot be reached or rejects the call.
+**Errors:** `502` when the provider's API cannot be reached or rejects the call. For `glm`, Z.AI's token-quota endpoint only serves Coding Plan subscriptions: a pay-as-you-go key gets `502` with `reason: "no-balance-api"` — Z.AI exposes no balance API for such accounts (verified 2026-09-16), and the Gateway hides the badge on this reason instead of offering a retry.
 
 ### `POST /api/gateway/provider/oauth`
 Run the OAuth device flow for a provider that supports it.
@@ -673,8 +676,8 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "id": "abc123def456",
     "agentId": "prometheus",
     "name": "prometheus",
-    "image": "openclaw-agent-base:latest",
-    "imageTag": "latest",
+    "image": "openclaw-agent-base:2026.9.3",
+    "imageTag": "2026.9.3",
     "template": "prometheus",
     "status": "running",
     "state": "running",
@@ -682,15 +685,20 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "ip": "172.19.0.5",
     "created": "2026-07-01T16:58:42.876829416Z",
     "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
-    "authToken": "***",
-    "controlPort": "3033"
+    "controlPort": "3033",
+    "openclawVersion": "2026.9.3",
+    "updateAvailable": false
   }
 ]
 ```
 
 **Notes:**
-- The URL is always `http://<host-ip>:<port>#token=...` (every agent gets a host port mapping)
-- The `authToken` uses the shared gateway token from `data/agents-token.json`
+- `openclawVersion` comes from the image's `org.opencontainers.image.version` label or
+  version tag, else from `openclaw --version` inside the running container (cached per
+  image id); `null` for a stopped agent whose image carries neither.
+- `updateAvailable` is `true` when a newer supported OpenClaw version is downloaded.
+- `controlPort` is the host port published for the Control UI. No link or token is
+  returned: the Open buttons go through `GET /api/agents/[id]/open-control-ui`
 - Containers are discovered via Docker API with label filter `AGENT_ID`
 - Template is inferred from the container image name + agent ID directory match in `agent-templates/`
 
@@ -785,7 +793,7 @@ Create a new agent container from a template.
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | yes | Container name, also becomes `AGENT_ID` and subdomain |
+| `name` | yes | Display name (`AGENT_NAME`); the container name and `AGENT_ID` are generated (`agent_<hex>`) |
 | `template` | yes | Template name (directory in `agent-templates/`) |
 | `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block |
 | `model` | no | Primary model id. Must be offered by this deployment (in the catalogue, enabled, provider has a key), in any form the proxy accepts; otherwise `400`. Defaults to `rev4a/deepseek/deepseek-flash`, validated the same way |
@@ -794,16 +802,18 @@ Create a new agent container from a template.
 **Every agent is created with a host port mapping:**
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
 - Single port: `-p <port>:3000` — maps a single host port to container port 3000
-- Control UI URL: composed by the browser as `http://<window.location.hostname>:<port>#token=<controlToken>` — the server returns the parts, not the URL
+- Control UI: the wizard's Open button goes through `GET /api/agents/[id]/open-control-ui`, like the Agents page
 - Port 3740 is reserved for Rev4a
+- Image: `openclaw-agent-base:<version>`, the newest supported OpenClaw version downloaded here; `409` when none is
 
 **Response:**
 ```json
 {
   "success": true,
   "containerId": "00f5de1eb08d...",
-  "name": "my-agent",
-  "image": "openclaw-agent-base:latest",
+  "containerName": "agent_2a3c3a07",
+  "displayName": "my-agent",
+  "image": "openclaw-agent-base:2026.9.3",
   "network": "rev4a-network",
   "controlToken": "asdfghjkl",
   "port": 3700,
@@ -856,6 +866,61 @@ docker command.
 
 ---
 
+### `PATCH /api/agents/[id]`
+Edit an agent's display name, its port range, or both. The job runs in the background
+(`lib/agent-edit.ts`); this answers `202` once it has started. The container is rebuilt
+on the image it already runs — **without a backup**: the persistent volume is never
+touched (`recreateAgentContainer()` in `lib/agent-recreate.ts`), then the gateway is
+waited for (up to 5 minutes) and the runtime config re-applied.
+
+The job is recorded in `agent_edits`, so a page reload or a Rev4a restart never loses it:
+`GET` below reports the running or last edit, and while it runs anything else that would
+touch the agent answers `409`.
+
+**Auth:** browser cookie
+
+**Body:**
+```json
+{ "displayName": "Argus", "portRange": "3700-3709" }
+```
+
+`portRange` is `"<start>"` or `"<start>-<end>"`, mapped onto the gateway port 3000
+(`3700-3709` → `3700-3709:3000-3009`). It is validated with the same rules and messages as
+agent creation (`lib/agent-ports.ts`): a range that holds Rev4a's port `3740`, an invalid
+format, or a port already published by **another** agent answers `400`
+(`Ports already in use: 3711, 3712`) before anything is rebuilt. The agent's own published
+ports are excluded, so keeping or shifting its block is not a conflict with itself.
+At least one field is required; an empty `displayName` is rejected.
+
+**Response (202):**
+```json
+{ "started": true, "id": 4 }
+```
+
+**Errors:** `400` invalid body, invalid port range or empty display name; `409` an edit,
+recreate, restore, update or backup of this agent is already running.
+
+---
+
+### `GET /api/agents/[id]`
+The running or last edit of an agent (`null` when it was never edited) — what the edit
+banner polls to resume after a reload. `status`: `rebuilding` → `done` | `failed`;
+`interrupted` after a Rev4a restart cut it off.
+
+**Auth:** browser cookie or bearer token
+
+```json
+{
+  "edit": {
+    "id": 4, "agentId": "agent_2a3c3a07", "status": "rebuilding",
+    "displayName": "test 2 async", "portRange": null,
+    "error": null, "startedAtMs": 1790007512520, "finishedAtMs": null
+  }
+}
+```
+
+---
+
 ### `POST /api/agents/[id]/restart`
 Restart an agent container (shorter than recreate — keeps everything intact).
 
@@ -870,105 +935,265 @@ Restart an agent container (shorter than recreate — keeps everything intact).
 
 ---
 
-### `POST /api/agents/[id]/backup`
-Create a backup of the agent's persistent volume.
+### `GET /api/agents/[id]/backup`
+List the agent's backup archives in Docker volume `rev4a-backups`.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
 **Response:**
 ```json
-{ "success": true, "file": "agent-prometheus-2026-07-12_043512345.tar.gz" }
+{ "backups": [ { "name": "agent-prometheus-2026-07-12_043512345.tar.gz", "size": "227.4 MB", "sizeBytes": 238442455, "date": "12/07/2026 04:35", "epoch": 1752292512 } ] }
 ```
 
-The backup file lives in Docker volume `rev4a-backups`. Backups exclude the npm
-package cache (`~/.npm/_cacache/`) to keep them small (~1.5 MB instead of 227 MB).
+Archives are created by the cold backup (`POST /api/agents/[id]/cold-backup`) and
+excluded the npm package cache (`~/.npm/_cacache/`). Sorted most-recent-first.
 
-**Error (404):** `{ "error": "No persistent volume found for agent '...'" }`
 
 ---
 
-### `GET /api/agents/[id]/backup`
-List available backups for a specific agent.
+### `DELETE /api/agents/[id]/backup?file=...`
+Remove one backup archive from `rev4a-backups`.
 
 **Auth:** browser cookie
 
-**Response:**
+**Response:** `{ "success": true }`
+
+**Error (400):** invalid or path-traversing file name.
+
+### `POST /api/agents/[id]/cold-backup`
+Cold backup of the agent's volume (`lib/cold-backup.ts`). Returns `202` once the job
+has started; the work continues in a helper container, `rev4a-backup-<id>`.
+
+1. The agent is stopped (`docker stop -t 30`, kill as a fallback) if it runs.
+2. The helper, started from the agent's own image, measures the volume (`du`),
+   refuses when `rev4a-backups` has less free space than about 60% of it, and writes
+   `agent-<id>-cold-<ts>.tar.gz.partial` (npm cache excluded) with GNU tar checkpoints
+   for progress.
+3. `tar -tzf` reads the whole archive back and must find `.openclaw/openclaw.json`;
+   only then is it renamed to `.tar.gz`. A failed or cancelled job leaves no archive.
+4. The agent is started again if it was running.
+
+The job's state is the helper container and its labels, so it survives a Rev4a
+restart: at startup, `reconcileColdBackups()` finishes helpers that exited and keeps
+watching the rest.
+
+While it runs, `POST restore`, `POST recreate`, `POST lifecycle`,
+`PATCH` and `DELETE /api/agents/[id]` answer `409`, and the provider sync skips the
+agent, reporting it in `sync.failed`.
+
+**Auth:** browser cookie or bearer token
+
+**Response (202):** `{ "started": true, "file": "agent-agent_9253eee3-cold-2026-09-16_000607123.tar.gz" }`
+
+**Errors:** `404` no container or no volume; `409` a backup of this agent is already
+running; `500` the helper could not start (the agent is started again if it was running).
+
+### `GET /api/agents/[id]/cold-backup`
+The running or last job; `{ "backup": null }` when there is none since Rev4a started.
+
 ```json
 {
-  "backups": [
-    { "name": "agent-prometheus-2026-07-12_043512345.tar.gz", "size": "1.6 MB", "date": "12/07/2026 04:35" }
-  ]
+  "backup": {
+    "agentId": "agent_9253eee3", "status": "running", "kind": "manual",
+    "file": "agent-agent_9253eee3-cold-2026-09-16_000607123.tar.gz",
+    "startedAtMs": 1789524367123, "finishedAtMs": null,
+    "totalBytes": 2023456789, "doneBytes": 812400000, "percent": 40,
+    "archiveBytes": null, "error": null
+  }
 }
 ```
 
-Backups are sorted most-recent-first.
+`status` is `running`, `succeeded` or `failed`; `error` is `cancelled` for a cancelled job.
 
----
-
-### `DELETE /api/agents/[id]/backup?file=agent-prometheus-2026-07-12_043512345.tar.gz`
-Remove a specific backup file.
-
-**Auth:** browser cookie
-
-**Response:**
-```json
-{ "success": true }
-```
-
-**Error (400):** if filename is invalid or contains path traversal
+### `DELETE /api/agents/[id]/cold-backup`
+Cancel the running job: the helper is removed, the partial archive deleted and the
+agent started again if it was running. `409` when nothing is running.
 
 ---
 
 ### `POST /api/agents/[id]/restore?file=agent-prometheus-2026-07-12_043512345.tar.gz`
-Restore an agent's persistent volume from a backup.
+Restore an agent's persistent volume from a backup. The job runs in the background
+(`lib/agent-restore.ts`); this answers `202` once it has started. No pre-restore backup is
+taken: restoring replaces the volume with the archive on purpose.
 
-The container is stopped, the volume content is replaced with the backup, then
-the container is restarted. If no container exists with the given `AGENT_ID`,
-the volume is restored anyway (useful for volume-only agents).
+1. The container is stopped if it runs.
+2. The volume content is cleared and the archive extracted — up to 30 minutes, since a
+   large workspace takes minutes to decompress. The file name reaches the container
+   through its environment, never as shell syntax.
+3. The container is started again even when the extract failed, so the agent never stays
+   down. A volume with no container (volume-only agent) is restored anyway.
 
-**Auth:** browser cookie
+The job is recorded in `agent_restores`, so a page reload or a Rev4a restart never loses
+it: while it runs, anything else that would touch the agent answers `409`
+(`lib/agent-busy.ts`), and after a Rev4a restart an active row becomes `interrupted` with
+the container started again.
 
-**Response:**
+**Auth:** browser cookie or bearer token
+
+**Response (202):**
 ```json
-{ "success": true, "container": "prometheus" }
+{ "started": true, "id": 3 }
 ```
 
-**Error (404):** if the backup file is not found
+**Errors:** `400` invalid file name (not `agent-<id>-<safe charset>.tar.gz`); `404` the
+archive does not exist; `409` a restore, recreate, update, edit or backup of this agent
+is already running.
+
+---
+
+### `GET /api/agents/[id]/restore`
+The running or last restore of an agent (`null` when it was never restored), with the
+archive being applied. `status`: `restoring` → `done` | `failed`; `interrupted` after a
+Rev4a restart cut it off.
+
+**Auth:** browser cookie or bearer token
+
+```json
+{
+  "restore": {
+    "id": 3, "agentId": "agent_2a3c3a07", "status": "restoring",
+    "file": "agent-agent_2a3c3a07-cold-2026-09-21_172032317.tar.gz",
+    "error": null, "startedAtMs": 1790004046548, "finishedAtMs": null
+  }
+}
+```
 
 ---
 
 ### `POST /api/agents/[id]/recreate`
-Rebuild the agent container from the **latest** `openclaw-agent-base:latest` image
-while preserving the persistent volume (workspace files, credentials, state DB,
-config). This is how an existing agent picks up image/OpenClaw/CLI updates: the
-software lives in the image, the data in the volume.
+Rebuild the agent container on its **own** OpenClaw version while preserving the
+persistent volume (workspace files, credentials, state DB, config). A recreate never
+changes version: moving to a newer OpenClaw version migrates the data one way, so it
+is a separate update. The job runs in the background (`lib/agent-recreate.ts`); this
+answers `202` once it has started.
 
-Flow:
-1. **Auto-backup first.** The volume is backed up to `agent-<id>-prerecreate-<ts>.tar.gz`
-   in `rev4a-backups`. **If the backup fails, the recreate is aborted** and the
-   running container is left untouched.
-2. The old container is removed (`docker rm -f`) and a new one is created with the
-   same image tag, environment variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`),
-   labels, port mappings, and network — reattaching the same volume.
-3. After startup, `applyRuntimeConfig()` (from `lib/agent-setup.ts`) guarantees:
-   - `hooks.bootstrap-extra-files` (Rev4a system rules injection)
-   - `skills.load.extraDirs` (shared skills discovery)
-   - `models.providers.rev4a` (provider proxy, host-dependent)
-   All patches use `config patch --stdin` (deep-merge) — existing user
-   customizations are never overwritten.
+The image is `openclaw-agent-base:<version>` for the version the agent runs
+(`resolveRecreateImage()` in `lib/agent-images.ts`). When that tag is missing but the
+container's image is still here, the image is tagged; when it is gone, a supported
+version is pulled. An agent whose version cannot be read keeps its exact image id.
 
-On the next boot, the image entrypoint runs `openclaw doctor --non-interactive`
-**only if the OpenClaw version changed** (safe migrations, no service restart),
-aligning the volume's state/config to the new binary.
+Flow (each step recorded in `agent_recreates`):
+1. **Cold backup** `agent-<id>-prerecreate-<ts>.tar.gz` — the agent stops for it, so
+   the archive cannot catch its SQLite files mid-write. **If the backup fails, the
+   recreate aborts and the agent is started again.**
+2. The container is rebuilt (`lib/agent-recreate.ts`): same image tag, environment
+   variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`), labels, port mappings and network,
+   reattaching the same volume. The network comes from the attached networks, or from
+   the container's `NetworkMode` when its endpoint was lost.
+3. The gateway is waited for (`/startupz`, up to 5 minutes), then `applyRuntimeConfig()`
+   (`lib/agent-setup.ts`) guarantees the hooks, shared skills, provider proxy and
+   Control UI origin policy.
+4. On success, older `prerecreate` archives are pruned to the newest two per agent
+   (manual `cold` and `preupdate` archives are never touched).
 
-**Auth:** browser cookie
+A failure before the rebuild starts the old container again, so a failed recreate never
+leaves the agent down. After a Rev4a restart, a job still active becomes `interrupted`
+at startup and the agent is started again — but only once its backup helper has
+finished, never while the archive is being written.
 
-**Response:**
+**Auth:** browser cookie or bearer token
+
+**Response (202):**
 ```json
-{ "success": true, "name": "prometheus", "image": "openclaw-agent-base:latest", "network": "openclaw-core_default", "backup": "agent-prometheus-prerecreate-2026-07-12_195512345.tar.gz" }
+{ "started": true, "id": 12 }
 ```
 
-**Error (500):** `{ "error": "Pre-recreate backup failed, aborting: ..." }`
+**Errors:** `404` when no image can be resolved; `409` when there is no container, an
+update, a recreate, a restore, an edit or a backup of this agent is running.
+
+---
+
+### `GET /api/agents/[id]/recreate`
+The running or last recreate of an agent, with live backup progress (`null` when the
+agent was never recreated).
+
+**Auth:** browser cookie or bearer token
+
+```json
+{
+  "recreate": {
+    "id": 12, "agentId": "agent_9253eee3", "status": "backing_up",
+    "image": "openclaw-agent-base:2026.7.1-2",
+    "backupFile": "agent-agent_9253eee3-prerecreate-2026-09-17_171000.tar.gz",
+    "backupPercent": 40, "error": null,
+    "startedAtMs": 1789656372120, "finishedAtMs": null
+  }
+}
+```
+
+- `status`: `backing_up` → `recreating` → `done` | `failed`; `interrupted` after a
+  Rev4a restart cut it off.
+- `backupPercent` is live only while `backing_up`.
+
+---
+
+### `GET /api/agents/[id]/update`
+The agent's OpenClaw version, the update it could take, and its latest update
+(`lib/agent-update.ts`).
+
+**Auth:** browser cookie or bearer token
+
+```json
+{
+  "currentVersion": "2026.7.1-2",
+  "candidate": { "fromVersion": "2026.7.1-2", "toVersion": "2026.9.3" },
+  "update": {
+    "id": 3, "agentId": "agent_9253eee3", "status": "backing_up",
+    "fromVersion": "2026.7.1-2", "toVersion": "2026.9.3",
+    "backupFile": "agent-agent_9253eee3-preupdate-2026.7.1-2-2026-09-16_003512345.tar.gz",
+    "backupPercent": 40, "verification": null, "error": null,
+    "startedAtMs": 1789524912000, "finishedAtMs": null
+  }
+}
+```
+
+- `candidate` is `null` when no newer supported version is downloaded.
+- `update.status`: `pending` → `backing_up` → `migrating` → `verifying` → `done` |
+  `failed`; `interrupted` after a Rev4a restart cut it off; `rolling_back` →
+  `rolled_back` | `rollback_failed` for a rollback.
+- `verification`: `{ sessions, lostEvents: [{ session, before, after }], missingCronJobs, ok }`.
+
+`503` when Docker cannot be reached.
+
+### `POST /api/agents/[id]/update`
+Start an update. **Body (optional):** `{ "version": "2026.9.3" }`; by default the newest
+supported version downloaded. Returns `202` with the new `update`; the steps continue in
+the background.
+
+1. **Preflight** (refused with `409`): the agent runs, the target is downloaded,
+   supported and newer than the agent's version, no update or backup is running.
+2. **Baseline**, inside the agent: transcript events per session (`.jsonl` lines on
+   2026.7.x, `transcript_events` rows from 9.x; trajectory files not counted) and cron
+   job names.
+3. **`backing_up`**: cold backup `agent-<id>-preupdate-<from>-<ts>.tar.gz`
+   (`startColdBackup`, agent left stopped).
+4. **`migrating`**: the container is recreated on `openclaw-agent-base:<to>`
+   (`lib/agent-recreate.ts`); its entrypoint runs `doctor --fix`; Rev4a waits up to 10
+   minutes for `/startupz` to report `started` with the target version, then re-applies
+   its config and provider block.
+5. **`verifying`**: every session has at least as many events as before and every cron
+   job is still there → `done`, then unused agent images are removed (`pruneAgentImages`).
+
+A failure before the recreate starts the old container again. A failure after it leaves
+the agent on the new version; the panel offers Rollback.
+
+**Errors:** `400` unsupported version, `409` refused (reason in `error`), `500`.
+
+While an update runs, `backup`, `cold-backup`, `restore`, `recreate`, `lifecycle`,
+`PATCH` and `DELETE /api/agents/[id]` answer `409 "An update of this agent is running"`,
+and the provider sync skips the agent.
+
+### `POST /api/agents/[id]/update/rollback`
+Roll back the latest update — `done`, `failed`, `interrupted` or `rollback_failed` — while
+its pre-update backup exists. `202` with the `update` (`rolling_back`).
+
+1. The previous version's image is made local (pulled when it is a supported version).
+2. The agent is stopped and its volume replaced by the pre-update backup.
+3. The container is recreated on `openclaw-agent-base:<from>` and must report that version.
+
+Rev4a's config is not re-applied: the restored `openclaw.json` is the one that version
+accepted. Everything the agent did after the backup is lost. `409` when there is nothing
+to roll back, the backup is gone, or an update or backup is running.
 
 ---
 
@@ -1057,13 +1282,19 @@ Disconnect Telegram from an agent.
 **Side effects:**
 - Sets `channels.telegram.enabled: false`, removes `botToken` and `allowFrom`
 - Removes the telegram binding
-- Deletes pairing files (`telegram-pairing.json`, `telegram-default-allowFrom.json`)
+- Clears the channel's approved senders in OpenClaw's pairing store (`clearChannelAllowlist()`)
 - No restart required
 
 ---
 
 ### `GET /api/agents/[id]/channels/pairing?channel=telegram`
 Get pending and approved pairings for a channel.
+
+Pending requests come from `openclaw pairing list --channel <channel> --json`. Approved
+senders come from OpenClaw's pairing store — on 2026.9.x the SQLite
+`channel_pairing_allow_entries` rows in `~/.openclaw/state/openclaw.sqlite`, read through
+the store's own `readChannelAllowFromStoreSync` (the credentials JSON files older
+releases used are gone, and reading those returned nothing).
 
 **Auth:** browser cookie
 
@@ -1085,7 +1316,6 @@ Get pending and approved pairings for a channel.
 ```
 
 - Pending codes are from `openclaw pairing list --json`
-- Approved senders are from the credentials allowFrom file
 
 ---
 
@@ -1115,6 +1345,15 @@ Approve a pending pairing code.
 ### `DELETE /api/agents/[id]/channels/pairing?channel=telegram&senderId=123456789`
 Revoke an approved sender.
 
+There is no CLI or RPC for this (`openclaw pairing` covers pending requests only,
+`channels.pairing.*` has no remove — verified on 2026.9.3). The pairing store's own
+writer is used instead: `removeChannelAllowFromStoreEntry`, located by function name in
+OpenClaw's `pairing-store` module and run inside the container, so the write goes
+through the same state transaction the CLI uses. Verifying a 2026.7.x agent is out of
+scope: Rev4a targets 2026.9.3. On a release that no longer exposes the writer the call
+fails with a message pointing at `/allowlist remove` from the chat — nothing is silently
+left unchanged.
+
 **Auth:** browser cookie
 
 **Query params:**
@@ -1126,6 +1365,207 @@ Revoke an approved sender.
 **Response (200):** `{ "success": true }`
 
 **Response (400):** `{ "error": "senderId query param is required" }`
+**Response (404):** `{ "error": "..." }` when the store is unavailable
+(the sender is already gone when present — the desired state).
+
+---
+
+### `GET /api/agents/[id]/devices`
+Browser access to one agent's Control UI: requests waiting for approval and browsers
+already approved.
+
+**Auth:** browser cookie
+
+Runs `openclaw devices list --json` inside the container with the async `dockerExec`;
+see `lib/agent-devices.ts`. On OpenClaw 2026.7.x, which answers `/startupz` with HTML
+and whose config disables device approval, the CLI is not called and both lists are
+empty.
+
+**Response:**
+```json
+{
+  "running": true,
+  "requiresApproval": true,
+  "pending": [
+    {
+      "requestId": "facd76cb-0dd5-462e-8d1d-d18ed35f6129",
+      "deviceId": "f1ad26df8bc4…",
+      "displayName": null,
+      "platform": "MacIntel",
+      "clientId": "openclaw-control-ui",
+      "clientMode": "webchat",
+      "roles": ["operator"],
+      "scopes": ["operator.admin", "operator.read", "operator.write"],
+      "remoteIp": "192.168.65.1",
+      "browserOrigin": "http://192.168.1.88:3710",
+      "isRepair": false,
+      "requestedAtMs": 1789490956623
+    }
+  ],
+  "approved": [
+    {
+      "deviceId": "848f99c9b0af…",
+      "label": null,
+      "platform": "MacIntel",
+      "clientId": "openclaw-control-ui",
+      "clientMode": "webchat",
+      "roles": ["operator"],
+      "scopes": ["operator.admin", "operator.read", "operator.write"],
+      "remoteIp": "192.168.65.1",
+      "approvedVia": "bootstrap",
+      "createdAtMs": 1789492279000,
+      "approvedAtMs": 1789492279000,
+      "lastUsedAtMs": 1789492300000
+    }
+  ]
+}
+```
+
+- A stopped agent answers `200` with `running: false` and empty lists.
+- `requiresApproval` is `null` when neither `/startupz` nor the config can be read.
+- `approvedVia`: `silent` (local connection, approved automatically), `owner` (approved
+  by an operator), `bootstrap` (one-time link), or another OpenClaw value.
+- Public keys and token values are never returned.
+
+**Errors:** `404` unknown agent, `503` Docker unreachable, `502` the OpenClaw command
+failed or returned incomplete JSON.
+
+---
+
+### `POST /api/agents/[id]/devices`
+Approve or reject a pending request.
+
+**Auth:** browser cookie
+
+**Body:** `{ "action": "approve" | "reject", "requestId": "<requestId>" }`
+
+**Response (200):** `{ "ok": true }`
+
+**Errors:** `400` invalid action or `requestId`, `404` unknown agent, `409` agent not
+running, `502` command failed.
+
+---
+
+### `PATCH /api/agents/[id]/devices`
+Rename an approved browser. The label is preferred over the name the client reports.
+
+**Auth:** browser cookie
+
+**Body:** `{ "deviceId": "<deviceId>", "name": "Office laptop" }` — 1-64 printable characters
+
+**Response (200):** `{ "ok": true }`
+
+**Errors:** as for `POST`.
+
+---
+
+### `DELETE /api/agents/[id]/devices?deviceId=<deviceId>`
+Revoke an approved browser (`openclaw devices remove`). It needs approval again the next
+time it connects.
+
+**Auth:** browser cookie
+
+**Response (200):** `{ "ok": true }`
+
+**Errors:** as for `POST`.
+
+---
+
+### `GET /api/agents/[id]/open-control-ui`
+Where the "Open" buttons navigate, in a new tab. Redirects (`302`) to the agent's
+Control UI.
+
+**Auth:** browser cookie
+
+The target host is the one the request reached Rev4a on (the `Host` header), with the
+agent's published port — never a parameter, so the link cannot be sent to another host.
+
+- **OpenClaw 9.x** (it answers `/startupz` with JSON): runs `openclaw dashboard --json`
+  in the container and redirects to its `browserUrl`, with the host, the port and the
+  `gatewayUrl` fragment parameter rewritten to that host and the published port. The
+  link is single-use, expires after ten minutes, and pairs the browser with no approval.
+- **OpenClaw 2026.7.x**, or when no one-time link can be issued: redirects to the plain
+  link `http://<host>:<port>/#token=<token>`, with the token read inside the container
+  (`/root/.agent-token`, then `OPENCLAW_GATEWAY_TOKEN`).
+
+A navigation, not a JSON call: the button opens this URL inside the click, so no tab
+is left blank after an `await` and no popup can be blocked.
+
+**Errors** (plain text, meant for the tab): `400` host not readable, `404` unknown agent,
+`409` agent not running or no published Control UI port, `503` Docker unreachable,
+`502` neither a one-time link nor a token available.
+
+---
+
+### `GET /api/agents/[id]/invite-link`
+A Control UI link to send to someone else — the "Invite link" button in Browser access.
+The browser that opens it passes gateway auth and waits in the agent's approval list;
+nothing opens until an operator approves it.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "url": "http://212.0.113.7:3710/#token=…", "loopbackHost": false }
+```
+
+- `url` is the plain token link. The host is the one the request reached Rev4a on
+  (the `Host` header); the port is the agent's published Control UI port. The token is
+  read inside the container with the entrypoint's precedence (`/root/.agent-token`,
+  then `OPENCLAW_GATEWAY_TOKEN`), so it is the one the Gateway checks.
+- `loopbackHost` is true when that host is `localhost`, `127.x` or `[::1]`: nobody else
+  can reach the link.
+- The gateway token is shared by every agent. Changing the agents token
+  (`PUT /api/agents/token`) invalidates every link sent.
+- `Cache-Control: no-store`.
+
+**Errors:** `400` host not readable, `404` unknown agent, `409` agent not running, no
+published Control UI port, or no browser approval on this agent (the link would open
+with no approval), `502` approval state or token not readable, `503` Docker
+unreachable.
+
+---
+
+### `GET /api/agents/devices-summary`
+Browsers waiting for approval, per running agent — the "browser waiting" badge on the
+agent list.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{ "agents": [ { "agentId": "agent_2a3c3a07", "requiresApproval": true, "pending": 1 } ] }
+```
+
+- At most three agents are read at a time; one that cannot be read reports
+  `error: true` and `pending: 0` without failing the others.
+- `503` with `agents: []` when Docker cannot be reached.
+
+---
+
+### `GET /api/agents/activity-summary`
+The long operation each agent is in the middle of, if any — the chip on the agent cards:
+`BACKUP nn%`, `RESTORING`, `RECREATING`, `UPDATING`.
+
+**Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+{ "agents": [
+  { "agentId": "agent_9253eee3", "kind": "backup", "file": "agent-agent_9253eee3-cold-2026-09-17_163103795.tar.gz", "percent": 16 },
+  { "agentId": "agent_2a3c3a07", "kind": "restore", "file": "agent-agent_2a3c3a07-cold-2026-09-21_172032317.tar.gz" },
+  { "agentId": "agent_a0000011", "kind": "update", "version": "2026.9.3" }
+] }
+```
+
+- `kind`: `backup`, `restore`, `recreate`, `update` or `edit`. A running cold backup takes
+  precedence, because while its helper archives the volume that is the phase actually in
+  progress (an update's or recreate's own backup phase reports `backup`).
+- `percent` is only on `backup` (`null` until the archive size has been measured; the
+  client renders `BACKUP…` then). `version` is on `recreate`/`update`.
+- Idle agents are not listed: an idle system answers `{ "agents": [] }`.
+- Read from the state modules (`agent_restores`, `agent_recreates`, `agent_upgrades`,
+  `agent_edits`) and one Docker list call for the running backup helpers.
 
 ---
 
@@ -1159,7 +1599,7 @@ Useful for inspecting the container config without SSH or terminal.
 {
   "name": "my-agent",
   "config": {
-    "gateway": { "controlUi": { "allowedOrigins": ["..."], "dangerouslyDisableDeviceAuth": true } },
+    "gateway": { "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true } },
     "agents": { "defaults": { "model": { "primary": "rev4a/deepseek/deepseek-flash", "fallbacks": [] } } },
     "models": { "providers": { "rev4a": { "baseUrl": "...", "apiKey": "***", "models": [...] } } }
   }
@@ -1187,6 +1627,9 @@ The token is stored in `data/agents-token.json`.
 
 ### `PUT /api/agents/token`
 Update the shared agents gateway token and push it to all running agent containers.
+Agents with a long operation in flight (update, recreate, restore, edit, backup) are
+skipped and listed, and a container that could not be updated is reported instead of
+being swallowed.
 
 **Auth:** browser cookie
 
@@ -1197,7 +1640,7 @@ Update the shared agents gateway token and push it to all running agent containe
 
 **Response:**
 ```json
-{ "success": true, "containersUpdated": 2 }
+{ "success": true, "containersUpdated": 2, "skipped": ["agent_9253eee3"], "failed": [{ "container": "agent_x", "error": "…" }] }
 ```
 
 **Side effects:**
@@ -1210,53 +1653,64 @@ Update the shared agents gateway token and push it to all running agent containe
 ## Agent Image Management
 
 ### `GET /api/agents/image-status`
-Check the status of the `openclaw-agent-base` Docker image.
+Which OpenClaw versions of the agent image are downloaded, and whether the registry
+publishes a newer supported one.
 
 **Auth:** browser cookie or bearer token
 
-The ghcr.io digest lookup is cached for 10 minutes and de-duplicated while in
-flight, so polling this endpoint does not re-query the registry every time.
+The registry tag list is read over the registry HTTP API (anonymous token for ghcr,
+plain HTTP for a `localhost` registry), cached for 10 minutes and de-duplicated while
+in flight, so polling this endpoint does not re-query the registry every time.
 
 **Response:**
 ```json
 {
+  "downloading": false,
+  "downloadingVersion": null,
   "exists": true,
   "needsUpdate": false,
-  "downloading": false,
-  "localId": "sha256:a1b2c3d4e5f6..."
+  "localVersions": ["2026.9.3"],
+  "newestLocal": "2026.9.3",
+  "available": null,
+  "registryReachable": true
 }
 ```
 
 | Field | Description |
 |---|---|
-| `exists` | Whether `openclaw-agent-base:latest` exists locally |
-| `needsUpdate` | `true` if local manifest digest differs from remote registry |
-| `downloading` | Whether a download is currently running |
-| `localId` | SHA256 ID of the local image, or null |
+| `exists` | A supported version is downloaded as `openclaw-agent-base:<version>` |
+| `needsUpdate` | `true` when none is, or when `available` is set |
+| `localVersions` | Supported versions downloaded, newest first |
+| `newestLocal` | The version new agents are created on |
+| `available` | Newest supported version on the registry that is not downloaded and is newer than `newestLocal`, or null |
+| `downloading` / `downloadingVersion` | A download running, and its version |
+| `registryReachable` | The tag list could be read |
 
 ### `POST /api/agents/download-image`
-Starts pulling or building the `openclaw-agent-base:latest` image. Returns 202
-Accepted immediately — the operation runs in the background and writes logs.
-The frontend polls `GET /api/agents/image-status` for progress updates.
+Downloads one OpenClaw version of the agent image in the background. Returns 202
+immediately; the frontend polls `GET /api/agents/image-status` for completion.
 
 **Auth:** browser cookie or bearer token
 
+**Body (optional):** `{ "version": "2026.9.3" }` — a supported version. Without it, the
+newest supported version the registry publishes.
+
 **Response (202):**
 ```json
-{ "status": "downloading" }
+{ "started": true, "version": "2026.9.3" }
 ```
 
-**Error (409):**
-```json
-{ "error": "A download is already in progress" }
-```
+**Errors:** `400` unsupported version; `409` a download is already in progress.
 
-Image state is managed in `lib/buildAgentImage.ts` (library functions, not HTTP routes):
-- `downloadAgentImage(opts)` — attempts `docker pull` from registry first, then falls back to `docker build`
-  all stdout/stderr to a log file, supports optional `onEvent` callback and `AbortSignal`
-- `abortDownload()` — sends SIGKILL to the child process, releases the download lock
-- `getDownloadLogPath()` — returns the path to the current/last download log file
-- `getIsDownloading()` — checks the in-memory lock flag
+The download is `lib/buildAgentImage.ts` → `downloadAgentImage({ version, onEvent, signal })`:
+- nothing to do when `openclaw-agent-base:<version>` is already here
+- `docker pull <registry>:<version>`, tag `openclaw-agent-base:<version>`, untag the
+  registry reference (`pullAgentImage()` in `lib/agent-images.ts`)
+- when the pull fails and the repository Dockerfile's `ARG OPENCLAW_VERSION` is that
+  version, `docker build --build-arg OPENCLAW_VERSION=<version>` instead; any other
+  version fails
+- one download at a time (in-process lock, `getIsDownloading()` /
+  `getDownloadingVersion()`); output goes to `/tmp/rev4a-download-<timestamp>.log`
 
 ### `GET /api/agents-active`
 
@@ -1609,7 +2063,7 @@ List all running Docker containers with resource usage.
   "containers": [
     {
       "name": "openclaw-atlas",
-      "image": "openclaw-agent-base:latest",
+      "image": "openclaw-agent-base:2026.9.3",
       "status": "running",
       "ports": ["0.0.0.0:3731->3000/tcp"],
       "created": "2026-06-20T10:00:00Z",

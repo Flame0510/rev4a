@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -68,6 +68,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_TIMEZONE` | No | IANA timezone used for scheduling and timestamps |
 | `REV4A_FORCE_INSECURE_COOKIE` | No | Allow a non-Secure session cookie — plain-HTTP deployments only |
+| `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
 
 See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 
@@ -76,9 +77,9 @@ See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 Every agent is created with:
 
 - A host port mapping (`-p <port>:3000`) for direct access
-- URL format: `http://<host-public-ip>:<port>#token=...`
+- Control UI at `http://<host>:<port>`, opened from the Agents page through `GET /api/agents/[id]/open-control-ui`
 - The provider gateway at `http://host.docker.internal:3740/api/provider/v1`
-- `allowedOrigins: ['*']` for browser Control UI access
+- `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback: true`, so the Control UI opens on whatever host the agent is reached on, and pages from other origins are refused
 
 The port is auto-assigned starting from 3000 (or user-specified).
 
@@ -302,9 +303,10 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 - Name, image, template, status, ports, IP
 - TG channel status chip (green = connected, hidden if not configured)
 - **Shared gateway token** — text input with Save & Sync. Changing the token saves it to `data/agents-token.json` and pushes it to all running containers.
-- **Control UI link** — direct Traefik URL with `#token=<token>` hash, reads the token from `agents-token.json` (source of truth), not from the container's local config.
+- **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port on the host the dashboard was reached on: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container.
 - **Agent creation wizard** — multi-step form at `/agents/create`.
-- **Channel Manager** — each agent detail panel has a Channels section with Telegram configuration and pairing management.
+- **Channel Manager** — each agent detail panel has a Channels section with Telegram configuration and pairing management. Pending requests (a sender's `/start` creates one) show an **Approve** button; approved senders show **Revoke** with a confirmation. Approved senders are OpenClaw's pairing store, not the agent config: on 2026.9.x the SQLite store, read and revoked through OpenClaw's own store functions (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+- **Browser access** — the detail panel section right after Channels. From OpenClaw 9.x each new browser must be approved once before the Control UI connects: the section lists requests waiting for approval (Approve / Reject) and approved browsers (Rename / Revoke), and the agent card shows a "browser waiting" badge. The **Open** buttons first ask the agent for a one-time link that pairs the browser with no approval, and open the plain token link when none can be issued (every 2026.7.x agent). **Invite link** (9.x agents only) gives a link to send to someone else: their browser passes gateway auth and waits in the approval list until approved. The link carries the gateway token every agent shares; changing the agents token invalidates every link sent. All of it runs the OpenClaw CLI inside the container asynchronously.
 
 ### Agent Creation Wizard (`/agents/create`)
 
@@ -318,20 +320,20 @@ Available templates:
 
 **Step 2 — Config:** Enter agent name, optional port, select a primary model from the available providers (pre-filtered by configured provider keys). The first model is pre-selected.
 
-**Step 3 — Deploy:** `POST /api/agents/create` creates the Docker container and returns the Traefik URL with the shared gateway token.
+**Step 3 — Deploy:** `POST /api/agents/create` creates the Docker container and returns its port and the shared gateway token; the wizard links to `http://<host>:<port>#token=<token>`.
 
 **Post-creation pipeline:**
-1. The container boots with the **openclaw-agent-base:latest** image — see [Agent Templates](#agent-templates) below.
+1. The container boots with the newest supported OpenClaw version downloaded here, `openclaw-agent-base:<version>`; the create answers `409` when none is — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
 3. The route waits for the gateway to finish starting with `waitForGatewayReady()`, up
    to 60 s. On OpenClaw 9.x it waits for `/startupz` to report `started`. The
    2026.7.1-2 image has no `/startupz`, so there it waits for `/health`, which only
    shows the server is listening.
 4. Once ready, the route writes:
-   - `gateway.controlUi.allowedOrigins` — Rev4a dashboard URL + Traefik hostname (required for browser Control UI access)
+   - `gateway.controlUi` with the browser-origin policy (`withControlUiPolicy()` in `lib/agent-setup.ts`): the Host-header fallback on, so the Control UI is accepted from the host the browser connected to — a public IP is refused without it — while pages from other origins are refused; an `allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` are dropped, any other allowlist is kept. Recreate re-applies the policy. Each new browser still needs a one-time device approval
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
 5. The route builds `models.providers.rev4a` with `buildRev4aProviderConfig()` and writes it with `openclaw config patch --stdin`.
-6. The agent's control UI is immediately accessible at `https://<name>.<your-domain>.com#token=<gateway-token>`.
+6. The agent's Control UI is reachable at `http://<host>:<port>#token=<gateway-token>`. For HTTPS or a domain, put your own reverse proxy in front of the published port: Rev4a sets no reverse-proxy labels on agent containers.
 
 ---
 
@@ -341,8 +343,9 @@ Each agent is created with a **persistent Docker volume** `agent-<name>-data`
 mounted at `/root`. This cleanly separates two planes:
 
 - **Software → image.** OpenClaw, `gh`, `vercel`, `supabase`, `trello`, Node — all
-  live in `openclaw-agent-base:latest` (outside `/root`). Updated by rebuilding the
-  image and recreating the container.
+  live in the agent image `openclaw-agent-base:<version>` (outside `/root`). A recreate
+  keeps the agent's OpenClaw version; moving an agent to a newer version is a separate
+  update.
 - **Data → volume.** Config (`openclaw.json`), state DB (`openclaw.sqlite`),
   workspace files, and CLI credentials (`.config/gh`, `.local/share/com.vercel.cli`,
   `.supabase`, …) live in `/root` and survive container removal.
@@ -354,9 +357,12 @@ a re-created agent keeps the workspace the user edited.
 
 | Action | What it does |
 |---|---|
-| **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `rev4a-backups` volume |
+| **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `rev4a-backups` volume, while the agent runs |
+| **Cold backup** | stop → archive `/root` (excl. npm cache) as `.partial` in a helper container → read the archive back → rename → start again if it was running. Other operations on the agent answer 409 meanwhile. Survives a Rev4a restart. API only for now (`/api/agents/[id]/cold-backup`) |
+| **Update** | the agent panel's OPENCLAW VERSION section, when a newer supported version is downloaded: count transcript events and cron jobs → cold pre-update backup → recreate on the new version (its data migrates one way) → wait for that version → check nothing went missing. Unused agent images are removed afterwards |
+| **Rollback** | after an update: stop → restore the pre-update backup → recreate on the previous version. Everything since the backup is lost |
 | **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
-| **Recreate** | auto-backup first (aborts if it fails) → rebuild from `openclaw-agent-base:latest` keeping the volume → picks up image/OpenClaw/CLI updates |
+| **Recreate** | auto-backup first (aborts if it fails) → rebuild on the agent's own OpenClaw version (`openclaw-agent-base:<version>`, tagged or pulled when missing) keeping the volume. Never changes version |
 | **Restart** | `docker restart`, nothing else |
 | **Delete** | **destructive**: removes container **+ volume + all backups**. Cannot be undone |
 
@@ -368,19 +374,50 @@ agent means rebuilding the image + Recreate, never `update` inside the container
 
 ## Agent Templates
 
-### Base Image (`openclaw-agent-base:latest`)
+### Base Image (`openclaw-agent-base:<version>`)
 
 **Dockerfile:** `agent-templates/base-image/Dockerfile`
 
+**Versions.** Images are kept locally per OpenClaw version, `openclaw-agent-base:<version>`;
+`:latest` is not used. The versions this release supports, newest first, and the model
+`input` list for each, are in `lib/agent-versions.json`, read by the server and the
+`rev4a` CLI. The Agents page banner offers the newest supported version the registry
+publishes (`ghcr.io/flame0510/rev4a/openclaw-agent-base`, or `REV4A_AGENT_IMAGE_REGISTRY`);
+downloading touches no agent. Create uses the newest supported version downloaded; recreate
+keeps the agent's version. An agent card shows **UPDATE AVAILABLE** when a newer supported
+version is downloaded.
+
 Built from `node:24-bookworm-slim`, includes:
-- OpenClaw CLI + DeepSeek provider plugin
+- OpenClaw, pinned by the `OPENCLAW_VERSION` build argument and recorded as the
+  `org.opencontainers.image.version` label
+- `gh`, `vercel`, `trello`, `supabase`
+- Plugins under `/opt/openclaw-plugins`, outside the agent volume and pinned to the same
+  OpenClaw release: DuckDuckGo web search
 - `openssl` (for local token generation)
 - Custom entrypoint `/agent-entrypoint.sh`
+
+See also [agent-templates/README.md](../agent-templates/README.md).
 
 **Entrypoint behavior:**
 - Resolves the auth token (file > env > local random)
 - Does NOT generate `openclaw.json` — OpenClaw creates its own default config on first boot
-- **Version-gated migration:** if the OpenClaw version differs from the one recorded in `/root/.openclaw/.last-version` (i.e. the image was rebuilt to a newer OpenClaw), runs `openclaw doctor --non-interactive` **before** starting the gateway. This applies only safe migrations (config normalization + on-disk state moves), skips service restarts, and aligns the persistent volume's state/config to the new binary. Best-effort — never blocks boot. Runs at most once per version change, not on every restart.
+- **Version-gated migration:** if the OpenClaw version differs from the one recorded in
+  `/root/.openclaw/.last-version` (a newer image, or a new volume), runs
+  `openclaw doctor --fix --non-interactive` **before** starting the gateway. `--fix` is
+  required from OpenClaw 9.x: the agent database schema is migrated only with the gateway
+  stopped, and the gateway refuses the old schema rather than migrating it. The version is
+  recorded only after a successful run, so a failed migration is retried on the next boot.
+  A failure does not block boot.
+- **Image defaults**, before the gateway starts, written only where missing:
+  - the image's plugin directories in `plugins.load.paths`
+  - `tools.web.search.provider: "duckduckgo"` when no provider is set
+  - `agents.defaults.heartbeat.every: "0m"` when unset: every heartbeat tick is a
+    model-calling turn, so the recurring cadence is opt-in
+
+  An explicit value, such as a heartbeat turned on for one agent, is never overwritten.
+  The config is read with one node process and written through `openclaw config patch`,
+  which validates; if `openclaw.json` cannot be read as JSON, the defaults are skipped and
+  the log says so.
 - Starts OpenClaw gateway with `--allow-unconfigured`: `openclaw gateway --bind lan --port 3000 --auth token --token "<token>" --allow-unconfigured`
 - Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 
@@ -437,7 +474,7 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 
 | Property | Value |
 |---|---|
-| Image | `openclaw-agent-base:latest` (Node 24-bookworm-slim + OpenClaw) |
+| Image | `openclaw-agent-base:<version>` (Node 24-bookworm-slim + OpenClaw) |
 | Port | `0.0.0.0:3731 → 3000` |
 | IP | `172.19.0.3` |
 | AGENT_ID | `atlas` |

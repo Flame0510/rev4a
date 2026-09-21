@@ -1,8 +1,8 @@
 name: Release NPM Publish
 
-# La versione pubblicata su npm è SEMPRE il tag della release GitHub.
-# Nessun trigger su push: pubblicare è un atto esplicito (release o dispatch),
-# mai un effetto collaterale di un commit.
+# The version published to npm is ALWAYS the GitHub release tag.
+# No trigger on push: publishing is an explicit act (release or dispatch),
+# never a side effect of a commit.
 
 on:
   release:
@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versione da pubblicare (es. 1.1.11). Vuoto = usa package.json"
+        description: "Version to publish (e.g. 1.1.11). Empty = use package.json"
         required: false
         type: string
       dry_run:
-        description: "Simula soltanto, senza pubblicare davvero"
+        description: "Dry run only, without publishing for real"
         required: false
         type: boolean
         default: true
@@ -29,12 +29,12 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - name: Checkout (tag della release, o ref del dispatch)
+      - name: Checkout (the release tag, or the dispatch ref)
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
-      - name: Risolvi e valida la versione
+      - name: Resolve and validate the version
         id: resolve
         run: |
           set -euo pipefail
@@ -46,43 +46,43 @@ jobs:
           fi
           VERSION="${RAW#v}"
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::Versione non valida: '$RAW'. Attesa la forma vX.Y.Z."
+            echo "::error::Invalid version: '$RAW'. Expected the form vX.Y.Z."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Pubblicherò la versione $VERSION"
+          echo "Publishing version $VERSION"
 
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      # npm ci prima del bump: il lock resta quello committato.
+      # npm ci before the bump: the lockfile stays the committed one.
       - name: Install
         run: npm ci
 
-      - name: Allinea package.json alla versione della release
+      - name: Align package.json with the release version
         run: npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
 
       # Gate: se non compila, non si pubblica.
       - name: Build
         run: npm run build
 
-      - name: Verifica se la versione è già su npm
+      - name: Check whether the version is already on npm
         id: exists
         run: |
           set -euo pipefail
           PKG="$(node -p "require('./package.json').name")"
           if npm view "$PKG@${{ steps.resolve.outputs.version }}" version >/dev/null 2>&1; then
             echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::$PKG@${{ steps.resolve.outputs.version }} esiste già su npm — publish saltata."
+            echo "::warning::$PKG@${{ steps.resolve.outputs.version }} already exists on npm — publish skipped."
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Una release pubblica sempre davvero. Il dry-run esiste solo per il
-      # dispatch manuale, dove è anche il default.
-      - name: Publish (simulazione)
+      # A release always publishes for real. The dry run exists only for the
+      # manual dispatch, where it is also the default.
+      - name: Publish (dry run)
         if: steps.exists.outputs.already == 'false' && github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: npm publish --access public --dry-run
 
@@ -92,8 +92,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Riporta la versione pubblicata dentro main, così repo e registry
-  # non possono più divergere silenziosamente.
+  # Carry the published version back into main, so the repo and the registry
+  # can no longer drift apart silently.
   sync-version:
     needs: publish
     if: github.event_name == 'release'
@@ -109,18 +109,18 @@ jobs:
         with:
           node-version: 22
 
-      - name: Allinea package.json sul branch di default
+      - name: Align package.json on the default branch
         run: |
           set -euo pipefail
           VERSION="${{ needs.publish.outputs.version }}"
           CURRENT="$(node -p "require('./package.json').version")"
           if [ "$CURRENT" = "$VERSION" ]; then
-            echo "package.json è già a $VERSION — niente da fare."
+            echo "package.json is already at $VERSION — nothing to do."
             exit 0
           fi
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
-          git commit -m "chore: allinea package.json a v$VERSION [skip ci]"
+          git commit -m "chore: align package.json with v$VERSION [skip ci]"
           git push

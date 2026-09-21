@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-09-13
+> **Last updated:** 2026-09-15
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -90,9 +90,11 @@ Agents page.
 
 **Update frequency:** polled every 2 seconds, continuously
 
-`GET /api/agents/image-status` compares the local image digest with the remote
-registry digest on ghcr.io. The banner polls it every 2 seconds for as long as the
-page is open, not only while something is running.
+`GET /api/agents/image-status` lists the supported OpenClaw versions downloaded and
+compares them with the versions the registry publishes. The registry list is refreshed
+at most every 10 minutes, so a newly published version can take that long to appear.
+The banner polls the endpoint every 2 seconds for as long as the page is open, not only
+while something is running.
 
 The operation the banner triggers is a **`docker pull`**, not a build. While it
 runs the banner shows an indeterminate animated bar: there is no percentage, no

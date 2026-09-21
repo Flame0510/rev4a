@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -130,6 +130,89 @@ The central container, running the Next.js dashboard + orchestration API.
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and
   `catalogueStatus()`. A failed read of `models.config.json` falls back to the last
   good copy and never deletes overrides.
+- **Agent images and OpenClaw versions.** `lib/agent-versions.json` lists the supported
+  OpenClaw versions, newest first, with the model `input` list for each; the server reads
+  it through `lib/agent-versions.ts`, the `rev4a` CLI with `require`. The provider sync
+  takes each agent's own list (`containerVersionSync()`: image tag, else the entrypoint's
+  `.last-version` file), so a 2026.7.x agent is never sent an `input` value it would
+  reject — one unknown value discards the whole generated catalogue. The previous
+  versions stay listed while agents still run them: that is also what lets a rollback
+  pull the previous image. `lib/agent-images.ts`
+  lists local `openclaw-agent-base:<version>` images through the Docker API, reads an
+  agent's version (image label or tag, else `openclaw --version` in the container, cached
+  per image id), reads the registry tag list over HTTP (cached 10 min), pulls a version
+  and resolves the image a recreate uses. Images are never addressed as `:latest`: create
+  takes the newest supported version downloaded, recreate the agent's own.
+- **Cold backups** are `lib/cold-backup.ts`. The agent is stopped and a detached helper
+  container, `rev4a-backup-<id>` from the agent's own image, archives its volume to
+  `rev4a-backups` as `.partial`, reads it back and renames it; the agent is started
+  again if it was running. The helper and its labels are the job, so no request waits
+  on it and a Rev4a restart does not lose it (`reconcileColdBackups()` in
+  `instrumentation.ts`). While a helper runs, the routes that change the agent answer
+  409 (`isColdBackupRunning()`), and `syncAllAgents()` skips the agent.
+- **Agent updates** are `lib/agent-update.ts`, with their state in the `agent_upgrades`
+  table (`lib/agent-update-state.ts`). An update counts the agent's transcript events per
+  session and its cron jobs, takes a cold pre-update backup, recreates the container on
+  the newer version (`lib/agent-recreate.ts`, argv only, env values outside the process
+  table), waits for `/startupz` to report that version, re-applies Rev4a's config and
+  checks the counts. A rollback restores the pre-update backup on the previous version.
+  Both run inside the Rev4a process; `markInterruptedUpdates()` at startup turns an
+  unfinished one into `interrupted`. `lib/agent-busy.ts` gives the routes one 409 reason
+  for "edit, update, recreate, restore or backup running". After a successful update, `pruneAgentImages()`
+  keeps only images in use plus the newest and previous versions.
+- **Agent recreates** are `lib/agent-recreate.ts`, with their state in the
+  `agent_recreates` table (`lib/agent-recreate-state.ts`): the same-version counterpart
+  of an update. A cold backup, then the container rebuilt on the image the agent already
+  runs, then `/startupz`, then the runtime config. It answers `202` and runs in the
+  background, so a page reload or a Rev4a restart does not lose it; at startup a job
+  still active becomes `interrupted` and the agent is started again — after its backup
+  helper has finished, never while the archive is written. On success the older
+  `prerecreate` archives are pruned to the newest two. The same `recreateAgentContainer()`
+  serves the edit route (`PATCH` → 202, no backup) and the Update action.
+  `agentBusyReason()` (`lib/agent-busy.ts`) covers it for every route that changes an agent.
+- **Host ports** are shared between creation and the edit flow by `lib/agent-ports.ts`
+  (pure: `validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`) and
+  `lib/agent-ports-server.ts` (`getUsedHostPorts()`, the Docker lookup, server-only since
+  client components cannot import `child_process`). One block maps to the container's
+  gateway port 3000 (`3700-3709` → `3700-3709:3000-3009`); both flows produce the same
+  validation messages, and the edit excludes the agent's own ports so its block never
+  conflicts with itself.
+- **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
+  (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
+  applied by rebuilding the container on the image it already runs — **no backup**, the
+  volume is never touched. Same 202-and-background shape as a restore; the parameters
+  live in the row, so recovery can tell what was being applied. The panel shows a banner
+  and the agent card an `EDITING` chip.
+- **Agent restores** are `lib/agent-restore.ts`, with their state in the `agent_restores`
+  table (`lib/agent-restore-state.ts`): the archive replaces the volume (stop, clear,
+  extract, start), up to 30 minutes. Same 202-and-background shape as a recreate, and the
+  same guarantees — a reload or a Rev4a restart does not lose the job, a second restore
+  is refused, an interrupted one starts the container again. The extract has no
+  percentage (it is a single `tar xzf`); the panel and the agent card show `RESTORING`.
+- **Browser access** to an agent's Control UI goes through `lib/agent-devices.ts`:
+  `openclaw devices list | approve | reject | rename | remove` and
+  `openclaw dashboard --json`, run inside the container with the async `dockerExec`.
+  The gateway token is resolved inside the container (`/root/.agent-token`, then its
+  environment), never passed in argv. Whether approval applies is decided by the
+  OpenClaw version: 9.x answers `/startupz` with JSON and always requires it;
+  2026.7.x follows `gateway.controlUi.dangerouslyDisableDeviceAuth`.
+  `buildInviteLink()` builds the plain token link for someone else; the invite route
+   refuses agents without approval. Every link's token is read inside the container,
+   and its host is the request's `Host` header (`hostnameFromHostHeader()`), never a
+   caller-supplied value.
+- **Telegram DM pairing** lives in `lib/channelManager.ts`. The bot binding is config
+  (`channels.telegram.botToken`/`dmPolicy`); *who* may talk is OpenClaw's pairing
+  store — on 2026.9.3 the SQLite rows in `~/.openclaw/state/openclaw.sqlite`, not the
+  `credentials/*.json` files older releases used. Reading and revoking go through the
+  store's own functions (`readChannelAllowFromStoreSync`,
+  `removeChannelAllowFromStoreEntry`): no CLI, RPC or documented export exposes them,
+  so a small script run inside the container finds OpenClaw's `pairing-store` module by
+  glob and its functions by name (the names survive minification; no hash or minified
+  symbol is hardcoded) and calls them, which uses the same state transaction the CLI
+  does. If a release stops exposing the store, the revoke fails with a message pointing
+  at `/allowlist remove` — it never reports success without changing anything. Approving
+  a pairing request (`openclaw pairing approve`) also bootstraps
+  `commands.ownerAllowFrom` for the first owner (OpenClaw's own behaviour).
 
 **Running commands inside containers** (`lib/docker-exec.ts`):
 
@@ -149,6 +232,7 @@ the rules for anything you touch, not as a description of the whole tree:
   container cannot blank an entire page. Callers: `app/api/skills/route.js`,
   `app/api/agents/models-summary/route.ts`,
   `app/api/agents/channels-summary/route.ts`,
+  `app/api/agents/devices-summary/route.ts`,
   `lib/openclaw-cron.ts`, `app/api/credentials/detect/route.ts`,
   `lib/credentials/delivery.ts`.
 - **Never interpolate a secret into a command string.** Pass it through the `env`
@@ -195,7 +279,9 @@ agent-{name}-data (named vol)         → /root                             (rw,
 All shared volumes are defined centrally in `lib/agent-setup.ts`
 (`REV4A_VOLUMES`) and used by both the create and recreate API routes.
 The `bootstrap-extra-files` hook is pre-wired in the base image Dockerfile
-and guaranteed at runtime by `applyRuntimeConfig()`.
+and guaranteed at runtime by `applyRuntimeConfig()`, which also applies the Control
+UI browser-origin policy (`withControlUiPolicy()`): the Host-header fallback on, an
+`allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` removed.
 
 **Injected environment variables:**
 ```
@@ -337,7 +423,7 @@ Rev4a Dashboard UI
 POST   /api/agents/create          Create new container agent (template + model)
 DELETE /api/agents/{id}            Destructive: remove container + volume + backups
 POST   /api/agents/{id}/restart    Restart container
-POST   /api/agents/{id}/recreate   Rebuild from latest image (volume preserved)
+POST   /api/agents/{id}/recreate   Rebuild on the agent's own version (volume preserved)
 GET    /api/agents                 List all agents (Docker containers with AGENT_ID)
 ```
 
@@ -422,7 +508,7 @@ networks:
 - Agent → Rev4a Gateway: `http://rev4a-control:3721`
 - Agent → Rev4a Dashboard: `http://rev4a-control:3720`
 - Rev4a → Agent (healthcheck): `http://agent-{id}:3000`
-- Traefik → Agent (external access): via Docker labels
+- Browser → Agent Control UI: the container's published host port, `http://<host>:<port>`. Rev4a sets no reverse-proxy labels
 
 ---
 
@@ -573,10 +659,10 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
    - Distributed: per-agent memory, Rev4a indexes centrally — more resilient
    - Recommendation: distributed with central index
 
-3. **Traefik routing: should agents be externally reachable?**
-   - If yes: per-agent Traefik labels managed by Rev4a
-   - If no: internal Docker network only
-   - Recommendation: no by default, yes only for agents serving APIs/UI
+3. **External access to agents** — decided: each agent's Control UI is published on a
+   host port, and Rev4a sets no reverse-proxy labels. HTTPS or a domain means the
+   operator's own proxy in front of that port. A first-class integration, with routing
+   labels applied at `docker run`, would be a separate feature.
 
 4. **Hermes and other frameworks: dashboard integration?**
    - Hermes has its own session format
@@ -628,6 +714,6 @@ for the full rationale.
 | Memory | Per-agent SQLite + central index | New |
 | Config | Generated YAML/JSON | New |
 | Credential stores | SQLite + JSON | credentials.db for service tokens, provider-keys.json for provider API keys. Neither is encrypted |
-| Reverse proxy | Traefik | Already in use |
+| Reverse proxy | Optional, operator's choice | Rev4a sets no reverse-proxy labels on agent containers |
 | Monitoring | Rev4a daemon (extended) | Evolution of current daemon |
 | Version control | Git + GitHub | `github.com/Flame0510/rev4a.git` |

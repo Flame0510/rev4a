@@ -668,12 +668,12 @@ function pollSessions() {
   // ── Timeout Detection ────────────────────────────────────────────────────
   // Find sub-agents that were 'working' in the last snapshot but are no longer
   // present in the current output and have been missing for more than 10 minutes.
-  // Questi vengono marcati come 'timeout' nella tabella events.
-  const TIMEOUT_THRESHOLD_MS = 10 * 60 * 1000; // 10 minuti
+  // These are recorded as 'timeout' in the events table.
+  const TIMEOUT_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
   for (const [session_id, snap] of knownSessions) {
     // Only sub-agents (contain 'subagent' in the key)
     if (!session_id.includes('subagent')) continue;
-    // Solo se erano working nell'ultimo poll
+    // Only if they were working in the last poll
     if (snap.status !== 'working') continue;
     // Only if not present in the current poll
     if (currentIds.has(session_id)) continue;
@@ -694,10 +694,10 @@ function pollSessions() {
       data: JSON.stringify({
         missing_for_ms: missingFor,
         last_status: snap.status,
-        message: `Subagente missing dopo ${Math.round(missingFor / 60000)}min senza completare`,
+        message: `Subagent missing for ${Math.round(missingFor / 60000)} min without completing`,
       }),
     });
-    log(`[TIMEOUT] ${session_id} missing da ${Math.round(missingFor / 60000)}min`);
+    log(`[TIMEOUT] ${session_id} missing for ${Math.round(missingFor / 60000)} min`);
 
     // Notify the maintainer via openclaw message (only if openclaw is available)
     try {
@@ -708,7 +708,7 @@ function pollSessions() {
         'message', 'send',
         '--account', 'ops',
         '--target', '100000000',
-        '--text', `⚠️ Rev4a: agent timeout\n\`${session_id.slice(-36)}\`\nMissing for ${Math.round(missingFor / 60000)} min senza completare.`,
+        '--text', `⚠️ Rev4a: agent timeout\n\`${session_id.slice(-36)}\`\nMissing for ${Math.round(missingFor / 60000)} min without completing.`,
       ], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
     } catch (e) {
       log(`[TIMEOUT] Telegram notification failed: ${e.message}`);

@@ -107,6 +107,102 @@ CREATE INDEX idx_metrics_ts ON system_metrics(ts);
 
 Rows older than 24 h are pruned automatically by the daemon.
 
+### `agent_upgrades` — agent updates and rollbacks
+
+```sql
+CREATE TABLE agent_upgrades (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      TEXT NOT NULL,
+  status        TEXT NOT NULL,   -- pending, backing_up, migrating, verifying, done, failed,
+                                 -- interrupted, rolling_back, rolled_back, rollback_failed
+  from_version  TEXT,
+  to_version    TEXT NOT NULL,
+  backup_file   TEXT,            -- pre-update cold backup in the rev4a-backups volume
+  baseline_json TEXT,            -- transcript events per session and cron job names before
+  verify_json   TEXT,            -- the comparison after the update
+  error         TEXT,
+  started_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  finished_at   INTEGER
+);
+
+CREATE INDEX idx_agent_upgrades_agent ON agent_upgrades(agent_id, started_at);
+```
+
+One row per update attempt (`lib/agent-update.ts`); a rollback moves the same row on to
+`rolling_back`. Created by `lib/db-bootstrap.mjs`. At startup, rows still in an active
+status are marked `interrupted`. Rows are never pruned.
+
+### `agent_recreates` — agent recreates
+
+```sql
+CREATE TABLE agent_recreates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id    TEXT NOT NULL,
+  status      TEXT NOT NULL,   -- backing_up, recreating, done, failed, interrupted
+  image       TEXT,            -- the image the container is rebuilt on
+  backup_file TEXT,            -- pre-recreate cold backup in the rev4a-backups volume
+  error       TEXT,
+  started_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  finished_at INTEGER
+);
+
+CREATE INDEX idx_agent_recreates_agent ON agent_recreates(agent_id, started_at);
+```
+
+One row per recreate attempt (`lib/agent-recreate.ts`), the same-version counterpart of
+an update: a cold backup, the container rebuilt, the gateway waited for. It is written
+so a page reload or a Rev4a restart mid-way is visible instead of lost
+(`GET /api/agents/[id]/recreate`). At startup, rows still in an active status become
+`interrupted` and the agent is started again once its backup helper has finished. Rows
+are never pruned.
+
+### `agent_restores` — agent restores
+
+```sql
+CREATE TABLE agent_restores (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id    TEXT NOT NULL,
+  status      TEXT NOT NULL,   -- restoring, done, failed, interrupted
+  file        TEXT,            -- the archive being applied, in the rev4a-backups volume
+  error       TEXT,
+  started_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  finished_at INTEGER
+);
+
+CREATE INDEX idx_agent_restores_agent ON agent_restores(agent_id, started_at);
+```
+
+One row per restore attempt (`lib/agent-restore.ts`): the volume is replaced from the
+archive. Persisted for the same reason as a recreate (`GET /api/agents/[id]/restore`),
+and at startup an active row becomes `interrupted` with the container started again.
+Rows are never pruned.
+
+### `agent_edits` — agent renames and port changes
+
+```sql
+CREATE TABLE agent_edits (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id     TEXT NOT NULL,
+  status       TEXT NOT NULL,   -- rebuilding, done, failed, interrupted
+  display_name TEXT,            -- the name being applied, when it was a rename
+  port_range   TEXT,            -- the range being applied, when it was a port change
+  error        TEXT,
+  started_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  finished_at  INTEGER
+);
+
+CREATE INDEX idx_agent_edits_agent ON agent_edits(agent_id, started_at);
+```
+
+One row per edit attempt (`lib/agent-edit.ts`): the container is rebuilt with the new
+name/ports, no backup involved. Persisted for the same reason as the others
+(`GET /api/agents/[id]`); at startup an active row becomes `interrupted` with the
+container started again. Rows are never pruned.
+
 ## Useful Queries
 
 ```sql

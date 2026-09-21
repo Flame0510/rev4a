@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-13
+> **Last updated:** 2026-09-15
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -34,10 +34,23 @@ Manage Docker containers running OpenClaw agents. See which agents are running, 
 
 The agent list also shows a compact TG chip next to each agent name (green = connected, hidden if not configured).
 
-The Agents page includes a banner for the **agent base image**
-(`openclaw-agent-base:latest`). It is hidden when the image is present and current.
-When the image is missing or outdated it appears with one button, labelled
-**Download Image** or **Download Update**.
+**Browser access:** on agents running OpenClaw 9.x, every new browser has to be approved once before the agent's Control UI connects. The detail panel's "BROWSER ACCESS" section lists browsers waiting for approval, with Approve and Reject, and the browsers already approved, with Rename and Revoke. A yellow "BROWSER WAITING" chip on the agent card says a request is pending. The **Open** button tries a one-time link that lets the browser in without any approval; if the agent cannot issue one (agents still on OpenClaw 2026.7.x) it opens the normal link, which on those agents needs no approval anyway. To let someone else in, **Invite link** gives a link to send them: their browser appears under waiting for approval, and nothing opens until you approve it. The link contains the token all agents share; changing the agents token cancels every link already sent.
+
+The Agents page includes a banner for the **agent base image**, which is kept per
+OpenClaw version. It is hidden when a supported version is downloaded and nothing newer
+is published. When no image is downloaded it offers **Download Image**; when a newer
+supported OpenClaw version is published it says so and offers **Download <version>**.
+Downloading changes no agent: new agents are created on the newest version downloaded,
+existing agents keep their version (a recreate never changes it), and their card shows
+**UPDATE AVAILABLE**.
+
+**Updating an agent:** the detail panel's "OPENCLAW VERSION" section shows the version the
+agent runs and, when a newer one is downloaded, **Update to <version>**. The update takes
+the agent offline for a few minutes: it backs the agent up while stopped, starts it on the
+new version (which converts its data), and checks that no conversation history or cron job
+went missing. Afterwards **Roll back to <version>** puts back the backup taken just before
+the update, on the old version; anything the agent did after the update is lost. The agent
+must be running to start an update.
 
 That button runs a `docker pull` from the registry. It is a download, not a build.
 While it runs the banner shows an indeterminate animated bar with no percentage and

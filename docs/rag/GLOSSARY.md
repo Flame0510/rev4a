@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -17,6 +17,9 @@ A small inline label component used for status indicators and channel chips. Six
 
 ## Backup (Agent)
 A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored in the `rev4a-backups` Docker volume. Used for restore operations and auto-created before each recreate.
+
+## Browser Access
+Which browsers may open an agent's Control UI. On OpenClaw 9.x every new browser must be approved once; the approval is remembered per browser. Managed in the "BROWSER ACCESS" section of the agent detail panel: approve or reject waiting browsers, rename or revoke approved ones. The Open button uses a one-time link that skips the approval. The Invite link button gives a link for someone else: their browser still waits for approval.
 
 ## Container
 A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones such as databases and reverse proxies, with a web terminal link. It shows no CPU or memory metrics.
@@ -73,10 +76,13 @@ Rev4a's built-in proxy that gives all agents unified access to configured LLM pr
 The AI concierge embedded in Rev4a. Click the floating chat button (bottom-right) on any page to ask questions about the dashboard features and navigation.
 
 ## Recreate (Agent)
-Rebuild an agent container from the latest `openclaw-agent-base:latest` image while preserving the persistent volume. Auto-backups the volume first — if the backup fails, the recreate is aborted. This is how agents pick up OpenClaw image updates.
+Rebuild an agent container on its own OpenClaw version while preserving the persistent volume. Auto-backups the volume first — if the backup fails, the recreate is aborted. A recreate never changes the OpenClaw version; moving to a newer version is a separate update.
 
 ## Restore (Agent)
 Replace an agent's persistent volume with a previously created backup. The container is stopped, the volume content is fully replaced, then the container is restarted.
+
+## Rollback (Agent)
+Undo an agent's latest OpenClaw update: the backup taken just before the update is put back and the agent starts again on its previous version. Anything the agent did after the update is lost. Offered in the agent's OPENCLAW VERSION section while that backup exists.
 
 ## Session
 One instance of an agent doing work. Tracks: start/end time, tokens used, cost, model, status, and task description. A session starts when an agent receives a task and ends when it completes or fails.
@@ -113,7 +119,10 @@ A capability available to agents: running shell commands, reading files, searchi
 A record of an agent using a tool during a session. Useful for auditing what an agent actually did. Shown in the Session Drawer.
 
 ## Traefik
-Optional reverse proxy for routing web traffic to agent containers. If configured, an agent gets a public URL. Rev4a itself runs on port 3740 and does not require Traefik.
+Optional reverse proxy an operator can put in front of the Rev4a dashboard or of an agent's port. Rev4a does not configure it and sets no routing labels on agents: an agent's Control UI is reached on its published port. Rev4a itself runs on port 3740 and does not require Traefik.
+
+## Update (Agent)
+Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. Undone with Rollback.
 
 ## Vault
 Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads), sync to and from containers, and live detection of which credentials are actually installed. Secrets are stored unencrypted.

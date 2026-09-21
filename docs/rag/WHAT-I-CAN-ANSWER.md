@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -48,13 +48,17 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I sync credentials to an agent?"
 - "How do I back up an agent?"
 - "How do I restore an agent from a backup?"
-- "How do I recreate an agent with the latest image?"
+- "How do I rebuild (recreate) an agent's container?"
 - "How do I delete an agent?"
 - "How do I restart the Rev4a server?"
 - "How do I change environment variables?"
 - "How do I add a cost override?" — There is no screen for it. The endpoint exists, but nothing in the dashboard calls it.
 - "How do I see the session lineage?"
 - "How do I log in to an agent's control UI?"
+- "Why does the Control UI ask me to approve this browser?"
+- "How do I approve or revoke a browser for an agent?"
+- "How do I give someone else access to an agent's Control UI?"
+- "How do I update an agent to a newer OpenClaw version, and how do I go back?"
 - "How do I register a new provider via OAuth?" — The endpoint exists but no page uses it. Providers are added by pasting an API key on the Gateway page.
 - "How do I manage agent model fallbacks?"
 - "How do I connect an agent to Telegram?"
