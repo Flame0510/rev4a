@@ -15,7 +15,8 @@ export const dynamic = 'force-dynamic';
  * GET /api/version
  *
  * Returns the installed Rev4a version from package.json.
- * No auth required.
+ *
+ * Auth: the rev4a_token cookie or Authorization: Bearer <REV4A_TOKEN>.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;

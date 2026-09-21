@@ -2102,16 +2102,16 @@ Update audio or timezone config in `openclaw.json`.
 ## Version & WebSocket
 
 ### `GET /api/version`
-Return the installed OpenClaw CLI version.
+Return the installed Rev4a version, read from `package.json`.
 
-**Auth:** browser cookie
+**Auth:** `rev4a_token` cookie or `Authorization: Bearer <REV4A_TOKEN>`
 
 **Response:**
 ```json
-{ "version": "openclaw x.y.z" }
+{ "version": "1.4.0" }
 ```
 
-**Fallback:** `{ "version": "unknown" }` if the command fails.
+**Fallback:** `{ "version": "0.0.0" }` if `package.json` cannot be read.
 
 ### Terminal WebSocket
 
