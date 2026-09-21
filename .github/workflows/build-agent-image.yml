@@ -1,11 +1,40 @@
 name: Build and Publish Agent Base Image
 
+# The image is published under its OpenClaw version, never as :latest by default.
+#
+# Rev4a creates and recreates agents from their version tag. Moving to a new OpenClaw
+# release migrates an agent's data one way: the old release refuses the migrated
+# database. Publishing :latest on every push would put anyone running the image by hand
+# on the new release before they chose to. So :latest moves only when this
+# workflow is run by hand with promote_latest; it is for people running the image
+# themselves, never for Rev4a.
+#
+# Tags:
+#   :<version>          the OpenClaw release in the Dockerfile (ARG OPENCLAW_VERSION);
+#                       moves when the image is rebuilt for the same release
+#   :<version>-<sha>    immutable, one per commit
+#   :latest             only with promote_latest
+
 on:
   push:
     branches: [main]
     paths:
       - 'agent-templates/base-image/**'
   workflow_dispatch:
+    inputs:
+      version:
+        description: "OpenClaw version to build instead of the Dockerfile ARG (e.g. 2026.7.1-2, to publish an older tag)"
+        required: false
+        type: string
+      retag_latest_as:
+        description: "Publish the existing :latest image under this version tag, without building (e.g. 2026.7.1-2)"
+        required: false
+        type: string
+      promote_latest:
+        description: "Also tag this build as :latest for people running the image by hand (Rev4a never uses it)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-and-push:
@@ -21,6 +50,37 @@ jobs:
         id: vars
         run: echo "repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
+      - name: Resolve the OpenClaw version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # A manual run may name a version (to publish an older tag, e.g. the one a
+          # rollback needs); otherwise the Dockerfile's ARG is the source of truth.
+          VERSION="$INPUT_VERSION"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(sed -n 's/^ARG OPENCLAW_VERSION=//p' agent-templates/base-image/Dockerfile | head -1)"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::the OpenClaw version is missing or malformed: '${VERSION}'"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute tags
+        id: tags
+        run: |
+          set -euo pipefail
+          BASE="ghcr.io/${{ steps.vars.outputs.repo }}/openclaw-agent-base"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAGS="${BASE}:${VERSION},${BASE}:${VERSION}-${GITHUB_SHA::7}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.promote_latest }}" = "true" ]; then
+            TAGS="${TAGS},${BASE}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "Publishing: $TAGS"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -28,10 +88,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_ACTIONS_TOKEN }}
 
+      # A release that predates the version ARG has only :latest on ghcr; a rollback
+      # needs its :<version> tag, so this republishes the existing image under it.
+      - name: Retag :latest as a version (no build)
+        if: inputs.retag_latest_as != ''
+        run: |
+          set -euo pipefail
+          V="${{ inputs.retag_latest_as }}"
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::retag_latest_as is malformed: '$V'"
+            exit 1
+          fi
+          BASE="ghcr.io/${{ steps.vars.outputs.repo }}/openclaw-agent-base"
+          docker pull "${BASE}:latest"
+          docker tag  "${BASE}:latest" "${BASE}:${V}"
+          docker push "${BASE}:${V}"
+
       - name: Build and push agent base image
+        if: inputs.retag_latest_as == ''
         uses: docker/build-push-action@v6
         with:
           context: agent-templates/base-image
           file: agent-templates/base-image/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.vars.outputs.repo }}/openclaw-agent-base:latest
+          build-args: |
+            OPENCLAW_VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.tags.outputs.tags }}

@@ -1,42 +1,30 @@
 # OpenClaw Agent Base Image
 #
 # Base image for agent containers in the Rev4a ecosystem.
-# Includes: Node, OpenClaw, gh CLI, Vercel CLI, Trello CLI, entrypoint.
+# Includes: Node, OpenClaw, gh CLI, Vercel CLI, Trello CLI, Supabase CLI, entrypoint.
 #
-# Traefik integration:
-#   - Static enablement is baked into the image.
-#   - Dynamic router/service labels are provided
-#     at container creation time via `docker run -l ...`.
-#   - See agent-templates/README.md for the full label set.
+# The agent's persistent volume is mounted at /root. Whatever this image writes
+# under /root (openclaw.json, installed plugins) reaches only agents created on an
+# empty volume. Settings every agent must have are re-applied by Rev4a at create
+# and recreate (lib/agent-setup.ts); the config patches below only seed new volumes.
 #
 # Build:
-#   docker build -t openclaw-agent-base:latest -f Dockerfile .
+#   docker build -t openclaw-agent-base:2026.9.3 -f Dockerfile .
+#   docker build --build-arg OPENCLAW_VERSION=<version> -t openclaw-agent-base:<version> .
 #
 # Test:
-#   docker run --rm openclaw-agent-base:latest openclaw --version
-#
-# Run with Traefik support:
-#   docker run -d \
-#     --name agent-<id> \
-#     --network openclaw-core_default \
-#     --restart unless-stopped \
-#     -l "AGENT_ID=<id>" \
-#     -l "traefik.enable=true" \
-#     -l "traefik.http.routers.agent-<id>.entrypoints=websecure" \
-#     -l "traefik.http.routers.agent-<id>.rule=Host(`<id>.<your-domain>`)" \
-#     -l "traefik.http.routers.agent-<id>.tls.certresolver=letsencrypt" \
-#     -l "traefik.http.services.agent-<id>.loadbalancer.server.port=3000" \
-#     -e AGENT_ID=<id> \
-#     openclaw-agent-base:latest
+#   docker run --rm openclaw-agent-base:2026.9.3 openclaw --version
 
 FROM node:24-bookworm-slim
 
+# The OpenClaw release this image runs, also recorded as a label so it can be read
+# with `docker image inspect` without starting a container.
+ARG OPENCLAW_VERSION=2026.9.3
+ARG SUPABASE_VERSION=2.109.1
+
 LABEL description="OpenClaw Agent Base — Rev4a multicontainer ecosystem"
 LABEL maintainer="Rev4a Agency"
-
-# Traefik static labels — enable proxy support by default.
-# Dynamic router/service labels must be provided at container creation.
-LABEL traefik.enable="true"
+LABEL org.opencontainers.image.version="${OPENCLAW_VERSION}"
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -55,15 +43,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Agent containers route model requests through Rev4a provider proxy
-RUN npm install -g openclaw@2026.7.1-2 vercel trello-cli \
-# Supabase CLI — installed via official GitHub release (npm global no longer supported on Linux)
-# Pinned to v2.109.1. Bump the version here to update.
-    && curl -fsSL https://github.com/supabase/cli/releases/download/v2.109.1/supabase_linux_amd64.tar.gz -o /tmp/supabase.tar.gz \
+# Agent containers route model requests through Rev4a provider proxy.
+#
+# --allow-scripts=openclaw: npm 11.16+ blocks install scripts unless allowed, and
+# without them the OpenClaw install is silently incomplete (native prebuilds and
+# bundled-plugin postinstall steps never run).
+#
+# Supabase CLI comes from its GitHub release (npm global is not supported on Linux),
+# for the architecture being built: amd64 in CI, arm64 on an Apple Silicon machine.
+#
+# gateway.controlUi.dangerouslyDisableDeviceAuth is not set: OpenClaw 9.x retired
+# it, ignores it and `doctor --fix` removes it. Browsers pair through device approval.
+RUN npm install -g "openclaw@${OPENCLAW_VERSION}" vercel trello-cli --allow-scripts=openclaw \
+    && ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/supabase/cli/releases/download/v${SUPABASE_VERSION}/supabase_linux_${ARCH}.tar.gz" -o /tmp/supabase.tar.gz \
     && tar xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase \
     && chmod +x /usr/local/bin/supabase \
     && rm /tmp/supabase.tar.gz \
-    && echo '{"gateway":{"mode":"local","controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}' \
+    && echo '{"gateway":{"mode":"local","controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true}}}' \
        | openclaw config patch --stdin
 
 # Default config directory + shared-skills extraDirs pre-wired.
@@ -78,6 +75,19 @@ RUN mkdir -p /data/.openclaw \
     && echo '{"hooks":{"internal":{"entries":{"bootstrap-extra-files":{"enabled":true,"paths":[".rev4a/*.md"]}}}}}' \
        | openclaw config patch --stdin
 
+# Plugins shipped with the image live outside /root, where the agent volume cannot
+# hide them, so they reach existing agents too. Each is pinned to the OpenClaw
+# release: a newer plugin can require a newer plugin API, and OpenClaw then skips it
+# at load. Install scripts stay disabled, as `openclaw plugins install` does.
+# The entrypoint adds these directories to plugins.load.paths.
+#
+# duckduckgo: key-free web_search provider. OpenClaw never auto-selects it, so the
+# entrypoint sets it as the provider when none is configured.
+RUN mkdir -p /opt/openclaw-plugins \
+    && cd /opt/openclaw-plugins \
+    && npm install --no-save --ignore-scripts "@openclaw/duckduckgo-plugin@${OPENCLAW_VERSION}" \
+    && test -f node_modules/@openclaw/duckduckgo-plugin/openclaw.plugin.json
+
 # Standard entrypoint
 COPY entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh
@@ -87,4 +97,3 @@ EXPOSE 3000
 
 ENTRYPOINT ["/agent-entrypoint.sh"]
 CMD ["openclaw", "gateway", "--bind", "lan", "--port", "3000"]
-

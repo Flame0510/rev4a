@@ -34,6 +34,10 @@ If you are an AI agent working on this repo: read this file before closing any t
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
 | `.github/workflows/release-publish.yml` | This file — Release process section |
+| `.github/workflows/build-agent-image.yml` | This file — Agent image publishing section |
+| `agent-templates/base-image/**` | `docs/REV4A.md` — Agent Templates (image contents, entrypoint behavior); `agent-templates/README.md` |
+| `lib/agent-versions.json` (supported OpenClaw versions) | This file — Agent image publishing section; `docs/REV4A.md` — Base Image |
+| `skills/**` (new or changed workspace skill) | `AGENTS.md` — §2.2a Workspace Skills table |
 
 ---
 
@@ -103,6 +107,57 @@ actually publishing, useful to sanity-check the pipeline itself.
 setup, and it made every commit touching `package.json` attempt a publish,
 racing against the `release` trigger and failing with `403 cannot publish
 over the previously published version` more often than not.
+
+---
+
+## Agent image publishing
+
+`.github/workflows/build-agent-image.yml` builds `agent-templates/base-image` on every
+push to `main` that touches it, and on demand. The OpenClaw release comes from
+`ARG OPENCLAW_VERSION` in the Dockerfile; a missing or malformed value fails the run
+before anything is built.
+
+It publishes to `ghcr.io/<repo>/openclaw-agent-base`:
+
+- `:<version>` — the OpenClaw release; moves when the image is rebuilt for the same
+  release
+- `:<version>-<short sha>` — immutable, one per commit
+- `:latest` — **only** when the workflow is run by hand with `promote_latest`
+
+Rev4a itself never uses `:latest`: it pulls `:<version>` for the versions listed in
+`lib/agent-versions.json` and keeps each as `openclaw-agent-base:<version>`. `:latest` is
+for people running the image by hand. A new OpenClaw release migrates an agent's data
+one way — the previous release refuses the migrated database — so moving `:latest` is a
+deliberate step, never a side effect of merging a Dockerfile change.
+
+**Supporting a new OpenClaw version** is one change: bump `ARG OPENCLAW_VERSION` in the
+Dockerfile and add the version at the top of `lib/agent-versions.json`, with the model
+`input` values that release accepts. Keep the previous versions listed while agents
+still run them.
+
+```bash
+gh workflow run build-agent-image.yml -f promote_latest=true
+```
+
+A manual run can also publish a version other than the Dockerfile's `ARG`, to backfill a
+tag an older release never published (a rollback pulls that tag):
+
+```bash
+gh workflow run build-agent-image.yml -f version=2026.7.1-2
+```
+
+The input, when set, is used both as the build argument and as the tag; empty keeps the
+Dockerfile ARG as the source of truth. The `:latest` tag still moves only with
+`promote_latest`.
+
+A release that predates the version ARG has only `:latest` on ghcr; a rollback still needs
+its `:<version>` tag. `retag_latest_as` republishes the existing `:latest` under that tag
+without building (the current Dockerfile may not be able to rebuild an older release —
+its pinned plugin version may not exist):
+
+```bash
+gh workflow run build-agent-image.yml -f retag_latest_as=2026.7.1-2
+```
 
 ---
 
