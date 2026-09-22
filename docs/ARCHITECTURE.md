@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-22
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -278,6 +278,19 @@ the rules for anything you touch, not as a description of the whole tree:
 `dockerExecWithInput` uses `spawn` rather than `execFile` because
 `promisify(exec)` silently ignores an `input` option: the process starts, stdin
 is never written, and the command hangs with no error to point at.
+
+- **The process model and self-update.** `rev4a serve` (the systemd unit's process) is a
+  supervisor: it spawns `rev4a _run <port>`, which in turn runs Next, the daemon and the
+  terminal WebSocket. `rev4a update` installs the new version, then `rev4a restart` writes
+  `.restart-flag` in the data directory; `_run` sees it, stops its children, waits for the
+  port to come free and exits with code **42**, and the supervisor relaunches `_run` on the
+  new code — so the supervisor itself never goes down (the unit's `NRestarts` stays 0).
+  The dashboard's **Update now** is only a detached `rev4a update` (`POST
+  /api/update-check`): it must not try to restart anything itself, because the update
+  stops the very process that spawned it, and the CLI's own flag is the mechanism that
+  matters. Its output goes to `update.log` in the data directory, since nothing else can
+  report the outcome: the banner records what it asked for, waits for the installed
+  version to change and only then reloads (see `VersionBanner`).
 
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
 

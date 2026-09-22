@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-22
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -102,6 +102,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "Why is the agent base image banner showing?"
 - "How do I fix 'image is outdated'?"
 - "How do agent image updates work?" — The banner on the Agents page runs a `docker pull`. It is a download, not a build: there is no modal, no live log, and no way to abort from the UI.
+- "How do I update Rev4a itself?" — The "Update available" banner starts `rev4a update` in the background (the same command as from a shell). It installs the new version and Rev4a restarts itself, so the dashboard drops for a short while; the banner waits for the new version and then confirms it, or says the update did not complete. The update's output is written to `update.log` in the Rev4a data directory (`~/.config/rev4a/data/update.log`) — the only place that says why an update failed.
 - "Why is my Telegram bot not connecting?"
 - "Why can't I approve a pairing code?"
 - "Why is the TG badge missing from my agent?"

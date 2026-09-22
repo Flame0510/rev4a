@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-22
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -35,6 +35,12 @@ Manage Docker containers running OpenClaw agents. See which agents are running, 
 The agent list also shows a compact TG chip next to each agent name (green = connected, hidden if not configured).
 
 **Browser access:** on agents running OpenClaw 9.x, every new browser has to be approved once before the agent's Control UI connects. The detail panel's "BROWSER ACCESS" section lists browsers waiting for approval, with Approve and Reject, and the browsers already approved, with Rename and Revoke. A yellow "BROWSER WAITING" chip on the agent card says a request is pending. The **Open** button tries a one-time link that lets the browser in without any approval; if the agent cannot issue one (it is stopped, or the link fails) it opens the normal link. To let someone else in, **Invite link** gives a link to send them: their browser appears under waiting for approval, and nothing opens until you approve it. The link contains the token all agents share; changing the agents token cancels every link already sent.
+
+Rev4a itself has an **"Update available"** banner: it starts `rev4a update` and the server
+restarts itself, so the dashboard drops briefly. The banner is only shown when a newer
+version is published; it waits for the restart and then confirms the new version, or
+reports that the update did not complete and points at `update.log` in the Rev4a data
+directory, where the update's output is written.
 
 The Agents page includes a banner for the **agent base image**, which is kept per
 OpenClaw version. It is hidden when a supported version is downloaded and nothing newer
