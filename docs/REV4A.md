@@ -201,6 +201,23 @@ If the daemon never answers, `serve` starts anyway, skips the network and image
 checks, and says so in the log. The startup sync then reaches no agent, and logs
 that too; run Sync All Agents once Docker is up.
 
+### Memory (a host that runs several agents)
+
+`rev4a update` installs the new version and the server rebuilds Next before it comes
+back (`rev4a` wipes `.next`, so the build always runs). That build is the memory peak
+of the whole installation: with several agent Gateways resident (roughly 0.5-0.8 GB
+each) a host with no swap can hit the kernel OOM killer during the update — it killed
+`next-server` on a 7.7 GB VPS, which then stayed unreachable until a reboot.
+
+Give such a host swap (4-8 GB is enough for the build) and a conservative
+`vm.swappiness`:
+
+```bash
+fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+echo 'vm.swappiness=10' > /etc/sysctl.d/99-rev4a-swap.conf
+```
+
 ### Systemd environment override
 
 File: `/etc/systemd/system/rev4a-next.service` (EnvironmentFile)
