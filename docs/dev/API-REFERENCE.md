@@ -2559,13 +2559,27 @@ Installed version against the latest published one.
 **Query params:** `check=1` queries the registry; without it the answer comes
 from local state only.
 
-**Response:** `{ "installed": "1.1.15", "latest": "1.1.16", "updateAvailable": true, "package": "@flame0510/project-aether" }`
+**Response:** `{ "installed": "1.4.2", "latest": "1.5.0", "updateAvailable": true, "package": "@flame0510/project-aether", "log": "update.log" }`
+
+`log` is the file name, in the Rev4a data directory, where the update's output is
+written.
 
 ### `POST /api/update-check`
-Run `rev4a update` as a detached background process. The dashboard restarts
-itself as part of the update, so the connection drops.
+Run `rev4a update` as a detached background process. Nothing here restarts anything:
+the update kills this process on its way in (`fuser -k <port>/tcp`) and `rev4a serve`
+brings the child back on the new binary via its `.restart-flag`, so the connection
+drops and the page has to wait for the server to answer again.
+
+The child's output goes to `update.log` in the data directory — the update restarts
+the process that spawned it, so that file is the only record of what happened.
 
 **Auth:** browser cookie or bearer token
+
+**Response:** `{ "success": true, "message": "...", "log": "update.log" }`
+
+The banner records what it asked for, polls `/api/version` until the installed version
+moves (or two minutes pass), reloads, and on the next mount either confirms
+"Updated to vX" or reports that the update did not complete and points at the log.
 
 ### `GET /api/alerts/smoke`
 Send a test alert, to verify the Telegram alerting path end to end.

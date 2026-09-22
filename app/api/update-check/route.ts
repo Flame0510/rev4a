@@ -68,45 +68,56 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ installed, latest, updateAvailable, package: getPackageInfo().name });
+  return NextResponse.json({ installed, latest, updateAvailable, package: getPackageInfo().name, log: 'update.log' });
 }
 
 /**
  * POST /api/update-check
  *
- * Spawns rev4a update as a detached background process.
- * rev4a update installs the latest version and writes .restart-flag,
- * which rev4a serve detects and exits with code 42, then auto-restarts
- * with the newly installed binary. No systemd required.
+ * Spawns `rev4a update` as a detached background process: it installs the latest
+ * version, writes `.restart-flag` and lets `rev4a serve` restart the child (`rev4a
+ * _run`) with the new binary. Nothing here has to restart anything — the update kills
+ * this very process on its way in (`fuser -k <port>/tcp`), so any callback meant to run
+ * after it is dead code; the CLI's own flag is the only mechanism that has to work.
+ *
+ * The child's output goes to `update.log` in the data directory: since the update
+ * restarts this process mid-run, that file is the only record of what happened.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
 
-  // Spawn rev4a update in background, then write restart flag directly
-  // from this process so rev4a serve detects it and restarts.
   const { spawn } = require('child_process');
   const { join } = require('path');
-  const { writeFileSync } = require('fs');
+  const { openSync, closeSync, appendFileSync } = require('fs');
 
   const dataDir = process.env.REV4A_DATA_DIR ||
     join(process.env.HOME || '/root', '.config', 'rev4a', 'data');
+  const logPath = join(dataDir, 'update.log');
+
+  let log: number | null = null;
+  try {
+    log = openSync(logPath, 'a');
+    appendFileSync(logPath, `\n[${new Date().toISOString()}] rev4a update, started from the dashboard\n`);
+  } catch {
+    // Unwritable log: run the update anyway, we just lose the record.
+  }
 
   const child = spawn('rev4a', ['update'], {
-    stdio: 'ignore',
+    stdio: log === null ? 'ignore' : ['ignore', log, log],
     detached: true,
+    cwd: dataDir,
   });
+  if (log !== null) closeSync(log);
 
-  // When rev4a update finishes, write the restart flag so rev4a serve
-  // picks it up and exits with code 42, triggering the auto-restart loop.
-  child.on('exit', () => {
-    try { writeFileSync(join(dataDir, '.restart-flag'), ''); } catch {}
+  child.on('error', (e: Error) => {
+    try { appendFileSync(logPath, `[dashboard] could not start the update: ${e.message}\n`); } catch {}
   });
-
   child.unref();
 
   return NextResponse.json({
     success: true,
-    message: 'Update started. The dashboard will restart once complete.',
+    message: 'Update started. Rev4a restarts itself once the new version is installed.',
+    log: 'update.log',
   });
 }
