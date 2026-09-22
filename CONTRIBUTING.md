@@ -143,7 +143,7 @@ A manual run can also publish a version other than the Dockerfile's `ARG`, to ba
 tag an older release never published (a rollback pulls that tag):
 
 ```bash
-gh workflow run build-agent-image.yml -f version=2026.7.1-2
+gh workflow run build-agent-image.yml -f version=2026.9.4
 ```
 
 The input, when set, is used both as the build argument and as the tag; empty keeps the
@@ -156,7 +156,7 @@ without building (the current Dockerfile may not be able to rebuild an older rel
 its pinned plugin version may not exist):
 
 ```bash
-gh workflow run build-agent-image.yml -f retag_latest_as=2026.7.1-2
+gh workflow run build-agent-image.yml -f retag_latest_as=<version>
 ```
 
 ---

@@ -3,7 +3,7 @@
  *
  * What the "Open" buttons navigate to, in a new tab. Redirects to the agent's Control
  * UI: through a one-time link that pairs the browser with no approval on OpenClaw 9.x,
- * or through the plain token link on 2026.7.x or when no one-time link can be issued.
+ * or through the plain token link when no one-time link can be issued.
  *
  * The target host is the one this request reached Rev4a on (the `Host` header), with
  * the agent's published port. It is never a parameter: a page elsewhere that gets a

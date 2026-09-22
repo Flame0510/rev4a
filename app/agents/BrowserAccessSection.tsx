@@ -6,11 +6,11 @@
  * From OpenClaw 9.x every new browser must be approved once before the Control UI
  * connects. This section lists the requests waiting for approval and the browsers
  * already approved, with approve, reject, rename and revoke. Agents created on
- * 2026.7.x run with device approval disabled and have nothing to list.
+ * Every supported agent lists its browsers through the CLI.
  *
  * `OpenControlUiButton` opens the Control UI through a one-time link that pairs the
  * browser with no approval, or through the plain token link when no one-time link can
- * be issued (2026.7.x has no `openclaw dashboard --json`).
+ * be issued.
  *
  * Data comes from `/api/agents/[id]/devices`, which runs the OpenClaw CLI inside the
  * container. It refreshes every few seconds only while this section is mounted.
@@ -352,7 +352,7 @@ export default function BrowserAccessSection({
 
       {access?.requiresApproval === false && (
         <div style={metaStyle}>
-          This agent runs with browser approval disabled (OpenClaw 2026.7.x): its Control UI opens with the token alone,
+          This agent could not be read: its Control UI may open with the token alone,
           so there is nothing to approve.
         </div>
       )}

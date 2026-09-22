@@ -47,34 +47,51 @@ const COLD_BACKUP_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 export class UpdateRefusedError extends Error {}
 
 /**
- * Counts transcript events per session, inside the agent: `.jsonl` lines on 2026.7.x,
- * `transcript_events` rows in `openclaw-agent.sqlite` from 9.x. Keys are
- * `<agent>/<session id>`; trajectory files are debug traces and are not counted.
+ * Counts transcript events per session, inside the agent: `transcript_events` rows in
+ * `openclaw-agent.sqlite`. Keys are `<agent>/<session id>`; trajectory files are debug
+ * traces and are not counted.
+ *
+ * Two other places are read as well, each taking the maximum per session (never the sum):
+ *  - `sessions/*.jsonl`, for a build that still writes transcripts as files;
+ *  - `session-sqlite-import-archive/archive-tier.<id>.jsonl.imported-<ts>`, where 9.x
+ *    moves the old `.jsonl` files after importing them into SQLite. A session whose
+ *    events were **not** imported lives only there, so without it the count drops to
+ *    zero and a healthy migration reads as lost data (seen on the VPS with 10 short
+ *    sessions of an agent: the archived file still held the same 8 lines).
  */
 const COUNT_TRANSCRIPTS = `
 const fs = require('fs'), path = require('path');
 const out = {};
+const bump = (key, n) => { if (n > (out[key] || 0)) out[key] = n; };
+const linesOf = (file) => {
+  try { return fs.readFileSync(file, 'utf8').split('\\n').filter((l) => l.trim()).length; } catch { return 0; }
+};
 const root = '/root/.openclaw/agents';
 for (const agent of fs.existsSync(root) ? fs.readdirSync(root) : []) {
-  const sessions = path.join(root, agent, 'sessions');
+  const base = path.join(root, agent);
+  const sessions = path.join(base, 'sessions');
   if (fs.existsSync(sessions)) {
     for (const f of fs.readdirSync(sessions)) {
       if (!f.endsWith('.jsonl') || f.endsWith('.trajectory.jsonl')) continue;
-      const n = fs.readFileSync(path.join(sessions, f), 'utf8').split('\\n').filter((l) => l.trim()).length;
-      const key = agent + '/' + f.slice(0, -'.jsonl'.length);
-      out[key] = Math.max(out[key] || 0, n);
+      bump(agent + '/' + f.slice(0, -'.jsonl'.length), linesOf(path.join(sessions, f)));
     }
   }
-  const dbFile = path.join(root, agent, 'agent', 'openclaw-agent.sqlite');
+  const archive = path.join(base, 'session-sqlite-import-archive');
+  if (fs.existsSync(archive)) {
+    for (const f of fs.readdirSync(archive)) {
+      if (f.includes('.trajectory.jsonl')) continue;
+      const m = f.match(/^archive-tier\\.(.+?)\\.jsonl\\.imported-\\d+$/);
+      if (m) bump(agent + '/' + m[1], linesOf(path.join(archive, f)));
+    }
+  }
+  const dbFile = path.join(base, 'agent', 'openclaw-agent.sqlite');
   if (fs.existsSync(dbFile)) {
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(dbFile, { readOnly: true });
-    // 2026.7.x creates this database too, without the transcript table.
     const hasEvents = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transcript_events'").get();
     if (hasEvents) {
       for (const r of db.prepare('SELECT session_id, COUNT(*) AS n FROM transcript_events GROUP BY session_id').all()) {
-        const key = agent + '/' + r.session_id;
-        out[key] = Math.max(out[key] || 0, Number(r.n));
+        bump(agent + '/' + r.session_id, Number(r.n));
       }
     }
     db.close();
@@ -361,6 +378,13 @@ async function runRollbackStart(agentId: string): Promise<number> {
   const row = latestUpdate(agentId);
   if (!row || !ROLLBACK_FROM.includes(row.status)) throw new UpdateRefusedError('There is no update of this agent to roll back');
   if (!row.backup_file || !row.from_version) throw new UpdateRefusedError('This update has no pre-update backup to restore');
+  // Refused up front, not mid-way: this Rev4a supports 9.x only, so a row recorded
+  // before 2026.7.x support was dropped has no image this build can recreate, and the
+  // readiness probe would never see the old Gateway as ready either. Better to say so
+  // than to restore a volume and leave the agent on a version this build cannot run.
+  if (!isSupportedVersion(row.from_version)) {
+    throw new UpdateRefusedError(`This Rev4a no longer supports OpenClaw ${row.from_version} (the version this update moved away from), so it cannot roll back to it`);
+  }
   if (!(await backupFileExists(row.backup_file))) {
     throw new UpdateRefusedError(`The pre-update backup ${row.backup_file} no longer exists`);
   }

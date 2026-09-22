@@ -2,9 +2,8 @@
  * GET /api/agents/devices-summary
  *
  * Browsers waiting for approval, per running agent — the "browser waiting" badge on
- * the agent cards. Agents whose config disables device auth (2026.7.x) are answered
- * from the config alone, without the CLI. One agent that cannot be read reports
- * `error: true` and does not blank the others.
+ * the agent cards. One agent that cannot be read reports `error: true` and does not
+ * blank the others.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';

@@ -1148,7 +1148,7 @@ agent was never recreated).
 {
   "recreate": {
     "id": 12, "agentId": "agent_9253eee3", "status": "backing_up",
-    "image": "openclaw-agent-base:2026.7.1-2",
+    "image": "openclaw-agent-base:2026.9.3",
     "backupFile": "agent-agent_9253eee3-prerecreate-2026-09-17_171000.tar.gz",
     "backupPercent": 40, "error": null,
     "startedAtMs": 1789656372120, "finishedAtMs": null
@@ -1170,12 +1170,12 @@ The agent's OpenClaw version, the update it could take, and its latest update
 
 ```json
 {
-  "currentVersion": "2026.7.1-2",
-  "candidate": { "fromVersion": "2026.7.1-2", "toVersion": "2026.9.3" },
+  "currentVersion": "2026.9.3",
+  "candidate": { "fromVersion": "2026.9.3", "toVersion": "2026.9.4" },
   "update": {
     "id": 3, "agentId": "agent_9253eee3", "status": "backing_up",
-    "fromVersion": "2026.7.1-2", "toVersion": "2026.9.3",
-    "backupFile": "agent-agent_9253eee3-preupdate-2026.7.1-2-2026-09-16_003512345.tar.gz",
+    "fromVersion": "2026.9.3", "toVersion": "2026.9.4",
+    "backupFile": "agent-agent_9253eee3-preupdate-2026.9.3-2026-09-16_003512345.tar.gz",
     "backupPercent": 40, "verification": null, "error": null,
     "startedAtMs": 1789524912000, "finishedAtMs": null
   }
@@ -1197,9 +1197,10 @@ the background.
 
 1. **Preflight** (refused with `409`): the agent runs, the target is downloaded,
    supported and newer than the agent's version, no update or backup is running.
-2. **Baseline**, inside the agent: transcript events per session (`.jsonl` lines on
-   2026.7.x, `transcript_events` rows from 9.x; trajectory files not counted) and cron
-   job names.
+2. **Baseline**, inside the agent: transcript events per session (`transcript_events`
+   rows in `openclaw-agent.sqlite`, plus `sessions/*.jsonl` and the
+   `session-sqlite-import-archive/` the 9.x import moves old files into, taking the
+   maximum per session; trajectory files not counted) and cron job names.
 3. **`backing_up`**: cold backup `agent-<id>-preupdate-<from>-<ts>.tar.gz`
    (`startColdBackup`, agent left stopped).
 4. **`migrating`**: the container is recreated on `openclaw-agent-base:<to>`
@@ -1384,8 +1385,8 @@ There is no CLI or RPC for this (`openclaw pairing` covers pending requests only
 `channels.pairing.*` has no remove — verified on 2026.9.3). The pairing store's own
 writer is used instead: `removeChannelAllowFromStoreEntry`, located by function name in
 OpenClaw's `pairing-store` module and run inside the container, so the write goes
-through the same state transaction the CLI uses. Verifying a 2026.7.x agent is out of
-scope: Rev4a targets 2026.9.3. On a release that no longer exposes the writer the call
+through the same state transaction the CLI uses. Rev4a supports 2026.9.x only, so no
+older layout is handled. On a release that no longer exposes the writer the call
 fails with a message pointing at `/allowlist remove` from the chat — nothing is silently
 left unchanged.
 
@@ -1412,9 +1413,8 @@ already approved.
 **Auth:** browser cookie
 
 Runs `openclaw devices list --json` inside the container with the async `dockerExec`;
-see `lib/agent-devices.ts`. On OpenClaw 2026.7.x, which answers `/startupz` with HTML
-and whose config disables device approval, the CLI is not called and both lists are
-empty.
+see `lib/agent-devices.ts`. When the Gateway cannot be read `requiresApproval` is null
+and both lists are empty.
 
 **Response:**
 ```json
@@ -1515,12 +1515,12 @@ Control UI.
 The target host is the one the request reached Rev4a on (the `Host` header), with the
 agent's published port — never a parameter, so the link cannot be sent to another host.
 
-- **OpenClaw 9.x** (it answers `/startupz` with JSON): runs `openclaw dashboard --json`
-  in the container and redirects to its `browserUrl`, with the host, the port and the
-  `gatewayUrl` fragment parameter rewritten to that host and the published port. The
-  link is single-use, expires after ten minutes, and pairs the browser with no approval.
-- **OpenClaw 2026.7.x**, or when no one-time link can be issued: redirects to the plain
-  link `http://<host>:<port>/#token=<token>`, with the token read inside the container
+- Runs `openclaw dashboard --json` in the container and redirects to its `browserUrl`,
+  with the host, the port and the `gatewayUrl` fragment parameter rewritten to that host
+  and the published port. The link is single-use, expires after ten minutes, and pairs
+  the browser with no approval.
+- When no one-time link can be issued: redirects to the plain link
+  `http://<host>:<port>/#token=<token>`, with the token read inside the container
   (`/root/.agent-token`, then `OPENCLAW_GATEWAY_TOKEN`).
 
 A navigation, not a JSON call: the button opens this URL inside the click, so no tab

@@ -14,16 +14,14 @@
  * route deletes the container when this probe times out, so a false negative
  * there destroys a healthy agent over an unrelated channel.
  *
- * **Two OpenClaw majors.** `/startupz` exists from 9.x: 503 while starting or
- * draining, 200 with `{"status":"started"}` when done. The 2026.7.1-2 image that
- * `openclaw-agent-base` currently pins has no `/startupz`; its Gateway answers
- * every unknown path with 200 and the web UI's HTML. So the probe reads the
- * status code *and* the body, and falls back to `/health` only for a 200 that is
- * not JSON — the old image. A 503, or no answer, means "not yet", never "use
- * `/health`": reading an empty answer as "old image" makes a 9.x Gateway count as
- * ready the moment it starts listening.
- *
- * Delete the `/health` fallback once every image is on 9.x.
+ * **The endpoint used.** `/startupz` exists from 9.x: 503 while starting or
+ * draining, 200 with `{"status":"started"}` when done. The probe reads the status
+ * code *and* the body: a 503, a non-JSON 200 or no answer means "not yet". A
+ * Gateway that refused readiness — for instance one that found a legacy session
+ * store and wants `doctor --fix` — answers 200 on `/health` while draining; reading
+ * that as ready would let the create route configure an agent that is still
+ * migrating (the 2026.7.1-2 fallback that used to do exactly that was removed with
+ * 7.x support).
  *
  * **Async.** A request path must not hold Node's single thread for up to a
  * minute; see docs/ARCHITECTURE.md §3.1.
@@ -88,16 +86,9 @@ export async function waitForGatewayReady(
 
     if (startupz.status === 200) {
       const json = asJson(startupz.body);
-      if (json) {
-        // 9.x: accept only the answer that means startup finished.
-        if (json.status === 'started') return true;
-      } else {
-        // 200 with a non-JSON body: the 2026.7.1-2 web UI catch-all, so this build
-        // has no /startupz. Liveness is the best signal it offers.
-        const health = await probe(container, '/health');
-        const h = health.status === 200 ? asJson(health.body) : null;
-        if (h && (h.ok === true || h.status === 'live')) return true;
-      }
+      // 9.x: accept only the answer that means startup finished. A 200 with any other
+      // body is not a ready Gateway.
+      if (json && json.status === 'started') return true;
     }
     // 503 (starting or draining), any other code, or no answer: not yet.
 

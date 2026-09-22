@@ -58,7 +58,7 @@ export function modelInputFor(version?: string | null): string[] {
 
 const VERSION_RE = /(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+))?/;
 
-/** The version in `2026.9.3`, `2026.7.1-2` or `OpenClaw 2026.9.3 (1391f7c)`; null when there is none. */
+/** The version in `2026.9.3` or `OpenClaw 2026.9.3 (1391f7c)`; null when there is none. */
 export function parseOpenClawVersion(text: string | null | undefined): string | null {
   const m = VERSION_RE.exec(text ?? '');
   if (!m) return null;

@@ -306,7 +306,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 - **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port on the host the dashboard was reached on: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container.
 - **Agent creation wizard** — multi-step form at `/agents/create`.
 - **Channel Manager** — each agent detail panel has a Channels section with Telegram configuration and pairing management. Pending requests (a sender's `/start` creates one) show an **Approve** button; approved senders show **Revoke** with a confirmation. Approved senders are OpenClaw's pairing store, not the agent config: on 2026.9.x the SQLite store, read and revoked through OpenClaw's own store functions (see [ARCHITECTURE.md](ARCHITECTURE.md)).
-- **Browser access** — the detail panel section right after Channels. From OpenClaw 9.x each new browser must be approved once before the Control UI connects: the section lists requests waiting for approval (Approve / Reject) and approved browsers (Rename / Revoke), and the agent card shows a "browser waiting" badge. The **Open** buttons first ask the agent for a one-time link that pairs the browser with no approval, and open the plain token link when none can be issued (every 2026.7.x agent). **Invite link** (9.x agents only) gives a link to send to someone else: their browser passes gateway auth and waits in the approval list until approved. The link carries the gateway token every agent shares; changing the agents token invalidates every link sent. All of it runs the OpenClaw CLI inside the container asynchronously.
+- **Browser access** — the detail panel section right after Channels. From OpenClaw 9.x each new browser must be approved once before the Control UI connects: the section lists requests waiting for approval (Approve / Reject) and approved browsers (Rename / Revoke), and the agent card shows a "browser waiting" badge. The **Open** buttons first ask the agent for a one-time link that pairs the browser with no approval, and open the plain token link when none can be issued (the agent is stopped, or the link fails). **Invite link** gives a link to send to someone else: their browser passes gateway auth and waits in the approval list until approved. The link carries the gateway token every agent shares; changing the agents token invalidates every link sent. All of it runs the OpenClaw CLI inside the container asynchronously.
 
 ### Agent Creation Wizard (`/agents/create`)
 
@@ -326,9 +326,8 @@ Available templates:
 1. The container boots with the newest supported OpenClaw version downloaded here, `openclaw-agent-base:<version>`; the create answers `409` when none is — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
 3. The route waits for the gateway to finish starting with `waitForGatewayReady()`, up
-   to 60 s. On OpenClaw 9.x it waits for `/startupz` to report `started`. The
-   2026.7.1-2 image has no `/startupz`, so there it waits for `/health`, which only
-   shows the server is listening.
+   to 60 s: `/startupz` has to report `started`. A 503 (starting or draining), a
+   non-JSON 200 or no answer all mean "not yet".
 4. Once ready, the route writes:
    - `gateway.controlUi` with the browser-origin policy (`withControlUiPolicy()` in `lib/agent-setup.ts`): the Host-header fallback on, so the Control UI is accepted from the host the browser connected to — a public IP is refused without it — while pages from other origins are refused; an `allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` are dropped, any other allowlist is kept. Recreate re-applies the policy. Each new browser still needs a one-time device approval
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard

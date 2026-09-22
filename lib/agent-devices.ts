@@ -9,11 +9,8 @@
  * with the entrypoint's precedence — `/root/.agent-token`, then the container's
  * `OPENCLAW_GATEWAY_TOKEN` — so it never reaches argv on the host.
  *
- * Browser approval exists from OpenClaw 9.x. Agents created on 2026.7.x carry
- * `gateway.controlUi.dangerouslyDisableDeviceAuth: true`: they open with the token
- * alone and have nothing to approve, so `requiresApproval` is false for them and
- * the CLI is not called. `openclaw dashboard --json` does not exist on 2026.7.x
- * either, so `resolveControlUiUrl` gives those agents the plain token link.
+ * Browser approval is part of OpenClaw 9.x, the only major this build supports. An
+ * agent whose Gateway cannot be read answers "unknown" rather than guessing.
  */
 import { dockerExec, dockerExecNoFail } from '@/lib/docker-exec';
 import { dockerFetch } from '@/lib/docker-socket';
@@ -110,35 +107,26 @@ async function runCli(container: string, args: string[], timeoutMs = CLI_TIMEOUT
   return parseCliJson(out);
 }
 
-/** True when the Gateway answers `/startupz` with JSON carrying its version, which only OpenClaw 9.x does. */
+/** True when the Gateway answers `/startupz` with JSON carrying its version: a 9.x Gateway. */
 async function answersStartupzWithVersion(container: string): Promise<boolean> {
   const probe = await dockerExecNoFail(container, ['curl', '-s', '--max-time', '3', 'http://127.0.0.1:3000/startupz'], { timeoutMs: CONFIG_TIMEOUT_MS });
   try {
     return typeof (JSON.parse(probe) as { version?: unknown })?.version === 'string';
   } catch {
-    // Not JSON: the 2026.7.x web UI answers every unknown path with HTML.
+    // Not JSON (a 9.x Gateway that is still starting answers 503, and a stopped agent
+    // answers nothing): the version cannot be read.
     return false;
   }
 }
 
 /**
- * Whether browsers need approval on this agent.
- *
- * The OpenClaw version decides first. 9.x answers `/startupz` with a JSON document
- * carrying its version, and there approval always applies: it ignores
- * `dangerouslyDisableDeviceAuth`, which an agent created on 2026.7.x may still carry.
- * Anything else is 2026.7.x, where that key does disable approval. Null when neither
- * can be read.
+ * Whether browsers need approval on this agent. Every supported OpenClaw answers
+ * `/startupz` with a JSON document carrying its version, and there approval always
+ * applies. Null when the Gateway cannot be read, so callers can answer "unknown"
+ * instead of guessing.
  */
 export async function requiresBrowserApproval(container: string): Promise<boolean | null> {
-  if (await answersStartupzWithVersion(container)) return true;
-  try {
-    const raw = await dockerExec(container, ['cat', '/root/.openclaw/openclaw.json'], { timeoutMs: CONFIG_TIMEOUT_MS });
-    const cfg = JSON.parse(raw) as { gateway?: { controlUi?: { dangerouslyDisableDeviceAuth?: unknown } } };
-    return cfg?.gateway?.controlUi?.dangerouslyDisableDeviceAuth !== true;
-  } catch {
-    return null;
-  }
+  return (await answersStartupzWithVersion(container)) ? true : null;
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
@@ -329,9 +317,8 @@ const plainLink = (hostname: string, port: string, token: string) =>
   `http://${hostForUrl(hostname)}:${port}/#token=${encodeURIComponent(token)}`;
 
 /**
- * Where "Open" should take the browser: the one-time link on OpenClaw 9.x, which pairs
- * the browser with no approval, else the plain token link — on 2026.7.x, which has no
- * `dashboard --json` and needs no approval, or when no one-time link could be issued.
+ * Where "Open" should take the browser: the one-time link, which pairs the browser with
+ * no approval, else the plain token link when no one-time link could be issued.
  */
 export async function resolveControlUiUrl(
   container: string,

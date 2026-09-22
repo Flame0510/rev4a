@@ -38,8 +38,9 @@ const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
  */
 /**
  * Model `input` values an agent's OpenClaw version accepts. The list is per version
- * (lib/agent-versions.json): 7.1-2 knows only `text | image`, and one value it does not
- * know invalidates the whole generated catalogue ("model catalog load issue").
+ * (lib/agent-versions.json): a value the running Gateway does not know invalidates the
+ * whole generated catalogue ("model catalog load issue"), and the accepted set grows
+ * between releases.
  */
 function modalityToInput(modality: string, version?: string | null): string[] {
   const allowed = new Set(modelInputFor(version));
@@ -376,8 +377,8 @@ export function syncAllAgents(): SyncOutcome {
       continue;
     }
     try {
-      // Per agent: the `input` list follows the version that agent runs, so a 7.x
-      // release never receives a modality value it would reject.
+      // Per agent: the `input` list follows the version that agent runs, so an agent on
+      // an older supported release never receives a modality value it would reject.
       syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name)));
       outcome.synced.push(container.name);
       if (!container.running) outcome.stopped.push(container.name);

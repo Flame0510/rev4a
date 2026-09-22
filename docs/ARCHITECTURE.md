@@ -120,11 +120,13 @@ The central container, running the Next.js dashboard + orchestration API.
 - Immutable by agents — enforced by the `:ro` mount
 - See `lib/agent-setup.ts` for the centralized volume + config guarantee logic
 - **Waiting for a new container** is `waitForGatewayReady()` in
-  `lib/agent-readiness.ts`, used by create, recreate and the agent route. On
-  OpenClaw 9.x it waits for `/startupz` to report `started` (503 while starting).
-  The 2026.7.1-2 image has no `/startupz` — its gateway serves the web UI with 200
-  for unknown paths — so there it falls back to `/health`, which only shows the
-  server is listening. Do not reimplement the wait in a route.
+  `lib/agent-readiness.ts`, used by create, recreate and the agent route. It waits for
+  `/startupz` to report `started` (503 while starting or draining, a non-JSON 200 or no
+  answer mean "not yet"). A Gateway that refused readiness — one that found a legacy
+  session store and wants `doctor --fix` — answers 200 on `/health` while draining; the
+  old fallback that accepted that as "ready" was removed with 7.x support, because it
+  let callers configure an agent that was still migrating. Do not reimplement the wait in
+  a route.
 - **The model catalogue** is read only through `lib/model-catalogue.ts`:
   `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and
@@ -134,10 +136,12 @@ The central container, running the Next.js dashboard + orchestration API.
   OpenClaw versions, newest first, with the model `input` list for each; the server reads
   it through `lib/agent-versions.ts`, the `rev4a` CLI with `require`. The provider sync
   takes each agent's own list (`containerVersionSync()`: image tag, else the entrypoint's
-  `.last-version` file), so a 2026.7.x agent is never sent an `input` value it would
-  reject — one unknown value discards the whole generated catalogue. The previous
-  versions stay listed while agents still run them: that is also what lets a rollback
-  pull the previous image. `lib/agent-images.ts`
+  `.last-version` file), so an agent on an older supported release is never sent an
+  `input` value it would reject — one unknown value discards the whole generated
+  catalogue. A version stays listed while agents still run it, and listing it is also what
+  lets a rollback pull its image: since 2026.9.3 is the only entry, a rollback whose target
+  is no longer listed is refused up front (`startAgentRollback()`) instead of restoring a
+  volume on a version this build cannot run. `lib/agent-images.ts`
   lists local `openclaw-agent-base:<version>` images through the Docker API, reads an
   agent's version (image label or tag, else `openclaw --version` in the container, cached
   per image id), reads the registry tag list over HTTP (cached 10 min), pulls a version
@@ -209,9 +213,9 @@ The central container, running the Next.js dashboard + orchestration API.
   `openclaw devices list | approve | reject | rename | remove` and
   `openclaw dashboard --json`, run inside the container with the async `dockerExec`.
   The gateway token is resolved inside the container (`/root/.agent-token`, then its
-  environment), never passed in argv. Whether approval applies is decided by the
-  OpenClaw version: 9.x answers `/startupz` with JSON and always requires it;
-  2026.7.x follows `gateway.controlUi.dangerouslyDisableDeviceAuth`.
+  environment), never passed in argv. Every supported OpenClaw answers `/startupz` with
+  JSON and always requires approval; when that read fails the panel says it could not
+  tell, instead of guessing.
   `buildInviteLink()` builds the plain token link for someone else; the invite route
    refuses agents without approval. Every link's token is read inside the container,
    and its host is the request's `Host` header (`hostnameFromHostHeader()`), never a

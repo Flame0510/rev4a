@@ -128,7 +128,7 @@ const UNKNOWN_VERSION_TTL_MS = 5 * 60 * 1000;
 /**
  * The OpenClaw version a container runs: its image's label or version tag, else
  * `openclaw --version` inside the running container, for images built before the
- * label existed (2026.7.1-2 published as `:latest` only). Null for a stopped container
+ * label existed (a release published as `:latest` only). Null for a stopped container
  * whose image carries neither.
  */
 export async function containerOpenClawVersion(

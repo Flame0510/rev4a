@@ -170,10 +170,10 @@ Saving calls `PUT /api/gateway/agent`, which writes the container's
   container's existing list untouched, `[]` clears it. The Model panel is the only
   UI that sets them; the create wizard does not
 - **no restart** — `agents` is in OpenClaw's hot-reload column, so the write
-  applies on the agent's next turn. Exception on OpenClaw 2026.7.1-2: a Telegram
-  channel keeps the configuration it had when it started, so Telegram replies stay on
-  the old model until the container is restarted. The Control UI picks the change up
-  at once. OpenClaw 9.x reads the configuration per message
+  applies on the agent's next turn. Current OpenClaw reads the configuration per
+  message; the Control UI picks the change up at once. (On 2026.7.1-2 a Telegram
+  channel kept the configuration it had when it started, so Telegram replies stayed on
+  the old model until the container was restarted — that build is no longer supported.)
 
 The agent list shows each agent's current model as a chip, fed by
 `GET /api/agents/models-summary`. The red states are split by remedy, because they
@@ -366,11 +366,11 @@ Restart the Rev4a server (via systemd).
    to the file directly without restarting the gateway.
 
    The model `input` list follows each agent's OpenClaw version
-   (`lib/agent-versions.json`, resolved by `containerVersionSync()`): the newest release
-   accepts `text | image | audio | video`, while `2026.7.1-2` accepts only `text | image`,
-   and one unknown value makes it discard the whole generated catalogue
-   (`model catalog load issue`). That is why the previous version stays in the table
-   while agents still run it.
+   (`lib/agent-versions.json`, resolved by `containerVersionSync()`): 2026.9.3 accepts
+   `text | image | audio | video`, an older release may accept less, and one unknown
+   value makes it discard the whole generated catalogue
+   (`model catalog load issue`). That is why a version stays in the table while agents
+   still run it.
 
 5. **Entrypoint does not generate openclaw.json** — The entrypoint resolves the
    auth token and starts the gateway with `--allow-unconfigured`; OpenClaw
