@@ -1,7 +1,7 @@
 {
   "name": "@flame0510/project-aether",
   "version": "1.6.1",
-  "description": "Rev4a — Revolution for Agents. OpenClaw agent fleet orchestrator.",
+  "description": "Rev4a \u2014 Revolution for Agents. OpenClaw agent fleet orchestrator.",
   "keywords": [
     "openclaw",
     "rev4a",
@@ -57,7 +57,9 @@
     "refresh:pricing": "node scripts/refresh-model-pricing.mjs",
     "smoke:db-bootstrap": "node scripts/smoke-db-bootstrap.mjs",
     "postinstall": "node bin/postinstall.js",
-    "check:language": "node scripts/check-language.mjs"
+    "check:language": "node scripts/check-language.mjs",
+    "info:suggest": "node scripts/model-info-suggest.mjs",
+    "info:verify": "node scripts/model-info-verify.mjs"
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",

@@ -52,7 +52,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |
-| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. Prices and the generated model details come from `npm run refresh:pricing` (`model-pricing.json`, `model-details.json` — never hand-edited); add/remove the catalogue's `info` block for what OpenRouter does not publish |
+| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. Prices and the generated model details come from `npm run refresh:pricing` (`model-pricing.json`, `model-details.json` — never hand-edited); the catalogue's `info` blocks (what no API publishes) are curated with `npm run info:suggest` and gated by `npm run info:verify` (`docs/dev/GATEWAY.md` — Curating an info block) |
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
 | `.github/workflows/release-publish.yml` | This file — Release process section |

@@ -206,6 +206,29 @@ block, and every number there carries its source:
 No generated field ever replaces a curated one silently: prices are separate files, and the
 modal shows the generated part's date (`asOf`).
 
+### Curating an `info` block
+
+Nothing here is estimated, and every number carries its source and date. The workflow has
+three steps, one command each:
+
+```bash
+npm run info:suggest -- <model id> …   # candidate facts from the model card (read-only)
+# the maintainer, or a worker agent asked to follow the same contract, proposes the block
+npm run info:verify  -- proposals.json   # the gate: refuses what the card does not support
+```
+
+- `scripts/model-info-suggest.mjs` prints the card's size sentences, its benchmark tables
+  (headers included) and its doc links, so the reading is a lookup rather than a hunt.
+- `scripts/model-info-verify.mjs` checks a proposal against the card: `evidence` present,
+  every number in `params` in the card text, every benchmark value in a row named after it
+  **under the column that names this model** (never a sibling variant), and `docUrl` when
+  asked with `--check-links`. It exits non-zero on a rejected proposal.
+- The proposal contract is what makes this safe: one JSON object per model with an
+  `evidence` entry per field, the verbatim line, the column used and the card's own date.
+  A worker that skips the evidence — or takes a value from a variant's column — is caught
+  here, not in the catalogue. Benchmarks that a card states only for a sibling
+  (`-Max`, `-Base`, `-HighSpeed`) are dropped.
+
 ---
 
 ## Per-agent model assignment
