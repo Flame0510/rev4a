@@ -115,6 +115,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
+| `/gateway` (model rows) | Each model has a **Details** (`⋯`) action opening a modal with what is known about it: description, price and the provider it comes from, architecture and parameters (mixture of experts, layers, hidden size, attention heads, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with their sources, licence and popularity. The facts come from the model's card on Hugging Face and — for the vendor's own size claim and benchmarks — from hand-curated entries that always cite a source and a date; nothing is estimated. |
 | `/crons` | Scheduled cron jobs — auto-discovered from the host gateway and every running agent container (Docker containers with `AGENT_ID` label), on/off toggle, run history per job |
 | `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion) — SQLite vault, synced into agent containers as CLI config or, for the REST-only providers, as a config file the agent reads |
 | `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |

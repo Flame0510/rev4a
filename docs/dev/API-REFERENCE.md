@@ -249,7 +249,10 @@ Returns current provider configuration state.
 |---|---|
 | `summary=1` | Returns only `{ provider, label, configured }` per provider — no `models`, no `pricing`, no `apiKey`. The full response awaits live pricing from OpenRouter, a network round trip costing ~2.4s on a cold cache; callers that only need to know whether *any* provider is configured should use this. |
 
-**Response:**
+**Response:** each provider carries its models, and a model carries `params` (the total
+parameter count) when its Hugging Face card publishes one — the Gateway row shows it next
+to the price, and a model without a card simply omits it.
+
 ```json
 {
   "providers": [

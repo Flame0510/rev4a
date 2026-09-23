@@ -13,6 +13,7 @@
 - **Agent creation wizard** — Pick a template (Atlas, Prometheus, Argus), choose an LLM model, deploy an agent in seconds
 - **Provider sync** — Add API keys once, push them to all agent containers with one click
 - **Model configuration** — Change the primary model and fallbacks per agent, from the detail panel on the Agents page. Providers: OpenAI, Anthropic, Google, DeepSeek, Groq, Kimi, GLM, Qwen, plus OpenRouter as an aggregator.
+- **Model details** — Every model row opens a modal with its description, price and provider, architecture and parameter count (mixture of experts, context, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with sources and licence. Numbers come from the model card on Hugging Face plus curated entries that cite a source; nothing is estimated
 - **Shared gateway token** — One token to rule all agents. Manage from the dashboard, sync to all containers
 - **Live event stream** — Real-time session lineage, agent spawning, cost reporting
 - **Workspace browser** — Browse and edit agent files live from the dashboard

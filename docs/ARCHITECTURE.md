@@ -130,6 +130,18 @@ The central container, running the Next.js dashboard + orchestration API.
 - **The model catalogue** is read only through `lib/model-catalogue.ts`:
   `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and
+  **The model data has three files and three scripts.** `models.config.json` is curated by
+  hand (identity, `enabled`, `deprecated`, and an optional `info` block for what no API
+  publishes: the vendor's size claim, benchmarks, the docs link, notes).
+  `model-pricing.json` and `model-details.json` are **generated** by
+  `npm run refresh:pricing` (`scripts/refresh-model-pricing.mjs`): prices from OpenRouter,
+  and per model the description, architecture and benchmarks from OpenRouter plus the size,
+  weight mix, licence and dates from the Hugging Face card. Two scripts back the curation
+  of `info`: `npm run info:suggest` (`scripts/model-info-suggest.mjs`) prints the candidate
+  facts from a card, and `npm run info:verify` (`scripts/model-info-verify.mjs`) refuses a
+  proposal the card does not support — evidence per field, every benchmark value under the
+  column that names this model. `GET /api/models/details` merges the three files for the
+  details modal (`docs/dev/GATEWAY.md`).
   `catalogueStatus()`. A failed read of `models.config.json` falls back to the last
   good copy and never deletes overrides.
 - **Agent images and OpenClaw versions.** `lib/agent-versions.json` lists the supported

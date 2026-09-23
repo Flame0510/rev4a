@@ -66,6 +66,12 @@ Defined in `app/globals.css` as CSS custom properties:
 
 ## Component design rules
 
+A shared component grows by **variant, never by copy**. `Metric` is the example: `size="sm"`
+is the compact form for a grid inside a dialog (smaller value, tighter spacing), and it lives
+on the primitive so the modal and the dashboard cannot drift apart. When a new page needs a
+pattern that does not exist yet, add it here and to `docs/FRONTEND-ARCHITECTURE.md`'s catalog,
+then use it — a one-off copy of markup is the thing this section exists to prevent.
+
 1. **Border radius: 0 everywhere.** `border-radius: 0` or sharp corners. Exceptions: `Pill`, avatar circles, status dots.
 2. **No shadows.** Flat design. Use `border: 1px solid var(--border)` to define surfaces.
 3. **Violet is the only accent.** `var(--violet)` for active states, primary actions, headings. `var(--violet-bg)` for hover/active backgrounds.

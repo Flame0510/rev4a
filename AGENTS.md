@@ -51,6 +51,12 @@ If you are an AI agent arriving on this repo for the first time:
 
 No Italian, no other languages in code or docs.
 
+`npm run check:language` scans every tracked file and exits non-zero on an Italian word;
+the release workflow runs it, so a release cannot ship Italian. It is also shipped as an
+optional git hook: `git config core.hooksPath .githooks` once per clone checks only what
+you are committing. A line carrying `lang-ok` is skipped when the Italian is the point of
+that line (see `CONTRIBUTING.md` § Language rule).
+
 ### 2.2 Code Style
 
 - **TypeScript strict mode** — `tsconfig.json` has `strict: true`

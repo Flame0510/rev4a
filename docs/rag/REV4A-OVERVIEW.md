@@ -70,7 +70,7 @@ Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atla
 Interactive graph showing session family trees — which agent spawned which child agent, across configurable time periods: 1d, 3d, 7d, 15d, 30d, and all. Click any node to inspect. Includes a live feed side panel.
 
 ### Gateway (`/gateway`)
-Connects agents to AI providers. Add and remove provider API keys, enable or disable individual models in the catalogue read from `models.config.json`, and push the resulting model list to every agent container. It does not assign models to agents: choosing which model an agent runs is done per agent, in the Model section of the agent's detail panel on the Agents page.
+Connects agents to AI providers. Add and remove provider API keys, enable or disable individual models in the catalogue read from `models.config.json`, and push the resulting model list to every agent container. It does not assign models to agents: choosing which model an agent runs is done per agent, in the Model section of the agent's detail panel on the Agents page. Every model row has a **Details** button: the modal shows the model's description, price and provider, its architecture and parameter count when the weights are public, reasoning modes, capabilities, benchmarks with sources, licence and how much disk the weights take — the numbers come from the model card on Hugging Face and from curated entries that cite a source, never from estimates.
 
 ### Containers (`/containers`)
 Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container.
