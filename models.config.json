@@ -166,7 +166,11 @@
       "name": "Kimi K3",
       "provider": "kimi",
       "enabled": true,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "2.78T total · 104B activated · 93 layers",
+        "notes": "Activated parameters and layers per the model card."
+      }
     },
     {
       "id": "kimi/kimi-k2.7-code",
@@ -194,14 +198,37 @@
       "name": "GLM-5.3",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.3",
+        "benchmarks": [
+          {
+            "name": "DeepSWE (v1.1)",
+            "value": 66.9,
+            "source": "https://huggingface.co/zai-org/GLM-5.3",
+            "asOf": "2026-09-04"
+          },
+          {
+            "name": "FrontierSWE",
+            "value": 78.1,
+            "source": "https://huggingface.co/zai-org/GLM-5.3",
+            "asOf": "2026-09-04"
+          }
+        ],
+        "notes": "Benchmarks per the model card."
+      }
     },
     {
       "id": "glm/glm-5.3-flash",
       "name": "GLM-5.3 Flash",
       "provider": "glm",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "320B total · 18B activated",
+        "docUrl": "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+        "notes": "Sizes per the vendor documentation."
+      }
     },
     {
       "id": "glm/glm-5.3-flashx",
@@ -474,14 +501,37 @@
       "name": "GLM 5.3 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.3",
+        "benchmarks": [
+          {
+            "name": "DeepSWE (v1.1)",
+            "value": 66.9,
+            "source": "https://huggingface.co/zai-org/GLM-5.3",
+            "asOf": "2026-09-04"
+          },
+          {
+            "name": "FrontierSWE",
+            "value": 78.1,
+            "source": "https://huggingface.co/zai-org/GLM-5.3",
+            "asOf": "2026-09-04"
+          }
+        ],
+        "notes": "Benchmarks per the model card."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5.3-flash",
       "name": "GLM 5.3 Flash (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "320B total · 18B activated",
+        "docUrl": "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+        "notes": "Sizes per the vendor documentation."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5.3-flashx",
@@ -836,7 +886,11 @@
       "name": "Kimi K3 (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "2.78T total · 104B activated · 93 layers",
+        "notes": "Activated parameters and layers per the model card."
+      }
     },
     {
       "id": "openrouter/amazon/nova-premier-v1",
@@ -885,14 +939,22 @@
       "name": "DeepSeek Flash (V4.1)",
       "provider": "deepseek",
       "enabled": true,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "552B backbone · 8–16B activated · 384 routed experts (6 per token) + 1 shared",
+        "notes": "Sizes per the model card."
+      }
     },
     {
       "id": "openrouter/deepseek/deepseek-v4.1-flash",
       "name": "DeepSeek V4.1 Flash (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "552B backbone · 8–16B activated · 384 routed experts (6 per token) + 1 shared",
+        "notes": "Sizes per the model card."
+      }
     },
     {
       "id": "openrouter/deepseek/deepseek-v4-flash-vision-exp",
@@ -1208,7 +1270,11 @@
       "name": "Qwen3.8 2.4T A95B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "2.4T total · 95B activated",
+        "notes": "Sizes per the model card."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.8-27b",

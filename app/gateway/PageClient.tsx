@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, ConfirmModal, Input, LoadingSpinner, Metric, ModalityIcons, Page, PageHeader, Pill, Surface } from '../components/ui';
+import ModelDetailsModal from './ModelDetailsModal';
+import { formatParams, formatPrice } from '../lib/model-format';
 import PasswordInput from '../components/PasswordInput';
 import { Skeleton } from '../components/Skeleton';
 import { useModels } from '../lib/models-context';
@@ -19,6 +21,8 @@ interface ModelInfo {
   pricingLive?: boolean;
   /** e.g. "text+image+file->text" — curated, matches what sync.ts provisions. */
   modality?: string;
+  /** Total parameters, when the model's card publishes them (open weights only). */
+  params?: number;
 }
 
 interface GatewayProvider {
@@ -89,6 +93,8 @@ export default function GatewayPageClient() {
 
   // Balance fetch state (per provider)
   const [balances, setBalances] = useState<Record<string, { balance: string; label?: string; loading?: boolean; error?: string; unsupported?: boolean } | null>>({});
+  /** Model whose details modal is open, null when none. */
+  const [detailsId, setDetailsId] = useState<string | null>(null);
   const [fetchingBalance, setFetchingBalance] = useState<Record<string, boolean>>({});
 
   // Accordion state — which provider cards are expanded
@@ -155,14 +161,8 @@ export default function GatewayPageClient() {
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
-  /** Format pricing for display: "$0.44 / $0.87" or "Free" or "Dynamic" or "—" */
-  function fmtPrice(p: { input: number; output: number } | null | undefined): string {
-    if (!p) return '—';
-    if (p.input === -1 && p.output === -1) return 'Dynamic';
-    if (p.input === 0 && p.output === 0) return 'Free';
-    const f = (n: number) => n < 0.01 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`;
-    return `${f(p.input)} / ${f(p.output)}`;
-  }
+  /** Format pricing for display — shared with the details modal (app/lib/model-format.ts). */
+  const fmtPrice = formatPrice;
 
   /**
    * Local model filter. Matches against both the display name and the id,
@@ -430,7 +430,7 @@ export default function GatewayPageClient() {
       </section>
 
       {/* =========================================================== */}
-      {/*  REV4A API KEY — sezione speciale                         */}
+      {/*  REV4A API KEY — special section                         */}
       {/* =========================================================== */}
       <div style={{ marginBottom: 20 }}>
       <Surface variant="panel">
@@ -658,6 +658,14 @@ export default function GatewayPageClient() {
                                   <span style={{ marginLeft: 8, color: 'var(--violet)', fontWeight: 500 }}>
                                     {fmtPrice(pricing)}
                                   </span>
+                                  {typeof m.params === 'number' && (
+                                    <span
+                                      style={{ marginLeft: 8, color: 'var(--text-dim)' }}
+                                      title={`${m.params.toLocaleString('en-US')} parameters (Hugging Face)`}
+                                    >
+                                      {formatParams(m.params)}
+                                    </span>
+                                  )}
                                   {m.pricingLive && (
                                     <span
                                       title="Live price from the OpenRouter API"
@@ -668,6 +676,15 @@ export default function GatewayPageClient() {
                                   )}
                                 </div>
                               </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`Details for ${m.name}`}
+                                title="Details"
+                                onClick={() => setDetailsId(m.id)}
+                              >
+                                ⋯
+                              </Button>
                               {modelMsg && (
                                 // Its own full-width line under the name, not a third column. As an
                                 // unconstrained flex item a long sync summary took its natural width
@@ -710,6 +727,7 @@ export default function GatewayPageClient() {
         cancelLabel="Cancel"
         tone="danger"
       />
-    </Page>
+          {detailsId && <ModelDetailsModal modelId={detailsId} onClose={() => setDetailsId(null)} />}
+</Page>
   );
 }

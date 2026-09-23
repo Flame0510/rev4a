@@ -11,6 +11,8 @@ import { readProviderKeys, writeProviderKeys } from './keys';
 import { dockerUnreachableReason, syncAllAgents, type SyncOutcome } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 import { getPricing } from '@/lib/model-pricing';
+import { getModelParams } from '@/lib/model-details';
+import { PROVIDER_LABELS } from '@/lib/provider-labels';
 import { loadModelsConfig, toggleModelOverride, type ModelConfigEntry } from '@/lib/model-catalogue';
 import { getLivePricing } from '@/lib/openrouter-pricing';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
@@ -33,70 +35,70 @@ interface ProviderEnvConfig {
 const PROVIDER_CONFIGS: Record<string, ProviderEnvConfig> = {
   google: {
     envKey: 'PROVIDER_GOOGLE_API_KEY',
-    label: 'Google Gemini',
+    label: PROVIDER_LABELS.google,
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     authHeader: 'x-goog-api-key',
     docsUrl: 'https://aistudio.google.com/app/apikey',
   },
   deepseek: {
     envKey: 'PROVIDER_DEEPSEEK_API_KEY',
-    label: 'DeepSeek',
+    label: PROVIDER_LABELS.deepseek,
     baseUrl: 'https://api.deepseek.com',
     authHeader: 'Authorization',
     docsUrl: 'https://platform.deepseek.com/api_keys',
   },
   openrouter: {
     envKey: 'PROVIDER_OPENROUTER_API_KEY',
-    label: 'OpenRouter',
+    label: PROVIDER_LABELS.openrouter,
     baseUrl: 'https://openrouter.ai/api',
     authHeader: 'Authorization',
     docsUrl: 'https://openrouter.ai/keys',
   },
   openai: {
     envKey: 'PROVIDER_OPENAI_API_KEY',
-    label: 'OpenAI',
+    label: PROVIDER_LABELS.openai,
     baseUrl: 'https://api.openai.com',
     authHeader: 'Authorization',
     docsUrl: 'https://platform.openai.com/api-keys',
   },
   anthropic: {
     envKey: 'PROVIDER_ANTHROPIC_API_KEY',
-    label: 'Anthropic',
+    label: PROVIDER_LABELS.anthropic,
     baseUrl: 'https://api.anthropic.com',
     authHeader: 'x-api-key',
     docsUrl: 'https://console.anthropic.com/settings/keys',
   },
   groq: {
     envKey: 'PROVIDER_GROQ_API_KEY',
-    label: 'Groq',
+    label: PROVIDER_LABELS.groq,
     baseUrl: 'https://api.groq.com/openai',
     authHeader: 'Authorization',
     docsUrl: 'https://console.groq.com/keys',
   },
   kimi: {
     envKey: 'PROVIDER_KIMI_API_KEY',
-    label: 'Kimi',
+    label: PROVIDER_LABELS.kimi,
     baseUrl: 'https://api.moonshot.cn',
     authHeader: 'Authorization',
     docsUrl: 'https://platform.kimi.com/console/api-keys',
   },
   glm: {
     envKey: 'PROVIDER_GLM_API_KEY',
-    label: 'GLM (Z.AI)',
+    label: PROVIDER_LABELS.glm,
     baseUrl: 'https://api.z.ai',
     authHeader: 'Authorization',
     docsUrl: 'https://z.ai/manage-apikey/apikey-list',
   },
   qwen: {
     envKey: 'PROVIDER_QWEN_API_KEY',
-    label: 'Qwen',
+    label: PROVIDER_LABELS.qwen,
     baseUrl: 'https://dashscope.aliyuncs.com',
     authHeader: 'Authorization',
     docsUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key',
   },
   rev4a: {
     envKey: 'REV4A_API_KEY',
-    label: 'REV4A API KEY',
+    label: PROVIDER_LABELS.rev4a,
     baseUrl: detectProviderGatewayUrl(),
     authHeader: 'Authorization',
     docsUrl: '',
@@ -167,6 +169,9 @@ export async function GET(request: NextRequest) {
   // containers from it, so taking a different one upstream would advertise
   // inputs the agent was never configured to accept.
   const livePricing = await getLivePricing(allModels.map((m) => m.id));
+  // Sizes for the row's "next to the price" hint: open-weight models only (see
+  // docs/dev/GATEWAY.md), absent for a model whose vendor does not publish one.
+  const paramsByModel = getModelParams();
 
   const providers = Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => {
     const providerModels = allModels.filter((m) => m.provider === key);
@@ -184,6 +189,7 @@ export async function GET(request: NextRequest) {
           if (staticPrice) entry.pricing = staticPrice;
         }
         if (m.modality) entry.modality = m.modality;
+        if (paramsByModel[m.id]) entry.params = paramsByModel[m.id];
         return entry;
       }),
       ...(providerKeys[key] ? { apiKey: providerKeys[key] } : {}),

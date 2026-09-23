@@ -316,6 +316,38 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 
 ---
 
+### `GET /api/models/details?id=<model id>`
+Everything the details modal shows for one model, and nothing more: fields the sources do
+not have are **absent**, never `null` and never a guess.
+
+**Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+{
+  "id": "glm/glm-5.3-flash", "name": "GLM-5.3 Flash", "provider": "glm",
+  "modality": "text+image+video->text", "enabled": false, "deprecated": false,
+  "price": { "input": 0.15, "output": 0.5, "source": "vendor" },
+  "details": { "description": "…", "created": "2026-08-26", "context": 1310720,
+               "providerContext": 1048576, "maxOutput": 943718,
+               "reasoning": { "mandatory": true, "default_effort": "max", "supported_efforts": ["max","high","low"] },
+               "supportedParameters": ["tools","reasoning","…"],
+               "benchmarks": { "design_arena": [ … ], "artificial_analysis": { … } },
+               "huggingFaceId": "zai-org/GLM-5.3-Flash", "url": "https://openrouter.ai/…" },
+  "info": null,
+  "asOf": "2026-09-23T14:02:40.271Z",
+  "detailsSource": "openrouter"
+}
+```
+
+`price.source` is `openrouter` for an `openrouter/*` entry and `vendor` for a direct one,
+which keeps prices honest: the refresh script never writes a vendor price. `details` comes
+from the generated `model-details.json` (`npm run refresh:pricing`, see
+`docs/dev/GATEWAY.md`), `info` from the catalogue's hand-written block, and `asOf` is when
+the generated part was produced. An id the catalogue does not carry answers `404`.
+
+**Errors:** `400` missing `id`, `404` unknown model.
+
 ### `GET /api/models`
 Models eligible to be used: the catalogue filtered down to models that are enabled
 (after overrides) and whose provider has a key configured, grouped by provider. Feeds the model pickers in the agent's
@@ -2564,8 +2596,11 @@ from local state only.
 
 **Response:** `{ "installed": "1.4.2", "latest": "1.5.0", "updateAvailable": true, "package": "@flame0510/project-aether", "log": "update.log" }`
 
-`log` is the file name, in the Rev4a data directory, where the update's output is
-written.
+`installed` is `null` when `package.json` cannot be read — during an update npm rewrites
+it, and a transient failure must not look like a version. With `installed` unknown there
+is nothing to compare, so `latest` is `null` and `updateAvailable` false. `installed` is
+never a placeholder like `0.0.0`. `log` is the file name, in the Rev4a data directory,
+where the update's output is written.
 
 ### `POST /api/update-check`
 Run `rev4a update` as a detached background process. Nothing here restarts anything:

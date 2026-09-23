@@ -615,6 +615,9 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ui-tone--danger { border-color: #7f1d1d; }
 .ui-muted { color: var(--text-dim); }
 .ui-metric-value { margin-top: 14px; font-size: 26px; font-weight: 800; color: var(--text); }
+/* Compact metric: for grids inside dialogs, where the card value would wrap. */
+.ui-metric--sm .ui-metric-value { margin-top: 6px; font-size: 15px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.ui-metric--sm .ui-kicker { font-size: 9px; }
 .ui-tone--danger .ui-metric-value { color: var(--red); }
 .ui-metric-subtitle { margin-top: 8px; font-size: 11px; }
 .ui-card-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
@@ -1386,7 +1389,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 
   /* Padding bottom per non coprire contenuti — handled by .app-shell__content */
 
-  /* Chat button alzato sopra la bottom navbar */
+  /* Chat button raised above the bottom navbar */
   .ochat__trigger {
     bottom: 70px !important;
   }

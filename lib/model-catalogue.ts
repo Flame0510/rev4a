@@ -14,6 +14,20 @@ import { readProviderKeys } from '@/app/api/gateway/provider/keys';
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The hand-written `info` block of a catalogue entry: what OpenRouter cannot tell us
+ * (parameter counts, the vendor's own docs, benchmarks published elsewhere). Every
+ * field is optional and every number carries its source — never an estimate.
+ */
+export interface ModelInfo {
+  params?: string;
+  released?: string;
+  docUrl?: string;
+  knowledgeCutoff?: string;
+  benchmarks?: { name: string; value: number; source: string; asOf?: string }[];
+  notes?: string;
+}
+
 export interface ModelConfigEntry {
   id: string;
   name: string;
@@ -22,6 +36,8 @@ export interface ModelConfigEntry {
   modality?: string;
   /** Upstream has retired this id. It still answers, but is redirected. */
   deprecated?: boolean;
+  /** Curated extras for the details modal (lib/model-details.ts). */
+  info?: ModelInfo;
 }
 
 /* ------------------------------------------------------------------ */
@@ -86,6 +102,7 @@ function loadBundledModels(): ModelConfigEntry[] {
       enabled: Boolean(m.enabled),
       modality: typeof m.modality === 'string' ? m.modality : undefined,
       deprecated: m.deprecated === true ? true : undefined,
+      info: m.info && typeof m.info === 'object' ? (m.info as ModelInfo) : undefined,
     }));
     lastGoodBundle = models;
     bundleStatus = 'ok';

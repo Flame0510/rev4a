@@ -148,6 +148,64 @@ for anyone cloning the project. It defines all known models across all providers
 Only enabled models for providers with a configured API key are synced to agent
 containers.
 
+Provider display names come from `lib/provider-labels.ts`: the Gateway's cards and the
+details modal read the same map, so a provider is never called two things in one page.
+
+### Model details (the details modal)
+
+The Gateway model row has a **⋯ Details** button opening `ModelDetailsModal`
+(`app/gateway/ModelDetailsModal.tsx`), fed by `GET /api/models/details?id=`. Three
+sources, each one labelled in the modal:
+
+| Source | File | Nature |
+|---|---|---|
+| Identity, enabled, modality, deprecation | `models.config.json` | curated by hand |
+| Price | `model-pricing.json` | refreshed for `openrouter/*`, hand for direct vendors |
+| Description, specs, benchmarks | `model-details.json` | **generated**, never hand-edited |
+
+`npm run refresh:pricing` (script `scripts/refresh-model-pricing.mjs`) fetches the
+OpenRouter catalogue once and writes both the prices and `model-details.json`:
+description, release date (`created`), context and the provider's own limit, max output,
+tokenizer, instruct type, knowledge cutoff, Hugging Face id, reasoning (mandatory, default
+and supported efforts), supported parameters, and the benchmarks OpenRouter publishes
+(design arenas with elo/rank/win-rate, Artificial Analysis indices).
+
+**Size and architecture** come from a second source: for every entry with a
+`hugging_face_id` the script asks the Hugging Face API (`safetensors.total` and the
+per-dtype breakdown, the task, the languages, downloads and likes) **and the model's
+`config.json`** — the API's summary config is reduced, the raw file is what carries the
+architecture. That covers the **open-weight** models (DeepSeek, GLM, Kimi, Qwen, Llama,
+StepFun…); a closed model has no card, so it gets no `params` and no `hf` block, and the
+modal hides those rows rather than estimating. `--no-hf` skips the lookups.
+
+Stored per model in an `hf` object: the architecture class and type, the mixture of
+experts (`experts`, per token, shared), layers, hidden size, attention heads (and KV
+heads, since MQA/GQA change what serving costs), vocabulary, the model's own max context,
+whether it has a **vision encoder** (multimodal models nest their language model under
+`text_config` and the encoder under `vision_config`), the precision (`fp8`,
+`compressed-tensors`…) and the weight mix by dtype, the task, the languages and the
+popularity. For a mixture-of-experts model the card's number is the **total**; an *active*
+count is a derivation, so the modal shows the facts (experts, per token) and the curated
+`info.params` free text can add the vendor's own "355B total, ~32B active". A direct entry is
+matched through the vendor alias map (`glm` → `z-ai`, `kimi` → `moonshotai`) for the data
+only — **its price stays the vendor's own**, and the modal says which is which.
+
+Anything OpenRouter does not publish is curated in the catalogue as an optional `info`
+block, and every number there carries its source:
+
+```json
+"info": {
+  "params": "~1.8T MoE (active ~40B)",
+  "docUrl": "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+  "knowledgeCutoff": "2026-03",
+  "benchmarks": [ { "name": "SWE-bench Verified", "value": 78.4, "source": "https://…", "asOf": "2026-08-26" } ],
+  "notes": "Native multimodal; 3x the coding-plan quota."
+}
+```
+
+No generated field ever replaces a curated one silently: prices are separate files, and the
+modal shows the generated part's date (`asOf`).
+
 ---
 
 ## Per-agent model assignment
