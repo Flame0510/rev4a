@@ -59,7 +59,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     const now = Date.now();
     if (cache && now - cache.checkedAt < CACHE_TTL_MS) {
       latest = cache.latest;
-      updateAvailable = cache.updateAvailable;
+      // Recomputed against the version reading us now: `installed` is not cached, and
+      // reusing the cached flag made the banner offer an update that had just been
+      // installed, for up to the cache's fifteen minutes (seen right after an update).
+      updateAvailable = !!latest && latest !== installed;
     } else {
       try {
         const pkgName = pkg.name || FALLBACK_PKG_NAME;

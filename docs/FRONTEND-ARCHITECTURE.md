@@ -36,6 +36,7 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `TemplateOption` | `TemplateOption.tsx` | Agent template selection card with avatar, description, optional badge. Centralises create-agent card styling. |
 | `Pill` | `Pill.tsx` | Small status/attribute label. Variants: `default`, `accent`. |
 | `ModalityIcons` | `ModalityIcons.tsx` | Capability badges parsed from a model's `modality` string (`"text+image->text"`). Input types render as icons; a non-text **output** is called out separately, since reading an image and generating one are different capabilities. Pass `dynamic` for router models, which advertise the union of everything they might route to and so show "varies" instead. |
+| `VersionBanner` (git hook note) | — | The repository ships `.githooks/pre-commit` (the language check on staged files); enabling it is one command per clone, documented in CONTRIBUTING. |
 | `Metric` | `Metric.tsx` | Metric card with title, value, subtitle, tone, and a `size` (`md` default, `sm` for a grid inside a dialog: smaller value, tighter spacing). |
 | `StatusCard` | `StatusCard.tsx` | Health/status report card. |
 | `Surface` | `Surface.tsx` | Shared panel/card surface, variant prop. |

@@ -2596,6 +2596,10 @@ from local state only.
 
 **Response:** `{ "installed": "1.4.2", "latest": "1.5.0", "updateAvailable": true, "package": "@flame0510/project-aether", "log": "update.log" }`
 
+`updateAvailable` is recomputed against the version reading the request, even when the
+registry answer comes from the fifteen-minute cache: reusing the cached flag made the
+banner offer an update that had just been installed, right after an update.
+
 `installed` is `null` when `package.json` cannot be read — during an update npm rewrites
 it, and a transient failure must not look like a version. With `installed` unknown there
 is nothing to compare, so `latest` is `null` and `updateAvailable` false. `installed` is
