@@ -146,7 +146,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
       <button
         type="button"
         onClick={onClose}
-        aria-label="Chiudi"
+        aria-label="Close"
         style={{
           position: 'absolute',
           top: isMobile ? 16 : 14,
@@ -185,9 +185,9 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
                 {session.status ?? 'idle'}
               </Row>
               <Row label="TIPO">
-                {session.session_id.includes(':cron:') ? 'cron' : 'sessione'}
+                {session.session_id.includes(':cron:') ? 'cron' : 'session'}
               </Row>
-              <Row label="MODELLO">{session.model ?? '-'}</Row>
+              <Row label="MODEL">{session.model ?? '-'}</Row>
               <Row label="COSTO">{formatUsdOrDash(session.cost_usd)}</Row>
               <Row label="TOKEN">
                 in: {formatTokens(session.tokens_in)} out: {formatTokens(session.tokens_out)}
@@ -215,7 +215,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
             ))}
           </Section>
 
-          <Section title="SESSIONI FIGLIE">
+          <Section title="CHILD SESSIONS">
             {children.length === 0 && <Muted>No child sessions</Muted>}
             {children.map((child) => (
               <div key={child.session_id} style={{ fontSize: 12 }}>

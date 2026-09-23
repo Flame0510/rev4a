@@ -106,7 +106,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ? 'Heartbeat metrics unavailable in this DB'
         : latestMetricAgeSeconds === null
           ? 'No heartbeat metrics detected'
-          : `ultimo heartbeat metrics ${latestMetricAgeSeconds}s fa`,
+          : `last heartbeat metrics ${latestMetricAgeSeconds}s ago`,
       source: 'runtime',
     });
 
@@ -157,7 +157,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         severity: 'warning',
         source: 'runtime',
         title: 'Review recent errors',
-        details: `${eventErrorCount} error events nelle ultime 24h.`,
+        details: `${eventErrorCount} error events in the last 24h.`,
         actionHref: '/lineage',
         dismissible: true,
         createdAt,
@@ -181,7 +181,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       label: 'Usage-based cost today',
       health: billing.usageBasedCost > 10 ? 'warning' : 'ok',
       value: `$${billing.usageBasedCost.toFixed(2)}`,
-      details: `DB estimate $${billing.dbEstimatedCost.toFixed(2)}; fixed ${billing.buckets.fixed.sessions} sessioni; credits ${billing.buckets.credits.sessions} sessioni`,
+      details: `DB estimate $${billing.dbEstimatedCost.toFixed(2)}; fixed ${billing.buckets.fixed.sessions} sessions; credits ${billing.buckets.credits.sessions} sessions`,
       source: 'cost',
     });
     if (billing.usageBasedCost > 10) {

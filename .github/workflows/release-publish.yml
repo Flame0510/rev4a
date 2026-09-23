@@ -65,6 +65,9 @@ jobs:
         run: npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
 
       # Gate: se non compila, non si pubblica.
+      - name: Check the language (100% English)
+        run: node scripts/check-language.mjs
+
       - name: Build
         run: npm run build
 

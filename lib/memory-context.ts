@@ -124,7 +124,7 @@ function formatBytesForWarning(value: number): string {
 function applyBootstrapSizeWarnings(file: FileSummary): void {
   const limit = BOOTSTRAP_FILE_WARN_BYTES[file.key as BootstrapFileName];
   if (!limit || file.size === null || file.size <= limit) return;
-  file.warnings.push(`${file.key} sopra soglia: ${formatBytesForWarning(file.size)} / ${formatBytesForWarning(limit)}`);
+  file.warnings.push(`${file.key} above threshold: ${formatBytesForWarning(file.size)} / ${formatBytesForWarning(limit)}`);
 }
 
 export function inspectFile(filePath: string, key: string): FileSummary {
@@ -334,7 +334,7 @@ function inspectAgent(seed: AgentSeed): AgentMemorySummary {
 
   summary.strategy = classifyAgent(summary);
   if (bootstrapBytes > WORKSPACE_TOTAL_WARN_BYTES) {
-    summary.warnings.push(`Bootstrap totale sopra budget: ${formatBytesForWarning(bootstrapBytes)} / ${formatBytesForWarning(WORKSPACE_TOTAL_WARN_BYTES)}`);
+    summary.warnings.push(`Bootstrap total above budget: ${formatBytesForWarning(bootstrapBytes)} / ${formatBytesForWarning(WORKSPACE_TOTAL_WARN_BYTES)}`);
   }
   summary.warnings = uniqueStrings(summary.warnings.concat(...Object.values(files).map((file) => file.warnings)));
   return summary;

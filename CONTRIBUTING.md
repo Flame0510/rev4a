@@ -1,5 +1,19 @@
 # Contributing to Rev4a
 
+## Language rule
+
+**100% English** — code, identifiers, comments, docs, UI strings, commit messages
+(`AGENTS.md` §2.1). `npm run check:language` scans every tracked file for Italian words and
+exits non-zero; the release workflow runs it, so a release cannot ship Italian. The list is
+deliberately conservative (it leaves out words that are English too, like `come` or `per`),
+and a line carrying `lang-ok` is skipped when the Italian is the point of that line:
+
+```ts
+const sample = 'il messaggio di errore'; // lang-ok: the exact text a user reported
+```
+
+---
+
 ## Documentation rule
 
 **Every change to code must include a documentation update in the same commit.**
@@ -30,7 +44,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |
-| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section |
+| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. Prices and the generated model details come from `npm run refresh:pricing` (`model-pricing.json`, `model-details.json` — never hand-edited); add/remove the catalogue's `info` block for what OpenRouter does not publish |
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
 | `.github/workflows/release-publish.yml` | This file — Release process section |
