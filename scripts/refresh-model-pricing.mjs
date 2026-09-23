@@ -49,13 +49,13 @@ function round(n) {
 }
 
 /**
- * Serialise model-pricing.json preserving its `5.0` style for whole numbers.
- * JSON.stringify writes `5`, which is the same value but rewrites ~114 lines
- * that didn't change — burying the handful of real price moves in noise and
- * making the diff unreviewable on every run.
+ * Serialise model-pricing.json in the shape the committed file has: integers as
+ * integers (`5`, not `5.0`) and up to six decimals otherwise. `perMillion` already
+ * rounds there, so `String` cannot emit float noise, and a run rewrites only the lines
+ * whose price actually moved — which is what makes the diff reviewable.
  */
 function serialisePricing(pricing) {
-  const num = (n) => (Number.isInteger(n) ? n.toFixed(1) : String(n));
+  const num = (n) => String(n);
   const body = Object.entries(pricing)
     .map(([id, p]) => `  ${JSON.stringify(id)}: {\n    "input": ${num(p.input)},\n    "output": ${num(p.output)}\n  }`)
     .join(',\n');
