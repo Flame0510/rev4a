@@ -12,6 +12,14 @@ and a line carrying `lang-ok` is skipped when the Italian is the point of that l
 const sample = 'il messaggio di errore'; // lang-ok: the exact text a user reported
 ```
 
+Git hooks are **not** installed automatically (nothing rewrites a contributor's git
+config): enable the one in `.githooks/` with a single command per clone, and it checks what
+you are committing before the commit exists:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ---
 
 ## Documentation rule
