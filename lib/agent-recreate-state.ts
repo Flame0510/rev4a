@@ -3,8 +3,9 @@
  *
  * Kept apart from lib/agent-recreate.ts so busy checks (lib/agent-busy.ts, the provider
  * sync) can ask which agents are being recreated without importing the recreate action.
+ * The machinery is lib/agent-job-state.ts; this file holds the table's types and names.
  */
-import { openDb } from '@/lib/db';
+import { createJobState } from '@/lib/agent-job-state';
 
 export type RecreateStatus = 'backing_up' | 'recreating' | 'done' | 'failed' | 'interrupted';
 
@@ -25,84 +26,42 @@ export interface AgentRecreateRow {
 
 const FINAL: readonly RecreateStatus[] = ['done', 'failed', 'interrupted'];
 
-export function insertRecreate(agentId: string, image: string): number {
-  const db = openDb(false);
-  try {
-    const now = Date.now();
-    const info = db.prepare(
-      `INSERT INTO agent_recreates (agent_id, status, image, started_at, updated_at)
-       VALUES (?, 'backing_up', ?, ?, ?)`,
-    ).run(agentId, image, now, now);
-    return Number(info.lastInsertRowid);
-  } finally {
-    db.close();
-  }
-}
+const state = createJobState({
+  table: 'agent_recreates',
+  initialStatus: 'backing_up',
+  activeStatuses: ACTIVE_RECREATE_STATUSES,
+  finalStatuses: FINAL,
+  insertColumns: ['image'],
+  writableColumns: ['backup_file'],
+});
 
 type Writable = Partial<Pick<AgentRecreateRow, 'status' | 'backup_file' | 'error'>>;
 
+export function insertRecreate(agentId: string, image: string): number {
+  return state.insert(agentId, image);
+}
+
 export function updateRecreateRow(id: number, fields: Writable): void {
-  const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
-  const now = Date.now();
-  const sets = [...entries.map(([k]) => `${k} = ?`), 'updated_at = ?'];
-  const values: unknown[] = [...entries.map(([, v]) => v), now];
-  if (fields.status && FINAL.includes(fields.status)) {
-    sets.push('finished_at = ?');
-    values.push(now);
-  } else if (fields.status) {
-    sets.push('finished_at = NULL');
-  }
-  const db = openDb(false);
-  try {
-    db.prepare(`UPDATE agent_recreates SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
-  } finally {
-    db.close();
-  }
+  state.update(id, fields);
 }
 
 export function latestRecreate(agentId: string): AgentRecreateRow | null {
-  const db = openDb(true);
-  try {
-    return (db.prepare('SELECT * FROM agent_recreates WHERE agent_id = ? ORDER BY id DESC LIMIT 1').get(agentId) as AgentRecreateRow | undefined) ?? null;
-  } finally {
-    db.close();
-  }
+  return state.latest<AgentRecreateRow>(agentId);
 }
 
 export function isRecreateActive(agentId: string): boolean {
-  const row = latestRecreate(agentId);
-  return !!row && ACTIVE_RECREATE_STATUSES.includes(row.status);
+  return state.isActive(agentId);
 }
 
-/** AGENT_IDs with a recreate in an active status. */
 export function activeRecreateAgentIds(): Set<string> {
-  const db = openDb(true);
-  try {
-    const placeholders = ACTIVE_RECREATE_STATUSES.map(() => '?').join(', ');
-    const rows = db.prepare(`SELECT DISTINCT agent_id FROM agent_recreates WHERE status IN (${placeholders})`).all(...ACTIVE_RECREATE_STATUSES) as { agent_id: string }[];
-    return new Set(rows.map((r) => r.agent_id));
-  } finally {
-    db.close();
-  }
+  return state.activeAgentIds();
 }
 
-/**
- * At startup no recreate job can be running: any row still active was cut off by the
- * restart. It becomes `interrupted`, keeping the step it was in.
- */
 export function markInterruptedRecreates(): number {
-  const db = openDb(false);
-  try {
-    const placeholders = ACTIVE_RECREATE_STATUSES.map(() => '?').join(', ');
-    const now = Date.now();
-    const info = db.prepare(
-      `UPDATE agent_recreates
-         SET error = COALESCE(error, 'Rev4a restarted while this step was running: ' || status),
-             status = 'interrupted', updated_at = ?, finished_at = ?
-       WHERE status IN (${placeholders})`,
-    ).run(now, now, ...ACTIVE_RECREATE_STATUSES);
-    return info.changes;
-  } finally {
-    db.close();
-  }
+  return state.markInterrupted();
+}
+
+/** Keep the newest `keepPerAgent` recreates of each agent; the rest is history. */
+export function pruneRecreates(keepPerAgent: number): number {
+  return state.prune(keepPerAgent);
 }

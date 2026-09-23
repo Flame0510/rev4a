@@ -207,8 +207,17 @@ The central container, running the Next.js dashboard + orchestration API.
   table (`lib/agent-restore-state.ts`): the archive replaces the volume (stop, clear,
   extract, start), up to 30 minutes. Same 202-and-background shape as a recreate, and the
   same guarantees — a reload or a Rev4a restart does not lose the job, a second restore
-  is refused, an interrupted one starts the container again. The extract has no
-  percentage (it is a single `tar xzf`); the panel and the agent card show `RESTORING`.
+  is refused, and an interrupted one is **run again from the same archive** at startup: a
+  half-written volume must never be presented as a restore, and the archive was already
+  checked before the job started (when it is gone the container is started on whatever the
+  volume holds, and the row says so). The extract has no percentage (it is a single
+  `tar xzf`); the panel and the agent card show `RESTORING`.
+- **The four job tables share one implementation**: `lib/agent-job-state.ts` builds the
+  insert/update/latest/active/`markInterrupted` machinery for `agent_upgrades`,
+  `agent_recreates`, `agent_restores` and `agent_edits`; each `lib/agent-*-state.ts` keeps
+  only its table's types and function names. They were four near-identical copies that had
+  started to drift. At startup `lib/agent-jobs-maintenance.ts` prunes each table to the
+  newest 20 rows per agent — the panel reads the latest row only, so the rest is history.
 - **Browser access** to an agent's Control UI goes through `lib/agent-devices.ts`:
   `openclaw devices list | approve | reject | rename | remove` and
   `openclaw dashboard --json`, run inside the container with the async `dockerExec`.

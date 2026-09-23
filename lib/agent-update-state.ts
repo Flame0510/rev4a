@@ -2,9 +2,10 @@
  * Persisted state of agent updates: the `agent_upgrades` table (lib/db-bootstrap.mjs).
  *
  * Kept apart from lib/agent-update.ts so the provider sync can ask which agents are
- * being updated without importing the update action, which imports the sync.
+ * being updated without importing the update action, which imports the sync. The
+ * machinery is lib/agent-job-state.ts; this file holds the table's types and names.
  */
-import { openDb } from '@/lib/db';
+import { createJobState } from '@/lib/agent-job-state';
 
 export type UpdateStatus =
   | 'pending'
@@ -38,65 +39,36 @@ export interface AgentUpdateRow {
 
 const FINAL: readonly UpdateStatus[] = ['done', 'failed', 'interrupted', 'rolled_back', 'rollback_failed'];
 
-export function insertUpdate(agentId: string, fromVersion: string | null, toVersion: string): number {
-  const db = openDb(false);
-  try {
-    const now = Date.now();
-    const info = db.prepare(
-      `INSERT INTO agent_upgrades (agent_id, status, from_version, to_version, started_at, updated_at)
-       VALUES (?, 'pending', ?, ?, ?, ?)`,
-    ).run(agentId, fromVersion, toVersion, now, now);
-    return Number(info.lastInsertRowid);
-  } finally {
-    db.close();
-  }
-}
+const state = createJobState({
+  table: 'agent_upgrades',
+  initialStatus: 'pending',
+  activeStatuses: ACTIVE_STATUSES,
+  finalStatuses: FINAL,
+  insertColumns: ['from_version', 'to_version'],
+  writableColumns: ['backup_file', 'baseline_json', 'verify_json'],
+});
 
 type Writable = Partial<Pick<AgentUpdateRow, 'status' | 'backup_file' | 'baseline_json' | 'verify_json' | 'error'>>;
 
+export function insertUpdate(agentId: string, fromVersion: string | null, toVersion: string): number {
+  return state.insert(agentId, fromVersion, toVersion);
+}
+
 export function updateRow(id: number, fields: Writable): void {
-  const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
-  const now = Date.now();
-  const sets = [...entries.map(([k]) => `${k} = ?`), 'updated_at = ?'];
-  const values: unknown[] = [...entries.map(([, v]) => v), now];
-  if (fields.status && FINAL.includes(fields.status)) {
-    sets.push('finished_at = ?');
-    values.push(now);
-  } else if (fields.status) {
-    sets.push('finished_at = NULL');
-  }
-  const db = openDb(false);
-  try {
-    db.prepare(`UPDATE agent_upgrades SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
-  } finally {
-    db.close();
-  }
+  state.update(id, fields);
 }
 
 export function latestUpdate(agentId: string): AgentUpdateRow | null {
-  const db = openDb(true);
-  try {
-    return (db.prepare('SELECT * FROM agent_upgrades WHERE agent_id = ? ORDER BY id DESC LIMIT 1').get(agentId) as AgentUpdateRow | undefined) ?? null;
-  } finally {
-    db.close();
-  }
+  return state.latest<AgentUpdateRow>(agentId);
 }
 
 export function isUpdateActive(agentId: string): boolean {
-  const row = latestUpdate(agentId);
-  return !!row && ACTIVE_STATUSES.includes(row.status);
+  return state.isActive(agentId);
 }
 
 /** AGENT_IDs with an update in an active status. */
 export function activeUpdateAgentIds(): Set<string> {
-  const db = openDb(true);
-  try {
-    const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ');
-    const rows = db.prepare(`SELECT DISTINCT agent_id FROM agent_upgrades WHERE status IN (${placeholders})`).all(...ACTIVE_STATUSES) as { agent_id: string }[];
-    return new Set(rows.map((r) => r.agent_id));
-  } finally {
-    db.close();
-  }
+  return state.activeAgentIds();
 }
 
 /**
@@ -105,18 +77,10 @@ export function activeUpdateAgentIds(): Set<string> {
  * between Rollback and a new Update.
  */
 export function markInterruptedUpdates(): number {
-  const db = openDb(false);
-  try {
-    const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ');
-    const now = Date.now();
-    const info = db.prepare(
-      `UPDATE agent_upgrades
-         SET error = COALESCE(error, 'Rev4a restarted while this step was running: ' || status),
-             status = 'interrupted', updated_at = ?, finished_at = ?
-       WHERE status IN (${placeholders})`,
-    ).run(now, now, ...ACTIVE_STATUSES);
-    return info.changes;
-  } finally {
-    db.close();
-  }
+  return state.markInterrupted();
+}
+
+/** Keep the newest `keepPerAgent` updates of each agent; the rest is history. */
+export function pruneUpdates(keepPerAgent: number): number {
+  return state.prune(keepPerAgent);
 }

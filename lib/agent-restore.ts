@@ -123,19 +123,42 @@ export function agentRestoreView(agentId: string): AgentRestoreView | null {
 
 /**
  * At startup no restore job can be running: rows still active were cut off by the
- * restart. They become `interrupted`; a container left stopped is started again,
- * best-effort, so nothing stays down.
+ * restart. A restore interrupted **mid-extract** leaves a half-written volume, so
+ * starting the container would present a partial workspace as if it were the restore: the
+ * extract is run again from the same archive (it is the source of truth and the file was
+ * checked before the job started), in the background, and the row lands in its final
+ * status. When the archive is gone the container is started on whatever the volume holds,
+ * and the row says so.
  */
 export async function recoverInterruptedRestores(): Promise<number> {
   const ids = activeRestoreAgentIds();
   if (ids.size === 0) return 0;
   const interrupted = markInterruptedRestores();
   for (const agentId of ids) {
-    const container = await inspectAgentContainer(agentId).catch(() => null);
-    const name = container?.Name?.replace(/^\//, '');
-    if (!name || container?.State?.Running) continue;
+    const row = latestRestore(agentId);
+    const name = (await inspectAgentContainer(agentId).catch(() => null))?.Name?.replace(/^\//, '');
+    if (row?.file && (await backupFileExists(agentId, row.file))) {
+      console.log(`[agent:restore] ${agentId}: re-running the interrupted restore from ${row.file}`);
+      void runRestore(row.id, agentId, row.file).finally(() => undefined);
+      continue;
+    }
+    if (!name) continue;
     const started = await startAndVerifyContainer(agentId, name);
     if (!started.ok) console.warn(`[agent:restore] ${agentId} did not come back after an interrupted restore: ${started.error}`);
   }
   return interrupted;
+}
+
+/** Whether the archive still exists in the backup volume. */
+async function backupFileExists(agentId: string, file: string): Promise<boolean> {
+  if (!isValidBackupFile(agentId, file)) return false;
+  try {
+    await runDocker(
+      ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'test -f "/backup/$FILE"'],
+      { timeoutMs: 30_000, env: { FILE: file } },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }

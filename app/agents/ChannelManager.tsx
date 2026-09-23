@@ -52,6 +52,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
 
   const [pending, setPending] = useState<PendingPairing[]>([]);
   const [approved, setApproved] = useState<ApprovedPairing[]>([]);
+  const [pairingError, setPairingError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pairingsAbortRef = useRef<AbortController | null>(null);
   const channelsAbortRef = useRef<AbortController | null>(null);
@@ -85,6 +86,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
         const data = await res.json();
         setPending(data.pending ?? []);
         setApproved(data.approved ?? []);
+        setPairingError(data.error ?? null);
       }
     } catch (e: any) {
       if (e?.name !== 'AbortError') { /* ignore aborted */ }
@@ -288,6 +290,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
           restarting={restarting}
           pending={pending}
           approved={approved}
+          pairingError={pairingError}
           approvingCode={approvingCode}
           revokingId={revokingId}
           onConnect={handleTelegramConnect}
@@ -305,7 +308,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
 
 function TelegramTab({
   tg, tgToken, setTgToken, loading, disconnecting, pairingsLoading, restarting,
-  pending, approved, approvingCode, revokingId,
+  pending, approved, pairingError, approvingCode, revokingId,
   onConnect, onDisconnect, onRestart, onApprove, onRevoke,
 }: {
   tg: TelegramChannel | null;
@@ -317,6 +320,7 @@ function TelegramTab({
   restarting: boolean;
   pending: PendingPairing[];
   approved: ApprovedPairing[];
+  pairingError: string | null;
   approvingCode: string | null;
   revokingId: string | null;
   onConnect: () => void;
@@ -343,6 +347,7 @@ function TelegramTab({
         <PairingSection
           pending={pending}
           approved={approved}
+          pairingError={pairingError}
           pairingsLoading={pairingsLoading}
           approvingCode={approvingCode}
           revokingId={revokingId}
@@ -389,11 +394,12 @@ function TelegramTab({
 // ── Pairing Section ──────────────────────────
 
 function PairingSection({
-  pending, approved, pairingsLoading, approvingCode, revokingId,
+  pending, approved, pairingError, pairingsLoading, approvingCode, revokingId,
   onApprove, onRevoke,
 }: {
   pending: PendingPairing[];
   approved: ApprovedPairing[];
+  pairingError: string | null;
   pairingsLoading: boolean;
   approvingCode: string | null;
   revokingId: string | null;
@@ -462,9 +468,15 @@ function PairingSection({
           )}
 
           {approved.length === 0 && (
-            <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>
-              No approved senders
-            </div>
+            pairingError ? (
+              <div style={{ fontSize: 10, color: 'var(--red, #ef4444)' }}>
+                {pairingError}
+              </div>
+            ) : (
+              <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+                No approved senders
+              </div>
+            )
           )}
         </>
       )}

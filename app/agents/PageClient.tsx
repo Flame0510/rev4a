@@ -343,9 +343,19 @@ export default function AgentsPageClient() {
       const res = await fetch('/api/agents/devices-summary');
       if (!res.ok || seq !== dvSummarySeq.current) return;
       const payload = await res.json();
-      const byId: Record<string, { pending: number }> = {};
-      for (const row of payload.agents ?? []) byId[row.agentId] = { pending: row.pending ?? 0 };
-      setDvSummary(byId);
+      // A row whose read failed carries `error: true` and no count: keep the previous
+      // value instead of writing zero, which would hide a request that is really waiting.
+      setDvSummary((prev) => {
+        const next: Record<string, { pending: number }> = {};
+        for (const row of payload.agents ?? []) {
+          if (row.error === true) {
+            if (prev[row.agentId]) next[row.agentId] = prev[row.agentId];
+            continue;
+          }
+          next[row.agentId] = { pending: row.pending ?? 0 };
+        }
+        return next;
+      });
     } catch { /* badges are optional */ }
   }, []);
 

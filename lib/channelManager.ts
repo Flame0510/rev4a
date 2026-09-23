@@ -287,6 +287,12 @@ export interface ApprovedPairing {
 export interface PairingState {
   pending: PendingPairing[];
   approved: ApprovedPairing[];
+  /**
+   * Why the approved list is empty, when that is not simply "none": the pairing store
+   * could not be read (the writer is not in this OpenClaw build, or the read failed).
+   * Callers must show it instead of "No approved senders", which would be a guess.
+   */
+  error?: string | null;
 }
 
 /**
@@ -428,8 +434,13 @@ export async function getPairings(agentId: string, channel: string = 'telegram')
   if (store.status === 'ok') {
     for (const entry of store.entries ?? []) approved.push({ senderId: String(entry) });
   }
+  // 'absent' is a real answer (no store yet, so no approved senders); anything else means
+  // the read did not succeed and an empty list must not be presented as "none".
+  const error = store.status === 'ok' || store.status === 'absent'
+    ? null
+    : (store.error ?? 'The approved senders could not be read');
 
-  return { pending, approved };
+  return { pending, approved, error };
 }
 
 /** Approve a pending pairing code */

@@ -1339,7 +1339,10 @@ releases used are gone, and reading those returned nothing).
 |---|---|---|
 | `channel` | no | Channel name (default: `telegram`) |
 
-**Response:**
+**Response:** `{ pending: [...], approved: [...], error: null }` — `error` carries why the
+approved list is empty when that is not simply "none" (the store could not be read); the
+panel shows it instead of "No approved senders". A missing store is not an error.
+
 ```json
 {
   "pending": [

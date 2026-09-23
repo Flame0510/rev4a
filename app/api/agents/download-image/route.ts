@@ -32,6 +32,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const version = (body?.version as string | undefined) ?? (await defaultDownloadVersion());
 
+  // Checked again here, next to the start: the first check and this one are separated by
+  // awaits, so two requests can pass it together. The loser of the race is refused inside
+  // downloadAgentImage, and that rejection would be swallowed by the catch below — the
+  // route would answer 202 for a download it never started.
+  if (getIsDownloading()) {
+    return NextResponse.json({ error: 'A download is already in progress' }, { status: 409 });
+  }
+
   // Start download in background — fire and forget
   downloadAgentImage({ version }).catch((e: unknown) => {
     console.error(`[download-image] OpenClaw ${version}:`, (e as Error).message);

@@ -428,7 +428,9 @@ function seedAgentToken() {
 function build() {
   log('BUILD', 'Building Next.js app…');
   try {
-    execSync('npx next build', { stdio: 'inherit', cwd: ROOT, timeout: 120_000 });
+    // Generous on purpose: a build is the slowest step of an install, and killing it
+    // because it passed two minutes takes the server down over slowness alone.
+    execSync('npx next build', { stdio: 'inherit', cwd: ROOT, timeout: 30 * 60_000 });
     log('BUILD', 'Build complete');
   } catch (err) {
     log('BUILD', `Build failed: ${err.message}`);
@@ -754,13 +756,14 @@ if (cmd === 'update') {
       console.log('Detected git repo — pulling and building…');
       execSync(`cd ${root} && git pull && npm install && npm run build`, {
         stdio: 'inherit',
-        timeout: 120_000,
+        // npm install + a full build: minutes, not two.
+        timeout: 30 * 60_000,
       });
     } else {
       console.log('Using npm global install…');
       execSync(`npm install -g ${PKG_NAME}@latest`, {
         stdio: 'inherit',
-        timeout: 120_000,
+        timeout: 20 * 60_000,
       });
       // Wipe old build so rev4a serve rebuilds with the new version
       const nextDir = join(ROOT, '.next');

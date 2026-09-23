@@ -28,7 +28,7 @@ const MODEL_PRICING = {
   'default':          { in: 3.00,  out: 15.00 },
 };
 
-// Alias diretti per modelli che non matchano per substring
+// Direct aliases for models that do not match by substring
 const MODEL_ALIASES = {
   'cheap': 'flash',
   'fast':  'claude-sonnet-4',
@@ -69,7 +69,7 @@ try {
 process.on('uncaughtException', (err) => {
   console.error(`[UNCAUGHT] ${err.message}\n${err.stack}`);
   console.error('Daemon will attempt restart via watchdog cron');
-  // NON uscire — il watchdog lo vede da healthcheck
+  // Do NOT exit — the watchdog reads this from the healthcheck
 });
 
 db.exec(`
@@ -749,7 +749,7 @@ function pollSessions() {
     }
   }
 
-  // WAL checkpoint FULL ogni 10 poll
+  // FULL WAL checkpoint every 10 polls
   pollCount = (pollCount || 0) + 1;
   if (pollCount % 10 === 0) {
     db.pragma('wal_checkpoint(FULL)');

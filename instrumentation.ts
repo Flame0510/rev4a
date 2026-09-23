@@ -65,5 +65,16 @@ export async function register() {
     } catch {
       console.warn('[rev4a] Could not reconcile cold backups on startup');
     }
+    // Retention for the lifecycle job tables: the panel reads the latest row of each
+    // agent, so the history is trimmed to the newest rows per agent. Best-effort.
+    try {
+      const { pruneLifecycleRows } = await import('./lib/agent-jobs-maintenance');
+      const removed = pruneLifecycleRows().filter((r) => r.removed > 0);
+      if (removed.length) {
+        console.log(`[rev4a] Pruned job history: ${removed.map((r) => `${r.table} ${r.removed}`).join(', ')}`);
+      }
+    } catch {
+      console.warn('[rev4a] Could not prune the lifecycle job history');
+    }
   }
 }
