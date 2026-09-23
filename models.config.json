@@ -145,7 +145,12 @@
       "name": "DeepSeek V4 Pro",
       "provider": "deepseek",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "DeepSeek-V4-Pro with 1.6T parameters (49B activated)",
+        "docUrl": "https://arxiv.org/abs/2606.19348",
+        "notes": "DeepSeek-V4-Pro uses a hybrid attention mechanism combining Compressed Sparse Attention (CSA) and Heavily Compressed Attention (HCA)."
+      }
     },
     {
       "id": "groq/llama-3.1-8b-instant",
@@ -177,7 +182,32 @@
       "name": "Kimi K2.7 Code",
       "provider": "kimi",
       "enabled": false,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "1T total parameters, 32B activated parameters",
+        "benchmarks": [
+          {
+            "name": "Kimi Code Bench v2",
+            "value": 62.0,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          },
+          {
+            "name": "MCP Atlas",
+            "value": 76.0,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          },
+          {
+            "name": "Program Bench",
+            "value": 53.6,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          }
+        ],
+        "docUrl": "https://platform.moonshot.ai",
+        "notes": "Kimi K2.7 Code includes a MoonViT vision encoder (400M parameters) and supports image and video input."
+      }
     },
     {
       "id": "kimi/kimi-k2.7-code-highspeed",
@@ -191,7 +221,32 @@
       "name": "Kimi K2.6",
       "provider": "kimi",
       "enabled": false,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "1T total parameters, 32B activated parameters",
+        "benchmarks": [
+          {
+            "name": "SWE-Bench Verified",
+            "value": 80.2,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          },
+          {
+            "name": "GPQA-Diamond",
+            "value": 90.5,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          },
+          {
+            "name": "AIME 2026",
+            "value": 96.4,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          }
+        ],
+        "docUrl": "https://platform.moonshot.ai",
+        "notes": "Kimi K2.6 is a native multimodal agentic model with a MoonViT vision encoder (400M parameters)."
+      }
     },
     {
       "id": "glm/glm-5.3",
@@ -242,35 +297,156 @@
       "name": "GLM-5.2",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "AIME 2026",
+            "value": 99.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          },
+          {
+            "name": "GPQA-Diamond",
+            "value": 91.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          },
+          {
+            "name": "SWE-bench Pro",
+            "value": 62.1,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.2",
+        "notes": "GLM-5.2 delivers a solid 1M-token context and proposes IndexShare, which reuses the same indexer across every four sparse attention layers, reducing per-token FLOPs by 2.9× at 1M context."
+      }
     },
     {
       "id": "glm/glm-5.1",
       "name": "GLM-5.1",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "GPQA-Diamond",
+            "value": 86.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          },
+          {
+            "name": "SWE-Bench Pro",
+            "value": 58.4,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          },
+          {
+            "name": "HLE",
+            "value": 31.0,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.1",
+        "notes": "GLM-5.1 sustains optimization over hundreds of rounds and thousands of tool calls, staying effective on agentic tasks over long horizons."
+      }
     },
     {
       "id": "glm/glm-5",
       "name": "GLM-5",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "GLM-5 scales from 355B parameters (32B active) to 744B parameters (40B active)",
+        "benchmarks": [
+          {
+            "name": "GPQA-Diamond",
+            "value": 86.0,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 77.8,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          },
+          {
+            "name": "HLE",
+            "value": 30.5,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5",
+        "notes": "GLM-5 integrates DeepSeek Sparse Attention (DSA), largely reducing deployment cost while preserving long-context capacity."
+      }
     },
     {
       "id": "glm/glm-4.7",
       "name": "GLM-4.7",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 84.3,
+            "source": "https://huggingface.co/zai-org/GLM-4.7",
+            "asOf": "2025-12-22"
+          },
+          {
+            "name": "GPQA-Diamond",
+            "value": 85.7,
+            "source": "https://huggingface.co/zai-org/GLM-4.7",
+            "asOf": "2025-12-22"
+          },
+          {
+            "name": "AIME 2025",
+            "value": 95.7,
+            "source": "https://huggingface.co/zai-org/GLM-4.7",
+            "asOf": "2025-12-22"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-4.7",
+        "notes": "GLM-4.7 adds Preserved Thinking, retaining thinking blocks across multi-turn coding conversations."
+      }
     },
     {
       "id": "glm/glm-4.7-flash",
       "name": "GLM-4.7 Flash",
       "provider": "glm",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "GLM-4.7-Flash is a 30B-A3B MoE model.",
+        "benchmarks": [
+          {
+            "name": "AIME 25",
+            "value": 91.6,
+            "source": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+            "asOf": "2026-01-19"
+          },
+          {
+            "name": "GPQA",
+            "value": 75.2,
+            "source": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+            "asOf": "2026-01-19"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 59.2,
+            "source": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+            "asOf": "2026-01-19"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-4.7"
+      }
     },
     {
       "id": "glm/glm-4.7-flashx",
@@ -340,14 +516,24 @@
       "name": "DeepSeek V4 Flash (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "DeepSeek-V4-Flash with 284B parameters (13B activated)",
+        "docUrl": "https://arxiv.org/abs/2606.19348",
+        "notes": "DeepSeek-V4-Flash is a Mixture-of-Experts model supporting a one-million-token context length."
+      }
     },
     {
       "id": "openrouter/deepseek/deepseek-v4-pro",
       "name": "DeepSeek V4 Pro (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "DeepSeek-V4-Pro with 1.6T parameters (49B activated)",
+        "docUrl": "https://arxiv.org/abs/2606.19348",
+        "notes": "DeepSeek-V4-Pro uses a hybrid attention mechanism combining Compressed Sparse Attention (CSA) and Heavily Compressed Attention (HCA)."
+      }
     },
     {
       "id": "openrouter/google/gemini-2.5-flash",
@@ -417,21 +603,76 @@
       "name": "Qwen 3.6 27B (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "27B parameters",
+        "benchmarks": [
+          {
+            "name": "SWE-bench Verified",
+            "value": 77.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-27B",
+            "asOf": "2026-04-21"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 87.8,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-27B",
+            "asOf": "2026-04-21"
+          },
+          {
+            "name": "MMLU-Pro",
+            "value": 86.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-27B",
+            "asOf": "2026-04-21"
+          }
+        ],
+        "docUrl": "https://github.com/QwenLM/Qwen3.8",
+        "notes": "Qwen3.6-27B is a Causal Language Model with a vision encoder that introduces thinking preservation to retain reasoning context from historical messages."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.6-35b-a3b",
       "name": "Qwen 3.6 35B-A3B (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "Number of Parameters: 35B in total and 3B activated",
+        "benchmarks": [
+          {
+            "name": "SWE-bench Verified",
+            "value": 73.4,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+            "asOf": "2026-04-15"
+          },
+          {
+            "name": "MMLU-Pro",
+            "value": 85.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+            "asOf": "2026-04-15"
+          },
+          {
+            "name": "GPQA",
+            "value": 86.0,
+            "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+            "asOf": "2026-04-15"
+          }
+        ],
+        "docUrl": "https://qwen.ai/blog?id=qwen3.6-35b-a3b",
+        "notes": "Qwen3.6-35B-A3B is a causal language model with a vision encoder, i.e. multimodal."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3-coder",
       "name": "Qwen 3 Coder (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "480B in total and 35B activated",
+        "docUrl": "https://github.com/QwenLM/Qwen3-Coder",
+        "notes": "Qwen3-Coder-480B-A35B-Instruct supports only non-thinking mode and does not generate <think></think> blocks."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3-max",
@@ -452,49 +693,201 @@
       "name": "Qwen 3 Next 80B Instruct (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Number of Parameters: 80B in total and 3B activated",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 80.6,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct",
+            "asOf": "2025-09-09"
+          },
+          {
+            "name": "GPQA",
+            "value": 72.9,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct",
+            "asOf": "2025-09-09"
+          },
+          {
+            "name": "AIME25",
+            "value": 69.5,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct",
+            "asOf": "2025-09-09"
+          }
+        ],
+        "notes": "Qwen3-Next-80B-A3B-Instruct supports only instruct (non-thinking) mode."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3-next-80b-a3b-thinking",
       "name": "Qwen 3 Next 80B Thinking (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Number of Parameters: 80B in total and 3B activated",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 82.7,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking",
+            "asOf": "2025-09-09"
+          },
+          {
+            "name": "GPQA",
+            "value": 77.2,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking",
+            "asOf": "2025-09-09"
+          },
+          {
+            "name": "AIME25",
+            "value": 87.8,
+            "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking",
+            "asOf": "2025-09-09"
+          }
+        ],
+        "notes": "Qwen3-Next-80B-A3B-Thinking supports only thinking mode."
+      }
     },
     {
       "id": "openrouter/minimax/minimax-m3",
       "name": "Minimax M3 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "It has ~428B parameters and ~23B activated parameters.",
+        "docUrl": "https://platform.minimax.io/docs/guides/text-generation",
+        "notes": "MiniMax-M3 uses MiniMax Sparse Attention (MSA) for efficient million-token context processing."
+      }
     },
     {
       "id": "openrouter/moonshotai/kimi-k2.7-code",
       "name": "Kimi K2.7 Code (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "1T total parameters, 32B activated parameters",
+        "benchmarks": [
+          {
+            "name": "Kimi Code Bench v2",
+            "value": 62.0,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          },
+          {
+            "name": "MCP Atlas",
+            "value": 76.0,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          },
+          {
+            "name": "Program Bench",
+            "value": 53.6,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
+            "asOf": "2026-06-11"
+          }
+        ],
+        "docUrl": "https://platform.moonshot.ai",
+        "notes": "Kimi K2.7 Code includes a MoonViT vision encoder (400M parameters) and supports image and video input."
+      }
     },
     {
       "id": "openrouter/moonshotai/kimi-k2.6",
       "name": "Kimi K2.6 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "1T total parameters, 32B activated parameters",
+        "benchmarks": [
+          {
+            "name": "SWE-Bench Verified",
+            "value": 80.2,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          },
+          {
+            "name": "GPQA-Diamond",
+            "value": 90.5,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          },
+          {
+            "name": "AIME 2026",
+            "value": 96.4,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "asOf": "2026-04-14"
+          }
+        ],
+        "docUrl": "https://platform.moonshot.ai",
+        "notes": "Kimi K2.6 is a native multimodal agentic model with a MoonViT vision encoder (400M parameters)."
+      }
     },
     {
       "id": "openrouter/moonshotai/kimi-k2",
       "name": "Kimi K2 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Kimi K2 is a state-of-the-art mixture-of-experts (MoE) language model with 32 billion activated parameters and 1 trillion total parameters.",
+        "benchmarks": [
+          {
+            "name": "LiveCodeBench v6",
+            "value": 53.7,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct",
+            "asOf": "2025-07-11"
+          },
+          {
+            "name": "MultiPL-E",
+            "value": 85.7,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct",
+            "asOf": "2025-07-11"
+          },
+          {
+            "name": "SWE-bench Verified (Agentless Coding)",
+            "value": 51.8,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct",
+            "asOf": "2025-07-11"
+          }
+        ],
+        "docUrl": "https://github.com/moonshotai/Kimi-K2",
+        "notes": "Kimi-K2-Instruct is a reflex-grade model without long thinking."
+      }
     },
     {
       "id": "openrouter/moonshotai/kimi-k2-thinking",
       "name": "Kimi K2 Thinking (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "AIME25",
+            "value": 94.5,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Thinking",
+            "asOf": "2025-11-04"
+          },
+          {
+            "name": "MMLU-Pro",
+            "value": 84.6,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Thinking",
+            "asOf": "2025-11-04"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 71.3,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2-Thinking",
+            "asOf": "2025-11-04"
+          }
+        ],
+        "docUrl": "https://moonshotai.github.io/Kimi-K2/thinking.html",
+        "notes": "Kimi K2 Thinking is a native INT4 quantized model with a 256k context window."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5.3",
@@ -545,21 +938,94 @@
       "name": "GLM 5.2 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "AIME 2026",
+            "value": 99.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          },
+          {
+            "name": "GPQA-Diamond",
+            "value": 91.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          },
+          {
+            "name": "SWE-bench Pro",
+            "value": 62.1,
+            "source": "https://huggingface.co/zai-org/GLM-5.2",
+            "asOf": "2026-06-16"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.2",
+        "notes": "GLM-5.2 delivers a solid 1M-token context and proposes IndexShare, which reuses the same indexer across every four sparse attention layers, reducing per-token FLOPs by 2.9× at 1M context."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5.1",
       "name": "GLM 5.1 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "GPQA-Diamond",
+            "value": 86.2,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          },
+          {
+            "name": "SWE-Bench Pro",
+            "value": 58.4,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          },
+          {
+            "name": "HLE",
+            "value": 31.0,
+            "source": "https://huggingface.co/zai-org/GLM-5.1",
+            "asOf": "2026-04-03"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5.1",
+        "notes": "GLM-5.1 sustains optimization over hundreds of rounds and thousands of tool calls, staying effective on agentic tasks over long horizons."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5",
       "name": "GLM 5 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "GLM-5 scales from 355B parameters (32B active) to 744B parameters (40B active)",
+        "benchmarks": [
+          {
+            "name": "GPQA-Diamond",
+            "value": 86.0,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 77.8,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          },
+          {
+            "name": "HLE",
+            "value": 30.5,
+            "source": "https://huggingface.co/zai-org/GLM-5",
+            "asOf": "2026-02-11"
+          }
+        ],
+        "docUrl": "https://docs.z.ai/guides/llm/glm-5",
+        "notes": "GLM-5 integrates DeepSeek Sparse Attention (DSA), largely reducing deployment cost while preserving long-context capacity."
+      }
     },
     {
       "id": "openrouter/z-ai/glm-5v-turbo",
@@ -594,49 +1060,124 @@
       "name": "StepFun 3.7 Flash (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "Step 3.7 Flash is a 198B-parameter sparse Mixture-of-Experts (MoE) vision-language model that combines a 196B-parameter language backbone with a 1.8B-parameter vision encoder for native image understanding.",
+        "docUrl": "https://platform.stepfun.ai",
+        "notes": "Step 3.7 Flash is a vision-language model with a 1.8B-parameter vision encoder for native image understanding."
+      }
     },
     {
       "id": "openrouter/stepfun/step-3.5-flash",
       "name": "StepFun 3.5 Flash (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Built on a sparse Mixture of Experts (MoE) architecture, it selectively activates only 11B of its 196B parameters per token.",
+        "benchmarks": [
+          {
+            "name": "τ²-Bench",
+            "value": 88.2,
+            "source": "https://huggingface.co/stepfun-ai/Step-3.5-Flash",
+            "asOf": "2026-02-01"
+          },
+          {
+            "name": "AIME 2025",
+            "value": 97.3,
+            "source": "https://huggingface.co/stepfun-ai/Step-3.5-Flash",
+            "asOf": "2026-02-01"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 74.4,
+            "source": "https://huggingface.co/stepfun-ai/Step-3.5-Flash",
+            "asOf": "2026-02-01"
+          }
+        ],
+        "docUrl": "https://static.stepfun.com/blog/step-3.5-flash/",
+        "notes": "Step 3.5 Flash uses 288 routed experts per layer plus 1 shared expert, top-8 per token."
+      }
     },
     {
       "id": "openrouter/tencent/hy3",
       "name": "Tencent HY3 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Hy3 is a 295B-parameter Mixture-of-Experts (MoE) model with 21B active parameters and 3.8B MTP layer parameters, developed by the Tencent Hy Team.",
+        "docUrl": "https://github.com/Tencent-Hunyuan/Hy3",
+        "notes": "Hy3 has 192 experts with top-8 activation."
+      }
     },
     {
       "id": "openrouter/tencent/hy3-preview",
       "name": "Tencent HY3 Preview (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "Hy3 preview is a 295B-parameter Mixture-of-Experts (MoE) model with 21B active parameters and 3.8B MTP layer parameters, developed by the Tencent Hy Team.",
+        "docUrl": "https://github.com/Tencent-Hunyuan/Hy3-preview",
+        "notes": "Hy3 preview has 192 experts with top-8 activation."
+      }
     },
     {
       "id": "openrouter/xiaomi/mimo-v2.5-pro",
       "name": "Xiaomi MiMo V2.5 Pro (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "MiMo-V2.5-Pro is an open-source Mixture-of-Experts (MoE) language model with 1.02T total parameters and 42B active parameters.",
+        "docUrl": "https://mimo.xiaomi.com/mimo-v2-5-pro",
+        "notes": "MiMo-V2.5-Pro uses hybrid Sliding Window Attention and Global Attention with a 6:1 ratio."
+      }
     },
     {
       "id": "openrouter/xiaomi/mimo-v2.5",
       "name": "Xiaomi MiMo V2.5 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+audio+video->text"
+      "modality": "text+image+audio+video->text",
+      "info": {
+        "params": "Architecture: Sparse MoE (Mixture of Experts), 310B total / 15B activated parameters",
+        "docUrl": "https://mimo.xiaomi.com/mimo-v2-5",
+        "notes": "MiMo-V2.5 is a native omnimodal model supporting text, image, video, and audio understanding."
+      }
     },
     {
       "id": "openrouter/meituan/longcat-2.0",
       "name": "Meituan LongCat 2.0 (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "We introduce LongCat-2.0, a large-scale MoE language model with 1.6 trillion total parameters and ~48 billion activated per token",
+        "benchmarks": [
+          {
+            "name": "Terminal-Bench 2.1",
+            "value": 70.8,
+            "source": "https://huggingface.co/meituan-longcat/LongCat-2.0",
+            "asOf": "2026-07-05"
+          },
+          {
+            "name": "SWE-bench Pro",
+            "value": 59.5,
+            "source": "https://huggingface.co/meituan-longcat/LongCat-2.0",
+            "asOf": "2026-07-05"
+          },
+          {
+            "name": "GPQA-diamond",
+            "value": 88.9,
+            "source": "https://huggingface.co/meituan-longcat/LongCat-2.0",
+            "asOf": "2026-07-05"
+          }
+        ],
+        "docUrl": "https://longcat.chat/blog/longcat-2.0",
+        "notes": "LongCat-2.0 includes 135B N-gram Embedding parameters in addition to its MoE."
+      }
     },
     {
       "id": "openrouter/kwaipilot/kat-coder-pro-v2.5",
@@ -738,28 +1279,107 @@
       "name": "NVIDIA Nemotron 3 Super 120B (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "120B total · 12B active",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 83.73,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+            "asOf": "2026-03-11"
+          },
+          {
+            "name": "GPQA (no tools)",
+            "value": 79.23,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+            "asOf": "2026-03-11"
+          },
+          {
+            "name": "HMMT Feb25 (with tools)",
+            "value": 94.73,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+            "asOf": "2026-03-11"
+          }
+        ],
+        "docUrl": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+        "notes": "Hybrid LatentMoE architecture interleaving Mamba-2, MoE, and Attention layers with Multi-Token Prediction (MTP) layers."
+      }
     },
     {
       "id": "openrouter/nvidia/nemotron-3-ultra-550b-a55b",
       "name": "NVIDIA Nemotron 3 Ultra 550B (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "params": "550B total · 55B active",
+        "benchmarks": [
+          {
+            "name": "Terminal Bench 2.1",
+            "value": 56.4,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+            "asOf": "2026-06-04"
+          },
+          {
+            "name": "SWE-Bench Verified",
+            "value": 70.7,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+            "asOf": "2026-06-04"
+          },
+          {
+            "name": "MMLU-Pro",
+            "value": 86.8,
+            "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+            "asOf": "2026-06-04"
+          }
+        ],
+        "docUrl": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+        "notes": "Hybrid LatentMoE architecture interleaving Mamba-2, MoE, and Attention layers with Multi-Token Prediction (MTP) layers."
+      }
     },
     {
       "id": "openrouter/nousresearch/hermes-4-405b",
       "name": "Nous Hermes 4 405B (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "docUrl": "https://arxiv.org/abs/2508.18255",
+        "notes": "Hybrid-mode reasoning model based on Llama-3.1-405B that emits explicit <think>…</think> segments when it chooses to deliberate."
+      }
     },
     {
       "id": "openrouter/thinkingmachines/inkling",
       "name": "Thinking Machines Inkling (OR)",
       "provider": "openrouter",
       "enabled": true,
-      "modality": "text+image+audio->text"
+      "modality": "text+image+audio->text",
+      "info": {
+        "params": "975B total · 41B active",
+        "benchmarks": [
+          {
+            "name": "GPQA Diamond",
+            "value": 87.2,
+            "source": "https://huggingface.co/thinkingmachines/Inkling",
+            "asOf": "2026-07-14"
+          },
+          {
+            "name": "AIME 2026",
+            "value": 97.1,
+            "source": "https://huggingface.co/thinkingmachines/Inkling",
+            "asOf": "2026-07-14"
+          },
+          {
+            "name": "SWEBench Verified",
+            "value": 77.6,
+            "source": "https://huggingface.co/thinkingmachines/Inkling",
+            "asOf": "2026-07-14"
+          }
+        ],
+        "docUrl": "https://github.com/thinking-machines-lab/tinker-cookbook",
+        "notes": "Native multimodal MoE accepting text, image and audio input, with images and video encoded via a hierarchical patch encoder and audio via discrete token encoding."
+      }
     },
     {
       "id": "openrouter/relace/relace-apply-3",
@@ -962,7 +1582,31 @@
       "provider": "openrouter",
       "enabled": false,
       "modality": "text+image->text",
-      "deprecated": true
+      "deprecated": true,
+      "info": {
+        "benchmarks": [
+          {
+            "name": "Terminal Bench 2.1",
+            "value": 83.9,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+            "asOf": "2026-08-31"
+          },
+          {
+            "name": "DeepSWE",
+            "value": 59.3,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+            "asOf": "2026-08-31"
+          },
+          {
+            "name": "Toolathlon-Verified",
+            "value": 75.9,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+            "asOf": "2026-08-31"
+          }
+        ],
+        "docUrl": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+        "notes": "Experimental multimodal model built on the DeepSeek-V4-Flash architecture, adding visual modules to unlock vision understanding."
+      }
     },
     {
       "id": "openrouter/openai/gpt-5-image",
@@ -1214,35 +1858,160 @@
       "name": "Qwen3.5-122B-A10B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "122B total · 10B active",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 86.7,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 86.6,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 72.0,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B",
+            "asOf": "2026-02-24"
+          }
+        ],
+        "docUrl": "https://qwen.ai/blog?id=qwen3.5",
+        "notes": "Native vision-language model using Gated Delta Networks plus sparse MoE (8 routed + 1 shared expert per token)."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.5-27b",
       "name": "Qwen3.5-27B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "27B parameters",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 86.1,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-27B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 85.5,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-27B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 72.4,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-27B",
+            "asOf": "2026-02-24"
+          }
+        ],
+        "docUrl": "https://qwen.ai/blog?id=qwen3.5",
+        "notes": "Native vision-language dense model incorporating a linear attention (Gated DeltaNet) mechanism."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.5-35b-a3b",
       "name": "Qwen3.5-35B-A3B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "35B total · 3B active",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 85.3,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 84.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+            "asOf": "2026-02-24"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 69.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+            "asOf": "2026-02-24"
+          }
+        ],
+        "docUrl": "https://qwen.ai/blog?id=qwen3.5",
+        "notes": "Native vision-language model using Gated Delta Networks plus sparse Mixture-of-Experts."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.5-397b-a17b",
       "name": "Qwen3.5 397B A17B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "397B in total and 17B activated",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 87.8,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B",
+            "asOf": "2026-02-16"
+          },
+          {
+            "name": "GPQA",
+            "value": 88.4,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B",
+            "asOf": "2026-02-16"
+          },
+          {
+            "name": "SWE-bench Verified",
+            "value": 76.4,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B",
+            "asOf": "2026-02-16"
+          }
+        ],
+        "docUrl": "https://github.com/QwenLM/Qwen3.8",
+        "notes": "Qwen3.5-397B-A17B uses a Gated DeltaNet plus sparse Mixture-of-Experts architecture with 512 experts (10 routed + 1 shared)."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.5-9b",
       "name": "Qwen3.5-9B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "9B parameters",
+        "benchmarks": [
+          {
+            "name": "MMLU-Pro",
+            "value": 82.5,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-9B",
+            "asOf": "2026-02-27"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 81.7,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-9B",
+            "asOf": "2026-02-27"
+          },
+          {
+            "name": "LiveCodeBench v6",
+            "value": 65.6,
+            "source": "https://huggingface.co/Qwen/Qwen3.5-9B",
+            "asOf": "2026-02-27"
+          }
+        ],
+        "docUrl": "https://qwen.ai/blog?id=qwen3.5",
+        "notes": "Native vision-language foundation model with a unified vision-language design."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.5-flash-02-23",
@@ -1281,14 +2050,64 @@
       "name": "Qwen3.8 27B (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "27B parameters",
+        "benchmarks": [
+          {
+            "name": "SWE-bench Pro",
+            "value": 61.7,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+            "asOf": "2026-08-05"
+          },
+          {
+            "name": "GPQA Diamond",
+            "value": 89.2,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+            "asOf": "2026-08-05"
+          },
+          {
+            "name": "LiveCodeBench v6",
+            "value": 90.3,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+            "asOf": "2026-08-05"
+          }
+        ],
+        "docUrl": "https://www.qwencloud.com/models/qwen3.8-27b",
+        "notes": "Qwen3.8-27B is a native vision-language model with flexible thinking control via reasoning_effort and preserve_thinking."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.8-flash",
       "name": "Qwen3.8 Flash (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image+video->text"
+      "modality": "text+image+video->text",
+      "info": {
+        "params": "125B with 6B activated, plus 51B n-gram embedding and 4B MTP",
+        "benchmarks": [
+          {
+            "name": "GPQA Diamond",
+            "value": 91.7,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+            "asOf": "2026-08-24"
+          },
+          {
+            "name": "LiveCodeBench v6",
+            "value": 91.9,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+            "asOf": "2026-08-24"
+          },
+          {
+            "name": "DeepSWE 1.1",
+            "value": 58.7,
+            "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+            "asOf": "2026-08-24"
+          }
+        ],
+        "docUrl": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+        "notes": "Uses an n-gram embedding for parameter scaling alongside a sparse Mixture-of-Experts backbone."
+      }
     },
     {
       "id": "openrouter/qwen/qwen3.8-max-0902",
@@ -1309,21 +2128,94 @@
       "name": "DeepSeek V4 Flash 0731 (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "Terminal Bench 2.1",
+            "value": 82.7,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
+            "asOf": "2026-07-31"
+          },
+          {
+            "name": "DeepSWE",
+            "value": 54.4,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
+            "asOf": "2026-07-31"
+          },
+          {
+            "name": "Toolathlon-Verified",
+            "value": 70.3,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731",
+            "asOf": "2026-07-31"
+          }
+        ],
+        "docUrl": "https://arxiv.org/abs/2606.19348",
+        "notes": "Official DeepSeek-V4-Flash release superseding the preview, with an attached DSpark speculative decoding module."
+      }
     },
     {
       "id": "openrouter/deepseek/deepseek-v4-pro-0813",
       "name": "DeepSeek V4 Pro 0813 (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text->text"
+      "modality": "text->text",
+      "info": {
+        "benchmarks": [
+          {
+            "name": "Terminal Bench 2.1",
+            "value": 87.9,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+            "asOf": "2026-08-13"
+          },
+          {
+            "name": "DeepSWE",
+            "value": 62.7,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+            "asOf": "2026-08-13"
+          },
+          {
+            "name": "Toolathlon-Verified",
+            "value": 74.1,
+            "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+            "asOf": "2026-08-13"
+          }
+        ],
+        "docUrl": "https://arxiv.org/abs/2606.19348",
+        "notes": "Official DeepSeek-V4-Pro release superseding the preview, with an attached DSpark speculative decoding module."
+      }
     },
     {
       "id": "openrouter/moonshotai/kimi-k2.5",
       "name": "Kimi K2.5 (OR)",
       "provider": "openrouter",
       "enabled": false,
-      "modality": "text+image->text"
+      "modality": "text+image->text",
+      "info": {
+        "params": "1T total parameters · 32B activated parameters",
+        "benchmarks": [
+          {
+            "name": "GPQA-Diamond",
+            "value": 87.6,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.5",
+            "asOf": "2026-01-29"
+          },
+          {
+            "name": "SWE-Bench Verified",
+            "value": 76.8,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.5",
+            "asOf": "2026-01-29"
+          },
+          {
+            "name": "AIME 2025",
+            "value": 96.1,
+            "source": "https://huggingface.co/moonshotai/Kimi-K2.5",
+            "asOf": "2026-01-29"
+          }
+        ],
+        "docUrl": "https://platform.moonshot.ai",
+        "notes": "Native multimodal agentic model with a MoonViT vision encoder (400M parameters) and shared experts."
+      }
     },
     {
       "id": "openrouter/x-ai/grok-4.6",
