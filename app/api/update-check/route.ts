@@ -8,15 +8,26 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 // package name is the single source of truth, so never hardcode it elsewhere.
 const FALLBACK_PKG_NAME = '@flame0510/project-aether';
 
-function getPackageInfo() {
-  try {
-    // Resolve relative to the project root (two levels above .next)
-    const pkgPath = join(process.cwd(), 'package.json');
-    const raw = readFileSync(pkgPath, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return { version: '0.0.0', name: FALLBACK_PKG_NAME };
+/**
+ * The installed package's name and version. `version` is **null when it cannot be read**
+ * — never a placeholder like `0.0.0`: during `rev4a update` npm rewrites this very file,
+ * and a transient read failure must not look like a version that changed.
+ */
+function getPackageInfo(): { version: string | null; name: string } {
+  // cwd first (systemd sets WorkingDirectory), then relative to this module: a global
+  // install started from elsewhere still finds its own package.json.
+  const candidates = [join(process.cwd(), 'package.json'), join(__dirname, '..', '..', '..', 'package.json')];
+  for (const pkgPath of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: unknown; name?: unknown };
+      const version = typeof parsed.version === 'string' && parsed.version ? parsed.version : null;
+      const name = typeof parsed.name === 'string' && parsed.name ? parsed.name : FALLBACK_PKG_NAME;
+      if (version) return { version, name };
+    } catch {
+      // try the next candidate
+    }
   }
+  return { version: null, name: FALLBACK_PKG_NAME };
 }
 
 interface CachedResult {
@@ -38,11 +49,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   const check = url.searchParams.get('check') === '1';
 
   const pkg = getPackageInfo();
-  const installed = pkg.version || '0.0.0';
+  const installed = pkg.version;
   let latest: string | null = null;
   let updateAvailable = false;
 
-  if (check) {
+  // Nothing to compare when the installed version is unknown: answer that, rather than
+  // offering an update against a placeholder.
+  if (check && installed) {
     const now = Date.now();
     if (cache && now - cache.checkedAt < CACHE_TTL_MS) {
       latest = cache.latest;
