@@ -96,10 +96,21 @@ at most every 10 minutes, so a newly published version can take that long to app
 The banner polls the endpoint every 2 seconds for as long as the page is open, not only
 while something is running.
 
-The operation the banner triggers is a **`docker pull`**, not a build. While it
-runs the banner shows an indeterminate animated bar: there is no percentage, no
-byte count, and no log output in the UI. A log is written server-side to
+The operation the banner triggers is a **`docker pull`**, not a build (unless the
+pull fails and this repository's own Dockerfile builds that exact version, a
+development fallback). While it runs the banner shows a real percent and the latest
+status line, both read from `docker pull`'s own per-layer output (`Pulling fs
+layer` → `Download complete` → `Pull complete`), not an animation; the bar falls
+back to indeterminate only for phases that report no layers (resolving the version,
+the local-build fallback). A **Cancel** button stops it (kills the `docker pull`/
+`docker build` process). A log is written server-side to
 `/tmp/rev4a-download-<timestamp>.log`, but nothing in the dashboard reads it.
+
+The outcome (ready / canceled / failed) is shown for up to 30 seconds after it
+happens even if the Agents page was not open for the live transition — a page
+reload or a return from another screen within that window still shows it, read
+from the server's own record of the last download rather than only a transition
+this one browser tab watched happen.
 
 ---
 

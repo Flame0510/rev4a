@@ -26,6 +26,36 @@ const BUILD_TIMEOUT_MS = 60 * 60 * 1000;
 /** The version being downloaded; `pending` while the default version is being resolved. */
 let downloadingVersion: string | null = null;
 let downloadLogPath: string | null = null;
+/** Owns the running pull/build process; `cancelDownload()` aborts it. One at a time, like the download itself. */
+let downloadController: AbortController | null = null;
+/** Set right before aborting, so the caller can tell a cancel from a real failure. */
+let downloadWasCanceled = false;
+/** `docker pull` layer ids seen, by state — the source of the real percent below. */
+const pullLayers = new Map<string, 'pending' | 'done'>();
+let downloadPercent: number | null = null;
+/** The latest status/progress/log line, shown verbatim while no percent is computable yet. */
+let downloadMessage: string | null = null;
+
+export interface DownloadOutcome {
+  version: string;
+  result: 'succeeded' | 'failed' | 'canceled';
+  source?: 'present' | 'registry' | 'build';
+  message: string;
+  at: number;
+}
+
+/**
+ * The last download's outcome, same idea as `finished` in lib/cold-backup.ts: a client
+ * that was not mounted for the live `downloading: true → false` transition (navigated
+ * away, reloaded, opened the page late) would otherwise see nothing at all once the
+ * download is done — this is what it reads instead. Overwritten by the next download,
+ * never cleared on its own; the client decides how long "recently" still means something.
+ */
+let lastDownloadResult: DownloadOutcome | null = null;
+
+export function getLastDownloadResult(): DownloadOutcome | null {
+  return lastDownloadResult;
+}
 
 /** Checks if a download is already running (in-process flag only). */
 export function getIsDownloading(): boolean {
@@ -34,6 +64,50 @@ export function getIsDownloading(): boolean {
 
 export function getDownloadingVersion(): string | null {
   return downloadingVersion === 'pending' ? null : downloadingVersion;
+}
+
+/** Real progress, from `docker pull`'s own layer-completion lines — null once nothing more is known than the status text. */
+export function getDownloadProgress(): { percent: number | null; message: string | null } {
+  return { percent: downloadPercent, message: downloadMessage };
+}
+
+/**
+ * Cancel the running download, if any. `runDocker` kills the child process; the
+ * download rejects with a distinct 'canceled' error so the caller can tell it apart
+ * from a real failure. Returns false when nothing is running.
+ */
+export function cancelDownload(): boolean {
+  if (!downloadController) return false;
+  downloadWasCanceled = true;
+  downloadController.abort();
+  return true;
+}
+
+/** Whether the download that just stopped was canceled by the caller, not a failure. Reset on the next download. */
+export function wasDownloadCanceled(): boolean {
+  return downloadWasCanceled;
+}
+
+/**
+ * Track `docker pull`'s per-layer lines to compute a real percent: each layer goes
+ * `Pulling fs layer` → `Download complete`/`Already exists`, and the fraction of
+ * layers done is a fair approximation of overall progress (layers pull in parallel,
+ * so it is not byte-exact, but it only moves forward and reaches 100 exactly when
+ * pulling does). Capped below 100 here; the caller sets 100 on real completion.
+ */
+function trackPullLayer(line: string): void {
+  const m = /^([0-9a-f]{12}):\s+(Pulling fs layer|Waiting|Download complete|Already exists|Pull complete)/.exec(line);
+  if (!m) return;
+  const [, id, state] = m;
+  if (state === 'Pulling fs layer' || state === 'Waiting') {
+    if (!pullLayers.has(id)) pullLayers.set(id, 'pending');
+  } else {
+    pullLayers.set(id, 'done');
+  }
+  const total = pullLayers.size;
+  if (total === 0) return;
+  const done = [...pullLayers.values()].filter((v) => v === 'done').length;
+  downloadPercent = Math.min(99, Math.round((done / total) * 100));
 }
 
 function appendLog(msg: string): void {
@@ -97,6 +171,18 @@ export async function downloadAgentImage(opts: DownloadOptions = {}): Promise<Do
   if (downloadingVersion !== null) throw new Error('A download is already in progress');
   downloadingVersion = opts.version ?? 'pending';
   downloadLogPath = `/tmp/rev4a-download-${Date.now()}.log`;
+  downloadWasCanceled = false;
+  pullLayers.clear();
+  downloadPercent = null;
+  downloadMessage = null;
+
+  // Owns the child process for this run. A caller's own signal (the wizard's SSE
+  // stream closing) aborts it too, same as cancelDownload() — both end up here, so
+  // `signal.aborted` below is the one place that tells "stopped" from "failed".
+  const controller = new AbortController();
+  downloadController = controller;
+  opts.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+  const { signal } = controller;
 
   try {
     const version = opts.version ?? (await defaultDownloadVersion());
@@ -105,44 +191,66 @@ export async function downloadAgentImage(opts: DownloadOptions = {}): Promise<Do
 
     if (await localVersionExists(version)) {
       event('complete', `OpenClaw ${version} image already downloaded`);
+      lastDownloadResult = { version, result: 'succeeded', source: 'present', message: `OpenClaw ${version} image already downloaded`, at: Date.now() };
       return { version, source: 'present' };
     }
 
     event('status', `Downloading OpenClaw ${version} image…`);
     try {
       await pullAgentImage(version, {
-        signal: opts.signal,
+        signal,
         onLine: (line) => {
           appendLog(line);
+          downloadMessage = line;
+          trackPullLayer(line);
           if (/Download|Extract|Pull/.test(line)) opts.onEvent?.(JSON.stringify({ type: 'progress', message: line }));
         },
       });
+      downloadPercent = 100;
       event('complete', `OpenClaw ${version} image downloaded`);
+      lastDownloadResult = { version, result: 'succeeded', source: 'registry', message: `OpenClaw ${version} image downloaded`, at: Date.now() };
       return { version, source: 'registry' };
     } catch (e) {
       appendLog(`Registry download failed: ${(e as Error).message}`);
-      if (opts.signal?.aborted || dockerfileVersion() !== version) {
+      if (signal.aborted) throw new Error('canceled');
+      if (dockerfileVersion() !== version) {
         throw new Error(`Could not download OpenClaw ${version}: ${(e as Error).message}`);
       }
     }
 
     event('log', 'Registry download failed, building the image locally…');
+    downloadPercent = null;
     await runDocker(
       ['build', '--build-arg', `OPENCLAW_VERSION=${version}`, '-t', localImageRef(version), '--progress=plain', DOCKERFILE_DIR],
       {
-        signal: opts.signal,
+        signal,
         timeoutMs: BUILD_TIMEOUT_MS,
         onLine: (line) => {
           appendLog(line);
+          downloadMessage = line;
           if (line.startsWith('#')) opts.onEvent?.(JSON.stringify({ type: 'step', message: line }));
         },
       },
     );
+    downloadPercent = 100;
     event('complete', `OpenClaw ${version} image built locally`);
+    lastDownloadResult = { version, result: 'succeeded', source: 'build', message: `OpenClaw ${version} image built locally`, at: Date.now() };
     return { version, source: 'build' };
+  } catch (e) {
+    const version = downloadingVersion === 'pending' ? (opts.version ?? 'unknown') : downloadingVersion;
+    if (signal.aborted) {
+      lastDownloadResult = { version, result: 'canceled', message: `OpenClaw ${version} download canceled`, at: Date.now() };
+      throw new Error('canceled');
+    }
+    lastDownloadResult = { version, result: 'failed', message: (e as Error).message, at: Date.now() };
+    throw e;
   } finally {
     downloadingVersion = null;
     downloadLogPath = null;
+    downloadController = null;
+    pullLayers.clear();
+    downloadPercent = null;
+    downloadMessage = null;
     cleanupOldLogs();
   }
 }

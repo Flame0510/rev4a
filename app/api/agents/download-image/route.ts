@@ -5,12 +5,17 @@ import { type NextRequest } from "next/server";
  * Downloads one OpenClaw version of the agent base image in the background.
  * Body (optional): `{ "version": "2026.9.3" }` — a supported version; without it, the
  * newest supported version the registry publishes. Returns 202 with the version;
- * poll GET /api/agents/image-status for completion.
+ * poll GET /api/agents/image-status for completion, percent and the latest status line.
  *
  * Requires auth. 400 for an unsupported version, 409 if a download is already running.
+ *
+ * DELETE /api/agents/download-image
+ *
+ * Cancels the running download, if any (kills the docker pull/build process).
+ * Requires auth. 404 when nothing is running.
  */
 import { NextResponse } from 'next/server';
-import { defaultDownloadVersion, downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
+import { cancelDownload, defaultDownloadVersion, downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
 import { isSupportedVersion } from '@/lib/agent-versions';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
@@ -40,10 +45,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'A download is already in progress' }, { status: 409 });
   }
 
-  // Start download in background — fire and forget
+  // Start download in background — fire and forget. A cancel (or the wizard's own
+  // stream closing) makes this reject with 'canceled', not a real failure: skip the log.
   downloadAgentImage({ version }).catch((e: unknown) => {
-    console.error(`[download-image] OpenClaw ${version}:`, (e as Error).message);
+    if ((e as Error).message !== 'canceled') {
+      console.error(`[download-image] OpenClaw ${version}:`, (e as Error).message);
+    }
   });
 
   return NextResponse.json({ started: true, version }, { status: 202 });
+}
+
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const denied = await requireAuthJWT(request);
+  if (denied) return denied;
+  if (!cancelDownload()) {
+    return NextResponse.json({ error: 'No download is running' }, { status: 404 });
+  }
+  return NextResponse.json({ canceling: true }, { status: 202 });
 }

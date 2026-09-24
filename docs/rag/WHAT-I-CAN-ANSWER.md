@@ -101,7 +101,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "What does the yellow diamond next to an agent mean?"
 - "Why is the agent base image banner showing?"
 - "How do I fix 'image is outdated'?"
-- "How do agent image updates work?" — The banner on the Agents page runs a `docker pull`. It is a download, not a build: there is no modal, no live log, and no way to abort from the UI.
+- "How do agent image updates work?" — The banner on the Agents page runs a `docker pull` and shows a real percent and status line from it (not an animation), with a Cancel button to stop it; there is no modal or live log, but the outcome is still shown for up to 30 seconds after it happens even if you were not watching.
 - "How big is model X / how many parameters does it have?" — Open the **Details** modal from the model row on the Gateway page: parameter counts, architecture and benchmark numbers come from the model's card on Hugging Face, with the vendor's own claim where it makes one. Models whose weights are not published (OpenAI, Anthropic, Google, Qwen's Plus/Max line) show no parameter count: the size is not public and Rev4a does not estimate it.
 - "How do I update Rev4a itself?" — The "Update available" banner starts `rev4a update` in the background (the same command as from a shell). It installs the new version and Rev4a restarts itself, so the dashboard drops for a short while; the banner waits for the new version and then confirms it, or says the update did not complete. The update's output is written to `update.log` in the Rev4a data directory (`~/.config/rev4a/data/update.log`) — the only place that says why an update failed.
 - "Why is my Telegram bot not connecting?"

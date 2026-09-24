@@ -1740,6 +1740,16 @@ in flight, so polling this endpoint does not re-query the registry every time.
 {
   "downloading": false,
   "downloadingVersion": null,
+  "downloadPercent": null,
+  "downloadMessage": null,
+  "canceled": false,
+  "lastResult": {
+    "version": "2026.9.3",
+    "result": "succeeded",
+    "source": "registry",
+    "message": "OpenClaw 2026.9.3 image downloaded",
+    "at": 1758700000000
+  },
   "exists": true,
   "needsUpdate": false,
   "localVersions": ["2026.9.3"],
@@ -1757,6 +1767,10 @@ in flight, so polling this endpoint does not re-query the registry every time.
 | `newestLocal` | The version new agents are created on |
 | `available` | Newest supported version on the registry that is not downloaded and is newer than `newestLocal`, or null |
 | `downloading` / `downloadingVersion` | A download running, and its version |
+| `downloadPercent` | Real percent from `docker pull`'s own layer-completion lines (`getDownloadProgress()`); null while unknown (resolving the version, or the local-build fallback, which reports no layers) |
+| `downloadMessage` | The latest status/progress line, verbatim, shown while `downloadPercent` is null |
+| `canceled` | True for the one poll after a user-initiated cancel (`DELETE`, below); reset when the next download starts |
+| `lastResult` | The last download's outcome (`getLastDownloadResult()`, `lib/buildAgentImage.ts`), or null before any download has run this process. `result` is `succeeded` / `failed` / `canceled`; `source` (`present` / `registry` / `build`) only on success. Kept regardless of whether a download is running now, so a client that missed the live transition — a page reload, a return from another screen — still sees it via `at` (epoch ms); overwritten by the next download, never cleared on its own. Same idea as `finished` in `lib/cold-backup.ts` |
 | `registryReachable` | The tag list could be read |
 
 ### `POST /api/agents/download-image`
@@ -1784,6 +1798,24 @@ The download is `lib/buildAgentImage.ts` → `downloadAgentImage({ version, onEv
   version fails
 - one download at a time (in-process lock, `getIsDownloading()` /
   `getDownloadingVersion()`); output goes to `/tmp/rev4a-download-<timestamp>.log`
+- real progress: `docker pull`'s own per-layer lines (`Pulling fs layer` → `Download
+  complete`/`Already exists`/`Pull complete`) are tracked into a percent
+  (`getDownloadProgress()`); it only moves forward and reaches 100 exactly when the
+  pull does, capped at 99 until then
+
+### `DELETE /api/agents/download-image`
+Cancels the running download, if any: kills the `docker pull`/`docker build` process
+(`cancelDownload()`). The rejected `downloadAgentImage()` promise carries a distinct
+`'canceled'` message, so the route's background `.catch` does not log it as a failure.
+
+**Auth:** browser cookie or bearer token
+
+**Response (202):**
+```json
+{ "canceling": true }
+```
+
+**Errors:** `404` nothing is running.
 
 ### `GET /api/agents-active`
 

@@ -58,10 +58,14 @@ went missing. Afterwards **Roll back to <version>** puts back the backup taken j
 the update, on the old version; anything the agent did after the update is lost. The agent
 must be running to start an update.
 
-That button runs a `docker pull` from the registry. It is a download, not a build.
-While it runs the banner shows an indeterminate animated bar with no percentage and
-no log output; there is no modal, no "View Progress", no "Run in Background", and
-no way to abort from the UI. Status is polled every 2 seconds.
+The agent base image banner above (not this update — an agent's own **Update to
+<version>** recreates it on an image already downloaded) is the one running the
+`docker pull`. While it runs the banner shows a real percent and the latest status
+line, read from `docker pull`'s own per-layer output, not an animation; a **Cancel**
+button stops it. There is no modal, no "View Progress", no "Run in Background". The
+outcome (ready / canceled / failed) is still shown for up to 30 seconds after it
+happens even on a page reload or a return from another screen, not only while the
+Agents page stayed open for it. Status is polled every 2 seconds.
 
 ### Create Agent (`/agents/create`)
 Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional port range (default: auto-assigned 10-port block, e.g. 3700-3709). The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.

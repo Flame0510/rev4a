@@ -9,7 +9,7 @@
  * (lib/agent-images.ts), so polling does not hit the network.
  */
 import { NextResponse, type NextRequest } from 'next/server';
-import { getDownloadingVersion, getIsDownloading } from '@/lib/buildAgentImage';
+import { getDownloadProgress, getDownloadingVersion, getIsDownloading, getLastDownloadResult, wasDownloadCanceled } from '@/lib/buildAgentImage';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dockerAvailable } from '@/lib/docker-socket';
 import { listLocalAgentImages, localSupportedVersions, remoteSupportedVersions, type LocalAgentImage } from '@/lib/agent-images';
@@ -21,7 +21,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
 
-  const base = { downloading: getIsDownloading(), downloadingVersion: getDownloadingVersion() };
+  const progress = getDownloadProgress();
+  const base = {
+    downloading: getIsDownloading(),
+    downloadingVersion: getDownloadingVersion(),
+    downloadPercent: progress.percent,
+    downloadMessage: progress.message,
+    /** True right after a user-initiated cancel; stays true until the next download starts. */
+    canceled: wasDownloadCanceled(),
+    /**
+     * The last download's outcome, whether or not anyone was watching it finish —
+     * covers a page reload or a late-opened tab. Overwritten by the next download.
+     */
+    lastResult: getLastDownloadResult(),
+  };
 
   if (!dockerAvailable()) {
     return NextResponse.json({
