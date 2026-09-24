@@ -1,0 +1,43 @@
+name: CI
+
+# The gates that used to run only at release time (release-publish.yml), moved in front
+# of main: a regression that breaks the build, the types or the 100% English rule is
+# caught on the pull request instead of when a version is being published.
+#
+# The release workflow keeps its own copies of these steps on purpose — it is the last
+# gate before npm, and it must not depend on this one having run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to the same branch cancels the run still in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Cheapest gate first: it needs no build output and names the offending line.
+      - name: Check the language (100% English)
+        run: npm run check:language
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

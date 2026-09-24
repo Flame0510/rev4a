@@ -4,7 +4,8 @@
 
 **100% English** — code, identifiers, comments, docs, UI strings, commit messages
 (`AGENTS.md` §2.1). `npm run check:language` scans every tracked file for Italian words and
-exits non-zero; the release workflow runs it, so a release cannot ship Italian. The list is
+exits non-zero; CI runs it on every pull request and the release workflow runs it again, so
+neither `main` nor a release can ship Italian. The list is
 deliberately conservative (it leaves out words that are English too, like `come` or `per`),
 and a line carrying `lang-ok` is skipped when the Italian is the point of that line:
 
@@ -55,6 +56,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. Prices and the generated model details come from `npm run refresh:pricing` (`model-pricing.json`, `model-details.json` — never hand-edited); the catalogue's `info` blocks (what no API publishes) are curated with `npm run info:suggest` and gated by `npm run info:verify` (`docs/dev/GATEWAY.md` — Curating an info block) |
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
+| `.github/workflows/ci.yml` | This file — Continuous integration section |
 | `.github/workflows/release-publish.yml` | This file — Release process section |
 | `.github/workflows/build-agent-image.yml` | This file — Agent image publishing section |
 | `agent-templates/base-image/**` | `docs/REV4A.md` — Agent Templates (image contents, entrypoint behavior); `agent-templates/README.md` |
@@ -97,6 +99,27 @@ docs/
 - **New page/component** → add it to `frontend-architecture.md` with its responsibility
 
 Keep docs accurate and current, not historical. No changelog entries inside doc files.
+
+---
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request against
+it, and it is the gate a change passes *before* it is merged:
+
+1. `npm run check:language` — the 100% English rule (first, because it is the cheapest
+   and it names the offending file and line)
+2. `npm run typecheck` — `tsc --noEmit`
+3. `npm run build` — the Next.js production build
+
+A new push to the same branch cancels the run still in flight.
+
+The release workflow repeats the language check and the build on purpose: it is the last
+gate before npm and must not assume CI has run on that commit.
+
+Until a test suite exists, these three steps are the project's only automated net — there
+are no unit or end-to-end tests. Treat a green CI as "it compiles and speaks English",
+not as "it works".
 
 ---
 

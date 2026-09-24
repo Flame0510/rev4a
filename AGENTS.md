@@ -52,10 +52,21 @@ If you are an AI agent arriving on this repo for the first time:
 No Italian, no other languages in code or docs.
 
 `npm run check:language` scans every tracked file and exits non-zero on an Italian word;
-the release workflow runs it, so a release cannot ship Italian. It is also shipped as an
+CI runs it on every pull request and the release workflow runs it again, so neither `main`
+nor a release can ship Italian. It is also shipped as an
 optional git hook: `git config core.hooksPath .githooks` once per clone checks only what
 you are committing. A line carrying `lang-ok` is skipped when the Italian is the point of
 that line (see `CONTRIBUTING.md` § Language rule).
+
+`check:language` is a **word list**, not a language detector — it only catches the
+words it knows, and it never reads the commit message (it scans tracked/staged file
+content, `git ls-files` / `git diff --name-only`). Twice already an agent doing the
+English pass on its own diff missed Italian the script would later catch (commits
+`8ec4c10`, `0ce4281`), and one Italian commit message (`c0a9bc3`) shipped because
+nothing checks that at all. Before committing, run the script for the words, then
+reread the diff yourself for Italian syntax made of words the list leaves out on
+purpose (`come`, `per`, `non`, `la`…) — and reread the commit message, which the
+script will never see.
 
 ### 2.2 Code Style
 
@@ -114,6 +125,9 @@ Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FR
 - [ ] Does `AGENTS.md` need updating? (New rules or conventions.)
 - [ ] Are there new dependencies? Add them to the relevant docs.
 - [ ] Does `README.md` need updating? (New features, changed setup.)
+- [ ] Ran `npm run check:language`? Then reread the diff and the commit message
+      yourself — the script is a word list, it misses Italian syntax and never
+      reads the message (see §2.1).
 
 **Guideline:** Write docs while you implement, not after. A change without
 documentation is incomplete.
@@ -190,6 +204,8 @@ When the user asks you to do something on this repository:
 ```bash
 npm run dev          # Start Next.js dev server
 npm run build        # Build for production
+npm run typecheck    # tsc --noEmit (CI gate)
+npm run check:language  # 100% English rule (CI gate)
 rev4a serve        # Start all services (dashboard + daemon + terminal)
 npm start            # Same as rev4a serve
 sudo systemctl status rev4a.service  # Production: check running services

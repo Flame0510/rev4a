@@ -52,10 +52,10 @@
   "scripts": {
     "dev": "next dev -p 3720",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "rev4a serve",
     "start:all": "rev4a serve",
     "refresh:pricing": "node scripts/refresh-model-pricing.mjs",
-    "smoke:db-bootstrap": "node scripts/smoke-db-bootstrap.mjs",
     "postinstall": "node bin/postinstall.js",
     "check:language": "node scripts/check-language.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",

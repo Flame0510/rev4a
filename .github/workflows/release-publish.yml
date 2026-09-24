@@ -64,7 +64,7 @@ jobs:
       - name: Align package.json with the release version
         run: npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
 
-      # Gate: se non compila, non si pubblica.
+      # Gate: no build, no publish.
       - name: Check the language (100% English)
         run: node scripts/check-language.mjs
 

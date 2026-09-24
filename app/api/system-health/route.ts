@@ -190,7 +190,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         severity: 'warning',
         source: 'cost',
         title: 'High usage-based cost',
-        details: `Provider usage-based today: $${billing.usageBasedCost.toFixed(2)}. Include OpenRouter e altri provider pay-per-use, non i piani fissi.`,
+        details: `Provider usage-based today: $${billing.usageBasedCost.toFixed(2)}. Counts OpenRouter and the other pay-per-use providers, not the fixed plans.`,
         actionHref: '/gateway',
         dismissible: true,
         createdAt,

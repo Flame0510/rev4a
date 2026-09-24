@@ -741,7 +741,7 @@ function pollSessions() {
     log(`Retention cleanup: ${r1.changes} cron sessions, ${r2.changes} cron events deleted`);
   }
 
-  // Prune knownSessions — delete completed sessions da >30 giorni
+  // Prune knownSessions — delete completed sessions older than 30 days
   const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
   for (const [id, snap] of knownSessions) {
     if (snap.status === 'completed' && snap.updatedAt && snap.updatedAt < cutoff) {

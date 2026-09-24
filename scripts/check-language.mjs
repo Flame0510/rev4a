@@ -35,6 +35,18 @@ const WORDS = [
   'essere', 'fare', 'dove', 'nuovo', 'nuova', 'vecchio', 'vecchia', 'davvero', 'invece',
   'inoltre', 'quindi', 'della', 'delle', 'degli', 'nella', 'nelle', 'negli', 'dalla', 'dalle',
   'dallo', 'allo', 'alla', 'sul', 'sulla', 'nessuno', 'nessuna', 'adesso', 'subito', 'oggi', 'ieri',
+  // Added 2026-09-24, after three lines survived the list above — one of them a UI string
+  // ('Include OpenRouter e altri provider…' in the system-health recommendations).
+  'compila', 'compilare', 'compilato', 'pubblica', 'pubblico', 'pubblicare', 'pubblicato',
+  'altro', 'altra', 'altri', 'altre', 'giorno', 'giorni', 'mese', 'settimana', 'settimane',
+  'aggiorna', 'aggiornare', 'aggiornamento', 'aggiornato', 'controllo', 'controlla', 'controllare',
+  'verifica', 'verificare', 'esempio', 'esempi', 'funziona', 'funzione', 'funzioni',
+  'creare', 'cancella', 'cancellare', 'scarica', 'scaricare', 'usare', 'usato', 'utilizzo',
+  'riga', 'parola', 'parole', 'elenco', 'codice', 'chiave', 'chiavi', 'prova', 'risultato',
+  'risultati', 'stesso', 'stessa', 'stessi', 'stesse', 'ancora', 'sempre', 'dopo', 'forse',
+  'puoi', 'posso', 'siamo', 'abbiamo', 'erano', 'servono', 'vuole', 'vuoi', 'quale', 'quali',
+  'disponibile', 'necessario', 'corretto', 'sbagliato', 'mancante', 'vuoto', 'ultimo', 'ultima',
+  'italiano', 'italiana', 'italiane', 'inglese', 'pero', 'cosi', 'piu', 'ecco', 'grazie',
 ];
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.md', '.json', '.sh', '.yml', '.yaml', '.css', '.html'];
