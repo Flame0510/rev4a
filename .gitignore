@@ -31,3 +31,6 @@ data/
 .npmrc
 globals.css.bak
 globals.css.pre-cleanup
+
+# Local working documents (plans, backlog, runbooks), never committed
+/plans/
