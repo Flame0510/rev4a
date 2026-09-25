@@ -62,7 +62,7 @@ that line (see `CONTRIBUTING.md` § Language rule).
 words it knows, and it never reads the commit message (it scans tracked/staged file
 content, `git ls-files` / `git diff --name-only`). Twice already an agent doing the
 English pass on its own diff missed Italian the script would later catch (commits
-`8ec4c10`, `0ce4281`), and one Italian commit message (`c0a9bc3`) shipped because
+`c7654c0`, `7b586f6`), and one Italian commit message (`0d9814b`) shipped because
 nothing checks that at all. Before committing, run the script for the words, then
 reread the diff yourself for Italian syntax made of words the list leaves out on
 purpose (`come`, `per`, `non`, `la`…) — and reread the commit message, which the
