@@ -82,6 +82,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
 | `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
+| `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated origins allowed to reach `next dev` (e.g. a LAN address); no effect on a production build |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 

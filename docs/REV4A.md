@@ -11,17 +11,6 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## Overview
-
-| Field | Value |
-|---|---|
-| VPS IP | `203.0.113.10` |
-| OS | Ubuntu 24.04.4 LTS |
-| Resources | 4 CPU, 15 GB RAM, 193 GB disk |
-
-
----
-
 ## Architecture
 
 ```

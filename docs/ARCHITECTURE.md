@@ -35,7 +35,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  DOCKER HOST (203.0.113.10, 4 CPU, 15 GB RAM, 193 GB disk)   │
+│  DOCKER HOST                                                   │
 │                                                                │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
 │  │ rev4a-control  │  │ agent-argus      │  │ agent-atlas  │ │
@@ -630,10 +630,11 @@ Every poll cycle the daemon records a `system_metrics` row. Data sources:
 
 - **CPU**: cgroup v2 usage delta (`/sys/fs/cgroup/cpu.stat`) when available, falls back to `/proc/stat` host ticks
 - **RAM**: `/proc/meminfo`
-- **Disk**: `df -BG /data`
+- **Disk**: `fs.statfsSync()` on the directory holding the events database — the
+  filesystem Rev4a's own data lives on; works the same on Linux and macOS
 - **Load**: `os.loadavg()[0]`
 
-Metrics older than 24 h are pruned automatically each cycle.
+Metrics older than 30 days are pruned automatically each cycle.
 
 ### Anomaly Detection
 

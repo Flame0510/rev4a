@@ -300,19 +300,14 @@ function readHostCpuSample() {
   return { idle, total };
 }
 
+// The filesystem holding Rev4a's own data (the events database's directory), in GB.
+// statfs works the same on Linux and macOS; the previous `df -BG /data` read a mount
+// that existed only on one old server and used GNU-only flags, so it reported 0/0.
 function getDiskStats() {
   try {
-    const result = spawnSync('df', ['-BG', '/data', '--output=used,size'], {
-      encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL',
-    });
-    if (result.status !== 0 || !result.stdout) return { used: 0, total: 0 };
-    const lines = result.stdout.trim().split('\n');
-    // lines[0] = header, lines[1] = data
-    if (lines.length < 2) return { used: 0, total: 0 };
-    const parts = lines[1].trim().split(/\s+/);
-    const used = parseFloat(parts[0]) || 0;  // already in GB (BG flag strips G)
-    const total = parseFloat(parts[1]) || 0;
-    return { used, total };
+    const st = fs.statfsSync(path.dirname(DB_PATH));
+    const gb = (blocks) => Math.round((blocks * st.bsize) / 1024 ** 3);
+    return { used: gb(st.blocks - st.bfree), total: gb(st.blocks) };
   } catch (e) {
     return { used: 0, total: 0 };
   }
@@ -540,7 +535,7 @@ function pollSessions() {
     const session_id = s.key;
 
     // Skip Telegram channel/group sessions (multi-user).
-    // Keep Telegram direct sessions (agent:ops:telegram:argus:direct:...) as root nodes
+    // Keep Telegram direct sessions (agent:<id>:telegram:<account>:direct:...) as root nodes
     // since they are the parent of all sub-agents spawned via Telegram.
     if (session_id.includes(':telegram:') && !session_id.includes(':direct:')) continue;
     const { label, parent_id: inferredParent } = parseSessionKey(s.key);
@@ -698,27 +693,12 @@ function pollSessions() {
       }),
     });
     log(`[TIMEOUT] ${session_id} missing for ${Math.round(missingFor / 60000)} min`);
-
-    // Notify the maintainer via openclaw message (only if openclaw is available)
-    try {
-      if (!openclawMissing) {
-        execSync('which openclaw', { stdio: 'ignore', timeout: 3000 });
-      }
-      spawnSync('openclaw', [
-        'message', 'send',
-        '--account', 'ops',
-        '--target', '100000000',
-        '--text', `⚠️ Rev4a: agent timeout\n\`${session_id.slice(-36)}\`\nMissing for ${Math.round(missingFor / 60000)} min without completing.`,
-      ], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
-    } catch (e) {
-      log(`[TIMEOUT] Telegram notification failed: ${e.message}`);
-    }
   }
 
   // Collect system metrics after each poll
   try { collectSystemMetrics(); } catch (e) { log(`[METRICS ERROR] ${e.message}`); }
 
-  // Force names and parents declared via lineage — overrides any previous label (including "Sub-agente")
+  // Force names and parents declared via lineage — overrides any previous label, including the generic placeholder older data carries
   const updateLabel = db.prepare('UPDATE sessions SET label = ?, parent_id = ? WHERE session_id = ?');
   const applyLineage = db.transaction(() => {
     for (const [child_id, agent_name] of Object.entries(declaredNames)) {

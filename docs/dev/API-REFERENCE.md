@@ -1579,7 +1579,7 @@ nothing opens until an operator approves it.
 
 **Response:**
 ```json
-{ "url": "http://212.0.113.7:3710/#token=…", "loopbackHost": false }
+{ "url": "http://203.0.113.7:3710/#token=…", "loopbackHost": false }
 ```
 
 - `url` is the plain token link. The host is the one the request reached Rev4a on
