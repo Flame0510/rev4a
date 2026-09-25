@@ -357,10 +357,10 @@ function collectSystemMetrics() {
             metric: 'cpu',
             values: [recent[1].cpu_percent, recent[0].cpu_percent],
             threshold: 85,
-            message: `CPU alta: ${recent[0].cpu_percent}% per 2 campioni consecutivi`,
+            message: `CPU high: ${recent[0].cpu_percent}% for 2 consecutive samples`,
           }),
         });
-        log(`[ANOMALY] CPU alta: ${recent[0].cpu_percent}%`);
+        log(`[ANOMALY] CPU high: ${recent[0].cpu_percent}%`);
       }
     }
     // RAM >90% for 2 consecutive samples
@@ -377,10 +377,10 @@ function collectSystemMetrics() {
             metric: 'ram',
             values: [ram1pct, ram0pct],
             threshold: 90,
-            message: `RAM alta: ${ram0pct}% per 2 campioni consecutivi`,
+            message: `RAM high: ${ram0pct}% for 2 consecutive samples`,
           }),
         });
-        log(`[ANOMALY] RAM alta: ${ram0pct}%`);
+        log(`[ANOMALY] RAM high: ${ram0pct}%`);
       }
     }
   }
