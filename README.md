@@ -162,4 +162,4 @@ at container creation time.
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).
