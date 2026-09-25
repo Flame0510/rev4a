@@ -141,7 +141,7 @@ This triggers `.github/workflows/release-publish.yml`, which:
 3. Skips the publish (with a warning, not a failed run) if that version
    already exists on npm — safe to re-run a release
 4. Publishes to npm with `NPM_TOKEN`
-5. Commits the version bump back to `main` (`chore: allinea package.json a
+5. Commits the version bump back to `main` (`chore: align package.json with
    vX.Y.Z [skip ci]`) so the repo can never drift from what's on npm
 
 `workflow_dispatch` is also available for a dry run (`dry_run: true`, the
@@ -215,6 +215,10 @@ Types: feat | fix | refactor | chore | docs
 Scope: api | daemon | db | ui | deploy | auth | rag
 ```
 
-Example: `feat(api): add /api/workspace endpoint` — and the same commit must touch `docs/dev/api-reference.md`.
+Example: `feat(api): add /api/workspace endpoint` — and the same commit must touch `docs/dev/API-REFERENCE.md`.
+
+Commits are attributed to the person who made the change. Do not add co-author trailers or
+"generated with" footers for AI assistants or other tools — in commit messages or in pull
+request descriptions — and keep tool-specific working folders out of the tree.
 
 A `docs`-only commit is valid when fixing stale documentation without touching code.
