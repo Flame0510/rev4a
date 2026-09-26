@@ -60,7 +60,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/containers/terminal/[id]': {
     title: 'Container Terminal',
-    description: 'Interactive web terminal for a specific Docker container. Gives you a direct shell into any running container.',
+    description: 'Interactive web terminal for a specific Docker container: a real shell (Tab completion, history, top, vi, resizing). A dropped connection is resumed for 2 minutes; Close ends the shell.',
     actions: ['Run shell commands inside the container', 'Inspect files, processes, and logs live', 'Use any CLI tool available inside the container'],
     hints: 'This is a live terminal — changes you make inside the container are real. Be careful with destructive commands.',
   },

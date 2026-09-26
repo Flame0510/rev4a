@@ -85,7 +85,7 @@ The page shows no CPU or memory figures and has no start, stop, or restart butto
 The machine Rev4a runs on. Three cards — CPU (percent, cores, load average), memory (used, available, swap) and storage (each disk with its used and free space, and whether it is the system disk, where Docker keeps agents, or where Rev4a keeps its data) — then charts of CPU, memory and each disk over 1 hour, 24 hours, 7 days or 30 days (for CPU and memory the average line with the peak shaded). Hover a chart (or focus it and use the arrow keys) to read a point; each chart has a Table view. Bars turn yellow and red when they reach their thresholds. Figures refresh every 30 seconds; history is kept 30 days.
 
 ### Container Terminal (`/containers/terminal/[id]`)
-Live web terminal into a Docker container. Run commands, inspect files, debug issues — like SSH but in the browser.
+Live web terminal into a running Docker container — like SSH in the browser: Tab completion, command history, `top`, `vi`, resizing with the window. If the connection drops (network, laptop sleep) the shell keeps running for 2 minutes and reconnecting picks it up; reloading the page resumes it too. **Close** ends the shell. If the container is stopped or missing, the page says so and offers **Reconnect**. Only a logged-in user can open it.
 
 ### Workspace (`/workspace`)
 File explorer for the OpenClaw workspace. Browse, view, and edit files across workspaces: the VPS host workspace and every agent container workspace. Switch between workspaces via a dropdown. Supports binary file preview (images) and text editing with syntax awareness.

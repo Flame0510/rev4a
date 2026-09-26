@@ -72,7 +72,7 @@
 
 **Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and installs them into containers on explicit sync. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
 
-**Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any of them. Fully functional. (Machine CPU, RAM and disk are on `/system`.)
+**Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any running one. Fully functional. (Machine CPU, RAM and disk are on `/system`.)
 
 **Workspace API:** Lazy-loaded file tree explorer with real-time reads (no caching), supports both host and container workspaces via `docker exec`.
 
@@ -81,7 +81,7 @@
 | Feature | Status | Notes |
 |---|---|---|
 | Credentials (UI + API) | 🟢 Implemented | SQLite, no encryption yet |
-| Container page | 🟢 Functional | Lists all containers, web terminal |
+| Container page | 🟢 Functional | Lists all containers, web terminal (xterm.js, no proxy needed) |
 | Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
 | Provider proxy | 🟢 Implemented | Agents route through Rev4a provider gateway |
 | Shared volumes | 🟢 Implemented | Skills + repos mounted on all agents |
@@ -749,39 +749,29 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 
 ## 11. Container Terminal
 
-Rev4a provides a real, interactive terminal for any agent container via
-a WebSocket-connected PTY. The implementation is documented in detail in
+Rev4a provides a real, interactive terminal (xterm.js in the browser, a PTY via
+`node-pty` on the host) for any running container. Details in
 [docs/CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md).
-
-### Two-process architecture
 
 | Process | Port | Role |
 |---|---|---|
-| Next.js (`next start`) | 3740 | Serves the terminal page, auth, API |
-| `terminal-ws-server.js` | 3741 (127.0.0.1) | WebSocket PTY server via `node-pty` |
+| `server.js` | 3740 | Next.js (pages, API) plus the WebSocket upgrade on `/api/terminal-ws` |
+| `terminal-ws-server.js` | 3741 (127.0.0.1) | The PTYs and their sessions |
 
-Both are started by `rev4a serve`; the terminal server is a process of its own to avoid
-event-loop contention with Next.js during high-throughput I/O. It has no authentication
-of its own and is reachable only through a reverse proxy route (see
-[CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md#routing)).
-
-### Why custom DOM over xterm.js
-
-The initial implementation used xterm.js (both canvas and DOM renderers).
-Both suffered from black-screen-on-large-output and broken scrolling due to
-CSS conflicts. The current implementation uses a plain `<div>` with native
-browser scrolling and a hidden `<textarea>` for input — stable under any
-output volume.
-
-See [CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md#terminal-client-browser)
-for the full rationale.
+Both are started by `rev4a serve`. The browser opens the terminal on the dashboard's own
+port, so no reverse proxy is needed. `server.js` checks the session cookie, the Origin and
+the container name, then forwards the handshake with a per-boot secret the terminal server
+requires; the terminal server is a process of its own so heavy shell output never stalls
+the dashboard. A shell survives a dropped connection for 2 minutes and is resumed by the
+same session id.
 
 ## 12. Technology Stack
 
 | Layer | Technology | Notes |
 |---|---|---|
 | Orchestrator | Docker / Docker Compose | Already in use |
-| Dashboard | Next.js 16 + React 19 | Current Rev4a |
+| Dashboard | Next.js 16 + React 19 | Current Rev4a, served by `server.js` (Next's programmatic API) |
+| Container terminal | xterm.js 6 (browser) + node-pty + `ws` | `docker exec` PTYs, sessions resumable for 2 minutes — `docs/CONTAINER-TERMINAL.md` |
 | Provider Gateway | Express/Fastify (Node.js) | To implement in Rev4a |
 | Database | SQLite (WAL mode) | Current `events.db`, may need to scale |
 | Memory | Per-agent SQLite + central index | New |

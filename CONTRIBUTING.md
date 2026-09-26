@@ -50,6 +50,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `app/globals.css` (tokens, visual language) | `docs/DESIGN-SYSTEM.md` — color tokens, shape rules |
 | `scripts/**` | `docs/ARCHITECTURE.md` |
 | `bin/**` (CLI, `rev4a serve` start-up) | `docs/REV4A.md` — Service Management; `README.md` — env vars |
+| `server.js`, `terminal-ws-server.js`, `app/containers/terminal/**` | `docs/CONTAINER-TERMINAL.md`; `docs/dev/API-REFERENCE.md` — `GET /api/terminal-ws` |
 | `instrumentation.ts` | `docs/dev/GATEWAY.md` — Sync Flow |
 | `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |

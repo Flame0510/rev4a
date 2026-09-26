@@ -1,289 +1,197 @@
 # Container Terminal — WebSocket PTY
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-09-26
 
 ---
 
 ## Overview
 
-Rev4a provides an interactive web-based terminal for Docker containers.
-It connects to any container with `AGENT_ID` label, spawning a real PTY session
-via `node-pty` and streaming I/O over a dedicated WebSocket server.
+`/containers/terminal/<name>` opens an interactive shell in a running Docker container —
+any container on the host (the Containers page links every running one). It is a real
+terminal: raw keystrokes, Tab completion and bash history, Ctrl-keys, cursor movement,
+full-screen programs (`top`, `vi`, `less`), resize, progress bars.
 
 ```
-Browser (xterm-compatible DOM terminal)
-  │  WebSocket wss://rev4a/containers/terminal/{id}
+Browser  xterm.js (@xterm/xterm)
+  │  ws(s)://<dashboard host>/api/terminal-ws?id=<container>&session=<uuid>[&resume=1]
   ▼
-terminal-ws-server.js (127.0.0.1:3741, reached through a reverse proxy — see Routing)
+server.js  (port 3740 — the dashboard's own port)
+  │  checks the Origin, the session cookie and the container name,
+  │  then forwards the handshake with the per-boot secret (no cookie)
+  ▼
+terminal-ws-server.js  (127.0.0.1:3741 only)
   │  node-pty
   ▼
-docker exec -it {containerId} env TERM=xterm-256color bash
-  │
-  ▼
-Container Shell (bash, interactive, full PTY)
+docker exec -it -e REV4A_TERMINAL_SESSION=<uuid> <container> env TERM=xterm-256color <bash | sh>
 ```
 
-## Architecture
+It needs **no reverse proxy**: the browser talks to the dashboard's own host and port,
+locally or over a plain-IP VPS. Behind a proxy, see [Reverse proxies](#reverse-proxies).
 
-### Two-process model
+## Processes
 
-| Process          | Port  | Role |
-|------------------|-------|------|
-| Next.js (`next start`) | 3740  | Next.js app (pages, API routes, auth) |
-| `terminal-ws-server.js` | 3741 | Standalone WebSocket server for terminal sessions, bound to 127.0.0.1 |
+`rev4a serve` starts three processes under one systemd unit (`rev4a.service`):
 
-Both are child processes of `rev4a serve` (with `daemon.js`), under the single
-`rev4a.service` unit in production. The terminal server is its own process, isolated from
-the Next.js app to avoid event-loop contention during high-throughput I/O (fast
-`seq`, `cat` on large files, interactive shell sessions).
-
-### Routing
-
-```
-/containers/terminal/{id}          → Next.js (page serving TerminalClient)
-/api/terminal-ws?id={containerId}  → reverse proxy → ws://127.0.0.1:3741
-```
-
-The browser opens the socket on the dashboard's own host (`/api/terminal-ws`). Next.js
-has no route for that path, so the terminal works only when a reverse proxy in front of
-Rev4a forwards it to port 3741; without one the socket gets a 404.
-
-**No authentication of its own.** `terminal-ws-server.js` checks neither the session
-cookie nor the token: whoever reaches it gets a shell in the container named by `id`.
-It listens on 127.0.0.1 only, so the exposure is exactly what the proxy route above
-opens. An open issue.
-
-### Data flow
-
-1. User opens `/containers/terminal/openclaw-atlas`
-2. `page.tsx` renders `<TerminalClient containerId="openclaw-atlas" />`
-3. `TerminalClient` opens a WebSocket to `/api/terminal-ws?id=openclaw-atlas`
-4. `terminal-ws-server.js` receives connection, spawns a PTY via node-pty:
-   ```
-   docker exec -it openclaw-atlas env TERM=xterm-256color bash
-   ```
-5. PTY output streams → WebSocket → browser (DOM terminal)
-6. User keystrokes → WebSocket → PTY stdin
-
-## Terminal Client (Browser)
-
-### Why not xterm.js?
-
-The first implementation used **xterm.js** (v5.3.0) with both **canvas** and
-**DOM** renderers. Both suffered from:
-
-- **Black screen on large output** — the canvas renderer went blank when
-  hundreds of lines were received in a single burst. The DOM renderer
-  (xterm.addons.dom) had the same issue under load.
-- **Broken scrolling** — xterm.js manages its own scrollback buffer internally,
-  but the canvas never grew, so native browser scrolling didn't exist. Mouse
-  wheel scrolling often failed or produced visual artifacts.
-- **CSS conflicts** — the parent app sets `html, body { overflow: hidden }`,
-  which interfered with xterm.js viewport calculation. Multiple workarounds
-  (`position: fixed`, `minHeight: 0`, `height: 100dvh`) didn't fully resolve
-  layout instability.
-- **Selection issues** — xterm.js intercepts mouse events for its own
-  selection system, making it hard to copy text natively.
-
-### Custom DOM terminal (current)
-
-The current terminal replaces xterm.js entirely with a plain HTML structure:
-
-```
-┌─────────────────────────────────┐
-│  Top bar (44px, container info) │
-├─────────────────────────────────┤
-│                                 │
-│  Output area (div, overflow:auto│
-│  white-space: pre-wrap)         │
-│                                 │
-│  root@hostname:~# ls -la        │
-│  total 12                       │
-│  drwxr-xr-x ...                 │
-│  -rw-r--r-- ...                 │
-│                                 │
-│  root@hostname:~# █             │
-├─────────────────────────────────┤
-│  (hidden <textarea> for input)  │
-└─────────────────────────────────┘
-```
-
-Key design decisions:
-
-| Decision | Rationale |
-|---|---|
-| **`<textarea>` hidden off-screen** | Captures all keystrokes including Tab, Arrows, Ctrl+letter. No focus/IME issues. Single-line only (no Enter for newlines). |
-| **`<div>` output area** | Native browser scrolling (`overflow: auto`). Normal text selection (copy/paste with Cmd+C). Render millions of lines without black screen. |
-| **`white-space: pre-wrap`** | Preserves ANSI-visible indentation and spacing while wrapping long lines. |
-| **Last output line + input inline** | The cursor and text being typed appear on the same line as the last prompt from the server, simulating a real terminal feel. |
-| **`requestAnimationFrame` auto-scroll** | After every buffer update, scrolls to bottom. Smooth, native scroll behavior. |
-
-### Input handling
-
-- **Hidden `<textarea>`** captures all keyboard input
-- `value` + `onChange` → React state `currentInput`
-- On `Enter` → command sent to WebSocket, input cleared
-- `Arrows` → local command history (client-side array)
-- `Tab` → `\t` sent to server (bash autocomplete)
-- `Ctrl+C/L/D/U` → respective control characters sent to server
-- **Multi-line paste** → split by `\n`, each line sent as a separate command
-
-### Pending command flash fix
-
-When the user presses Enter, `currentInput` is immediately cleared.
-However, the server echoes the command back with a newline + new prompt.
-Between the clear and the server echo, there is a visible frame where the
-input line appears blank.
-
-**Fix:** A `pendingCmdRef` ref holds the last submitted command string.
-The rendering logic uses:
-
-```ts
-const showInput = pendingCmdRef.current ? pendingCmdRef.current : currentInput;
-```
-
-`pendingCmdRef` is reset as soon as any server output arrives (the echo),
-so the command text stays visible without flicker.
-
-### ANSI parsing (color rendering)
-
-The terminal now includes a real ANSI parser (`parseAnsi()`) that converts
-SGR (Select Graphic Rendition) escape sequences into styled `<span>`
-elements:
-
-| Feature | Supported |
-|---|---|
-| Foreground colors 30-37 (normal) | ✅ |
-| Foreground colors 90-97 (bright) | ✅ |
-| Background colors 40-47 | ✅ |
-| Background colors 100-107 (bright) | ✅ |
-| Bold (1) | ✅ `fontWeight: 700` |
-| Dim (2) | ✅ `opacity: 0.6` |
-| Italic (3) | ✅ |
-| Underline (4) | ✅ |
-| Reset (0) | ✅ clears all styles |
-| Bracketed paste `[?2004h/l` | 🚫 stripped |
-| Non-SGR CSI (cursor, erase) | 🚫 stripped |
-| OSC sequences (title, clipboard) | 🚫 stripped |
-
-**Implementation:**
-
-```ts
-type AnsiStyle = {
-  fg?: string;          // CSS color
-  bg?: string;          // CSS background-color
-  bold?: boolean;
-  dim?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-};
-type Segment = { text: string; style: AnsiStyle };
-```
-
-The parser walks the raw ANSI string character by character. When it
-encounters `\x1b[`, it reads until `m` to get SGR parameters. Each
-parameter (e.g. `31` for red foreground) is translated into a color
-from the ANSI color map. All non-SGR escape sequences (cursor movement,
-erase display, bracketed paste) are silently stripped.
-
-The raw PTY output is kept in state as-is (with ANSI), split by `\n`,
-and each line is passed through `RenderAnsi` which uses `useMemo` to
-avoid re-parsing on every render.
-
-**Color palette** follows the One Dark theme used by the UI:
-
-| Code | Color | Hex |
+| Process | Listens on | Role |
 |---|---|---|
-| 30/90 (black) | Dark gray | `#1d1d1d` / `#5c6370` |
-| 31/91 (red) | Soft red | `#e06c75` |
-| 32/92 (green) | Soft green | `#98c379` |
-| 33/93 (yellow) | Amber | `#d19a66` |
-| 34/94 (blue) | Soft blue | `#61afef` |
-| 35/95 (magenta) | Purple | `#c678dd` |
-| 36/96 (cyan) | Teal | `#56b6c2` |
-| 37/97 (white) | Light gray / white | `#abb2bf` / `#ffffff` |
+| `server.js` | 3740, all interfaces | Next.js (pages, API, `proxy.ts`) through its programmatic API, plus the WebSocket upgrade on `/api/terminal-ws` |
+| `daemon.js` | — | Session poll and machine metrics |
+| `terminal-ws-server.js` | 127.0.0.1:3741 | The PTYs and their sessions |
 
-### Legacy: ANSI stripping (pre-color support)
+The terminal server is its own process so a flood of shell output never stalls the
+dashboard's event loop. `server.js` replaces `next start`; every HTTP request goes to
+Next.js unchanged. `npm run dev` (`next dev`) has no terminal: use `rev4a serve`.
 
-The original implementation stripped all ANSI sequences, keeping only
-visible text. This was replaced by the parser above on 2026-06-25.
+## Security
 
-## Terminal Server (`terminal-ws-server.js`)
+At the upgrade, in `server.js`, in this order:
 
-### Dependencies
+| Check | Refused with |
+|---|---|
+| The path is `/api/terminal-ws` (no other path takes an upgrade) | `404` |
+| `Origin` equals the host the browser addressed: `Host`, or `X-Forwarded-Host` from a proxy; case and the scheme's default port are ignored. Blocks a page on another site from opening a shell with the user's cookie (cross-site WebSocket hijacking); a browser cannot set `X-Forwarded-Host` on a WebSocket, so accepting it opens nothing | `403` |
+| The `rev4a_token` cookie verifies — the JWT the dashboard pages require (`REV4A_JWT_SECRET` from the environment or `.env`); a bearer token is not accepted here | `401` |
+| The container name matches Docker's pattern (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`, ≤128 characters) | `400` |
+| The per-boot secret is set (Rev4a started with `rev4a serve`) | `503` |
+| The terminal server answers (refused → `502`, silent for 10 s → `504`) | `502` / `504` |
 
-- **ws** (WebSocket server)
-- **node-pty** (pseudo-terminal for child processes)
+The handshake is then replayed to 127.0.0.1:3741 **without the cookie** and with
+`X-Rev4a-Terminal-Secret` (any copy the client sent is dropped): a random value
+`rev4a serve` generates at every start and passes to both processes in the environment
+(`REV4A_TERMINAL_SECRET`, never in argv). The terminal server refuses any handshake
+without it (`401`, constant-time comparison), so another local user who reaches the
+loopback port gets nothing. Started without the variable, both sides say so in the log.
 
-### Session lifecycle
+The terminal server then checks the container exists and runs (`docker inspect`) and
+picks `bash`, or `sh` when the image has none. Every host-side Docker call passes argv —
+no host shell. Inside the container two fixed `sh -c` scripts run (the shell lookup and
+the clean-up below); the session id reaches the clean-up as an argument, never
+interpolated.
 
-1. WebSocket connection established with `?id=openclaw-atlas`
-2. `node-pty` spawns `docker exec -it {containerId} bash` with:
-   - `name: 'xterm-256color'`
-   - `cols: 80, rows: 30` (initial, resized on client fit)
-3. PTY `onData` → WebSocket `send`
-4. WebSocket `message` → PTY `write`
-5. Idle timeout: 30 minutes (reset on any client input)
-6. On disconnect or `exit` command → cleanup child process, close socket
+What an authenticated user can do is the single-admin model: open a shell in any running
+container. Sessions are not bound to the login that opened them — any valid cookie can
+resume a session id it knows — and an open socket is not re-checked when the login
+expires; closing the tab or **Close** ends it. The session id travels in the WebSocket
+URL, so a reverse proxy's access log records it.
 
-### Resize handling
+## Sessions
 
-The client sends a JSON message when the terminal dimensions change:
+The browser names its session: a UUID kept in `sessionStorage` per container, sent as
+`&session=`. The shell belongs to that id, not to the socket:
 
-```json
-{ "type": "resize", "cols": 120, "rows": 40 }
+- **Drop** (network, laptop sleep): the shell keeps running for **2 minutes**, its output
+  queued (the newest 64 K characters, cut at a line start). The page reconnects with
+  `&resume=1` and is attached to it, receiving the queued output — a command started
+  before the drop finishes and is seen. Past 2 minutes (or after a Rev4a restart) the
+  shell is gone and the resume is answered with `4002` and the reason; **Reconnect**
+  starts a new one.
+- **Reload** resumes the same shell while it lives (same tab, same `sessionStorage`); a
+  reload after it ended simply starts a new one.
+- **Close** (the button) ends it at once: the page sends close code `1000` — or, while it
+  is reconnecting, briefly attaches only to send it — the id is forgotten, and the next
+  visit starts a new shell.
+- **The same session in two tabs** (a duplicated tab copies `sessionStorage`): the newer
+  takes it, the older is closed with `4003`. Two sockets starting the same new id at once
+  get one shell: the second waits for the first.
+- **Idle**: no input and no output for 30 minutes ends the shell (`4002`).
+- **Heartbeat**: the server pings every 25 s; a socket that misses a ping is dropped
+  (its shell then waits the 2 minutes). Keeps idle links open through NAT and finds dead peers.
+- **Limits**: at most 20 shells at once (`4429`); keystrokes typed before the shell starts
+  are kept up to 64 K characters; a message is at most 1 MB.
+- **Backpressure**: when 1 MB of output waits for a slow client the shell is paused, and
+  resumed below 256 KB — `yes` or a huge `cat` cannot grow the server's memory.
+
+**Ending a session ends the shell inside the container.** Killing the host's `docker exec`
+client alone does not: Docker leaves an exec running when its client goes away, so every
+closed terminal used to leave a shell (and anything running in it) in the container. The
+shell is started with `REV4A_TERMINAL_SESSION=<id>` in its environment, which every
+process it starts inherits; ending the session runs, in the container, a scan of
+`/proc/*/environ` for that marker — `SIGHUP` to what carries it (a terminal hangup), then
+`SIGKILL` a second later to what ignored it. Needs `sh`, `tr` and `grep` in the image
+(BusyBox and Debian/Ubuntu images have them).
+
+Sizes: the page sends `{"type":"resize","cols":n,"rows":n}` on connect and whenever the
+terminal's columns or rows change; a size or keystrokes sent while the server still
+checks the container are kept and applied when the shell starts. A resume keeps the
+shell's size until the page sends its own.
+
+### Close codes
+
+| Code | Meaning | Client |
+|---|---|---|
+| `1000` | Closed on purpose by the page | Stops, shows **Reconnect** |
+| `4001` | The shell exited (`exit`, Ctrl-D) | Stops, shows the reason, **Reconnect** starts a new shell |
+| `4002` | Idle for 30 minutes, or a resume found the shell already gone | Same |
+| `4003` | The session was opened in another tab | Same |
+| `4404` | No such container / invalid name | Same |
+| `4409` | The container is stopped | Same |
+| `4410` | No `bash` or `sh` in the container | Same |
+| `4429` | 20 shells already open | Same |
+| `4500` | The PTY could not be started on this host | Same |
+| other (1006…) | The connection dropped | Reconnects: 1 s, 2 s, 5 s, then every 10 s |
+
+Six handshakes in a row that fail before opening (about 40 s: not logged in, Rev4a down
+or restarting, a proxy refusing the upgrade) stop the retries with a message and the
+**Reconnect** button.
+
+## Reverse proxies
+
+Rev4a needs none, but works behind one that:
+
+- forwards WebSocket upgrades on `/api/terminal-ws` **to port 3740** (the dashboard), like
+  every other path. A route sending `/api/terminal-ws` to **3741** — what older versions
+  asked for — must be removed: 3741 now answers `401` to anything but `server.js`;
+- keeps the host the browser used, in `Host` or `X-Forwarded-Host`. nginx replaces `Host`
+  with the upstream address by default: set `proxy_set_header Host $host;` (or
+  `X-Forwarded-Host $host`), plus `proxy_http_version 1.1`, `Upgrade $http_upgrade` and
+  `Connection "upgrade"`. Otherwise the Origin check answers `403`.
+
+## Terminal client (browser)
+
+`app/containers/terminal/[id]/TerminalClient.tsx`: **xterm.js 6** (`@xterm/xterm`) with
+`@xterm/addon-fit` (sizes the terminal to its box, refitted by a `ResizeObserver`) and
+`@xterm/addon-web-links` (http/https URLs open in a new tab). Keystrokes go to the socket
+as they are typed (`onData`, and `onBinary` for legacy mouse reports); output is written
+as it arrives. 5 000 lines of scrollback, its own scrolling and selection. Copy with the
+system shortcut where it is not Ctrl-C (Cmd-C on macOS); in a terminal Ctrl-C belongs to
+the shell. Loaded in the browser only (dynamic import). The palette comes from the design
+tokens. The session id is a random UUID from `crypto.getRandomValues` —
+`crypto.randomUUID()` exists only in secure contexts, and a dashboard served over plain
+HTTP by IP is not one.
+
+The page is full screen: a bar (`ui-kicker`, the container name, a status `Badge` —
+Connecting, Connected, Reconnecting, Closed — and `Button`s **Reconnect** / **Close**),
+a notice line when the session stopped, and the terminal. Styles are the `terminal-page`
+classes in `globals.css`.
+
+### Why xterm.js again
+
+The first version (June 2026) used xterm.js 5.3 and was replaced the same day by a
+custom DOM renderer after a black screen on large output, broken scrolling and selection
+problems — layout issues under `html, body { overflow: hidden }` with a viewport that
+never sized. The custom renderer could not be a terminal: it sent whole lines on Enter
+(no Tab completion, no bash history), never sent a size, and stripped `\r` and cursor
+movement (no progress bars, no `top`/`vi`/`less`). xterm.js 6 now lives in a fixed-size
+box sized by `addon-fit`. Before it replaced the custom renderer it was checked in a real
+browser (Playwright, 2026-09-26) against those failures: 20 000 lines of `seq` render to
+the last line, the alternate screen and cursor addressing work (BusyBox `top` renders),
+resize reaches the PTY (`tput cols`).
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| "Cannot open the terminal" after about 40 s | Not logged in (session expired); Rev4a down; or a reverse proxy not forwarding the upgrade to 3740 or rewriting `Host` (see [Reverse proxies](#reverse-proxies)) |
+| "No container named …" / "… is not running" | The container is gone or stopped: an agent is started from the Agents page, any other container with `docker start` |
+| "The previous shell has ended" | The connection was down for more than 2 minutes, or Rev4a restarted: **Reconnect** opens a new shell |
+| "Could not start the shell: posix_spawnp failed" (macOS) | node-pty's `spawn-helper` lost its execute bit; `terminal-ws-server.js` restores it at start — restart Rev4a |
+
+## Files
+
 ```
-
-The server calls `term.resize(cols, rows)` to update the PTY dimensions.
-This ensures commands like `top`, `less`, `vim` use the correct viewport.
-
-### Chunked output
-
-PTY output is buffered and flushed every 10ms to avoid overwhelming the
-browser's DOM renderer with a single giant chunk. If the buffer exceeds
-2000 characters, it is flushed immediately in sub-chunks.
-
-This was added because `seq 1 10000` or `cat` on a large file would
-send 100KB+ in one frame, causing the browser to freeze.
-
-### Why node-pty over `spawn('script')` or `unbuffer`?
-
-Earlier attempts used:
-
-- `spawn('docker exec -i ...')` — no PTY, commands had no echo, no history,
-  no tab completion
-- `spawn('script', ['-q', '-c', 'docker exec -i ...'])` — created a PTY but
-  output was fully buffered and never appeared until the process exited
-- `spawn('unbuffer', ['-p', 'docker exec -i ...'])` — same buffering issue
-
-`node-pty` is the only reliable way to create a real PTY and get
-line-buffered or character-buffered I/O in real-time.
-
-## File Structure
-
+server.js                                   # HTTP + terminal upgrade on the dashboard port
+terminal-ws-server.js                       # PTYs, sessions, clean-up, heartbeat (127.0.0.1)
+app/containers/terminal/[id]/page.tsx       # the page (auth-protected by proxy.ts)
+app/containers/terminal/[id]/TerminalClient.tsx
 ```
-app/containers/terminal/
-├── [id]/
-│   ├── page.tsx               # Next.js page (auth-protected)
-│   └── TerminalClient.tsx     # Client-side terminal component
-terminal-ws-server.js           # WebSocket PTY server, started by `rev4a serve`
-```
-
-## Known Limitations
-
-- **No full-screen TUI support** — `vim`, `top`, `nano`, `htop` will
-  not render correctly because cursor positioning sequences are stripped.
-  These tools require a proper xterm-compatible terminal.
-- **Single session per connection** — no multiplexing, no tabs.
-  Each WebSocket connection spawns one PTY.
-- **No WebGL renderer** — DOM rendering is CPU-bound for very fast output.
-  In practice, up to ~500 lines/sec is smooth.
-
-## Future Improvements
-
-- [ ] Detect TUI applications and fall back to xterm.js WebGL renderer
-- [ ] Terminal multiplexer (multiple tabs, split panes)
-- [ ] Download session log as text file
-- [ ] Paste confirmation dialog for multi-line pastes
-- [ ] Dark/light theme toggle

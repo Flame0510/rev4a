@@ -22,7 +22,7 @@ A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Bac
 Which browsers may open an agent's Control UI. On OpenClaw 9.x every new browser must be approved once; the approval is remembered per browser. Managed in the "BROWSER ACCESS" section of the agent detail panel: approve or reject waiting browsers, rename or revoke approved ones. The Open button uses a one-time link that skips the approval. The Invite link button gives a link for someone else: their browser still waits for approval.
 
 ## Container
-A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones such as databases and reverse proxies, with a web terminal link. It shows no CPU or memory metrics.
+A Docker container running on the server. Each agent runs in its own container. The Containers page shows all containers, including infrastructure ones such as databases and reverse proxies, with a web terminal link (a real shell in the browser; a dropped connection is resumed for 2 minutes). It shows no CPU or memory metrics.
 
 ## Channel
 A communication channel (Telegram) configured on an agent. Channels allow users to send DMs to the agent via messaging apps. The Channel Manager modal lets you connect/disconnect Telegram and manage pairings (approve/reject senders).

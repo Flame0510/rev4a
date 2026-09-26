@@ -1,313 +1,267 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import '@xterm/xterm/css/xterm.css';
+import { Badge, Button, type Tone } from '../../../components/ui';
 
-const RECONNECT_DELAY = 2000;
+/** Retry delays after a drop; the last one repeats. */
+const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
+/**
+ * Handshakes that fail before ever opening before giving up — about 40 s with the delays
+ * above, longer than a Rev4a restart (`rev4a update`).
+ */
+const MAX_FAILED_OPENS = 6;
+/**
+ * Close codes from terminal-ws-server.js (and 1000, the page's own deliberate close) after
+ * which retrying cannot help: the reason is shown and the page waits for Reconnect, which
+ * starts a new shell.
+ */
+const FINAL_CLOSE_CODES = new Set([1000, 4001, 4002, 4003, 4404, 4409, 4410, 4429, 4500]);
 
-// ── ANSI Color Map ──────────────────────────────────────────────
-const ANSI_FG: Record<number, string> = {
-  30: '#1d1d1d', 31: '#e06c75', 32: '#98c379', 33: '#d19a66',
-  34: '#61afef', 35: '#c678dd', 36: '#56b6c2', 37: '#abb2bf',
-  90: '#5c6370', 91: '#e06c75', 92: '#98c379', 93: '#d19a66',
-  94: '#61afef', 95: '#c678dd', 96: '#56b6c2', 97: '#ffffff',
+type Status = 'connecting' | 'connected' | 'reconnecting' | 'closed';
+const STATUS: Record<Status, { label: string; tone: Tone }> = {
+  connecting: { label: 'Connecting…', tone: 'info' },
+  connected: { label: 'Connected', tone: 'success' },
+  reconnecting: { label: 'Reconnecting…', tone: 'warning' },
+  closed: { label: 'Closed', tone: 'danger' },
 };
-const ANSI_BG: Record<number, string> = {
-  40: '#1d1d1d', 41: '#e06c75', 42: '#98c379', 43: '#d19a66',
-  44: '#61afef', 45: '#c678dd', 46: '#56b6c2', 47: '#abb2bf',
-  100: '#5c6370', 101: '#e06c75', 102: '#98c379', 103: '#d19a66',
-  104: '#61afef', 105: '#c678dd', 106: '#56b6c2', 107: '#ffffff',
-};
 
-type AnsiStyle = { fg?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean };
-type Segment = { text: string; style: AnsiStyle };
+/**
+ * A random UUID v4. `crypto.randomUUID()` exists only in a secure context (HTTPS or
+ * localhost) and a plain-HTTP dashboard (a VPS by IP) is not one; `getRandomValues` is
+ * available everywhere.
+ */
+function uuid(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
-// ── ANSI Parser ─────────────────────────────────────────────────
-// Parses text with ANSI escape sequences into {text, style} segments.
-// Handles: SGR (Select Graphic Rendition) — colors, bold, dim, italic, underline, reset.
-// Strips: bracketed paste, OSC, non-SGR sequences, bell, CR.
-function parseAnsi(text: string): Segment[] {
-  const segments: Segment[] = [];
-  const current: AnsiStyle = {};
-  let i = 0;
-
-  while (i < text.length) {
-    // Check for ESC
-    if (text[i] === '\x1b' && i + 1 < text.length) {
-      if (text[i + 1] === '[') {
-        // CSI sequence: \x1b[ ... <final byte>
-        const start = i + 2;
-        const end = text.indexOf('m', start); // SGR ends with 'm'
-        if (end !== -1) {
-          const params = text.slice(start, end).split(';');
-          for (const p of params) {
-            const code = parseInt(p, 10);
-            if (isNaN(code)) continue;
-            if (code === 0) {
-              // Reset all
-              Object.keys(current).forEach(k => delete (current as any)[k]);
-            } else if (code === 1) current.bold = true;
-            else if (code === 2) current.dim = true;
-            else if (code === 3) current.italic = true;
-            else if (code === 4) current.underline = true;
-            else if (code === 22) { current.bold = false; current.dim = false; }
-            else if (code === 23) current.italic = false;
-            else if (code === 24) current.underline = false;
-            else if (code >= 30 && code <= 37) { current.fg = ANSI_FG[code]; }
-            else if (code >= 90 && code <= 97) { current.fg = ANSI_FG[code]; }
-            else if (code === 39) delete current.fg;
-            else if (code >= 40 && code <= 47) { current.bg = ANSI_BG[code]; }
-            else if (code >= 100 && code <= 107) { current.bg = ANSI_BG[code]; }
-            else if (code === 49) delete current.bg;
-          }
-          i = end + 1;
-          continue;
-        }
-        // CSI not ending with 'm' — strip whole sequence
-        const endByte = text.slice(i + 2).search(/[@-~]/);
-        if (endByte !== -1) {
-          i += 2 + endByte + 1;
-          continue;
-        }
-      } else if (text[i + 1] === ']') {
-        // OSC sequence: strip until ST (\x1b\\ or \x07)
-        const st = text.indexOf('\x1b\\', i);
-        const bell = text.indexOf('\x07', i);
-        const endPos = st !== -1 ? st + 2 : (bell !== -1 ? bell + 1 : -1);
-        if (endPos !== -1) { i = endPos; continue; }
-      } else {
-        // Any other ESC sequence: strip 2 chars
-        i += 2;
-        continue;
-      }
-    }
-
-    // Bell
-    if (text[i] === '\x07') { i++; continue; }
-    // CR
-    if (text[i] === '\r') { i++; continue; }
-
-    // Collect visible characters until next ESC or EOL
-    let j = i;
-    while (j < text.length && text[j] !== '\x1b' && text[j] !== '\x07' && text[j] !== '\r') {
-      j++;
-    }
-    if (j > i) {
-      segments.push({ text: text.slice(i, j), style: { ...current } });
-    }
-    i = j;
+/** The session id for this container in this tab: a reload resumes the same shell. */
+function sessionKey(containerId: string) {
+  return `rev4a-terminal-session:${containerId}`;
+}
+function readSession(containerId: string): string {
+  try {
+    const stored = sessionStorage.getItem(sessionKey(containerId));
+    if (stored) return stored;
+    const fresh = uuid();
+    sessionStorage.setItem(sessionKey(containerId), fresh);
+    return fresh;
+  } catch {
+    return uuid();
   }
-
-  return segments;
+}
+function forgetSession(containerId: string) {
+  try { sessionStorage.removeItem(sessionKey(containerId)); } catch { /* storage blocked */ }
 }
 
-// ── Segment to inline style ─────────────────────────────────────
-function segmentStyle(s: AnsiStyle): React.CSSProperties {
-  const style: React.CSSProperties = {};
-  if (s.fg) style.color = s.fg;
-  if (s.bg) style.backgroundColor = s.bg;
-  if (s.bold) style.fontWeight = 700;
-  if (s.dim) style.opacity = 0.6;
-  if (s.italic) style.fontStyle = 'italic';
-  if (s.underline) style.textDecoration = 'underline';
-  return style;
+/** The terminal palette from the design tokens, so it follows globals.css. */
+function themeFromTokens() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  return {
+    background: v('--bg', '#0A0A0B'),
+    foreground: v('--text', '#E8E8E8'),
+    cursor: v('--violet', '#925BFC'),
+    cursorAccent: v('--bg', '#0A0A0B'),
+    selectionBackground: 'rgba(146, 91, 252, 0.35)',
+  };
 }
 
-// ── Render text as segments (cached via useMemo) ────────────────
-function RenderAnsi({ text }: { text: string }) {
-  const segments = useMemo(() => parseAnsi(text), [text]);
-  return (
-    <>
-      {segments.map((seg, i) => (
-        <span key={i} style={segmentStyle(seg.style)}>{seg.text}</span>
-      ))}
-    </>
-  );
-}
-
-// ── Terminal Client Component ───────────────────────────────────
+/**
+ * The container terminal: xterm.js (a full terminal emulator — raw keystrokes, cursor
+ * movement, full-screen programs) over the WebSocket that server.js forwards to
+ * terminal-ws-server.js. The shell survives a dropped connection for two minutes and a
+ * reconnect with the same session id picks it up; see docs/CONTAINER-TERMINAL.md.
+ */
 export default function TerminalClient({ containerId }: { containerId: string }) {
-  const outputRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const router = useRouter();
+  const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const cmdHistoryRef = useRef<string[]>([]);
-  const histIdxRef = useRef(-1);
-  const cmdBufferRef = useRef('');
-  const pendingCmdRef = useRef('');
-  const [status, setStatus] = useState('Connecting...');
-  const [buffer, setBuffer] = useState(''); // raw PTY output (kept for segment rendering)
-  const [currentInput, setCurrentInput] = useState('');
-
-  function appendOutput(raw: string) {
-    if (!raw) return;
-    pendingCmdRef.current = '';
-    setBuffer(prev => {
-      const next = prev + raw;
-      return next.length > 200000 ? next.slice(-200000) : next;
-    });
-  }
+  const [status, setStatus] = useState<Status>('connecting');
+  /** Why the terminal stopped retrying; null while it connects or retries. */
+  const [stopped, setStopped] = useState<string | null>(null);
+  /** Bumped by Reconnect: a new shell. */
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
-  }, [buffer]);
-
-  function sendCommand(cmd: string) {
-    if (!cmd.trim() && !cmd) return;
-    cmdHistoryRef.current.push(cmd);
-    histIdxRef.current = cmdHistoryRef.current.length;
-    cmdBufferRef.current = '';
-    pendingCmdRef.current = cmd;
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(cmd + '\n');
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    const val = e.currentTarget.value;
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      setCurrentInput('');
-      sendCommand(val);
-    } else if (e.key === 'ArrowUp') { e.preventDefault();
-      if (!cmdHistoryRef.current.length) return;
-      if (histIdxRef.current === cmdHistoryRef.current.length) cmdBufferRef.current = val;
-      histIdxRef.current = Math.max(0, histIdxRef.current - 1);
-      setCurrentInput(cmdHistoryRef.current[histIdxRef.current]);
-    } else if (e.key === 'ArrowDown') { e.preventDefault();
-      if (histIdxRef.current >= cmdHistoryRef.current.length - 1) {
-        histIdxRef.current = cmdHistoryRef.current.length;
-        setCurrentInput(cmdBufferRef.current);
-      } else { histIdxRef.current++; setCurrentInput(cmdHistoryRef.current[histIdxRef.current]); }
-    } else if (e.key === 'Tab') { e.preventDefault();
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send('\t');
-    } else if (e.key === 'c' && e.ctrlKey) { e.preventDefault();
-      setCurrentInput('');
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send('\x03');
-    } else if (e.key === 'l' && e.ctrlKey) { e.preventDefault();
-      setBuffer(''); setCurrentInput('');
-    } else if (e.key === 'd' && e.ctrlKey) { e.preventDefault();
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send('\x04');
-    } else if (e.key === 'u' && e.ctrlKey) { e.preventDefault(); setCurrentInput(''); }
-  }
-
-  function handlePaste(e: React.ClipboardEvent) {
-    const pasted = e.clipboardData.getData('text');
-    if (pasted.includes('\n')) {
-      e.preventDefault();
-      for (const line of pasted.trim().split('\n')) if (line.trim()) sendCommand(line.trim());
-    }
-  }
-
-  useEffect(() => {
-    let mounted = true;
+    const host = hostRef.current;
+    if (!host) return;
+    let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let observer: ResizeObserver | null = null;
+    let cleanupTerminal = () => {};
+    setStopped(null);
+    setStatus('connecting');
 
-    function connect() {
-      if (!mounted) return;
-      setStatus('Connecting...');
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(
-        `${protocol}//${window.location.host}/api/terminal-ws?id=${encodeURIComponent(containerId)}`
-      );
-      ws.onopen = () => {
-        if (!mounted) { ws.close(); return; }
-        setStatus('Connected'); inputRef.current?.focus();
-        appendOutput(`[Connected] ${containerId}\n`);
+    (async () => {
+      // xterm.js touches `window` at import: load it in the browser only.
+      const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-fit'),
+        import('@xterm/addon-web-links'),
+      ]);
+      if (disposed) return;
+
+      const term = new Terminal({
+        cursorBlink: true,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: 13,
+        lineHeight: 1.2,
+        scrollback: 5000,
+        macOptionIsMeta: true,
+        theme: themeFromTokens(),
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new WebLinksAddon());
+      term.open(host);
+      fit.fit();
+      term.focus();
+
+      const note = (text: string) => term.write(`\r\n\x1b[2m[${text}]\x1b[0m\r\n`);
+      const sendSize = () => {
+        const ws = wsRef.current;
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       };
-      ws.onmessage = (event) => {
-        if (!mounted) return;
-        const text = typeof event.data === 'string' ? event.data : new TextDecoder().decode(new Uint8Array(event.data));
-        appendOutput(text);
+      const send = (data: string) => {
+        const ws = wsRef.current;
+        if (ws?.readyState === WebSocket.OPEN) ws.send(data);
       };
-      ws.onclose = () => {
-        if (!mounted) return;
-        setStatus('Disconnected');
-        appendOutput('\n[Disconnected]\n');
-        reconnectTimer = setTimeout(() => { if (mounted) connect(); }, RECONNECT_DELAY);
+      const inputSub = term.onData(send);
+      // Legacy (X10) mouse reports come as binary strings; the PTY takes them as text.
+      const binarySub = term.onBinary(send);
+      const resizeSub = term.onResize(() => sendSize());
+      observer = new ResizeObserver(() => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { try { fit.fit(); } catch { /* hidden */ } }, 100);
+      });
+      observer.observe(host);
+
+      const session = readSession(containerId);
+      let drops = 0;
+      let failedOpens = 0;
+      /** A shell was attached on this page load: later reconnects resume it. */
+      let hadShell = false;
+
+      const connect = () => {
+        if (disposed) return;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // After a drop the page asks to *resume*: if the shell is gone the server says so
+        // (4002) instead of silently starting a new one under the same id.
+        const resume = drops > 0 && hadShell ? '&resume=1' : '';
+        const ws = new WebSocket(
+          `${protocol}//${window.location.host}/api/terminal-ws?id=${encodeURIComponent(containerId)}&session=${session}${resume}`,
+        );
+        let opened = false;
+        wsRef.current = ws;
+        ws.onopen = () => {
+          if (disposed) { ws.close(1000); return; }
+          opened = true;
+          hadShell = true;
+          if (drops) note('reconnected');
+          drops = 0;
+          failedOpens = 0;
+          setStatus('connected');
+          sendSize();
+          term.focus();
+        };
+        ws.onmessage = (event) => {
+          if (typeof event.data === 'string') term.write(event.data); // the server sends text only
+        };
+        ws.onclose = (event) => {
+          if (disposed || wsRef.current !== ws) return;
+          if (FINAL_CLOSE_CODES.has(event.code)) {
+            forgetSession(containerId);
+            setStatus('closed');
+            setStopped(event.reason || 'The terminal session ended.');
+            if (opened) note(event.reason || 'session ended');
+            return;
+          }
+          if (!opened && ++failedOpens >= MAX_FAILED_OPENS) {
+            setStatus('closed');
+            setStopped('Cannot open the terminal. Check that you are still logged in and that Rev4a is running; behind a reverse proxy, that it forwards WebSocket upgrades and keeps the Host header.');
+            return;
+          }
+          if (opened) note('connection lost — reconnecting');
+          const delay = RECONNECT_DELAYS_MS[Math.min(drops, RECONNECT_DELAYS_MS.length - 1)];
+          drops++;
+          setStatus('reconnecting');
+          reconnectTimer = setTimeout(connect, delay);
+        };
       };
-      wsRef.current = ws;
-    }
-    connect();
-    setTimeout(() => inputRef.current?.focus(), 300);
+      connect();
+
+      cleanupTerminal = () => {
+        inputSub.dispose();
+        binarySub.dispose();
+        resizeSub.dispose();
+        term.dispose();
+      };
+    })();
+
     return () => {
-      mounted = false;
+      disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+      if (resizeTimer) clearTimeout(resizeTimer);
+      observer?.disconnect();
+      const ws = wsRef.current;
+      wsRef.current = null;
+      // Leaving the page is not a deliberate close: the shell waits two minutes for a reload.
+      ws?.close(4000, 'page left');
+      cleanupTerminal();
     };
-  }, [containerId]);
+  }, [containerId, generation]);
 
-  function handleOutputClick() { inputRef.current?.focus(); }
+  function handleClose() {
+    // A deliberate close ends the shell at once (code 1000) instead of keeping it for a return.
+    const ws = wsRef.current;
+    wsRef.current = null;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.close(1000, 'closed');
+    } else {
+      // Not connected right now (reconnecting): attach briefly to the waiting shell only to end
+      // it, so it does not linger for two minutes.
+      ws?.close(4000, 'page left');
+      const session = readSession(containerId);
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ender = new WebSocket(
+        `${protocol}//${window.location.host}/api/terminal-ws?id=${encodeURIComponent(containerId)}&session=${session}&resume=1`,
+      );
+      ender.onopen = () => ender.close(1000, 'closed');
+    }
+    forgetSession(containerId);
+    router.push('/containers');
+  }
 
-  const lines = useMemo(() => buffer.split('\n'), [buffer]);
-  const lastLine = lines[lines.length - 1] || '';
-  const showInput = pendingCmdRef.current ? pendingCmdRef.current : currentInput;
+  function handleReconnect() {
+    forgetSession(containerId);
+    setGeneration((g) => g + 1);
+  }
 
+  const s = STATUS[status];
   return (
-    <div style={{
-      position: 'fixed', top: 0, left: 0,
-      width: '100vw', height: '100dvh',
-      background: '#0a0a0b', display: 'flex', flexDirection: 'column',
-      zIndex: 9999,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13, lineHeight: 1.5, color: '#e0e0e0',
-    }}>
-      {/* Top bar */}
-      <div style={{
-        height: 44, minHeight: 44, background: '#141416',
-        borderBottom: '1px solid #222',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 16px', color: '#888', fontSize: 12, flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: '#925BFC', letterSpacing: '4px', fontSize: 14, fontFamily: 'Instrument Serif, serif' }}>TERMINAL</span>
-          <span style={{ color: status === 'Connected' ? '#22c55e' : '#ef4444' }}>●</span>
-          <span style={{ color: '#ccc' }}>{containerId}</span>
-          <span style={{ color: '#555', fontSize: 11 }}>{status}</span>
+    <div className="terminal-page">
+      <div className="terminal-page__bar">
+        <div className="terminal-page__title">
+          <span className="ui-kicker ui-kicker--accent">Terminal</span>
+          <span className="terminal-page__container">{containerId}</span>
+          <Badge tone={s.tone}>{s.label}</Badge>
         </div>
-        <a href="/containers" style={{
-          color: '#888', textDecoration: 'none', border: '1px solid #333',
-          borderRadius: 4, padding: '3px 10px', fontSize: 11, cursor: 'pointer',
-        }}>CLOSE</a>
-      </div>
-
-      {/* Scrollable output area */}
-      <div ref={outputRef} onClick={handleOutputClick} style={{
-        flex: 1, overflow: 'auto', padding: '8px 12px 0',
-        whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-        cursor: 'text', userSelect: 'text', WebkitUserSelect: 'text',
-      }}>
-        {lines.length > 1 && (
-          <div>
-            {lines.slice(0, -1).map((line, i) => (
-              <div key={i} style={{ minHeight: '1.5em', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                <RenderAnsi text={line} />
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Last line + cursor inline */}
-        <div style={{ display: 'flex', minHeight: '1.5em' }}>
-          <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            <RenderAnsi text={lastLine} />
-            {showInput}
-            <span style={{
-              display: 'inline-block', width: 8, height: '1.1em',
-              background: '#e0e0e0',
-              animation: 'blink 1s step-end infinite',
-              verticalAlign: 'text-bottom', marginLeft: 1,
-            }} />
-          </span>
+        <div className="terminal-page__actions">
+          {stopped && (
+            <Button type="button" variant="secondary" size="sm" onClick={handleReconnect}>Reconnect</Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" onClick={handleClose}>Close</Button>
         </div>
       </div>
-
-      {/* Hidden textarea */}
-      <textarea ref={inputRef} value={currentInput}
-        onChange={e => setCurrentInput(e.target.value)}
-        onKeyDown={handleKeyDown} onPaste={handlePaste}
-        autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-        style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: 1, height: 1, opacity: 0 }}
-      />
+      {stopped && <div role="status" className="terminal-page__notice">{stopped}</div>}
+      <div ref={hostRef} className="terminal-page__screen" />
     </div>
   );
 }

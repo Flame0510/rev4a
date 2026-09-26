@@ -57,7 +57,7 @@ rev4a serve --port 8080
 PORT=8080 rev4a serve
 ```
 
-`rev4a serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process group. Ctrl+C cleanly stops everything.
+`rev4a serve` starts all three internal processes (the dashboard — Next.js through `server.js` —, the session daemon, the terminal server) as a single foreground process group. Ctrl+C cleanly stops everything.
 
 ## Production (systemd)
 
@@ -72,7 +72,7 @@ sudo systemctl status 'rev4a'
 sudo journalctl -u rev4a -f   # logs
 ```
 
-`rev4a serve` starts all three internal processes (Next.js dashboard, session daemon, terminal WebSocket) as a single foreground process managed by systemd.
+`rev4a serve` starts all three internal processes (the dashboard — Next.js through `server.js` —, the session daemon, the terminal server) as a single foreground process managed by systemd.
 
 ## Configuration
 
@@ -117,9 +117,9 @@ the dashboard's cold backups cover them. Details: `docs/dev/DATABASE.md` § Back
 
 Rev4a runs three processes under the hood:
 
-1. **Next.js app** — serves the dashboard UI and API routes (port 3740)
+1. **Dashboard** (`server.js`) — Next.js (UI and API routes) plus the terminal's WebSocket, on port 3740
 2. **Daemon** (`daemon.js`) — polls sessions every 30s, writes to SQLite, collects system metrics
-3. **Terminal WebSocket** (`terminal-ws-server.js`) — provides PTY terminal access to containers (port 3741)
+3. **Terminal WebSocket** (`terminal-ws-server.js`) — PTY terminal access to containers (127.0.0.1:3741, reached through the dashboard's own port — no reverse proxy needed)
 
 `rev4a serve` manages all three as a single process group. On Ctrl+C or SIGTERM, all children are cleanly stopped. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
 

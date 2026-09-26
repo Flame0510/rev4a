@@ -2266,12 +2266,28 @@ Return the installed Rev4a version, read from `package.json`.
 
 **Fallback:** `{ "version": "0.0.0" }` if `package.json` cannot be read.
 
-### Terminal WebSocket
+### `GET /api/terminal-ws` (WebSocket)
 
-Not an `/api/` route and not on the dashboard port. `terminal-ws-server.js`
-listens on **`ws://127.0.0.1:3741`** (`TERMINAL_WS_PORT`), bound to the loopback
-interface only, and speaks the PTY protocol described in
-[CONTAINER-TERMINAL.md](../CONTAINER-TERMINAL.md).
+The container terminal. A WebSocket upgrade on the dashboard's own port, handled by
+`server.js` (not a Next.js route) and forwarded to `terminal-ws-server.js` on
+127.0.0.1:3741 (`TERMINAL_WS_PORT`).
+
+**Auth:** browser cookie only (`rev4a_token`), and `Origin` must equal the host — no bearer.
+
+**Query:** `id` — the container name or id; `session` — a UUID naming the shell, so a
+reconnect with the same value resumes it (up to 2 minutes after a drop); `resume=1` — the
+page is reconnecting to a shell it had: if that shell is gone the server closes with
+`4002` instead of starting a new one.
+
+**Refused at the handshake**, in this order: `404` any other upgrade path, `403` Origin
+not the addressed host (`Host` or `X-Forwarded-Host`), `401` no or bad cookie, `400` bad
+container name, `503` Rev4a not started with `rev4a serve` (no terminal secret),
+`502`/`504` the terminal server refused or did not answer.
+
+**Messages:** client → server: keystrokes as text, or `{"type":"resize","cols":n,"rows":n}`;
+server → client: terminal output. Close codes (`4001` shell exited, `4002` idle, or a resume
+found the shell gone, `4003` opened in another tab, `4404` no container, `4409` stopped,
+`4410` no shell, `4429` too many shells, `4500` PTY failed) are listed in [CONTAINER-TERMINAL.md](../CONTAINER-TERMINAL.md#close-codes).
 
 ---
 

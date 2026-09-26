@@ -19,9 +19,10 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
               ┌──────────┴──────────────────┐
               │  rev4a serve                │
               │  (systemd: rev4a.service)   │
-              │  Next.js 16      :3740      │
+              │  server.js       :3740      │
+              │  (Next.js 16 + terminal WS) │
               │  daemon.js                  │
-              │  terminal WS     :3741      │
+              │  terminal-ws  :3741 (local) │
               └──────────┬──────────────────┘
                          │
                 docker exec / Docker API

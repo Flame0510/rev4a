@@ -513,14 +513,18 @@ function serve(port) {
 
   const children = [];
   const wsPort = process.env.TERMINAL_WS_PORT || '3741';
+  // Shared by server.js (which forwards the terminal WebSocket after checking the session)
+  // and the terminal server (which refuses anything without it). New at every start.
+  const terminalSecret = require('crypto').randomBytes(32).toString('hex');
 
   log('SERVE', `Starting Rev4a on port ${port}…`);
 
-  // Next.js
-  const next = spawn('npx', ['next', 'start', '-p', String(port)], {
+  // Next.js, through server.js: the same pages and API, plus the terminal WebSocket on
+  // this port (so the terminal needs no reverse proxy in front).
+  const next = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: childEnv,
+    env: { ...childEnv, TERMINAL_WS_PORT: wsPort, REV4A_TERMINAL_SECRET: terminalSecret },
   });
   children.push(next);
   log('SERVE', `Next.js PID ${next.pid}`);
@@ -538,7 +542,7 @@ function serve(port) {
   const ws = spawn(process.execPath, ['terminal-ws-server.js'], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: { ...childEnv, TERMINAL_WS_PORT: wsPort },
+    env: { ...childEnv, TERMINAL_WS_PORT: wsPort, REV4A_TERMINAL_SECRET: terminalSecret },
   });
   children.push(ws);
   log('SERVE', `Terminal WS PID ${ws.pid}`);

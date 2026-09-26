@@ -667,6 +667,16 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ui-chart__table th, .ui-chart__table td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); font-weight: 400; }
 .ui-chart__table th { color: var(--text-dim); }
 
+/* Container terminal: full screen, a bar on top, xterm.js below (it owns its own scrolling). */
+.terminal-page { position: fixed; inset: 0; height: 100dvh; z-index: 9999; display: flex; flex-direction: column; background: var(--bg); color: var(--text); }
+.terminal-page__bar { flex-shrink: 0; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.terminal-page__title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.terminal-page__container { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-page__actions { display: flex; gap: 8px; }
+.terminal-page__notice { flex-shrink: 0; padding: 8px 16px; font-size: 12px; color: var(--yellow); border-bottom: 1px solid var(--border); }
+.terminal-page__screen { flex: 1; min-height: 0; padding: 8px 0 0 12px; overflow: hidden; }
+.terminal-page__screen .xterm { height: 100%; }
+
 /* System page: three cards, then one chart per metric; one column below lg (992px). */
 .system-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .system-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

@@ -74,7 +74,7 @@ already filled in — you normally never set these by hand. See
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `PORT` | `3740` | No | Dashboard HTTP port |
-| `TERMINAL_WS_PORT` | `3741` | No | Container terminal WebSocket port |
+| `TERMINAL_WS_PORT` | `3741` | No | Loopback port of the container terminal server (the browser uses the dashboard's port) |
 | `REV4A_PASSWORD` | — | Yes | Dashboard login password (set via the setup wizard) |
 | `REV4A_TOKEN` | auto-generated | Yes | Bearer token for API routes and agent calls |
 | `REV4A_JWT_SECRET` | auto-generated | Yes | Secret for auth cookies |

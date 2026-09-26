@@ -156,7 +156,8 @@ documentation is incomplete.
 domain:      <your-rev4a-domain> (port 3740, behind the reverse proxy of your choice)
 stack:       Next.js 16 + React 19 + TypeScript + SQLite + systemd
 processes:   one systemd unit, rev4a.service, runs `rev4a serve`, which supervises
-             Next.js (port 3740), the session daemon and the terminal WebSocket (port 3741)
+             server.js (Next.js + the terminal upgrade, port 3740), the session daemon and
+             the terminal server (127.0.0.1:3741)
 repo:        github.com/Flame0510/rev4a.git (branch main)
 language:    100% English
 ```
@@ -166,7 +167,7 @@ language:    100% English
 | File | What it covers |
 |---|---|
 | `docs/ARCHITECTURE.md` | System architecture, multi-container vision, component design |
-| `docs/CONTAINER-TERMINAL.md` | Terminal WebSocket PTY, custom DOM terminal, design decisions |
+| `docs/CONTAINER-TERMINAL.md` | Container terminal: server.js upgrade, security, sessions, xterm.js client |
 | `docs/FRONTEND-ARCHITECTURE.md` | Frontend structure, component tree, mobile breakpoints |
 | `docs/REV4A.md` | App-level features, pages, navigation |
 | `docs/DESIGN-SYSTEM.md` | Design tokens, colors, typography |
