@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button, Pill } from '../components/ui';
 
 interface ContainerInfo {
@@ -85,7 +86,8 @@ export default function ContainersClient() {
                 {c.state === 'running' ? c.status.replace(/^Up\s+/, '') : c.status}
               </span>
               {c.state === 'running' && (
-                <a
+                // A client-side navigation (prefetched), not a full page reload.
+                <Link
                   href={`/containers/terminal/${encodeURIComponent(c.name)}`}
                   style={{
                     fontSize: 10,
@@ -100,7 +102,7 @@ export default function ContainersClient() {
                   }}
                 >
                   TERMINAL
-                </a>
+                </Link>
               )}
             </div>
 

@@ -337,3 +337,48 @@ export function AgentSyncRowsSkeleton({ rows = 3 }: { rows?: number }) {
     </div>
   );
 }
+
+/**
+ * The frame of a route's `loading.tsx`: full width up to `maxWidth`, centred, scrollable.
+ *
+ * `width: 100%` is the point. The app shell's content area is a column flexbox, and a
+ * child with `margin: 0 auto` but no width is not stretched by it — it shrinks to its
+ * content. Every loader used to do exactly that, so its only fixed-width piece (a 120 px
+ * title bar) set the width of everything, and the rows came out 120 px wide.
+ */
+export function RouteLoadingShell({ children, maxWidth = 1080, padding = '24px 20px' }: {
+  children: React.ReactNode;
+  maxWidth?: number;
+  padding?: string;
+}) {
+  return (
+    <div
+      aria-busy="true"
+      style={{
+        width: '100%',
+        maxWidth,
+        margin: '0 auto',
+        padding,
+        boxSizing: 'border-box',
+        height: '100%',
+        overflowY: 'auto',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** A title bar over a list of rows — the loader of the list pages. */
+export function ListPageSkeleton({ rows = 5, rowHeight = 48, titleWidth = 120 }: {
+  rows?: number;
+  rowHeight?: number;
+  titleWidth?: number;
+}) {
+  return (
+    <RouteLoadingShell>
+      <Skeleton width={titleWidth} height={20} accent style={{ marginBottom: 20 }} />
+      <CardRowSkeleton count={rows} height={rowHeight} />
+    </RouteLoadingShell>
+  );
+}

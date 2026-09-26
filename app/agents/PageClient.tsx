@@ -284,6 +284,9 @@ function AgentListItem({
 
 export default function AgentsPageClient() {
   const router = useRouter();
+  // "+ New" navigates with router.push, which prefetches nothing: warm the route up front,
+  // so the click shows Create Agent (or its loading frame) at once.
+  useEffect(() => { router.prefetch('/agents/create'); }, [router]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
