@@ -221,7 +221,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // this is intentional (e.g. BOOTSTRAP.md only exists in custom/).
     const templateFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'MEMORY.md', 'TOOLS.md', 'HEARTBEAT.md', 'BOOTSTRAP.md'];
 
+    // --init: Docker's tini runs as PID 1 and collects orphaned processes. Without it
+    // openclaw-gateway is PID 1 and never does, so every process a tool leaves behind
+    // (Chrome, builds, scripts) stays a zombie and counts against the container's pids
+    // limit until the container can no longer start anything. Same flag in
+    // lib/agent-recreate.ts.
     const cmd = `docker run -d \
+      --init \
       --name "${containerName}" \
       --network "${network}" \
       --restart unless-stopped \

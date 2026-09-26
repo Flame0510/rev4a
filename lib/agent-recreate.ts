@@ -138,6 +138,9 @@ export async function recreateAgentContainer(
 
   const runArgs = (img: string): string[] => [
     'run', '-d',
+    // tini as PID 1 collects orphaned processes (zombies) — see the create route. An
+    // existing agent gets it here, the next time it is recreated, updated or edited.
+    '--init',
     '--name', agentId,
     '--network', network,
     '--restart', 'unless-stopped',
