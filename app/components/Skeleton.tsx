@@ -11,6 +11,8 @@ type SkeletonProps = {
   inline?: boolean;
   className?: string;
   style?: React.CSSProperties;
+  /** `span` for a placeholder inside text (a `<p>`, a `<span>`), where a `<div>` is invalid HTML and the parser would split the paragraph. */
+  as?: 'div' | 'span';
 };
 
 export function Skeleton({
@@ -21,6 +23,7 @@ export function Skeleton({
   inline = false,
   className,
   style,
+  as: Tag = 'div',
 }: SkeletonProps) {
   const base: React.CSSProperties = {
     display: inline ? 'inline-block' : 'block',
@@ -35,7 +38,7 @@ export function Skeleton({
     verticalAlign: inline ? 'middle' : undefined,
     ...style,
   };
-  return <div className={className} style={base} aria-hidden="true" />;
+  return <Tag className={className} style={base} aria-hidden="true" />;
 }
 
 /** Tree skeleton — simulates file tree structure like workspace sidebar */

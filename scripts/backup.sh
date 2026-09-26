@@ -7,9 +7,9 @@
 #
 # What it archives: the whole Rev4a data directory — $REV4A_DATA_DIR when set,
 # otherwise ~/.config/rev4a (the same rule as lib/rev4a-paths.ts). That is `.env`
-# (secrets and configuration), everything under `data/` (events.db and credentials.db
-# with their -wal/-shm files, provider-keys.json, agents-token.json, model overrides,
-# the update log) and `shared/` (shared skills and rules). New files there are included
+# (secrets and configuration), everything under `data/` (events.db, metrics.db and
+# credentials.db with their -wal/-shm files, provider-keys.json, agents-token.json, model
+# overrides, the update log) and `shared/` (shared skills and rules). New files there are included
 # automatically.
 #
 # Not included: agent volumes (the cold backups in the dashboard cover those), the

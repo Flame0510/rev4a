@@ -43,7 +43,7 @@ A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase 
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.
 
 ## Dashboard
-The main page of Rev4a (`/`). Shows live sessions, cost summary, health cards for Rev4a's runtime, cron and lineage, and a real-time event feed. It shows no CPU, RAM, disk or load average, and there is no setup banner: an incomplete wizard redirects to `/wizard`.
+The main page of Rev4a (`/`). Shows live sessions, cost summary, health cards for Rev4a's runtime, cron and lineage, and a real-time event feed. Its Machine card shows the server's CPU, RAM and fullest disk right now, with a link to the System page. There is no setup banner: an incomplete wizard redirects to `/wizard`.
 
 ## Event
 A lifecycle occurrence for a session: spawned, completed, failed, or missing too long (spawn timeout); the daemon also records system anomalies (high CPU or RAM) as events. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
@@ -130,7 +130,10 @@ Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, 
 ## Workspace
 The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the host workspace, which appears as `Local`, and all agent containers.
 
-## System Health
-A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, feed ingestion freshness, errors in the last 24 hours, today's usage-based cost, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
+## System (page)
+The page with the machine Rev4a runs on: CPU (with cores and load), memory and swap, and each disk's used and free space, now and over 1 hour, 24 hours, 7 days or 30 days. A bar turns yellow and then red when it reaches a threshold (CPU and memory 85 % / 95 %, disk 80 % / 90 %), and the level is written next to it.
 
-It reports no CPU, RAM, disk or load average. Those metrics are collected by the daemon and stored for 30 days, and are served by `/api/metrics`, but no page displays them.
+## System Health
+A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, the daemon heartbeat (how old its latest machine sample is), errors in the last 24 hours, today's usage-based cost, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
+
+It reports no CPU, RAM, disk or load average: those are on the System page (`/system`), sampled every 30 seconds by the daemon and kept for 30 days.

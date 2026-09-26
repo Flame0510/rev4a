@@ -10,6 +10,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 
 - "Where do I find the agents page?"
 - "How do I get to the container list?"
+- "Where do I see CPU, RAM or disk usage of the server?" — The System page (`/system`), and the Machine card on the Dashboard.
 - "Where can I see the first-run wizard?"
 - "Is there a page for cron jobs?"
 - "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers and the model catalogue. Which model an agent runs is on the Agents page, in that agent's detail panel.

@@ -97,9 +97,10 @@ When environment variables are saved via the Config page (Save & Restart):
 
 | Route | Description |
 |---|---|
-| `/` | System overview — containers, resources, quick links |
+| `/` | System overview — health, sessions, the machine's CPU / RAM / disk (links to `/system`), cost, live feed |
 | `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard, channel manager (Telegram pairing) |
 | `/containers` | All Docker containers on the host |
+| `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s) |
 | `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |

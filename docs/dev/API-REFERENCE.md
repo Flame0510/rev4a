@@ -1906,25 +1906,50 @@ Register a parent→child relationship between sessions.
 ## Metrics
 
 ### `GET /api/metrics`
-System metrics from the daemon's `system_metrics` table: the latest sample, the most
-recent samples, and 24 h CPU aggregates.
+Machine metrics of the host Rev4a runs on — CPU, RAM, swap, storage — read from
+`metrics.db` (written by the daemon every 30 s, see `docs/dev/DATABASE.md`): the latest
+sample, live host facts, and a bucketed history for one range. The System page
+(`/system`) and the dashboard's Machine card use it.
 
 **Auth:** Bearer or browser cookie
 
-**Query:** `limit` — how many `history` rows (default 60, max 1000): the most recent ones, returned oldest first.
+**Query:** `range` — `1h` (default), `24h`, `7d` or `30d`; anything else answers `400`.
+The range is cut into buckets of `bucket_s` seconds (about 120 points, never shorter than
+60 s — two samples, so a timer that drifts a second leaves no false gaps), each with its
+average and peak: 60 s for `1h`, 720 s for `24h`, 5040 s for `7d`, 21 600 s for `30d`.
 
 **Response:**
 ```json
 {
-  "latest": { "cpu": 12.5, "ram_used_mb": 1820, "ram_total_mb": 4096, "disk_used_gb": 38, "disk_total_gb": 100, "load_avg": 0.42, "ts": 1749201000 },
-  "history": [ { "cpu": 12.5, "ram_used_mb": 1820, "ram_total_mb": 4096, "ts": 1749201000 } ],
-  "stats_24h": { "cpu_avg": 14, "cpu_max": 68 }
+  "latest": {
+    "ts": 1790419256, "age_s": 12, "cpu": 21.5,
+    "ram_used_mb": 4779, "ram_total_mb": 7851, "swap_used_mb": 2048, "swap_total_mb": 4096,
+    "load_avg_1m": 1.35, "load_avg_5m": 1.56, "load_avg_15m": 1.21,
+    "disks": [
+      { "mount": "/", "roles": ["root", "docker", "data"], "used_mb": 61440, "avail_mb": 38912, "total_mb": 102400, "percent": 61 }
+    ]
+  },
+  "host": { "hostname": "vps", "platform": "linux", "cores": 4, "uptime_s": 290000 },
+  "interval_s": 30,
+  "range": "1h",
+  "bucket_s": 60,
+  "history": [ { "ts": 1790419230, "cpu_avg": 21.5, "cpu_max": 29.1, "ram_avg": 60.9, "ram_max": 61.2 } ],
+  "disk_history": [ { "mount": "/", "points": [ { "ts": 1790419230, "percent": 61 } ] } ]
 }
 ```
 
-`ts` is in **seconds**. The daemon records one sample per completed poll (every 30 s) and keeps
-30 days. A host without the OpenClaw CLI records none: the daemon stays idle there,
-and `latest` is `null`.
+- `ts` values are in **seconds**; a `history` point's `ts` is the start of its bucket.
+  Buckets with no samples are absent (the daemon was not running), not zero.
+- `ram_used_mb` is total − available, the figure `free` shows (Linux `/proc/meminfo`); on
+  macOS active + wired + compressed pages. `swap_*` are `null` where there is no swap
+  figure. `ram_avg`/`ram_max` are percentages.
+- `disks`: each filesystem once — `/`, Docker's data root (`docker info`), and Rev4a's
+  data directory, merged when they are the same device; `roles` says which of the three
+  it is. `percent` is used / (used + available), as `df` computes it.
+- `latest` is `null` before the daemon's first sample (the database is created when the
+  daemon starts, the first sample about 5 s later), and when `metrics.db` has no tables. `age_s` older than 3 × `interval_s`
+  means the daemon is not sampling; the page says so.
+- `host` is read live by the API process, which runs on the same host.
 
 ---
 
@@ -1932,7 +1957,11 @@ and `latest` is `null`.
 
 ### `GET /api/system-health`
 Aggregated checks of the runtime, cron jobs and usage cost, with recommendations. It
-does not report CPU, RAM, disk or the Docker daemon (those are in `GET /api/metrics`).
+does not report CPU, RAM or disk (those are in `GET /api/metrics`). Its `runtime.heartbeat`
+check ("Daemon heartbeat") reads the age of the newest machine metrics sample in
+`metrics.db`: it shows the daemon is alive, not that the OpenClaw session poll ingests —
+the two run on separate timers. A `metrics.db` that cannot be read makes this one check
+say so; it does not fail the others.
 
 **Auth:** browser cookie or bearer token
 
@@ -1950,7 +1979,7 @@ does not report CPU, RAM, disk or the Docker daemon (those are in `GET /api/metr
 }
 ```
 
-Checks: `runtime.sessions`, `runtime.ingestion`, `runtime.errors24h`,
+Checks: `runtime.sessions`, `runtime.heartbeat`, `runtime.errors24h`,
 `cost.usageBasedToday`, `cron.jobs`. `health` (overall and per check) is `"ok"` /
 `"warning"` / `"error"`; a recommendation's `severity` is `"info"` / `"warning"` /
 `"critical"`. `generatedAt` and `createdAt` are ISO strings.

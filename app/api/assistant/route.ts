@@ -18,7 +18,7 @@ interface PageContext {
 const PAGE_CONTEXT: Record<string, PageContext> = {
   '/': {
     title: 'Dashboard',
-    description: 'Main overview with live session list, cost summary by model, health cards for Rev4a\'s own runtime, cron and lineage, and a real-time event feed. It shows no CPU, RAM, disk or load average: those are collected by the daemon but no page displays them.',
+    description: 'Main overview with live session list, cost summary by model, health cards for Rev4a\'s own runtime, cron and lineage, and a real-time event feed. The Machine card shows the server\'s CPU, RAM and fullest disk right now, coloured past a threshold, with a link to the System page.',
     actions: ['Click any session row to open the Session Drawer for full details and tool call history', 'View cost breakdown by model and time period', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
     hints: 'The Session Drawer shows you the complete tool call history for any session — just click a row.',
   },
@@ -45,6 +45,12 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     description: 'Scheduled cron jobs that run agents on a recurring schedule. Shows schedule expression (cron syntax), last run time, next run time, and status for each job.',
     actions: ['See all scheduled cron jobs at a glance', 'Check when each cron last ran and when it will run next', 'View job status (scheduled, running, completed, error)'],
     hints: 'Cron jobs use standard cron syntax. If a job shows "error" status, it means the last execution failed.',
+  },
+  '/system': {
+    title: 'System',
+    description: 'The machine Rev4a runs on: CPU (percent, cores, load average 1/5/15 min), memory (used, available, swap) and storage (each disk with used and free space, and whether it is the system disk, Docker\'s data or Rev4a\'s data), now and over 1h, 24h, 7d or 30d. Sampled by the Rev4a daemon every 30 seconds, kept 30 days.',
+    actions: ['Read the current CPU, memory, swap and disk usage', 'Switch the charts between 1h, 24h, 7d and 30d', 'Hover a chart (or focus it and use the arrow keys) to read the average and peak at a point', 'Open a chart\'s Table view for the numbers'],
+    hints: 'Bars turn yellow then red past their thresholds: CPU and memory at 85% and 95%, disks at 80% and 90%. If the page says "Not collecting", the Rev4a daemon is not sampling: check that rev4a serve is running.',
   },
   '/containers': {
     title: 'Containers',
@@ -117,6 +123,7 @@ Navigation links inside Rev4a:
 - Gateway → /gateway
 - Cron Jobs → /crons
 - Containers → /containers
+- System (CPU, RAM, disk of the server) → /system
 - Config → /config
 - Lineage → /lineage?period=7d
 - Memory / Context → /memory

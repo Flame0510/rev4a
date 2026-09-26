@@ -60,6 +60,16 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/system',
+    label: 'System',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="2.5" width="13" height="11" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M4 10.5l2.5-3 2 2 3.5-4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     href: '/workspace',
     label: 'Workspace',
     icon: (

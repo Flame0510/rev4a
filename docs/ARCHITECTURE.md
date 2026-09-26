@@ -72,7 +72,7 @@
 
 **Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and installs them into containers on explicit sync. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
 
-**Container management UI:** The `/containers` page lists all running Docker containers with resource usage and quick links, and opens a web terminal into any of them. Fully functional.
+**Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any of them. Fully functional. (Machine CPU, RAM and disk are on `/system`.)
 
 **Workspace API:** Lazy-loaded file tree explorer with real-time reads (no caching), supports both host and container workspaces via `docker exec`.
 
@@ -81,7 +81,7 @@
 | Feature | Status | Notes |
 |---|---|---|
 | Credentials (UI + API) | 🟢 Implemented | SQLite, no encryption yet |
-| Container page | 🟢 Functional | Lists all containers, resources, web terminal |
+| Container page | 🟢 Functional | Lists all containers, web terminal |
 | Agent creation wizard | 🟢 Implemented | One-click create with model/template selection |
 | Provider proxy | 🟢 Implemented | Agents route through Rev4a provider gateway |
 | Shared volumes | 🟢 Implemented | Skills + repos mounted on all agents |
@@ -575,15 +575,16 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 1. Poll `openclaw sessions --json --all-agents` every 30 s
 2. Upsert session rows into `events.db`
 3. Emit `spawn` / `complete` / `fail` / `spawn_timeout` events into the `events` table
-4. Collect system metrics (CPU, RAM, disk) after every completed poll
-5. Detect anomalies (CPU > 85%, RAM > 90%) and record them
-6. Manage DB lifecycle (WAL mode, checkpoint after each cycle)
+4. Sample the host machine (CPU, RAM, swap, storage) every 30 s into `metrics.db`, on a
+   timer of its own
+5. Detect anomalies (CPU > 85%, RAM > 90%, a disk > 90%) and record them as events
+6. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
 
 ### Poll Interval
 
 A fixed 30 s timer, whether or not sessions are working. When the OpenClaw CLI is not on
-the host, the daemon logs it once and stays idle — and then records no system metrics
-either, since they are collected at the end of a poll.
+the host, the session poll logs it once and stays idle; the machine metrics keep being
+sampled, since they have their own timer.
 
 ### Cost Estimation
 
@@ -625,28 +626,40 @@ The daemon uses `INSERT … ON CONFLICT DO UPDATE` with these rules:
 
 ### System Metrics
 
-After every completed poll the daemon records a `system_metrics` row. Data sources:
+Every 30 s (`METRICS_INTERVAL_MS`) the daemon samples the machine it runs on and writes a
+`system_metrics` row plus one `system_disks` row per filesystem into `metrics.db` — its
+own database next to `events.db` (schema in `docs/dev/DATABASE.md`). Machine-wide sources:
 
-- **CPU**: cgroup v2 usage delta (`/sys/fs/cgroup/cpu.stat`) when available, falls back to host ticks from `os.cpus()`
-- **RAM**: `os.totalmem()` / `os.freemem()`
-- **Disk**: `fs.statfsSync()` on the directory holding the events database — the
-  filesystem Rev4a's own data lives on; works the same on Linux and macOS
-- **Load**: `os.loadavg()[0]`
+- **CPU**: busy share of all cores since the previous sample, from host ticks
+  (`os.cpus()`, i.e. `/proc/stat` on Linux) — the whole machine, not Rev4a's cgroup
+- **RAM / swap**: `/proc/meminfo` on Linux, used = `MemTotal − MemAvailable` (what `free`
+  shows); on macOS (development) active + wired + compressed pages from `vm_stat` and
+  `vm.swapusage`; elsewhere `os.totalmem()` / `os.freemem()` and no swap
+- **Storage**: `fs.statfsSync()` on `/`, Docker's data root (`docker info`, asked once and
+  retried every 10 min while Docker is down) and Rev4a's data directory, each device once;
+  a path that cannot be read (Docker Desktop's root inside its VM) is skipped
+- **Load**: `os.loadavg()` 1 / 5 / 15 min
 
-Metrics older than 30 days are pruned automatically each cycle.
+The first sample comes about 5 s after start (the CPU figure needs a delta from the baseline
+taken at load), then one every 30 s. Samples older than 30 days are pruned at every sample.
+`metrics.db` is opened in a try: if it cannot be (corrupt, unwritable), sampling is off —
+`[METRICS] disabled` in the log — and the session poll keeps running. The API side reads
+it through `lib/metrics-db.ts` (read-only, `null` when there is nothing to read);
+`GET /api/metrics` serves the System page (`/system`) and the dashboard's Machine card.
 
 ### Anomaly Detection
 
-The daemon compares the last two metric samples. When both exceed a threshold and the
-cooldown (5 min per metric) has passed, it inserts a `system_anomaly` event
-(`{ metric, values, threshold, message }`) and logs `[ANOMALY] CPU high: N%` or
-`[ANOMALY] RAM high: N%`. No feature consumes `system_anomaly` events yet; they only pass through the generic
-event feeds.
+After each sample the daemon inserts a `system_anomaly` event into `events.db`
+(`{ metric, values, threshold, message }`) and logs `[ANOMALY] <message>` when:
 
-| Metric | Threshold (two consecutive samples) |
-|---|---|
-| CPU | > 85% |
-| RAM | > 90% |
+| Metric | Condition | Repeats |
+|---|---|---|
+| CPU | > 85% on two consecutive samples | at most once per 5 min |
+| RAM | > 90% on two consecutive samples | at most once per 5 min |
+| Disk (each filesystem) | ≥ 90% | once when it reaches it, no cooldown — again only after it drops back under, or after the daemon restarts |
+
+No feature consumes `system_anomaly` events yet; they only pass through the generic
+event feeds.
 
 ### DB Safety
 

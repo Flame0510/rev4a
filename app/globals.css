@@ -636,8 +636,49 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ui-pill.ui-tone--info { border-color: rgba(99,102,241,0.28); color: #818cf8; background: rgba(99,102,241,0.12); }
 .ui-tone--info { border-color: rgba(99,102,241,0.28); }
 
+/* Meter: a 0-100 % fill whose colour carries the level; the level is also written out. */
+.ui-meter { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 15px; }
+.ui-meter__track { flex: 1; height: 6px; background: var(--bg3); border-radius: 0; overflow: hidden; }
+.ui-meter__fill { height: 100%; transition: width 0.3s; }
+.ui-meter__fill--ok { background: var(--violet); }
+.ui-meter__fill--warning { background: var(--yellow); }
+.ui-meter__fill--critical { background: var(--red); }
+.ui-meter__level { font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.08em; }
+.ui-meter__level--warning { color: var(--yellow); }
+.ui-meter__level--critical { color: var(--red); }
+
+/* TimeSeriesChart: one series, 2px line, 10% peak wash, hairline grid, text in text tokens. */
+.ui-chart { transition: opacity 0.2s; }
+.ui-chart__plot { position: relative; width: 100%; outline: none; }
+.ui-chart__plot:focus-visible { outline: 1px solid var(--violet-dim); outline-offset: -1px; }
+.ui-chart__grid { stroke: var(--border); stroke-width: 1; }
+.ui-chart__tick { fill: var(--text-dim); font-size: 10px; font-family: var(--font-mono-stack); font-variant-numeric: tabular-nums; }
+.ui-chart__line { fill: none; stroke: var(--violet); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ui-chart__wash { fill: var(--violet); fill-opacity: 0.1; stroke: none; }
+.ui-chart__dot { fill: var(--violet); }
+.ui-chart__marker { fill: var(--violet); stroke: var(--bg2); stroke-width: 2; }
+.ui-chart__end-label { fill: var(--text); font-size: 11px; font-family: var(--font-mono-stack); }
+.ui-chart__crosshair { stroke: var(--text-dim); stroke-width: 1; }
+.ui-chart__tooltip { position: absolute; top: 0; transform: translateX(-50%); pointer-events: none; background: var(--bg); border: 1px solid var(--border); padding: 6px 8px; font-size: 11px; white-space: nowrap; }
+.ui-chart__table { margin-top: 6px; font-size: 11px; }
+.ui-chart__table summary { cursor: pointer; color: var(--text-dim); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.ui-chart__table table { width: 100%; border-collapse: collapse; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.ui-chart__table caption { text-align: left; color: var(--text-dim); padding-bottom: 4px; }
+.ui-chart__table th, .ui-chart__table td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); font-weight: 400; }
+.ui-chart__table th { color: var(--text-dim); }
+
+/* System page: three cards, then one chart per metric; one column below lg (992px). */
+.system-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.system-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 991px) {
+  .system-cards, .system-charts { grid-template-columns: minmax(0, 1fr); }
+}
+
 .cockpit { overflow: auto; height: 100%; padding: 20px; }
 .cockpit__metrics { display: grid; grid-template-columns: minmax(260px, 1.2fr) repeat(3, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cockpit__machine-item { white-space: nowrap; color: var(--text); }
+.cockpit__machine-item--warning { color: var(--yellow); }
+.cockpit__machine-item--critical { color: var(--red); }
 .cockpit__health-row { margin-top: 12px; display: flex; align-items: baseline; gap: 12px; }
 .cockpit__health { font-size: 34px; text-transform: uppercase; font-weight: 800; }
 .cockpit__health--ok { color: var(--green); }

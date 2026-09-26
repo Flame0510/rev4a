@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
+import { latestMetricSample } from '@/lib/metrics-db';
 import { maybeSendAlert } from '@/lib/alerts';
 import { summarizeBilling } from '@/lib/billing';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
@@ -83,11 +84,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       source: 'runtime',
     });
 
-    const hasSystemMetrics = tableExists(db, 'system_metrics');
-    const latestMetricRow = hasSystemMetrics
-      ? (db.prepare('SELECT MAX(ts) AS latest FROM system_metrics').get() as { latest: number | null })
-      : null;
-    const latestMetricTs = getSeconds(latestMetricRow?.latest);
+    // The daemon's heartbeat: the age of its newest machine metrics sample (metrics.db, every
+    // 30 s on a timer of its own). It proves the daemon is alive — not that the OpenClaw session
+    // poll is ingesting, which runs separately and may have nothing to poll on this host.
+    const metricSample = latestMetricSample();
+    const hasSystemMetrics = metricSample.available;
+    const latestMetricTs = getSeconds(metricSample.ts);
     const latestMetricAgeSeconds = latestMetricTs ? Math.floor(Date.now() / 1000) - latestMetricTs : null;
     const runtimeFreshnessHealth: Health = !hasSystemMetrics
       ? 'ok'
@@ -98,15 +100,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           : 'ok';
 
     checks.push({
-      id: 'runtime.ingestion',
-      label: 'Runtime ingestion',
+      id: 'runtime.heartbeat',
+      label: 'Daemon heartbeat',
       health: runtimeFreshnessHealth,
       value: hasSystemMetrics ? (latestMetricTs ? 'fresh' : 'missing') : 'n/d',
-      details: !hasSystemMetrics
-        ? 'Heartbeat metrics unavailable in this DB'
-        : latestMetricAgeSeconds === null
-          ? 'No heartbeat metrics detected'
-          : `last heartbeat metrics ${latestMetricAgeSeconds}s ago`,
+      details: metricSample.error
+        ? `metrics.db unreadable: ${metricSample.error}`
+        : !hasSystemMetrics
+          ? 'No machine metrics database yet'
+          : latestMetricAgeSeconds === null
+            ? 'No machine metrics sample yet'
+            : `last machine metrics sample ${latestMetricAgeSeconds}s ago`,
       source: 'runtime',
     });
 
@@ -115,11 +119,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         id: 'runtime.check-freshness',
         severity: 'warning',
         source: 'runtime',
-        title: 'Check Rev4a runtime heartbeat',
+        title: 'Check that the Rev4a daemon is running',
         details: latestMetricAgeSeconds === null
-          ? 'No heartbeat metrics available from runtime.'
-          : `Heartbeat metrics stuck for ${latestMetricAgeSeconds}s (threshold ${staleThresholdSeconds}s).`,
-        actionHref: '/lineage',
+          ? 'No machine metrics sample yet.'
+          : `No machine metrics sample for ${latestMetricAgeSeconds}s (threshold ${staleThresholdSeconds}s).`,
+        actionHref: '/system',
         dismissible: false,
         createdAt,
       });
@@ -130,11 +134,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       kind: 'db-freshness',
       title: 'Rev4a DB freshness',
       message: !hasSystemMetrics
-        ? 'system_metrics table unavailable: freshness runtime not verifiable.'
+        ? 'No machine metrics database: the daemon heartbeat cannot be verified.'
         : latestMetricAgeSeconds === null
-          ? 'No heartbeat metrics detected.'
-          : `Last heartbeat metrics ${latestMetricAgeSeconds}s ago (threshold ${staleThresholdSeconds}s).`,
-      resolvedMessage: 'DB Rev4a fresh again.',
+          ? 'No machine metrics sample yet.'
+          : `Last machine metrics sample ${latestMetricAgeSeconds}s ago (threshold ${staleThresholdSeconds}s).`,
+      resolvedMessage: 'Rev4a daemon sampling again.',
       stale: hasSystemMetrics ? (latestMetricAgeSeconds === null ? true : latestMetricAgeSeconds > staleThresholdSeconds) : false,
     });
 

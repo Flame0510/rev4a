@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Rev4a Daemon — SQLite event logger
- * Polls OpenClaw sessions every 30s, writes events to SQLite.
+ * Polls OpenClaw sessions every 30s, writes events to SQLite, and samples the host
+ * machine (CPU, RAM, swap, storage) every 30s on a timer of its own.
  */
 
 'use strict';
@@ -12,7 +13,13 @@ const { spawnSync, execSync } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = process.env.REV4A_DB || path.join(os.homedir(), '.config', 'rev4a', 'data', 'events.db');
+// Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
+// dir is REV4A_DATA_DIR or ~/.config/rev4a — the API reads the files the daemon writes.
+const DATA_DIR = process.env.REV4A_DATA_DIR
+  || (process.platform === 'win32'
+    ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'rev4a')
+    : path.join(os.homedir(), '.config', 'rev4a'));
+const DB_PATH = process.env.REV4A_DB || path.join(DATA_DIR, 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
 
 // Cost rates per 1M tokens (separate in/out pricing)
@@ -70,20 +77,6 @@ process.on('uncaughtException', (err) => {
   console.error('Daemon will attempt restart via watchdog cron');
   // Do NOT exit — the watchdog reads this from the healthcheck
 });
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS system_metrics (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  cpu_percent REAL,
-  ram_used_mb INTEGER,
-  ram_total_mb INTEGER,
-  disk_used_gb REAL,
-  disk_total_gb REAL,
-  load_avg_1m REAL
-);
-CREATE INDEX IF NOT EXISTS idx_metrics_ts ON system_metrics(ts);
-`);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sessions (
@@ -176,210 +169,283 @@ const knownSessions = new Map(); // session_id -> { status, tokens_in, tokens_ou
 let pollCount = 0;
 
 // ── System Metrics ───────────────────────────────────────────────────────────
+//
+// Machine-wide CPU, RAM, swap and storage of the host Rev4a runs on, sampled on their
+// own timer (METRICS_INTERVAL_MS) — independent of the OpenClaw session poll, which has
+// no source on a host without the `openclaw` CLI.
 
-const insertMetric = db.prepare(`
-  INSERT INTO system_metrics (ts, cpu_percent, ram_used_mb, ram_total_mb, disk_used_gb, disk_total_gb, load_avg_1m)
-  VALUES (@ts, @cpu_percent, @ram_used_mb, @ram_total_mb, @disk_used_gb, @disk_total_gb, @load_avg_1m)
-`);
-const pruneMetrics = db.prepare(`DELETE FROM system_metrics WHERE ts < ?`);
-const getLastTwoMetrics = db.prepare(`SELECT cpu_percent, ram_used_mb, ram_total_mb FROM system_metrics ORDER BY ts DESC LIMIT 2`);
+/**
+ * Machine metrics live in their own database next to events.db, so the event log stays
+ * sessions and events only and the history can be dropped without touching them. The
+ * daemon is its only writer; GET /api/metrics reads it (lib/metrics-db.ts, same path).
+ * Anomalies are still events, in events.db, where the live feed reads them.
+ *
+ * Opened in a try: a metrics.db that cannot be opened (corrupt, unwritable, disk full)
+ * turns sampling off with a log line and leaves the session poll running.
+ */
+const METRICS_DB_PATH = path.join(path.dirname(DB_PATH), 'metrics.db');
+const metrics = openMetricsStore();
 
-// Anomaly cooldown: track last anomaly alert timestamps
-const lastAnomalyAlert = { cpu: 0, ram: 0 };
-const ANOMALY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-
-function getCpuPercent() {
-  // Container-accurate CPU: prefer cgroup v2 usage delta over host cumulative ticks.
-  const nowWallUsec = Number(process.hrtime.bigint() / 1000n);
-  const cgroupUsageUsec = readCgroupUsageUsec();
-
-  if (cgroupUsageUsec !== null) {
-    if (lastCpuSample && lastCpuSample.cgroupUsageUsec !== null) {
-      const deltaUsageUsec = cgroupUsageUsec - lastCpuSample.cgroupUsageUsec;
-      const deltaWallUsec = nowWallUsec - lastCpuSample.wallUsec;
-      if (deltaUsageUsec >= 0 && deltaWallUsec > 0) {
-        const limitCores = getCpuLimitCores();
-        const raw = (deltaUsageUsec / deltaWallUsec) / limitCores * 100;
-        const clamped = Math.max(0, Math.min(100, raw));
-        lastCpuSample = { wallUsec: nowWallUsec, cgroupUsageUsec, host: null };
-        return Number(clamped.toFixed(2));
-      }
-    }
-    lastCpuSample = { wallUsec: nowWallUsec, cgroupUsageUsec, host: null };
-    return 0;
-  }
-
-  const host = readHostCpuSample();
-  if (lastCpuSample && lastCpuSample.host) {
-    const deltaTotal = host.total - lastCpuSample.host.total;
-    const deltaIdle = host.idle - lastCpuSample.host.idle;
-    if (deltaTotal > 0) {
-      const busy = Math.max(0, deltaTotal - deltaIdle);
-      const raw = (busy / deltaTotal) * 100;
-      const clamped = Math.max(0, Math.min(100, raw));
-      lastCpuSample = { wallUsec: nowWallUsec, cgroupUsageUsec: null, host };
-      return Number(clamped.toFixed(2));
-    }
-  }
-  lastCpuSample = { wallUsec: nowWallUsec, cgroupUsageUsec: null, host };
-  return 0;
-}
-
-const CGROUP_CPU_STAT = '/sys/fs/cgroup/cpu.stat';
-const CGROUP_CPU_MAX = '/sys/fs/cgroup/cpu.max';
-const CGROUP_CPUSET_EFFECTIVE = '/sys/fs/cgroup/cpuset.cpus.effective';
-let lastCpuSample = null;
-
-function readText(filePath) {
+function openMetricsStore() {
   try {
-    return fs.readFileSync(filePath, 'utf8').trim();
-  } catch {
+    const mdb = new Database(METRICS_DB_PATH);
+    mdb.pragma('journal_mode = WAL');
+    mdb.pragma('synchronous = NORMAL');
+    mdb.exec(`
+CREATE TABLE IF NOT EXISTS system_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  cpu_percent REAL,
+  ram_used_mb INTEGER,
+  ram_total_mb INTEGER,
+  swap_used_mb INTEGER,
+  swap_total_mb INTEGER,
+  load_avg_1m REAL,
+  load_avg_5m REAL,
+  load_avg_15m REAL
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_ts ON system_metrics(ts);
+
+CREATE TABLE IF NOT EXISTS system_disks (
+  ts INTEGER NOT NULL,
+  mount TEXT NOT NULL,
+  roles TEXT,
+  used_mb INTEGER,
+  avail_mb INTEGER,
+  total_mb INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_disks_ts ON system_disks(ts);
+CREATE INDEX IF NOT EXISTS idx_disks_mount_ts ON system_disks(mount, ts);
+`);
+    return {
+      db: mdb,
+      insertMetric: mdb.prepare(`
+        INSERT INTO system_metrics (ts, cpu_percent, ram_used_mb, ram_total_mb, swap_used_mb, swap_total_mb,
+          load_avg_1m, load_avg_5m, load_avg_15m)
+        VALUES (@ts, @cpu_percent, @ram_used_mb, @ram_total_mb, @swap_used_mb, @swap_total_mb,
+          @load_avg_1m, @load_avg_5m, @load_avg_15m)
+      `),
+      insertDisk: mdb.prepare(`
+        INSERT INTO system_disks (ts, mount, roles, used_mb, avail_mb, total_mb)
+        VALUES (@ts, @mount, @roles, @used_mb, @avail_mb, @total_mb)
+      `),
+      pruneMetrics: mdb.prepare('DELETE FROM system_metrics WHERE ts < ?'),
+      pruneDisks: mdb.prepare('DELETE FROM system_disks WHERE ts < ?'),
+      getLastTwoMetrics: mdb.prepare('SELECT cpu_percent, ram_used_mb, ram_total_mb FROM system_metrics ORDER BY ts DESC LIMIT 2'),
+    };
+  } catch (err) {
+    log(`[METRICS] disabled: cannot open ${METRICS_DB_PATH}: ${err.message}`);
     return null;
   }
 }
 
-function parseCpuListCount(value) {
-  if (!value) return 0;
-  let count = 0;
-  for (const token of value.split(',')) {
-    const part = token.trim();
-    if (!part) continue;
-    if (part.includes('-')) {
-      const [startRaw, endRaw] = part.split('-');
-      const start = Number(startRaw);
-      const end = Number(endRaw);
-      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
-        count += (end - start + 1);
-      }
-    } else {
-      const cpu = Number(part);
-      if (Number.isFinite(cpu)) count += 1;
-    }
-  }
-  return count;
-}
+const METRICS_INTERVAL_MS = 30_000;
+const METRICS_RETENTION_S = 30 * 24 * 3600;
+/** How long to wait before asking Docker for its root directory again after a failure. */
+const DOCKER_ROOT_RETRY_MS = 10 * 60 * 1000;
 
-function getCpuLimitCores() {
-  const cpuMax = readText(CGROUP_CPU_MAX);
-  if (cpuMax) {
-    const [quotaRaw, periodRaw] = cpuMax.split(/\s+/);
-    if (quotaRaw && quotaRaw !== 'max') {
-      const quota = Number(quotaRaw);
-      const period = Number(periodRaw);
-      if (Number.isFinite(quota) && Number.isFinite(period) && quota > 0 && period > 0) {
-        return Math.max(quota / period, 0.001);
-      }
-    }
-  }
+// Anomaly cooldown: last alert per metric (cpu, ram); disks use the crossing state below
+const lastAnomalyAlert = {};
+const ANOMALY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const DISK_ANOMALY_PERCENT = 90; // at or above, like the System page's critical level
+/** Filesystems above the threshold: a disk stays full, so it is reported once per crossing (and once after a restart — in memory only). */
+const diskAboveThreshold = new Set();
 
-  const cpusetCount = parseCpuListCount(readText(CGROUP_CPUSET_EFFECTIVE));
-  if (cpusetCount > 0) return cpusetCount;
-
-  return os.cpus().length || 1;
-}
-
-function readCgroupUsageUsec() {
-  const stat = readText(CGROUP_CPU_STAT);
-  if (!stat) return null;
-  const line = stat.split('\n').find((x) => x.startsWith('usage_usec '));
-  if (!line) return null;
-  const usage = Number(line.split(/\s+/)[1]);
-  if (!Number.isFinite(usage)) return null;
-  return usage;
-}
-
+/** Host CPU ticks summed over every core (`/proc/stat` on Linux): the whole machine. */
 function readHostCpuSample() {
-  const cpus = os.cpus();
   let idle = 0;
   let total = 0;
-  for (const cpu of cpus) {
+  for (const cpu of os.cpus()) {
     idle += cpu.times.idle;
     total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
   }
   return { idle, total };
 }
 
-// The filesystem holding Rev4a's own data (the events database's directory), in GB.
-// statfs works the same on Linux and macOS; the previous `df -BG /data` read a mount
-// that existed only on one old server and used GNU-only flags, so it reported 0/0.
-function getDiskStats() {
-  try {
-    const st = fs.statfsSync(path.dirname(DB_PATH));
-    const gb = (blocks) => Math.round((blocks * st.bsize) / 1024 ** 3);
-    return { used: gb(st.blocks - st.bfree), total: gb(st.blocks) };
-  } catch (e) {
-    return { used: 0, total: 0 };
+let lastCpuSample = readHostCpuSample();
+
+/** Busy share of all cores since the previous sample, 0-100. */
+function getCpuPercent() {
+  const sample = readHostCpuSample();
+  const deltaTotal = sample.total - lastCpuSample.total;
+  const deltaIdle = sample.idle - lastCpuSample.idle;
+  lastCpuSample = sample;
+  if (deltaTotal <= 0) return 0;
+  const busy = Math.max(0, deltaTotal - deltaIdle);
+  return Number(Math.max(0, Math.min(100, (busy / deltaTotal) * 100)).toFixed(2));
+}
+
+/**
+ * macOS (development): used = active + wired + compressed pages, close to Activity
+ * Monitor's "Memory Used" — os.freemem() there counts only free pages, so the cache
+ * would read as used and every Mac would sit near 100 %. Swap from `vm.swapusage`.
+ */
+function getDarwinMemory() {
+  const vm = spawnSync('vm_stat', { encoding: 'utf8', timeout: 3000 });
+  if (vm.status !== 0) return null;
+  const pageSize = Number(/page size of (\d+) bytes/.exec(vm.stdout)?.[1]);
+  const pages = (name) => Number(new RegExp(`${name}:\\s+(\\d+)`).exec(vm.stdout)?.[1] ?? NaN);
+  const used = (pages('Pages active') + pages('Pages wired down') + pages('Pages occupied by compressor')) * pageSize;
+  if (!Number.isFinite(used)) return null;
+  const swap = spawnSync('sysctl', ['-n', 'vm.swapusage'], { encoding: 'utf8', timeout: 3000 });
+  const swapMb = (label) => Number(new RegExp(`${label} = ([\\d.]+)M`).exec(swap.stdout || '')?.[1] ?? NaN);
+  const swapTotal = swapMb('total');
+  return {
+    ram_used_mb: Math.round(used / 1024 / 1024),
+    ram_total_mb: Math.round(os.totalmem() / 1024 / 1024),
+    swap_used_mb: Number.isFinite(swapTotal) ? Math.round(swapMb('used')) : null,
+    swap_total_mb: Number.isFinite(swapTotal) ? Math.round(swapTotal) : null,
+  };
+}
+
+/**
+ * RAM and swap in MB. On Linux from /proc/meminfo: used = MemTotal − MemAvailable, the
+ * figure `free` reports (page cache the kernel can reclaim is not "used"). On macOS see
+ * getDarwinMemory(); anywhere else os.totalmem()/os.freemem(), and no swap.
+ */
+function getMemory() {
+  const mb = (kb) => Math.round(kb / 1024);
+  if (process.platform === 'darwin') {
+    const mac = getDarwinMemory();
+    if (mac) return mac;
   }
+  try {
+    const info = {};
+    for (const line of fs.readFileSync('/proc/meminfo', 'utf8').split('\n')) {
+      const m = /^(\w+):\s+(\d+)/.exec(line);
+      if (m) info[m[1]] = Number(m[2]);
+    }
+    if (info.MemTotal && info.MemAvailable !== undefined) {
+      return {
+        ram_used_mb: mb(info.MemTotal - info.MemAvailable),
+        ram_total_mb: mb(info.MemTotal),
+        swap_used_mb: mb((info.SwapTotal || 0) - (info.SwapFree || 0)),
+        swap_total_mb: mb(info.SwapTotal || 0),
+      };
+    }
+  } catch { /* not Linux */ }
+  const total = os.totalmem();
+  return {
+    ram_used_mb: Math.round((total - os.freemem()) / 1024 / 1024),
+    ram_total_mb: Math.round(total / 1024 / 1024),
+    swap_used_mb: null,
+    swap_total_mb: null,
+  };
+}
+
+let dockerRootDir = null;
+let dockerRootCheckedAt = 0;
+
+/** Docker's data root (where images and agent volumes live), asked once and cached. */
+function getDockerRootDir() {
+  if (dockerRootDir || Date.now() - dockerRootCheckedAt < DOCKER_ROOT_RETRY_MS) return dockerRootDir;
+  dockerRootCheckedAt = Date.now();
+  const r = spawnSync('docker', ['info', '--format', '{{.DockerRootDir}}'], { encoding: 'utf8', timeout: 5000 });
+  const dir = r.status === 0 ? String(r.stdout).trim() : '';
+  if (dir.startsWith('/')) dockerRootDir = dir;
+  return dockerRootDir;
+}
+
+/**
+ * The filesystems worth watching: `/`, Docker's root and Rev4a's data directory, each
+ * filesystem once (paths on the same device are merged, their roles listed together).
+ * A path that cannot be read — Docker Desktop's root lives inside its VM — is skipped.
+ * Sizes follow `df`: used = blocks − free, avail = what a normal user can still write.
+ */
+function getDisks() {
+  const candidates = [
+    ['/', 'root'],
+    [getDockerRootDir(), 'docker'],
+    [path.dirname(DB_PATH), 'data'],
+  ];
+  const byDevice = new Map();
+  for (const [mount, role] of candidates) {
+    if (!mount) continue;
+    try {
+      const dev = fs.statSync(mount).dev;
+      const known = byDevice.get(dev);
+      if (known) { known.roles.push(role); continue; }
+      const st = fs.statfsSync(mount);
+      const mb = (blocks) => Math.round((blocks * st.bsize) / 1024 / 1024);
+      byDevice.set(dev, {
+        mount,
+        roles: [role],
+        used_mb: mb(st.blocks - st.bfree),
+        avail_mb: mb(st.bavail),
+        total_mb: mb(st.blocks),
+      });
+    } catch { /* not readable here */ }
+  }
+  return [...byDevice.values()];
+}
+
+/** Share of a filesystem in use the way `df` computes it: used / (used + avail). */
+function diskPercent(d) {
+  const denom = d.used_mb + d.avail_mb;
+  return denom > 0 ? Math.round((d.used_mb / denom) * 100) : 0;
+}
+
+/** Write a system_anomaly event. `cooldownKey` limits it to one per ANOMALY_COOLDOWN_MS; null writes it now. */
+function recordAnomaly(cooldownKey, metric, values, threshold, message) {
+  const nowMs = Date.now();
+  if (cooldownKey) {
+    if (nowMs - (lastAnomalyAlert[cooldownKey] || 0) <= ANOMALY_COOLDOWN_MS) return;
+    lastAnomalyAlert[cooldownKey] = nowMs;
+  }
+  insertEvent.run({
+    ts: nowMs,
+    session_id: 'system',
+    type: 'system_anomaly',
+    data: JSON.stringify({ metric, values, threshold, message }),
+  });
+  log(`[ANOMALY] ${message}`);
 }
 
 function collectSystemMetrics() {
   const now = Math.floor(Date.now() / 1000);
   const cpu_percent = getCpuPercent();
-  const ram_total = os.totalmem();
-  const ram_free = os.freemem();
-  const ram_used_mb = Math.round((ram_total - ram_free) / 1024 / 1024);
-  const ram_total_mb = Math.round(ram_total / 1024 / 1024);
-  const disk = getDiskStats();
-  const load_avg_1m = parseFloat(os.loadavg()[0].toFixed(2));
+  const mem = getMemory();
+  const disks = getDisks();
+  const [load1, load5, load15] = os.loadavg().map((v) => Number(v.toFixed(2)));
 
-  insertMetric.run({
-    ts: now,
-    cpu_percent,
-    ram_used_mb,
-    ram_total_mb,
-    disk_used_gb: disk.used,
-    disk_total_gb: disk.total,
-    load_avg_1m,
-  });
+  metrics.db.transaction(() => {
+    metrics.insertMetric.run({
+      ts: now,
+      cpu_percent,
+      ...mem,
+      load_avg_1m: load1,
+      load_avg_5m: load5,
+      load_avg_15m: load15,
+    });
+    for (const d of disks) metrics.insertDisk.run({ ts: now, ...d, roles: d.roles.join(',') });
+    metrics.pruneMetrics.run(now - METRICS_RETENTION_S);
+    metrics.pruneDisks.run(now - METRICS_RETENTION_S);
+  })();
 
-  // Prune old data (keep 30 days)
-  pruneMetrics.run(now - 30 * 24 * 3600);
-
-  // Anomaly detection — check last 2 consecutive samples
-  const recent = getLastTwoMetrics.all();
+  // Anomalies: CPU > 85 % and RAM > 90 % on two consecutive samples (with a cooldown); a
+  // filesystem once when it reaches DISK_ANOMALY_PERCENT, again only after it drops back
+  // under it — disk usage does not spike and fall back, a cooldown would repeat forever.
+  const recent = metrics.getLastTwoMetrics.all();
   if (recent.length === 2) {
-    const nowMs = Date.now();
-    // CPU >85% for 2 consecutive samples
     if (recent[0].cpu_percent > 85 && recent[1].cpu_percent > 85) {
-      if (nowMs - lastAnomalyAlert.cpu > ANOMALY_COOLDOWN_MS) {
-        lastAnomalyAlert.cpu = nowMs;
-        insertEvent.run({
-          ts: Date.now(),
-          session_id: 'system',
-          type: 'system_anomaly',
-          data: JSON.stringify({
-            metric: 'cpu',
-            values: [recent[1].cpu_percent, recent[0].cpu_percent],
-            threshold: 85,
-            message: `CPU high: ${recent[0].cpu_percent}% for 2 consecutive samples`,
-          }),
-        });
-        log(`[ANOMALY] CPU high: ${recent[0].cpu_percent}%`);
-      }
+      recordAnomaly('cpu', 'cpu', [recent[1].cpu_percent, recent[0].cpu_percent], 85,
+        `CPU high: ${recent[0].cpu_percent}% for 2 consecutive samples`);
     }
-    // RAM >90% for 2 consecutive samples
-    const ram0pct = recent[0].ram_total_mb > 0 ? Math.round(recent[0].ram_used_mb / recent[0].ram_total_mb * 100) : 0;
-    const ram1pct = recent[1].ram_total_mb > 0 ? Math.round(recent[1].ram_used_mb / recent[1].ram_total_mb * 100) : 0;
-    if (ram0pct > 90 && ram1pct > 90) {
-      if (nowMs - lastAnomalyAlert.ram > ANOMALY_COOLDOWN_MS) {
-        lastAnomalyAlert.ram = nowMs;
-        insertEvent.run({
-          ts: Date.now(),
-          session_id: 'system',
-          type: 'system_anomaly',
-          data: JSON.stringify({
-            metric: 'ram',
-            values: [ram1pct, ram0pct],
-            threshold: 90,
-            message: `RAM high: ${ram0pct}% for 2 consecutive samples`,
-          }),
-        });
-        log(`[ANOMALY] RAM high: ${ram0pct}%`);
-      }
+    const pct = (r) => (r.ram_total_mb > 0 ? Math.round((r.ram_used_mb / r.ram_total_mb) * 100) : 0);
+    if (pct(recent[0]) > 90 && pct(recent[1]) > 90) {
+      recordAnomaly('ram', 'ram', [pct(recent[1]), pct(recent[0])], 90,
+        `RAM high: ${pct(recent[0])}% for 2 consecutive samples`);
     }
   }
-
-  log(`[METRICS] CPU:${cpu_percent}% RAM:${ram_used_mb}/${ram_total_mb}MB Disk:${disk.used}/${disk.total}GB Load:${load_avg_1m}`);
+  for (const d of disks) {
+    const p = diskPercent(d);
+    if (p < DISK_ANOMALY_PERCENT) {
+      diskAboveThreshold.delete(d.mount);
+    } else if (!diskAboveThreshold.has(d.mount)) {
+      diskAboveThreshold.add(d.mount);
+      recordAnomaly(null, 'disk', [p], DISK_ANOMALY_PERCENT, `Disk high: ${d.mount} ${p}% used`);
+    }
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -694,9 +760,6 @@ function pollSessions() {
     log(`[TIMEOUT] ${session_id} missing for ${Math.round(missingFor / 60000)} min`);
   }
 
-  // Collect system metrics after each poll
-  try { collectSystemMetrics(); } catch (e) { log(`[METRICS ERROR] ${e.message}`); }
-
   // Force names and parents declared via lineage — overrides any previous label, including the generic placeholder older data carries
   const updateLabel = db.prepare('UPDATE sessions SET label = ?, parent_id = ? WHERE session_id = ?');
   const applyLineage = db.transaction(() => {
@@ -746,17 +809,35 @@ log(`Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
 pollSessions();
 const timer = setInterval(pollSessions, POLL_INTERVAL_MS);
 
+// Machine metrics: the first sample a few seconds after start (the CPU figure needs a
+// delta from the baseline taken at load), then every interval. Off when metrics.db failed.
+function sampleMetrics() {
+  try { collectSystemMetrics(); } catch (e) { log(`[METRICS ERROR] ${e.message}`); }
+}
+const FIRST_SAMPLE_DELAY_MS = 5000;
+let metricsTimer = null;
+const firstSample = metrics
+  ? setTimeout(() => { sampleMetrics(); metricsTimer = setInterval(sampleMetrics, METRICS_INTERVAL_MS); }, FIRST_SAMPLE_DELAY_MS)
+  : null;
+if (metrics) log(`Machine metrics every ${METRICS_INTERVAL_MS / 1000}s into ${METRICS_DB_PATH}`);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
   clearInterval(timer);
+  clearTimeout(firstSample);
+  clearInterval(metricsTimer);
   db.close();
+  metrics?.db.close();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   log('SIGINT received, shutting down...');
   clearInterval(timer);
+  clearTimeout(firstSample);
+  clearInterval(metricsTimer);
   db.close();
+  metrics?.db.close();
   process.exit(0);
 });

@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Costs, FilterConfig, Session, SessionEvent } from '@/lib/types';
 import { isSessionActive } from '@/lib/patterns/sessionPresentation';
 import { SkeletonLines, SkeletonMetric } from './Skeleton';
-import { Metric, StatusCard, Surface, toneFromHealth } from './ui';
+import { Metric, StatusCard, Surface, meterLevel, toneFromHealth, type MeterLevel, type Tone } from './ui';
 import { apiFetch } from '@/lib/apiFetch';
 import LiveFeed from './LiveFeed';
 import CostBreakdown from './CostBreakdown';
@@ -36,6 +36,50 @@ interface SystemHealthPayload {
   checks: SystemCheck[];
   recommendations: Recommendation[];
   generatedAt: string;
+}
+
+interface MachineNow {
+  cpu: number | null;
+  ram: number | null;
+  disk: number | null;
+  /** `empty`: no sample yet; `stale`: the newest is older than 3 intervals; `error`: the last refresh failed (figures are the previous ones). */
+  state: 'ok' | 'empty' | 'stale' | 'error';
+}
+
+const LEVEL_TONE: Record<MeterLevel, Tone> = { ok: 'neutral', warning: 'warning', critical: 'danger' };
+
+/** The host machine right now (CPU, RAM, fullest disk) from /api/metrics; details on /system. */
+function useMachineNow(): MachineNow | null {
+  const [now, setNow] = useState<MachineNow | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const load = () => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      apiFetch('/api/metrics?range=1h', { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d) => {
+          const l = d.latest;
+          if (!l) { setNow({ cpu: null, ram: null, disk: null, state: 'empty' }); return; }
+          const disks: { percent: number }[] = l.disks ?? [];
+          setNow({
+            cpu: l.cpu === null ? null : Math.round(l.cpu),
+            ram: l.ram_total_mb ? Math.round((l.ram_used_mb / l.ram_total_mb) * 100) : null,
+            disk: disks.length ? Math.max(...disks.map((x) => x.percent)) : null,
+            state: l.age_s > d.interval_s * 3 ? 'stale' : 'ok',
+          });
+        })
+        .catch((e) => {
+          if (e?.name === 'AbortError') return;
+          setNow((prev) => ({ cpu: prev?.cpu ?? null, ram: prev?.ram ?? null, disk: prev?.disk ?? null, state: 'error' }));
+        });
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { clearInterval(t); abortRef.current?.abort(); };
+  }, []);
+  return now;
 }
 
 interface SystemCockpitProps {
@@ -75,6 +119,7 @@ export default function SystemCockpit({
   loading = false,
 }: SystemCockpitProps) {
   const [systemHealth, setSystemHealth] = useState<SystemHealthPayload | null>(null);
+  const machine = useMachineNow();
 
   useEffect(() => {
     const load = () => {
@@ -108,6 +153,19 @@ export default function SystemCockpit({
   const health = systemHealth?.health ?? 'warning';
   const recommendations = systemHealth?.recommendations ?? [];
   const runtimeFreshness = runtimeCheck?.details ?? fmtAge(metrics.latest);
+  const pct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
+  // Each figure with its level, on the thresholds the System page uses (CPU/RAM 85/95, disk 80/90).
+  const machineItems: { name: string; value: number | null; level: MeterLevel }[] = machine
+    ? [
+        { name: 'CPU', value: machine.cpu, level: machine.cpu === null ? 'ok' : meterLevel(machine.cpu, 85, 95) },
+        { name: 'RAM', value: machine.ram, level: machine.ram === null ? 'ok' : meterLevel(machine.ram, 85, 95) },
+        { name: 'Disk', value: machine.disk, level: machine.disk === null ? 'ok' : meterLevel(machine.disk, 80, 90) },
+      ]
+    : [];
+  const machineIssues = machineItems.filter((i) => i.level !== 'ok');
+  const machineTone: Tone = machine && machine.state !== 'ok'
+    ? 'warning'
+    : LEVEL_TONE[machineIssues.some((i) => i.level === 'critical') ? 'critical' : machineIssues.length ? 'warning' : 'ok'];
 
   return (
     <section className="cockpit">
@@ -121,6 +179,28 @@ export default function SystemCockpit({
           <div className="ui-muted" style={{ marginTop: 10, fontSize: 11 }}>Server-side monitor from `/api/system-health`.</div>
         </Surface>
         <Metric title="Active sessions" value={metrics.active} subtitle={`${sessions.length} total`} loading={loading} />
+        {/* A Surface, not a Metric: a danger Metric paints its whole value red, and only the
+            figure past its threshold should be. */}
+        <Surface as="article" tone={machineTone}>
+          <div className="ui-kicker">Machine</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 12, marginTop: 14, fontSize: 15, fontWeight: 700 }}>
+            {machineItems.length ? machineItems.map((i) => (
+              <span key={i.name} className={`cockpit__machine-item cockpit__machine-item--${i.level}`}>{i.name} {pct(i.value)}</span>
+            )) : '—'}
+          </div>
+          <div className="ui-muted ui-metric-subtitle">
+            {machine?.state === 'error'
+              ? 'Metrics unavailable. '
+              : machine?.state === 'empty'
+                ? 'No samples yet. '
+                : machine?.state === 'stale'
+                  ? 'Not collecting. '
+                  : machineIssues.length
+                    ? `${machineIssues.map((i) => `${i.name} ${i.level === 'critical' ? 'critical' : 'high'}`).join(', ')}. `
+                    : ''}
+            <Link href="/system" className="ui-link">Open System →</Link>
+          </div>
+        </Surface>
         <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
       </div>
 

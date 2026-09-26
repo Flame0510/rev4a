@@ -2,13 +2,16 @@
 
 > **Last updated:** 2026-09-26
 
-Rev4a uses a single SQLite file (`events.db`) in WAL mode.
+Rev4a keeps three SQLite files in WAL mode, by default all in the data directory's `data/`:
+`events.db` (sessions and events, below), `metrics.db` (machine metrics, see
+[Metrics Database](#metrics-database-metricsdb)) and `credentials.db` (see
+[Credentials Database](#credentials-database-credentialsdb)).
 
 ## Location
 
 | Environment | Path |
 |---|---|
-| VPS (default) | `/path/to/rev4a/data/events.db` |
+| Default | `~/.config/rev4a/data/events.db` (`$REV4A_DATA_DIR/data/events.db`) |
 | Custom | Set `REV4A_DB` env var |
 
 ## WAL Mode
@@ -19,8 +22,9 @@ PRAGMA synchronous = NORMAL;
 ```
 
 - The daemon writes; the Next.js API routes open read-only connections
-- `PRAGMA wal_checkpoint(PASSIVE)` runs after each daemon poll cycle
-- WAL files: `events.db-shm`, `events.db-wal` — do not delete while daemon is running
+- `events.db`: `PRAGMA wal_checkpoint(PASSIVE)` after each daemon poll cycle, `FULL` every 10
+- `metrics.db`: SQLite's automatic checkpoint (every 1000 pages) — no explicit one
+- WAL files (`*.db-shm`, `*.db-wal`) — do not delete while the daemon is running
 
 ## Tables
 
@@ -88,27 +92,9 @@ CREATE TABLE cost_override (
 
 When a `cost_override` row exists for the current month, the UI displays the override value instead of the computed sum.
 
-### `system_metrics` — infrastructure metrics
-
-```sql
-CREATE TABLE system_metrics (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts           INTEGER NOT NULL,
-  cpu_percent  REAL,
-  ram_used_mb  INTEGER,
-  ram_total_mb INTEGER,
-  disk_used_gb REAL,
-  disk_total_gb REAL,
-  load_avg_1m  REAL
-);
-
-CREATE INDEX idx_metrics_ts ON system_metrics(ts);
-```
-
-Rows older than 30 days are pruned automatically by the daemon (one row per completed 30 s poll;
-none on a host without the OpenClaw CLI, where the daemon stays idle).
-No feature consumes the `system_anomaly` events the daemon writes to `events` yet; they
-only pass through the generic event feeds.
+The daemon also writes a `system_anomaly` event (session `system`) when the machine
+crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). No feature
+consumes those events yet; they only pass through the generic event feeds.
 
 ### `agent_upgrades` — agent updates and rollbacks
 
@@ -254,6 +240,60 @@ off the machine. `restore.sh` refuses an archive with links in it and a running
 `rev4a.service` when it runs, and replaces the data directory as a whole (a leftover
 SQLite `-wal` cannot mix into the restored state), then resets the permissions. Agent volumes are not included —
 the dashboard's cold backups cover them.
+
+## Metrics Database (`metrics.db`)
+
+Machine metrics of the host — CPU, RAM, swap, storage — kept apart from `events.db`, so
+the event log holds sessions and events only and the history can be dropped on its own.
+
+**Location:** `data/metrics.db`, next to `events.db` (it follows `REV4A_DB`'s directory; both
+the daemon and the API resolve the data directory the same way, `REV4A_DATA_DIR` included).
+**Created by** the daemon when it starts (`CREATE TABLE IF NOT EXISTS`), which is also its
+only writer; `GET /api/metrics` and `GET /api/system-health` read it
+(`lib/metrics-db.ts`). Until the daemon has run once the file does not exist, and the
+API answers with `latest: null`. If the daemon cannot open it (corrupt, unwritable), it
+logs `[METRICS] disabled` and keeps polling sessions without sampling.
+**Sampling:** the first sample about 5 s after the daemon starts, then every 30 s, on a timer
+of its own — independent of the OpenClaw session poll.
+**Retention:** 30 days, pruned at every sample: ~86 400 `system_metrics` rows, and one
+`system_disks` row per filesystem per sample (up to ~259 200 for three).
+
+```sql
+CREATE TABLE system_metrics (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts            INTEGER NOT NULL,   -- Unix seconds
+  cpu_percent   REAL,               -- all cores, busy share since the previous sample
+  ram_used_mb   INTEGER,            -- total − available (Linux), as `free` shows it
+  ram_total_mb  INTEGER,
+  swap_used_mb  INTEGER,            -- NULL where there is no swap figure
+  swap_total_mb INTEGER,
+  load_avg_1m   REAL,
+  load_avg_5m   REAL,
+  load_avg_15m  REAL
+);
+CREATE INDEX idx_metrics_ts ON system_metrics(ts);
+
+-- One row per filesystem per sample: `/`, Docker's data root and Rev4a's data directory,
+-- each device once; roles lists which of them it is (e.g. 'root,docker,data').
+CREATE TABLE system_disks (
+  ts       INTEGER NOT NULL,        -- the same ts as the system_metrics row
+  mount    TEXT NOT NULL,
+  roles    TEXT,
+  used_mb  INTEGER,                 -- blocks − free
+  avail_mb INTEGER,                 -- what a normal user can still write
+  total_mb INTEGER
+);
+CREATE INDEX idx_disks_ts ON system_disks(ts);
+CREATE INDEX idx_disks_mount_ts ON system_disks(mount, ts);
+```
+
+**Anomalies** go to `events.db` as `system_anomaly` events: CPU above 85 % or RAM above
+90 % on two consecutive samples (at most once per 5 minutes per metric), and a filesystem
+at 90 % or more once when it reaches the threshold, with no cooldown (again only after it
+has dropped back under, or once after each daemon start: the state is kept in memory).
+
+Installs from before this database may still have a `system_metrics` table in
+`events.db`: nothing reads or writes it any more, and it can be dropped.
 
 ## Credentials Database (`credentials.db`)
 

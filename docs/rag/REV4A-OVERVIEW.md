@@ -9,7 +9,7 @@ Rev4a is the control panel for your AI agent infrastructure. It shows you everyt
 ### Dashboard (`/`)
 The main page. See live sessions (who's working right now), cost summary, an overall health indicator, and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made.
 
-The health cards cover Rev4a's own runtime, cron and watchdog, and lineage. They do **not** show CPU, RAM, disk, or load average: those metrics are collected and stored, but no page displays them. There is no wizard banner on the dashboard; an incomplete setup redirects to `/wizard` instead.
+The health cards cover Rev4a's own runtime, cron and watchdog, and lineage. The Machine card shows the server's CPU, RAM and fullest disk right now, coloured when it reaches a threshold, and links to the System page for details. There is no wizard banner on the dashboard; an incomplete setup redirects to `/wizard` instead.
 
 ### First-run wizard (`/wizard`)
 First-run setup wizard that guides new users through configuration. Four steps:
@@ -80,6 +80,9 @@ Connects agents to AI providers. Add and remove provider API keys, enable or dis
 Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container.
 
 The page shows no CPU or memory figures and has no start, stop, or restart buttons: it is read-only apart from the terminal link. Container lifecycle is managed from the Agents page.
+
+### System (`/system`)
+The machine Rev4a runs on. Three cards — CPU (percent, cores, load average), memory (used, available, swap) and storage (each disk with its used and free space, and whether it is the system disk, where Docker keeps agents, or where Rev4a keeps its data) — then charts of CPU, memory and each disk over 1 hour, 24 hours, 7 days or 30 days (for CPU and memory the average line with the peak shaded). Hover a chart (or focus it and use the arrow keys) to read a point; each chart has a Table view. Bars turn yellow and red when they reach their thresholds. Figures refresh every 30 seconds; history is kept 30 days.
 
 ### Container Terminal (`/containers/terminal/[id]`)
 Live web terminal into a Docker container. Run commands, inspect files, debug issues — like SSH but in the browser.
