@@ -1387,7 +1387,7 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
     white-space: nowrap;
   }
 
-  /* Padding bottom per non coprire contenuti — handled by .app-shell__content */
+  /* Bottom padding so content is not covered — handled by .app-shell__content */
 
   /* Chat button raised above the bottom navbar */
   .ochat__trigger {

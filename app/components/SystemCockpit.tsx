@@ -144,7 +144,7 @@ export default function SystemCockpit({
                     <span>{item.severity}</span>
                   </div>
                   <div className="ui-muted" style={{ marginTop: 4 }}>{item.details}</div>
-                  {item.actionHref && <Link href={item.actionHref} className="ui-link" style={{ display: 'inline-block', marginTop: 6 }}>Apri →</Link>}
+                  {item.actionHref && <Link href={item.actionHref} className="ui-link" style={{ display: 'inline-block', marginTop: 6 }}>Open →</Link>}
                 </li>
               ))}
             </ul>

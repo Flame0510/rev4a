@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-09-26
 
 ---
 
@@ -52,8 +52,9 @@ If you are an AI agent arriving on this repo for the first time:
 No Italian, no other languages in code or docs.
 
 `npm run check:language` scans every tracked file and exits non-zero on an Italian word;
-CI runs it on every pull request and the release workflow runs it again, so neither `main`
-nor a release can ship Italian. It is also shipped as an
+CI runs it on every push to `main` and every pull request, and the release workflow runs
+it again before publishing — Italian that reaches `main` is flagged at once and cannot be
+published. It is also shipped as an
 optional git hook: `git config core.hooksPath .githooks` once per clone checks only what
 you are committing. A line carrying `lang-ok` is skipped when the Italian is the point of
 that line (see `CONTRIBUTING.md` § Language rule).
@@ -97,7 +98,7 @@ Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FR
 
 1. **Use shared primitives.** All UI lives in `app/components/ui/`. `Button`, `Input`, `Select`, `Modal`, `Toast`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `Pill`, `Metric`, `StatusCard`, `Surface`, `Page`. Never replicate them.
 2. **No inline styles on interactive elements.** Buttons, inputs, selects use the shared component. Only layout wrappers use inline style.
-3. **Square visual language.** `border-radius: 0`, no shadows, flat design. Copper accent only.
+3. **Square visual language.** `border-radius: 0`, no shadows, flat design. The violet accent (`--color-accent-500`) only.
 4. **Interactive elements must be `<button type="button">`.** Not `<span onClick>`, not `<div onClick>`.
 5. **100% English.** UI labels, errors, aria-labels. No Italian.
 6. **New UI component?** Add it to `app/components/ui/`, export from `index.ts`, document in `docs/FRONTEND-ARCHITECTURE.md`.
@@ -152,10 +153,10 @@ documentation is incomplete.
 ## 3. Architecture Overview (Quick Reference)
 
 ```
-domain:      <your-rev4a-domain> (port 3740, proxied by Traefik)
+domain:      <your-rev4a-domain> (port 3740, behind the reverse proxy of your choice)
 stack:       Next.js 16 + React 19 + TypeScript + SQLite + systemd
-processes:   rev4a-next (Next.js, port 3740)
-             rev4a-terminal-ws (WebSocket PTY, port 3741)
+processes:   one systemd unit, rev4a.service, runs `rev4a serve`, which supervises
+             Next.js (port 3740), the session daemon and the terminal WebSocket (port 3741)
 repo:        github.com/Flame0510/rev4a.git (branch main)
 language:    100% English
 ```
@@ -193,7 +194,7 @@ When the user asks you to do something on this repository:
 
 - You have `docker`, `systemctl`, and filesystem access on the VPS
 - Use `sudo systemctl restart rev4a.service` after builds
-- Use `sudo journalctl -u rev4a-next -f` to view Next.js logs
+- Use `sudo journalctl -u rev4a -f` to view the logs (Next.js, daemon and terminal share the unit)
 - Use `npm run build` for Next.js builds
 - Never expose secrets in responses
 - Monitor `docs/MEMORY.md` is NOT part of this repo — it's a private workspace file
@@ -210,8 +211,7 @@ npm run check:language  # 100% English rule (CI gate)
 rev4a serve        # Start all services (dashboard + daemon + terminal)
 npm start            # Same as rev4a serve
 sudo systemctl status rev4a.service  # Production: check running services
-sudo journalctl -u rev4a-next -f    # Production: Next.js logs
-sudo journalctl -u rev4a-daemon -f  # Production: daemon logs
+sudo journalctl -u rev4a -f         # Production: logs of all three processes
 ```
 
 ---
@@ -224,6 +224,6 @@ sudo journalctl -u rev4a-daemon -f  # Production: daemon logs
 | **PULSE** | Embedded AI assistant in the UI |
 | **OpenClaw** | The agent runtime that Rev4a monitors |
 | **Nexus** | Host-level agent on the VPS (ops context) |
-| **Traefik** | Reverse proxy in front of all containers |
+| **Traefik** | The reverse proxy the original deployment used; Rev4a works behind any proxy, or none |
 | **node-pty** | Node.js PTY library for interactive terminal sessions |
 | **AGENT_ID** | Docker label used to identify agent containers |

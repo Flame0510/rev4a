@@ -597,11 +597,11 @@ POST /api/sessions/maintenance/cleanup
 
 ## 9. References
 
-- [Session maintenance](/concepts/session) — OpenClaw docs
-- [Session management deep dive](/reference/session-management-compaction) — store schema + maintenance rules
-- [Compaction](/concepts/compaction) — auto + manual compaction
-- [Session pruning](/concepts/session-pruning) — tool-result trimming
-- [Transcript hygiene](/reference/transcript-hygiene) — provider-specific fixups
-- [Cron jobs](/automation/cron-jobs) — cron.sessionRetention + run log config
+- [Session maintenance](https://docs.openclaw.ai/concepts/session) — OpenClaw docs
+- [Session management deep dive](https://docs.openclaw.ai/reference/session-management-compaction) — store schema + maintenance rules
+- [Compaction](https://docs.openclaw.ai/concepts/compaction) — auto + manual compaction
+- [Session pruning](https://docs.openclaw.ai/concepts/session-pruning) — tool-result trimming
+- [Transcript hygiene](https://docs.openclaw.ai/reference/transcript-hygiene) — provider-specific fixups
+- [Cron jobs](https://docs.openclaw.ai/automation/cron-jobs) — cron.sessionRetention + run log config
 - [Rev4a API Reference](API-REFERENCE.md)
 - [Rev4a Frontend Architecture](../FRONTEND-ARCHITECTURE.md)

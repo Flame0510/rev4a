@@ -12,7 +12,7 @@ interface DashboardToolbarProps {
 export default function DashboardToolbar({ filter, onChange, agents = ['all'] }: DashboardToolbarProps) {
   return (
     <section className="toolbar">
-      <span className="toolbar-label">AGENTI</span>
+      <span className="toolbar-label">AGENTS</span>
 
       {agents.map((name) => (
         <button
@@ -44,7 +44,7 @@ export default function DashboardToolbar({ filter, onChange, agents = ['all'] }:
       </button>
 
       <span className="toolbar-sep">|</span>
-      <span className="toolbar-label">PERIODO</span>
+      <span className="toolbar-label">PERIOD</span>
 
       {PERIODS.map((p) => (
         <button

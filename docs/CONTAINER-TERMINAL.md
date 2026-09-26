@@ -15,7 +15,7 @@ via `node-pty` and streaming I/O over a dedicated WebSocket server.
 Browser (xterm-compatible DOM terminal)
   │  WebSocket wss://rev4a/containers/terminal/{id}
   ▼
-terminal-ws-server.js (port 3741, proxied by Traefik)
+terminal-ws-server.js (127.0.0.1:3741, reached through a reverse proxy — see Routing)
   │  node-pty
   ▼
 docker exec -it {containerId} env TERM=xterm-256color bash
@@ -30,19 +30,29 @@ Container Shell (bash, interactive, full PTY)
 
 | Process          | Port  | Role |
 |------------------|-------|------|
-| `rev4a-next`   | 3740  | Next.js app (pages, API routes, auth) |
-| `rev4a-terminal-ws` | 3741 | Standalone WebSocket server for terminal sessions |
+| Next.js (`next start`) | 3740  | Next.js app (pages, API routes, auth) |
+| `terminal-ws-server.js` | 3741 | Standalone WebSocket server for terminal sessions, bound to 127.0.0.1 |
 
-The terminal server is a separate systemd service (rev4a-terminal-ws). It was isolated from
+Both are child processes of `rev4a serve` (with `daemon.js`), under the single
+`rev4a.service` unit in production. The terminal server is its own process, isolated from
 the Next.js app to avoid event-loop contention during high-throughput I/O (fast
 `seq`, `cat` on large files, interactive shell sessions).
 
-### Traefik routing
+### Routing
 
 ```
 /containers/terminal/{id}          → Next.js (page serving TerminalClient)
-/api/terminal-ws?id={containerId}  → WebSocket proxy → ws://127.0.0.1:3741
+/api/terminal-ws?id={containerId}  → reverse proxy → ws://127.0.0.1:3741
 ```
+
+The browser opens the socket on the dashboard's own host (`/api/terminal-ws`). Next.js
+has no route for that path, so the terminal works only when a reverse proxy in front of
+Rev4a forwards it to port 3741; without one the socket gets a 404.
+
+**No authentication of its own.** `terminal-ws-server.js` checks neither the session
+cookie nor the token: whoever reaches it gets a shell in the container named by `id`.
+It listens on 127.0.0.1 only, so the exposure is exactly what the proxy route above
+opens. An open issue.
 
 ### Data flow
 
@@ -257,8 +267,7 @@ app/containers/terminal/
 ├── [id]/
 │   ├── page.tsx               # Next.js page (auth-protected)
 │   └── TerminalClient.tsx     # Client-side terminal component
-terminal-ws-server.js           # WebSocket PTY server (rev4a-terminal-ws.service)
-rev4a.service                  # Systemd target for all three services
+terminal-ws-server.js           # WebSocket PTY server, started by `rev4a serve`
 ```
 
 ## Known Limitations

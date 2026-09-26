@@ -45,6 +45,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const encoder = new TextEncoder();
+  // Aborted when the client goes away (the stream's cancel()), which stops docker.
+  const abort = new AbortController();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -54,10 +56,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         } catch { /* stream closed */ }
       };
 
-      const ctrl = controller as ReadableStreamDefaultController & { signal?: AbortSignal };
-
       try {
-        await downloadAgentImage({ onEvent: send, signal: ctrl.signal });
+        await downloadAgentImage({ onEvent: send, signal: abort.signal });
       } catch (e: unknown) {
         send(JSON.stringify({
           type: 'error',
@@ -66,7 +66,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
       controller.close();
     },
-    cancel() { /* downloadAgentImage stops the docker process through the signal */ },
+    // A ReadableStreamDefaultController has no signal of its own; this is the hook the
+    // runtime calls when the client disconnects.
+    cancel() { abort.abort(); },
   });
 
   return new Response(stream, {

@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-26
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -14,34 +14,29 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 ## Architecture
 
 ```
-                      Internet
+              Browser (directly, or through a reverse proxy of your choice)
                          │
-                    ┌────┴────┐
-                    │ Traefik │  (Docker container, host network)
-                    │  :443   │
-                    └────┬────┘
+              ┌──────────┴──────────────────┐
+              │  rev4a serve                │
+              │  (systemd: rev4a.service)   │
+              │  Next.js 16      :3740      │
+              │  daemon.js                  │
+              │  terminal WS     :3741      │
+              └──────────┬──────────────────┘
                          │
-              ┌──────────┴──────────┐
-              │  rev4a             │
-              │  systemd (rev4a.service)    │
-              │  :3740              │
-              │  Next.js 16         │
-              └─────────────────────┘
+                docker exec / Docker API
                          │
            ┌─────────────┴─────────────┐
-           │                           │
-   docker exec / API           docker exec / API
-           │                           │
-    ┌──────┴──────┐           ┌────────┴────────┐
-    │ openclaw-core│           │  openclaw-atlas │
-    │ :3700-3708   │           │  :3731 → 3000   │
-    │ AGENT_ID=core│           │  AGENT_ID=atlas  │
-    └──────────────┘           └─────────────────┘
+    ┌──────┴──────┐             ┌──────┴──────┐
+    │ agent       │     …       │ agent       │
+    │ container   │             │ container   │
+    │ (OpenClaw)  │             │ (OpenClaw)  │
+    └─────────────┘             └─────────────┘
 ```
 
 ### Environment
 
-Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`. See [.env.example](../.env.example) for the canonical, always-current list.
+Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`, except the three read before `.env` is loaded — `REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS` (both from the process environment: a shell export or a systemd `Environment=` line) and `REV4A_SKIP_POSTINSTALL_BUILD` (read by `npm install`). See [.env.example](../.env.example) for the canonical, always-current list.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -56,8 +51,11 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_TIMEZONE` | No | IANA timezone used for scheduling and timestamps |
-| `REV4A_FORCE_INSECURE_COOKIE` | No | Allow a non-Secure session cookie — plain-HTTP deployments only |
+| `REV4A_FORCE_INSECURE_COOKIE` | No | `1` allows a non-Secure session cookie — plain-HTTP deployments only (any other value, `true` included, does nothing) |
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
+| `REV4A_DOCKER_WAIT_SECONDS` | No | How long `rev4a serve` waits for the Docker daemon at start-up (default `90`, capped at 600) |
+| `REV4A_DEV_ORIGINS` | No | Extra comma-separated hostnames or IPs allowed to reach `next dev`; no effect on a production build |
+| `REV4A_SKIP_POSTINSTALL_BUILD` | No | `1` in CI: `npm ci` then skips the post-install `next build` (the workflows build as a separate step). Any non-empty value skips it, `0` included — leave it unset to build |
 
 See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 
@@ -80,10 +78,12 @@ to any specific reverse proxy.
 
 When environment variables are saved via the Config page (Save & Restart):
 
-1. Values are written to `.env` in the project root
-2. Secrets are loaded via `EnvironmentFile=` pointing to `.env` (chmod 600). Only non-secret vars (`NODE_ENV`, `PATH`, `REV4A_DB`) are in the unit file. Other vars (passwords, non-Rev4a keys) stay in `.env` for the application to read at runtime.
-3. `systemctl daemon-reload` is run
-4. The server restarts with the new environment
+1. Values are merged into the data directory's `.env` (`~/.config/rev4a/.env`; the
+   `.env` in the installation root is a link to it). An empty value removes the key.
+2. `sudo systemctl daemon-reload` is attempted; it is harmless where there is no systemd.
+3. **Save & Restart** runs `sudo systemctl restart rev4a.service`: the restart only works
+   when Rev4a runs as that systemd service. Started any other way, restart `rev4a serve`
+   yourself — `serve` reads `.env` at start-up, so nothing changes until then.
 
 ## Components
 
@@ -149,7 +149,7 @@ REV4A_TELEGRAM_BOT_TOKEN=         # Telegram bot token
 REV4A_TELEGRAM_CHAT_ID=           # Telegram chat to notify
 REV4A_ALERT_COOLDOWN_MS=600000    # Minimum time between repeat alerts for the same condition
 REV4A_ALERT_STALE_SECONDS=120     # How long without a DB write before the system is considered stale
-REV4A_ALERT_SMOKE=false           # Set true to send a one-off test alert on startup
+REV4A_ALERT_SMOKE=false           # true enables GET /api/alerts/smoke (sends a test alert) in production
 ```
 
 **Behavior:**
@@ -210,14 +210,16 @@ echo 'vm.swappiness=10' > /etc/sysctl.d/99-rev4a-swap.conf
 
 ### Systemd environment override
 
-File: `/etc/systemd/system/rev4a-next.service` (EnvironmentFile)
+File: `/etc/systemd/system/rev4a.service.d/override.conf` — a drop-in for the single
+`rev4a.service` unit (`systemctl edit rev4a`). It is for the variables `.env` does not
+carry: `rev4a serve` reads `~/.config/rev4a/.env` itself, and a key present there wins
+over the same key set here — so secrets such as `REV4A_PASSWORD` or `REV4A_TOKEN`
+belong in `.env` (or `/config`), not in the drop-in. It is also the only place for the
+variables read before `.env` is loaded (`REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS`).
 
 ```ini
 [Service]
-Environment=REV4A_PASSWORD=***
-Environment=REV4A_TOKEN=***
-Environment=REV4A_JWT_SECRET=***
-Environment=REV4A_DB=/path/to/rev4a/data/events.db
+Environment=REV4A_DOCKER_WAIT_SECONDS=180
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 ```
@@ -471,48 +473,6 @@ File-based, tracked in git. Each entry:
 ```
 Models with `enabled: false` are ignored.
 Only models whose provider has a key in `data/provider-keys.json` are synced.
-
----
-
-## Containers
-
-### openclaw-atlas
-
-| Property | Value |
-|---|---|
-| Image | `openclaw-agent-base:<version>` (Node 24-bookworm-slim + OpenClaw) |
-| Port | `0.0.0.0:3731 → 3000` |
-| IP | `172.19.0.3` |
-| AGENT_ID | `atlas` |
-| Config mount | `/docker/atlas-data/openclaw-fixed.json → /root/.openclaw/openclaw.json` |
-| Auth mode | `token` |
-
-**Control UI:** `http://<vps-ip>:3731` — enter the gateway token to log in.
-Rev4a-generated direct links should use `#token=<gateway-token>` for automatic Control UI sign-in.
-
-### openclaw-core
-
-| Property | Value |
-|---|---|
-| Image | `ghcr.io/hostinger/hvps-openclaw:latest` |
-| Ports | `:3711-3719` (mapped to container `:3700-3708`) |
-| AGENT_ID | `core` |
-
-### openclaw-guest
-
-| Property | Value |
-|---|---|
-| Image | `ghcr.io/hostinger/hvps-openclaw:latest` |
-| Port | `:3730` |
-| AGENT_ID | `guest` |
-
-### Other containers
-
-| Name | Image | Notes |
-|---|---|---|
-| `hermes` | `nousresearch/hermes-agent:latest` | Hermes agent |
-| `hermes-dashboard` | `nousresearch/hermes-agent:latest` | Hermes dashboard |
-| `traefik-traefik-1` | `traefik:latest` | Reverse proxy |
 
 ---
 

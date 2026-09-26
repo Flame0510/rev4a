@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
-import { getPassword, getJwtSecret } from '@/lib/rev4a-auth';
+import { getPassword, getJwtSecret, secretEquals } from '@/lib/rev4a-auth';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       password?: string;
     };
 
-    if (!input || input !== password) {
+    if (!input || !secretEquals(input, password)) {
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
     }
 

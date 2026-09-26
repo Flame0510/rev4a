@@ -118,7 +118,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         title: 'Check Rev4a runtime heartbeat',
         details: latestMetricAgeSeconds === null
           ? 'No heartbeat metrics available from runtime.'
-          : `Heartbeat metrics stuck for ${latestMetricAgeSeconds}s (soglia ${staleThresholdSeconds}s).`,
+          : `Heartbeat metrics stuck for ${latestMetricAgeSeconds}s (threshold ${staleThresholdSeconds}s).`,
         actionHref: '/lineage',
         dismissible: false,
         createdAt,
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ? 'system_metrics table unavailable: freshness runtime not verifiable.'
         : latestMetricAgeSeconds === null
           ? 'No heartbeat metrics detected.'
-          : `Last heartbeat metrics ${latestMetricAgeSeconds}s fa (soglia ${staleThresholdSeconds}s).`,
+          : `Last heartbeat metrics ${latestMetricAgeSeconds}s ago (threshold ${staleThresholdSeconds}s).`,
       resolvedMessage: 'DB Rev4a fresh again.',
       stale: hasSystemMetrics ? (latestMetricAgeSeconds === null ? true : latestMetricAgeSeconds > staleThresholdSeconds) : false,
     });

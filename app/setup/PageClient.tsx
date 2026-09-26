@@ -149,7 +149,7 @@ export default function SetupPageClient() {
               <div style={{ display: 'grid', gap: 6, textAlign: 'left', padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)' }}>
                 {[
                   'Set admin password',
-                  'Agent base image is built by the setup script',
+                  'Agent base image: download it from the banner on the Agents page',
                   'Next: add providers & agents in the wizard',
                 ].map((t) => (
                   <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text)' }}>

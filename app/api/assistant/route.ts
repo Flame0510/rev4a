@@ -24,7 +24,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/agents': {
     title: 'Agents',
-    description: 'List of all Docker containers that run OpenClaw agents. Shows status (running/exited/paused), image, ports, IP, and creation time. Includes a top banner for the agent base image status: yellow warning when outdated or missing, animated progress bar when downloading from registry.',
+    description: 'List of all Docker containers that run OpenClaw agents. Shows status (running/exited/paused), image, ports, IP, and creation time. Includes a top banner for the agent base image status: yellow warning when a newer version is published or none is downloaded; while downloading, the percent of layers finished, docker\'s latest output line and a Cancel button; afterwards the outcome (ready, canceled or the error).',
     actions: ['Filter by status: all, running, or exited', 'Click an agent to see its details (environment variables, backups, Telegram channels, and the Model section that sets its primary model and fallbacks)', 'Create a new agent using the "Create Agent" button', 'Download the agent base image when the banner shows it missing or outdated'],
     hints: 'The status bullet tells you at a glance if an agent is running (green), exited (red), or paused (yellow). The base image banner shows when a newer supported version is published on the registry — downloading makes it available to create and update agents on; it changes no agent by itself.',
   },
@@ -58,11 +58,17 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Run shell commands inside the container', 'Inspect files, processes, and logs live', 'Use any CLI tool available inside the container'],
     hints: 'This is a live terminal — changes you make inside the container are real. Be careful with destructive commands.',
   },
+  '/credentials': {
+    title: 'Credentials',
+    description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion) once and install them into agent containers. Secrets are stored unencrypted in credentials.db; provider API keys are managed on the Gateway page, not here.',
+    actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Sync a credential to an agent container, or De-sync it to remove it', 'See which credentials are actually installed in each container (detected live)'],
+    hints: 'A credential reaches a container only when you sync it, and leaves only when you de-sync it. Any stored credential can be synced to any container.',
+  },
   '/config': {
     title: 'Config',
     description: 'Rev4a application configuration page. View and manage settings that control how Rev4a behaves.',
     actions: ['View current configuration values', 'Modify configuration settings', 'Save changes to update Rev4a behavior'],
-    hints: 'Configuration changes take effect immediately when saved.',
+    hints: 'Saved values are written to the .env file; restart Rev4a for them to take effect.',
   },
   '/lineage': {
     title: 'Lineage',
@@ -107,7 +113,7 @@ Navigation links inside Rev4a:
 - Dashboard → /
 - Agents → /agents
 - Create Agent → /agents/create
-- Providers → /providers
+- Credentials → /credentials
 - Gateway → /gateway
 - Cron Jobs → /crons
 - Containers → /containers
@@ -118,11 +124,14 @@ Navigation links inside Rev4a:
 - Tools → /tools
 - Plugins → /plugins
 - Skills → /skills
+- Wizard (first-run guide: providers, first agent) → /wizard
 `.trim();
 
 function buildSystemPrompt(page: string): string {
   const path = page.split('?')[0] || '/';
-  const ctx = PAGE_CONTEXT[path] ?? {
+  // Dynamic routes are keyed by their pattern; the terminal is the only one.
+  const key = path.startsWith('/containers/terminal/') ? '/containers/terminal/[id]' : path;
+  const ctx = PAGE_CONTEXT[key] ?? {
     title: path,
     description: 'Unknown page.',
     actions: [],

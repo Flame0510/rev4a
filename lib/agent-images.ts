@@ -226,6 +226,13 @@ export async function remoteSupportedVersions(): Promise<string[] | null> {
 /**
  * Runs `docker <args>`, streaming output lines; rejects with the last error line.
  *
+ * A signal that is already aborted rejects before anything is spawned: an `abort`
+ * listener added to an aborted signal never fires, so the process would otherwise run
+ * to completion even though its caller has been cancelled.
+ *
+ * Lines are reassembled across output chunks — a chunk can end mid-line — and `\r` is
+ * treated as a line break too, since docker redraws progress with it.
+ *
  * `env` is for container environment on `docker run`: each name is inserted as `-e KEY`
  * right after the subcommand, and the value reaches docker through its own
  * environment, so secrets stay out of the process table.
@@ -235,6 +242,10 @@ export function runDocker(
   opts: { onLine?: (line: string) => void; signal?: AbortSignal; timeoutMs: number; env?: Record<string, string> },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new Error(`docker ${args[0]} aborted`));
+      return;
+    }
     const envNames = Object.keys(opts.env ?? {});
     const argv = envNames.length ? [args[0], ...envNames.flatMap((k) => ['-e', k]), ...args.slice(1)] : args;
     const child = spawn('docker', argv, {
@@ -243,17 +254,28 @@ export function runDocker(
     });
     let lastError = '';
     let firstError = '';
-    const onData = (isErr: boolean) => (chunk: Buffer) => {
-      for (const line of chunk.toString().split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        if (isErr) {
-          // Docker prints the cause first and "Run 'docker run --help' …" last; keep
-          // both ends so the rejection can carry the cause, not the usage pointer.
-          firstError ||= line.trim();
-          lastError = line.trim();
-        }
-        opts.onLine?.(line);
+    const emit = (line: string, isErr: boolean) => {
+      if (!line.trim()) return;
+      if (isErr) {
+        // Docker prints the cause first and "Run 'docker run --help' …" last; keep
+        // both ends so the rejection can carry the cause, not the usage pointer.
+        firstError ||= line.trim();
+        lastError = line.trim();
       }
+      opts.onLine?.(line);
+    };
+    // The unfinished tail of the last chunk, per stream, completed by the next one.
+    const pending = { out: '', err: '' };
+    const onData = (isErr: boolean) => (chunk: Buffer) => {
+      const key = isErr ? 'err' : 'out';
+      const parts = (pending[key] + chunk.toString()).split(/\r\n|\n|\r/);
+      pending[key] = parts.pop() ?? '';
+      for (const line of parts) emit(line, isErr);
+    };
+    const flush = () => {
+      emit(pending.out, false);
+      emit(pending.err, true);
+      pending.out = pending.err = '';
     };
     child.stdout.on('data', onData(false));
     child.stderr.on('data', onData(true));
@@ -271,6 +293,7 @@ export function runDocker(
       reject(err);
     });
     child.on('close', (code) => {
+      flush();
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', kill);
       if (code === 0) resolve();
@@ -281,8 +304,9 @@ export function runDocker(
 
 /**
  * Pull `<registry>:<version>` and tag it `openclaw-agent-base:<version>`. The registry
- * reference is removed afterwards (an untag, the layers stay), so local images list
- * under the version tag only.
+ * reference is removed afterwards, so local images list under the version tag only: after
+ * a successful tag that is an untag (the layers stay); when the tag failed or was
+ * cancelled it is the image's only name, and the pulled image is deleted with it.
  */
 export async function pullAgentImage(
   version: string,
@@ -291,8 +315,13 @@ export async function pullAgentImage(
   if (!isSupportedVersion(version)) throw new Error(`OpenClaw ${version} is not supported by this Rev4a`);
   const remote = `${registryRepository()}:${version}`;
   await runDocker(['pull', remote], { ...opts, timeoutMs: PULL_TIMEOUT_MS });
-  await runDocker(['tag', remote, localImageRef(version)], { ...opts, timeoutMs: 30_000 });
-  await runDocker(['rmi', remote], { timeoutMs: 30_000 }).catch(() => {});
+  try {
+    await runDocker(['tag', remote, localImageRef(version)], { ...opts, timeoutMs: 30_000 });
+  } finally {
+    // Also when the tag failed or was cancelled: left behind, the registry reference
+    // is a full image under a name neither the listing nor retention looks at.
+    await runDocker(['rmi', remote], { timeoutMs: 30_000 }).catch(() => {});
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The project is 100% English (AGENTS.md 2.1). This checks only what is being committed,
-# so it costs nothing; the release workflow runs the same script over the whole tree as
-# the real gate. Bypass with `git commit --no-verify` when you know why.
+# so it costs nothing; CI and the release workflow run the same script over the whole tree
+# as the real gates. Bypass with `git commit --no-verify` when you know why.
 #
 # One-time setup per clone: git config core.hooksPath .githooks
 node scripts/check-language.mjs --staged

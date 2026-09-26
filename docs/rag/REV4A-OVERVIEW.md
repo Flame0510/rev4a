@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-22
+> **Last updated:** 2026-09-26
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -60,12 +60,12 @@ must be running to start an update.
 
 The agent base image banner above (not this update — an agent's own **Update to
 <version>** recreates it on an image already downloaded) is the one running the
-`docker pull`. While it runs the banner shows a real percent and the latest status
-line, read from `docker pull`'s own per-layer output, not an animation; a **Cancel**
-button stops it. There is no modal, no "View Progress", no "Run in Background". The
-outcome (ready / canceled / failed) is still shown for up to 30 seconds after it
-happens even on a page reload or a return from another screen, not only while the
-Agents page stayed open for it. Status is polled every 2 seconds.
+`docker pull`. While it runs the banner shows the percent of layers finished and the
+latest line of docker's output; a **Cancel** button, offered once the download is
+running, stops it. There is no modal, no "View Progress", no "Run in Background". The
+outcome ("ready" and "canceled" for 3 seconds, a failure until the next action) is
+reported even when it happened while the Agents page was closed or reloading, if it is
+less than 30 seconds old. Status is polled every 2 seconds.
 
 ### Create Agent (`/agents/create`)
 Wizard to spin up a new agent. Steps: choose a template (Prometheus, Argus, Atlas, etc.), name your agent, pick a model, set an optional port range (default: auto-assigned 10-port block, e.g. 3700-3709). The agent is created as a Docker container with a persistent volume — all config, workspace files, and credentials survive container restarts.

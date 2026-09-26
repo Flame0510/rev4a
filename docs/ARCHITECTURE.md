@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-22
+> **Last updated:** 2026-09-26
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -130,7 +130,9 @@ The central container, running the Next.js dashboard + orchestration API.
 - **The model catalogue** is read only through `lib/model-catalogue.ts`:
   `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and
-  **The model data has three files and three scripts.** `models.config.json` is curated by
+  `catalogueStatus()`. A failed read of `models.config.json` falls back to the last
+  good copy and never deletes overrides.
+- **The model data has three files and three scripts.** `models.config.json` is curated by
   hand (identity, `enabled`, `deprecated`, and an optional `info` block for what no API
   publishes: the vendor's size claim, benchmarks, the docs link, notes).
   `model-pricing.json` and `model-details.json` are **generated** by
@@ -142,8 +144,6 @@ The central container, running the Next.js dashboard + orchestration API.
   proposal the card does not support — evidence per field, every benchmark value under the
   column that names this model. `GET /api/models/details` merges the three files for the
   details modal (`docs/dev/GATEWAY.md`).
-  `catalogueStatus()`. A failed read of `models.config.json` falls back to the last
-  good copy and never deletes overrides.
 - **Agent images and OpenClaw versions.** `lib/agent-versions.json` lists the supported
   OpenClaw versions, newest first, with the model `input` list for each; the server reads
   it through `lib/agent-versions.ts`, the `rev4a` CLI with `require`. The provider sync
@@ -572,19 +572,18 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 
 ### Responsibilities
 
-1. Poll `openclaw sessions --json --all-agents` on a configurable interval
+1. Poll `openclaw sessions --json --all-agents` every 30 s
 2. Upsert session rows into `events.db`
-3. Emit `spawn` / `complete` / `error` events into the `events` table
-4. Collect system metrics (CPU, RAM, disk) every poll cycle
-5. Detect anomalies (CPU > 90%, RAM > 90%) and log warnings
+3. Emit `spawn` / `complete` / `fail` / `spawn_timeout` events into the `events` table
+4. Collect system metrics (CPU, RAM, disk) after every completed poll
+5. Detect anomalies (CPU > 85%, RAM > 90%) and record them
 6. Manage DB lifecycle (WAL mode, checkpoint after each cycle)
 
-### Poll Intervals
+### Poll Interval
 
-| Condition | Interval |
-|---|---|
-| No active sessions | 30 s |
-| ≥ 1 session with status `working` | 15 s |
+A fixed 30 s timer, whether or not sessions are working. When the OpenClaw CLI is not on
+the host, the daemon logs it once and stays idle — and then records no system metrics
+either, since they are collected at the end of a poll.
 
 ### Cost Estimation
 
@@ -626,10 +625,10 @@ The daemon uses `INSERT … ON CONFLICT DO UPDATE` with these rules:
 
 ### System Metrics
 
-Every poll cycle the daemon records a `system_metrics` row. Data sources:
+After every completed poll the daemon records a `system_metrics` row. Data sources:
 
-- **CPU**: cgroup v2 usage delta (`/sys/fs/cgroup/cpu.stat`) when available, falls back to `/proc/stat` host ticks
-- **RAM**: `/proc/meminfo`
+- **CPU**: cgroup v2 usage delta (`/sys/fs/cgroup/cpu.stat`) when available, falls back to host ticks from `os.cpus()`
+- **RAM**: `os.totalmem()` / `os.freemem()`
 - **Disk**: `fs.statfsSync()` on the directory holding the events database — the
   filesystem Rev4a's own data lives on; works the same on Linux and macOS
 - **Load**: `os.loadavg()[0]`
@@ -638,17 +637,21 @@ Metrics older than 30 days are pruned automatically each cycle.
 
 ### Anomaly Detection
 
-The daemon compares the last two metric samples. If a threshold is exceeded and the cooldown (5 min) has passed, it logs a `WARN` line:
+The daemon compares the last two metric samples. When both exceed a threshold and the
+cooldown (5 min per metric) has passed, it inserts a `system_anomaly` event
+(`{ metric, values, threshold, message }`) and logs `[ANOMALY] CPU high: N%` or
+`[ANOMALY] RAM high: N%`. No feature consumes `system_anomaly` events yet; they only pass through the generic
+event feeds.
 
-| Metric | Threshold |
+| Metric | Threshold (two consecutive samples) |
 |---|---|
-| CPU | > 90% |
+| CPU | > 85% |
 | RAM | > 90% |
 
 ### DB Safety
 
 - WAL mode + `PRAGMA synchronous = NORMAL` for concurrent read safety
-- `PRAGMA wal_checkpoint(PASSIVE)` runs after each poll cycle
+- `PRAGMA wal_checkpoint(PASSIVE)` runs after each poll cycle, `FULL` every 10 cycles
 - On `uncaughtException` the daemon logs but does NOT exit — relies on systemd Restart=always for recovery
 
 ### Migrations
@@ -735,17 +738,19 @@ ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
 
 Rev4a provides a real, interactive terminal for any agent container via
 a WebSocket-connected PTY. The implementation is documented in detail in
-[docs/container-terminal.md](container-terminal.md).
+[docs/CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md).
 
 ### Two-process architecture
 
 | Process | Port | Role |
 |---|---|---|
-| `rev4a-next` (Next.js) | 3740 | Serves the terminal page, auth, API |
-| `rev4a-terminal-ws` (standalone) | 3741 | WebSocket PTY server via `node-pty` |
+| Next.js (`next start`) | 3740 | Serves the terminal page, auth, API |
+| `terminal-ws-server.js` | 3741 (127.0.0.1) | WebSocket PTY server via `node-pty` |
 
-The terminal server runs as a separate systemd service (rev4a-terminal-ws) to avoid event-loop
-contention with Next.js during high-throughput I/O.
+Both are started by `rev4a serve`; the terminal server is a process of its own to avoid
+event-loop contention with Next.js during high-throughput I/O. It has no authentication
+of its own and is reachable only through a reverse proxy route (see
+[CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md#routing)).
 
 ### Why custom DOM over xterm.js
 
@@ -755,7 +760,7 @@ CSS conflicts. The current implementation uses a plain `<div>` with native
 browser scrolling and a hidden `<textarea>` for input — stable under any
 output volume.
 
-See [container-terminal.md](container-terminal.md#terminal-client-browser)
+See [CONTAINER-TERMINAL.md](CONTAINER-TERMINAL.md#terminal-client-browser)
 for the full rationale.
 
 ## 12. Technology Stack

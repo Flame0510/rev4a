@@ -2,7 +2,7 @@
 
 Source of truth: `app/design-system.ts` + CSS tokens in `app/globals.css`.
 
-> **Last updated:** 2026-07-03
+> **Last updated:** 2026-09-26
 
 ---
 
@@ -44,18 +44,21 @@ Rev4a uses a **square/sharp** visual language:
 Defined in `app/globals.css` as CSS custom properties:
 
 ```css
---bg:           #0a0a0a      /* Page background */
---bg2:          #111         /* Slightly lighter surface */
---border:       #222         /* Default border */
---text:         #e0e0e0      /* Primary text */
---text-dim:     #888         /* Muted/secondary text */
---violet:       #a78bfa      /* Brand accent */
---violet-bg:    #1a1030     /* Violet-tinted hover/active background */
---green:        #22c55e      /* Success */
---red:          #ef4444      /* Error */
---yellow:       #eab308      /* Warning */
---blue:         #60a5fa      /* Info / links */
+--bg:         var(--color-bg-950)       /* #0A0A0B  Page background */
+--bg2:        var(--color-bg-900)       /* #111114  Slightly lighter surface */
+--border:     var(--color-border-700)   /* #222228  Default border */
+--text:       var(--color-text-100)     /* #E8E8E8  Primary text */
+--text-dim:   var(--color-text-400)     /* #888     Muted/secondary text */
+--violet:     var(--color-accent-500)   /* #925BFC  Brand accent */
+--violet-bg:  rgba(146, 91, 252, 0.08)  /* Violet-tinted hover/active background */
+--green:      var(--color-success-500)  /* #22c55e  Success */
+--red:        var(--color-danger-500)   /* #ef4444  Error */
+--yellow:     var(--color-warning-500)  /* #f59e0b  Warning */
+--blue:       var(--color-blue-400)     /* #60a5fa  Info / links */
 ```
+
+The semantic tokens above point at the palette tokens (`--color-*`) defined at the top of
+`app/globals.css`; the hex values are the palette's, quoted for reference.
 
 ### Typography
 

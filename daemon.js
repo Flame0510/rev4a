@@ -14,7 +14,6 @@ const path = require('path');
 
 const DB_PATH = process.env.REV4A_DB || path.join(os.homedir(), '.config', 'rev4a', 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
-const POLL_INTERVAL_ACTIVE_MS = 15_000; // 15s when working sessions detected
 
 // Cost rates per 1M tokens (separate in/out pricing)
 const MODEL_PRICING = {

@@ -27,13 +27,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     downloadingVersion: getDownloadingVersion(),
     downloadPercent: progress.percent,
     downloadMessage: progress.message,
-    /** True right after a user-initiated cancel; stays true until the next download starts. */
+    /** Whether the last finished download ended as cancelled (derived from `lastResult`). */
     canceled: wasDownloadCanceled(),
     /**
      * The last download's outcome, whether or not anyone was watching it finish —
      * covers a page reload or a late-opened tab. Overwritten by the next download.
      */
     lastResult: getLastDownloadResult(),
+    /** The server's clock, so the client can age `lastResult.at` without trusting its own. */
+    serverTime: Date.now(),
   };
 
   if (!dockerAvailable()) {

@@ -8,21 +8,18 @@
  * Downloading touches no agent: each agent keeps its OpenClaw version until it is
  * updated on its own.
  *
- * The percent and the status line are real (docker pull's own layer-completion
- * lines, via GET /api/agents/image-status — see lib/buildAgentImage.ts), not an
- * indeterminate animation; the bar falls back to indeterminate only for the phases
- * that report no layers (resolving the version, the local-build fallback). Cancel
- * (DELETE /api/agents/download-image) kills the running docker process; the banner
- * shows a neutral "Download canceled." rather than the generic failure message.
+ * The percent and the status line are real (docker pull's own per-layer lines, via
+ * GET /api/agents/image-status — see lib/buildAgentImage.ts); the bar is indeterminate
+ * only while no percent can be computed yet (resolving the version, listing the layers,
+ * the local-build fallback). Cancel (DELETE /api/agents/download-image) appears once the
+ * server reports the download running, and kills the docker process.
  *
- * A result reaches the banner even when this component instance was not mounted for
- * the live transition — switched to another page mid-download and came back, or
- * reloaded — as long as it happened within LATE_RESULT_WINDOW_MS: the server keeps the
- * last outcome (lib/buildAgentImage.ts, `lastDownloadResult`, the same idea as
- * `finished` in lib/cold-backup.ts) and image-status returns it regardless of whether a
- * download is running right now. Found by testing this exact scenario by hand
- * (2026-09-24): a fast download — the layers were already cached locally — finished
- * between a screen change and coming back, leaving no trace on screen.
+ * Every outcome — ready, cancelled, failed — comes from the server's record of the last
+ * download (`lastResult`), whether this instance watched it happen or not: a download
+ * that ended while the Agents page was closed or reloading is still reported, if it
+ * ended less than LATE_RESULT_WINDOW_MS ago (aged with the server's clock). Each outcome
+ * is shown once per page load, even though the Agents page renders this component in
+ * more than one place (mobile list, mobile detail, desktop).
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '../components/ui';
@@ -32,12 +29,14 @@ interface ImageStatus {
   needsUpdate: boolean;
   downloading: boolean;
   downloadingVersion: string | null;
-  /** Real percent from docker pull's own layer-completion lines; null while unknown. */
+  /** Real percent from docker pull's per-layer lines; null while it cannot be computed yet. */
   downloadPercent: number | null;
-  /** The latest status/progress line, shown verbatim while no percent is known yet. */
+  /** The latest line of docker's output, shown under the percent. */
   downloadMessage: string | null;
-  /** True right after a user-initiated cancel, for the one poll tick that catches it. */
+  /** Whether the last finished download ended as cancelled. */
   canceled: boolean;
+  /** The server's clock when it answered, used to age `lastResult.at`. */
+  serverTime?: number;
   /** The last download's outcome, even one this component instance never watched live. */
   lastResult: {
     version: string;
@@ -57,6 +56,14 @@ const POLL_MS = 2000;
  * short enough that reopening the page an hour later shows nothing stale. */
 const LATE_RESULT_WINDOW_MS = 30_000;
 
+/**
+ * The newest `lastResult.at` already shown or dismissed. Module-level rather than per
+ * instance: the Agents page mounts this banner in several places and remounts it when the
+ * mobile view switches, and one outcome must not be announced once per mount. A page
+ * reload resets it, which is intended — that is one of the cases it exists to cover.
+ */
+let lastShownResultAt = 0;
+
 export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: () => void }) {
   const [status, setStatus] = useState<ImageStatus>({
     exists: true, needsUpdate: false, downloading: false, downloadingVersion: null,
@@ -68,13 +75,10 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
   const [justCanceled, setJustCanceled] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const wasDownloadingRef = useRef<string | null>(null);
   const completedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canceledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** The `at` of the newest `lastResult` this component instance has already shown or
-   * dismissed as stale, so a late-arriving result (this instance was not mounted for the
-   * live transition — a reload, a return from another page) is shown exactly once. */
-  const shownResultAtRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -87,56 +91,48 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
         const data: ImageStatus = await res.json();
         setStatus(data);
 
+        const result = data.lastResult;
+        const unseen = !!result && result.at > lastShownResultAt;
+        const showOutcome = (r: NonNullable<ImageStatus['lastResult']>) => {
+          lastShownResultAt = r.at;
+          if (r.result === 'canceled') {
+            setJustCanceled(true);
+            if (canceledTimerRef.current) clearTimeout(canceledTimerRef.current);
+            canceledTimerRef.current = setTimeout(() => setJustCanceled(false), 3000);
+          } else if (r.result === 'succeeded') {
+            setJustCompleted(r.version);
+            onImageReady?.();
+            if (completedTimerRef.current) clearTimeout(completedTimerRef.current);
+            completedTimerRef.current = setTimeout(() => setJustCompleted(null), 3000);
+          } else {
+            setError(r.message || `The OpenClaw ${r.version} download did not complete.`);
+          }
+        };
+
         if (data.downloading) {
           setError(null);
           wasDownloadingRef.current = data.downloadingVersion ?? wasDownloadingRef.current ?? 'image';
-          // Whatever is running now will produce the next lastResult; the one already on
-          // record (from before this run) is not news any more.
-          if (data.lastResult) shownResultAtRef.current = data.lastResult.at;
+          // The record on file is from before this run: not news any more.
+          if (result) lastShownResultAt = Math.max(lastShownResultAt, result.at);
         } else if (wasDownloadingRef.current) {
-          // Live transition: this instance watched the download start and stop.
+          // Live transition: this instance watched the download run and stop.
           const finished = wasDownloadingRef.current;
           wasDownloadingRef.current = null;
           setActionLoading(false);
           setCanceling(false);
-          if (data.lastResult) shownResultAtRef.current = data.lastResult.at;
-          if (data.canceled) {
-            setJustCanceled(true);
-            if (canceledTimerRef.current) clearTimeout(canceledTimerRef.current);
-            canceledTimerRef.current = setTimeout(() => setJustCanceled(false), 3000);
-          } else if (data.localVersions?.includes(finished)) {
-            setJustCompleted(finished);
-            onImageReady?.();
-            if (completedTimerRef.current) clearTimeout(completedTimerRef.current);
-            completedTimerRef.current = setTimeout(() => setJustCompleted(null), 3000);
-          } else {
+          setCancelError(null);
+          if (result && unseen) showOutcome(result);
+          else if (!result) {
             setError(`The OpenClaw ${finished} download did not complete. Check the Docker connection and try again.`);
           }
-        } else if (
-          data.lastResult &&
-          data.lastResult.at > shownResultAtRef.current &&
-          Date.now() - data.lastResult.at < LATE_RESULT_WINDOW_MS
-        ) {
-          // Arrived late: the download finished (or failed, or was canceled) while this
-          // component instance was not mounted to see it — switched screens and came
-          // back, or reloaded. Same feedback a live transition would have shown, sourced
-          // from the server's own record instead of a transition only this tab could see.
-          shownResultAtRef.current = data.lastResult.at;
-          if (data.lastResult.result === 'canceled') {
-            setJustCanceled(true);
-            if (canceledTimerRef.current) clearTimeout(canceledTimerRef.current);
-            canceledTimerRef.current = setTimeout(() => setJustCanceled(false), 3000);
-          } else if (data.lastResult.result === 'succeeded') {
-            setJustCompleted(data.lastResult.version);
-            onImageReady?.();
-            if (completedTimerRef.current) clearTimeout(completedTimerRef.current);
-            completedTimerRef.current = setTimeout(() => setJustCompleted(null), 3000);
-          } else {
-            setError(data.lastResult.message || `The OpenClaw ${data.lastResult.version} download did not complete.`);
-          }
-        } else if (data.lastResult) {
+          // result present but already seen: another instance (or a late pass) announced it.
+        } else if (result && unseen && (data.serverTime ?? Date.now()) - result.at < LATE_RESULT_WINDOW_MS) {
+          // Arrived late: it ended while this instance was not mounted or not yet
+          // watching (a reload, a return from another page, a very fast download).
+          showOutcome(result);
+        } else if (result) {
           // Already shown, or too old to matter: just remember it so it cannot retrigger.
-          shownResultAtRef.current = Math.max(shownResultAtRef.current, data.lastResult.at);
+          lastShownResultAt = Math.max(lastShownResultAt, result.at);
         }
       } catch { /* ignore */ }
 
@@ -179,16 +175,22 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
 
   const handleCancel = useCallback(async () => {
     setCanceling(true);
+    setCancelError(null);
     try {
       const res = await fetch('/api/agents/download-image', { method: 'DELETE' });
-      if (!res.ok && res.status !== 404) {
+      if (res.status === 404) {
+        // Nothing running any more: it ended on its own; its outcome arrives with the poll.
+        setCanceling(false);
+        return;
+      }
+      if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to cancel' }));
-        setError(data.error || 'Failed to cancel');
+        setCancelError(data.error || 'Failed to cancel');
         setCanceling(false);
       }
-      // On success the poll tick clears `canceling` once the download actually stops.
+      // 202: the poll clears `canceling` once the download has actually stopped.
     } catch (e: unknown) {
-      setError((e as Error).message || 'Failed to cancel');
+      setCancelError((e as Error).message || 'Failed to cancel');
       setCanceling(false);
     }
   }, []);
@@ -223,6 +225,7 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
               {status.downloadMessage}
             </span>
           )}
+          {cancelError && <span style={{ color: 'var(--red)', fontSize: 11 }}>{cancelError}</span>}
         </div>
         <div style={{
           flex: 1, maxWidth: 120, height: 3,
@@ -238,9 +241,15 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
             }} />
           )}
         </div>
-        <Button variant="secondary" size="sm" onClick={() => { void handleCancel(); }} loading={canceling} disabled={canceling}>
-          {canceling ? 'Canceling…' : 'Cancel'}
-        </Button>
+        {/* Offered only once the server reports the download running: before that there
+            is nothing to cancel, and a DELETE would answer 404. */}
+        {status.downloading ? (
+          <Button variant="secondary" size="sm" onClick={() => { void handleCancel(); }} loading={canceling} disabled={canceling}>
+            {canceling ? 'Canceling…' : 'Cancel'}
+          </Button>
+        ) : (
+          <Button variant="secondary" size="sm" disabled>Starting…</Button>
+        )}
       </Banner>
     );
   }
@@ -250,7 +259,7 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
     return (
       <Banner success>
         <div style={{ flex: 1 }}>
-          <span style={{ color: '#22c55e', fontWeight: 500 }}>✓ OpenClaw {justCompleted} agent image ready</span>
+          <span style={{ color: 'var(--green)', fontWeight: 500 }}>✓ OpenClaw {justCompleted} agent image ready</span>
         </div>
       </Banner>
     );
@@ -267,19 +276,24 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
     );
   }
 
-  // ─── Needs download ───
+  // ─── Needs download, or an error to report ───
+  // With an image present and nothing newer published, only an error brings us here:
+  // show just the error, not an "available" line with no version to name.
+  const headline = !status.exists
+    ? '⚠ Agent base image not found.'
+    : status.available ? `⚠ OpenClaw ${status.available} is available.` : null;
   return (
     <Banner warning>
       <div style={{ flex: 1 }}>
-        <strong style={{ color: '#fbbf24' }}>
-          {status.exists
-            ? `⚠ OpenClaw ${status.available} is available.`
-            : '⚠ Agent base image not found.'}
-        </strong>
-        {' '}{status.exists
-          ? 'Download it for new agents; existing agents keep their version until they are updated.'
-          : 'Download it to create agent containers.'}
-        {error && <div style={{ color: '#ef4444', fontSize: 11, marginTop: 4 }}>{error}</div>}
+        {headline && (
+          <>
+            <strong style={{ color: 'var(--yellow)' }}>{headline}</strong>
+            {' '}{status.exists
+              ? 'Download it for new agents; existing agents keep their version until they are updated.'
+              : 'Download it to create agent containers.'}
+          </>
+        )}
+        {error && <div style={{ color: 'var(--red)', fontSize: headline ? 11 : 12, marginTop: headline ? 4 : 0 }}>{headline ? '' : '⚠ '}{error}</div>}
       </div>
       {(status.exists ? status.available : true) && (
         <Button variant="primary" size="sm" onClick={() => { void handleDownload(status.available); }} loading={actionLoading}>

@@ -27,13 +27,13 @@ sudo systemctl enable --now 'rev4a'
 
 | Dependency | Minimum | Notes |
 |---|---|---|
-| Linux | Ubuntu 20.04+ / Debian 11+ | The setup script targets these |
+| Linux | Ubuntu 20.04+ / Debian 11+ | What production runs on; macOS works for development |
 | Docker | 24+ | Required for creating agent containers |
 | RAM | 2 GB | 4 GB recommended |
 | Disk | 5 GB free | 10 GB recommended for agents |
 
-**For the one-command install:** everything else (Node.js, Docker, dependencies) is installed automatically.
-**For manual install:** you need Node.js 22+, npm, and Docker pre-installed.
+You need Node.js 22+ and npm installed first. Docker too, except on Linux run as root:
+there `rev4a` installs it when it is missing (Docker's `get.docker.com` script).
 
 ## Quick Start (Manual)
 
@@ -81,7 +81,7 @@ Rev4a reads environment variables from `.env`. Key variables:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3740` | Dashboard HTTP port |
-| `REV4A_DB` | `./data/events.db` | SQLite database path |
+| `REV4A_DB` | `~/.config/rev4a/data/events.db` | SQLite database path (the data directory follows `REV4A_DATA_DIR`) |
 | `REV4A_TOKEN` | — | Auth token for API access (required) |
 | `REV4A_PASSWORD` | — | Password for dashboard login |
 | `REV4A_JWT_SECRET` | — | JWT signing secret (auto-generated) |
@@ -101,14 +101,17 @@ npm run dev          # Next.js dev server on port 3720
 ## Backup & Restore
 
 ```bash
-# Create a backup (DBs, configs, credentials)
-sudo bash scripts/backup.sh
+# Archive Rev4a's data directory (.env, data/, shared/) into ~/rev4a-backups/
+bash scripts/backup.sh
 
-# Restore from a backup archive
-sudo bash scripts/restore.sh backups/rev4a-backup-20260724-120000.tar.gz
+# Restore it (the current state is archived first; rev4a.service is stopped if running,
+# any other running `rev4a serve` must be stopped first)
+bash scripts/restore.sh ~/rev4a-backups/rev4a-backup-20260926-120000.tar.gz
 ```
 
-Backups include: `data/*.db`, `data/provider-keys.json`, `data/agents-token.json`, `models.config.json`, `.env`.
+Run them as the user Rev4a runs as (root on a typical server install). The archive holds
+every secret in plain text: keep a copy off the machine. Agent volumes are not included —
+the dashboard's cold backups cover them. Details: `docs/dev/DATABASE.md` § Backup.
 
 ## Architecture
 
@@ -137,4 +140,3 @@ node lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
 | Auth 401 | Wrong token | Check `REV4A_TOKEN` |
 | SQLite error | Missing system dep | `apt-get install sqlite3` on Linux |
 | `better-sqlite3` build fail | Native binding mismatch | `npm rebuild better-sqlite3` |
-| Certificates not issued | Wrong ACME email | Set `TRAEFIK_ACME_EMAIL` env var, re-run setup |

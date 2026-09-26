@@ -2,7 +2,7 @@
 
 ## Operational status
 - **Role:** Developer Lead
-- **Workspace:** /data/.openclaw/workspace-atlas
+- **Workspace:** /root/.openclaw/workspace/
 
 ## Periodic checks (heartbeat)
 - [ ] Any active tasks from Argus?

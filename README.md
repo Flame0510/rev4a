@@ -18,7 +18,7 @@
 - **Live event stream** — Real-time session lineage, agent spawning, cost reporting
 - **Workspace browser** — Browse and edit agent files live from the dashboard
 - **Provider proxy** — OpenAI-compatible chat completions proxy that routes through a shared key vault
-- **System health** — CPU, RAM, disk, Docker daemon status, recommendations
+- **System health** — runtime sessions, event ingestion and errors, cron jobs and usage cost, with recommendations
 - **Cost tracking** — Per-session, per-model, per-time-range usage and cost reporting
 - **PWA-ready** — Install on phone for mobile monitoring
 
@@ -82,7 +82,8 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
 | `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
-| `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated origins allowed to reach `next dev` (e.g. a LAN address); no effect on a production build |
+| `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated hostnames or IPs allowed to reach `next dev` (e.g. a LAN address, without scheme or port); no effect on a production build |
+| `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Any non-empty value skips it, `0` included |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 

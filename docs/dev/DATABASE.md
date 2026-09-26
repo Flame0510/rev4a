@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-09-26
 
 Rev4a uses a single SQLite file (`events.db`) in WAL mode.
 
@@ -105,7 +105,10 @@ CREATE TABLE system_metrics (
 CREATE INDEX idx_metrics_ts ON system_metrics(ts);
 ```
 
-Rows older than 24 h are pruned automatically by the daemon.
+Rows older than 30 days are pruned automatically by the daemon (one row per completed 30 s poll;
+none on a host without the OpenClaw CLI, where the daemon stays idle).
+No feature consumes the `system_anomaly` events the daemon writes to `events` yet; they
+only pass through the generic event feeds.
 
 ### `agent_upgrades` — agent updates and rollbacks
 
@@ -235,14 +238,22 @@ SELECT * FROM tree;
 ## Backup
 
 ```bash
-# Manual snapshot
-sqlite3 events.db ".backup events.db.bak-$(date +%s)"
+# Everything Rev4a owns: the whole data directory (.env, data/, shared/)
+bash scripts/backup.sh                    # -> ~/rev4a-backups/rev4a-backup-<UTC time>.tar.gz
+bash scripts/restore.sh ~/rev4a-backups/rev4a-backup-<UTC time>.tar.gz
 
-# Automated (via backup.sh in repo root)
-bash /data/.openclaw/workspace-ops/rev4a-next-ts/backup.sh
+# One database only, consistent while Rev4a runs (needs the sqlite3 CLI)
+sqlite3 ~/.config/rev4a/data/events.db ".backup events-$(date +%s).db"
 ```
 
-Backups are stored in `backups/` inside the repo directory.
+`backup.sh` archives the Rev4a data directory (`$REV4A_DATA_DIR`, default
+`~/.config/rev4a`) whole, so a new file there is included without changing the script.
+The archive (mode 0600, directory 0700) holds every secret in plain text; keep a copy
+off the machine. `restore.sh` refuses an archive with links in it and a running
+`rev4a serve`, archives the current state into `~/rev4a-backups` first, stops
+`rev4a.service` when it runs, and replaces the data directory as a whole (a leftover
+SQLite `-wal` cannot mix into the restored state), then resets the permissions. Agent volumes are not included —
+the dashboard's cold backups cover them.
 
 ## Credentials Database (`credentials.db`)
 

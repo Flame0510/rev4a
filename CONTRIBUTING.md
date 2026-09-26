@@ -4,8 +4,9 @@
 
 **100% English** — code, identifiers, comments, docs, UI strings, commit messages
 (`AGENTS.md` §2.1). `npm run check:language` scans every tracked file for Italian words and
-exits non-zero; CI runs it on every pull request and the release workflow runs it again, so
-neither `main` nor a release can ship Italian. The list is
+exits non-zero; CI runs it on every push to `main` and every pull request, and the release
+workflow runs it again before publishing — Italian that reaches `main` is flagged at once and
+cannot be published. The list is
 deliberately conservative (it leaves out words that are English too, like `come` or `per`),
 and a line carrying `lang-ok` is skipped when the Italian is the point of that line:
 
@@ -112,7 +113,11 @@ it, and it is the gate a change passes *before* it is merged:
 2. `npm run typecheck` — `tsc --noEmit`
 3. `npm run build` — the Next.js production build
 
-A new push to the same branch cancels the run still in flight.
+A new push to the same branch cancels the run still in flight. The job's token is
+read-only and not kept in `.git/config` after checkout. `npm ci` runs with
+`REV4A_SKIP_POSTINSTALL_BUILD=1`: without it `bin/postinstall.js` would run a full
+`next build` during the install — before the language check, and swallowing its own
+failure — and the build would then run a second time.
 
 The release workflow repeats the language check and the build on purpose: it is the last
 gate before npm and must not assume CI has run on that commit.

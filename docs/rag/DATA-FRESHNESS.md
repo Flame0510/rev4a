@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-26
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -14,9 +14,8 @@ The daemon polls `openclaw sessions --json --all-agents` on a fixed 30-second
 timer. Session statuses, token counts, and costs are therefore up to 30 seconds
 behind reality.
 
-The code declares a shorter 15-second interval for when a session is `working`,
-but nothing uses it — the timer is always 30 seconds. Do not tell a user the
-dashboard speeds up during active work.
+The interval is fixed: it does not speed up while a session is `working`. Do not tell
+a user the dashboard refreshes faster during active work.
 
 **What this means for PULSE:** if you ask "is Argus working right now?", the
 answer reflects data that is up to 30 seconds old.
@@ -29,7 +28,7 @@ answer reflects data that is up to 30 seconds old.
 
 The `/api/stream` endpoint pushes updates to the dashboard every 5 seconds. It
 sends exactly three things:
-- New events (spawn, complete, error, tool_call)
+- New events (spawn, complete, fail, spawn_timeout, system_anomaly)
 - The session list
 - Today's cost total
 
@@ -43,7 +42,8 @@ to 30 seconds to appear, plus up to 5 more to reach the browser.
 
 ## System metrics (CPU, RAM, disk)
 
-**Update frequency:** every daemon poll cycle (30 seconds)
+**Update frequency:** every completed daemon poll cycle (30 seconds). A host without the
+OpenClaw CLI records no metrics at all: the daemon stays idle there.
 
 **Retention:** 30 days (older rows are pruned automatically each cycle)
 
@@ -98,19 +98,19 @@ while something is running.
 
 The operation the banner triggers is a **`docker pull`**, not a build (unless the
 pull fails and this repository's own Dockerfile builds that exact version, a
-development fallback). While it runs the banner shows a real percent and the latest
-status line, both read from `docker pull`'s own per-layer output (`Pulling fs
-layer` → `Download complete` → `Pull complete`), not an animation; the bar falls
-back to indeterminate only for phases that report no layers (resolving the version,
-the local-build fallback). A **Cancel** button stops it (kills the `docker pull`/
-`docker build` process). A log is written server-side to
+development fallback). While it runs the banner shows the percent of layers
+finished and the latest line of docker's output; the bar is indeterminate until a
+percent can be computed (while the version is resolved and the layers are listed,
+and during the local-build fallback). The percent never goes down and stops at 99:
+completion is announced by the outcome, not by 100%. A **Cancel** button, offered
+once the download is running, stops it — the `docker pull`/`docker build` process is
+killed, or never started if the cancel came first. A log is written server-side to
 `/tmp/rev4a-download-<timestamp>.log`, but nothing in the dashboard reads it.
 
-The outcome (ready / canceled / failed) is shown for up to 30 seconds after it
-happens even if the Agents page was not open for the live transition — a page
-reload or a return from another screen within that window still shows it, read
-from the server's own record of the last download rather than only a transition
-this one browser tab watched happen.
+The outcome comes from the server's own record of the last download: "ready" and
+"canceled" show for 3 seconds, a failure stays until the next action. An outcome
+that happened while the Agents page was closed or reloading is still reported if it
+is less than 30 seconds old.
 
 ---
 

@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-26
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -1750,6 +1750,7 @@ in flight, so polling this endpoint does not re-query the registry every time.
     "message": "OpenClaw 2026.9.3 image downloaded",
     "at": 1758700000000
   },
+  "serverTime": 1758700004000,
   "exists": true,
   "needsUpdate": false,
   "localVersions": ["2026.9.3"],
@@ -1767,9 +1768,10 @@ in flight, so polling this endpoint does not re-query the registry every time.
 | `newestLocal` | The version new agents are created on |
 | `available` | Newest supported version on the registry that is not downloaded and is newer than `newestLocal`, or null |
 | `downloading` / `downloadingVersion` | A download running, and its version |
-| `downloadPercent` | Real percent from `docker pull`'s own layer-completion lines (`getDownloadProgress()`); null while unknown (resolving the version, or the local-build fallback, which reports no layers) |
-| `downloadMessage` | The latest status/progress line, verbatim, shown while `downloadPercent` is null |
-| `canceled` | True for the one poll after a user-initiated cancel (`DELETE`, below); reset when the next download starts |
+| `downloadPercent` | Fraction of layers finished, from `docker pull`'s own per-layer lines (`getDownloadProgress()`), 0-99. Null until it can be computed: while the version is resolved, while docker is still listing the layers, on a pull where every layer is already present, and on the local-build fallback |
+| `downloadMessage` | The latest line of docker's output, verbatim (the banner shows it under the percent) |
+| `canceled` | Whether the last finished download ended as cancelled — derived from `lastResult`, so a cancel that arrived after the image was already tagged does not make a successful download read as cancelled |
+| `serverTime` | The server's clock (epoch ms) when it answered; clients age `lastResult.at` with it instead of their own clock |
 | `lastResult` | The last download's outcome (`getLastDownloadResult()`, `lib/buildAgentImage.ts`), or null before any download has run this process. `result` is `succeeded` / `failed` / `canceled`; `source` (`present` / `registry` / `build`) only on success. Kept regardless of whether a download is running now, so a client that missed the live transition — a page reload, a return from another screen — still sees it via `at` (epoch ms); overwritten by the next download, never cleared on its own. Same idea as `finished` in `lib/cold-backup.ts` |
 | `registryReachable` | The tag list could be read |
 
@@ -1787,26 +1789,32 @@ newest supported version the registry publishes.
 { "started": true, "version": "2026.9.3" }
 ```
 
-**Errors:** `400` unsupported version; `409` a download is already in progress.
+**Errors:** `400` unsupported version; `409` a download is already in progress; `503`
+Docker is not available (refused here, before `202`, so the client gets the reason).
 
 The download is `lib/buildAgentImage.ts` → `downloadAgentImage({ version, onEvent, signal })`:
 - nothing to do when `openclaw-agent-base:<version>` is already here
 - `docker pull <registry>:<version>`, tag `openclaw-agent-base:<version>`, untag the
-  registry reference (`pullAgentImage()` in `lib/agent-images.ts`)
+  registry reference — also when the tag step fails or is cancelled, so no
+  `<registry>:<version>` reference is left behind (`pullAgentImage()` in `lib/agent-images.ts`)
 - when the pull fails and the repository Dockerfile's `ARG OPENCLAW_VERSION` is that
   version, `docker build --build-arg OPENCLAW_VERSION=<version>` instead; any other
   version fails
 - one download at a time (in-process lock, `getIsDownloading()` /
-  `getDownloadingVersion()`); output goes to `/tmp/rev4a-download-<timestamp>.log`
-- real progress: `docker pull`'s own per-layer lines (`Pulling fs layer` → `Download
-  complete`/`Already exists`/`Pull complete`) are tracked into a percent
-  (`getDownloadProgress()`); it only moves forward and reaches 100 exactly when the
-  pull does, capped at 99 until then
+  `getDownloadingVersion()`); docker's output also goes to
+  `/tmp/rev4a-download-<timestamp>.log` (mode 0600; logs older than 24 h are removed when a download ends) for diagnosis
+- progress: a layer counts as finished at `Pull complete` or `Already exists` (not at
+  `Download complete`, which still has the extraction ahead); the percent is withheld
+  until the first layer starts transferring — before that the layer list may be
+  incomplete — never goes down, and stays below 100: completion is reported by
+  `lastResult`, not by the percent
 
 ### `DELETE /api/agents/download-image`
-Cancels the running download, if any: kills the `docker pull`/`docker build` process
-(`cancelDownload()`). The rejected `downloadAgentImage()` promise carries a distinct
-`'canceled'` message, so the route's background `.catch` does not log it as a failure.
+Cancels the running download, if any (`cancelDownload()`): the `docker pull`/`docker build`
+process is killed, or never started when the cancel arrives before it (`runDocker` refuses
+an already-aborted signal, and the download checks after every wait). The rejected
+`downloadAgentImage()` promise carries a distinct `'canceled'` message, so the route's
+background `.catch` does not log it as a failure; `lastResult.result` becomes `canceled`.
 
 **Auth:** browser cookie or bearer token
 
@@ -1815,9 +1823,8 @@ Cancels the running download, if any: kills the `docker pull`/`docker build` pro
 { "canceling": true }
 ```
 
-**Errors:** `404` nothing is running.
-
-### `GET /api/agents-active`
+**Errors:** `404` nothing is running — the download has not started yet, or has
+already ended.
 
 ### `GET /api/agents-active`
 Configured agents (from `openclaw.json`) enriched with recent session activity
@@ -1899,42 +1906,54 @@ Register a parent→child relationship between sessions.
 ## Metrics
 
 ### `GET /api/metrics`
-System metrics: latest snapshot + 24 h history + 24 h aggregates.
+System metrics from the daemon's `system_metrics` table: the latest sample, the most
+recent samples, and 24 h CPU aggregates.
 
 **Auth:** Bearer or browser cookie
+
+**Query:** `limit` — how many `history` rows (default 60, max 1000): the most recent ones, returned oldest first.
 
 **Response:**
 ```json
 {
-  "latest": { "ts": 1749201000000, "cpu_percent": 12.5, "ram_used_mb": 1820, "ram_total_mb": 4096, "disk_used_gb": 38.2, "disk_total_gb": 100.0, "load_avg_1m": 0.42 },
-  "history": [ ...up to 288 rows (24h at 5min intervals)... ],
-  "stats_24h": { "avg_cpu": 14.2, "max_cpu": 68.0, "avg_ram_mb": 1750 }
+  "latest": { "cpu": 12.5, "ram_used_mb": 1820, "ram_total_mb": 4096, "disk_used_gb": 38, "disk_total_gb": 100, "load_avg": 0.42, "ts": 1749201000 },
+  "history": [ { "cpu": 12.5, "ram_used_mb": 1820, "ram_total_mb": 4096, "ts": 1749201000 } ],
+  "stats_24h": { "cpu_avg": 14, "cpu_max": 68 }
 }
 ```
+
+`ts` is in **seconds**. The daemon records one sample per completed poll (every 30 s) and keeps
+30 days. A host without the OpenClaw CLI records none: the daemon stays idle there,
+and `latest` is `null`.
 
 ---
 
 ## System Health
 
 ### `GET /api/system-health`
-Aggregated health checks with recommendations.
+Aggregated checks of the runtime, cron jobs and usage cost, with recommendations. It
+does not report CPU, RAM, disk or the Docker daemon (those are in `GET /api/metrics`).
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
 **Response:**
 ```json
 {
   "health": "ok",
   "checks": [
-    { "name": "daemon", "status": "ok", "detail": "last poll 18s ago" },
-    { "name": "disk", "status": "warn", "detail": "82% used" }
+    { "id": "runtime.sessions", "label": "Runtime sessions", "health": "ok", "value": 1, "details": "last session activity 3m ago", "source": "runtime" }
   ],
-  "recommendations": [ "Consider archiving old sessions to reduce disk usage." ],
-  "generatedAt": 1749201500000
+  "recommendations": [
+    { "id": "cost.review-usage-based", "severity": "warning", "source": "cost", "title": "High usage-based cost", "details": "…", "actionHref": "/gateway", "dismissible": true, "createdAt": "2026-09-26T10:00:00.000Z" }
+  ],
+  "generatedAt": "2026-09-26T10:00:00.000Z"
 }
 ```
 
-`health` values: `"ok"` / `"warn"` / `"error"`
+Checks: `runtime.sessions`, `runtime.ingestion`, `runtime.errors24h`,
+`cost.usageBasedToday`, `cron.jobs`. `health` (overall and per check) is `"ok"` /
+`"warning"` / `"error"`; a recommendation's `severity` is `"info"` / `"warning"` /
+`"critical"`. `generatedAt` and `createdAt` are ISO strings.
 
 ---
 
@@ -2654,7 +2673,7 @@ the process that spawned it, so that file is the only record of what happened.
 
 **Response:** `{ "success": true, "message": "...", "log": "update.log" }`
 
-The banner records what it asked for, polls `/api/version` until the installed version
+The banner records what it asked for, polls `/api/update-check` until the installed version
 moves (or two minutes pass), reloads, and on the next mount either confirms
 "Updated to vX" or reports that the update did not complete and points at the log.
 

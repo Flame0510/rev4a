@@ -27,11 +27,13 @@ export function shortLabel(sessionId: string): string {
   return sessionId.slice(0, 14);
 }
 
+// The two Italian patterns match prompt prefixes stored in older sessions' data; they
+// are matched, never shown, so they stay as they are.
 function stripTaskBoilerplate(value: string): string {
   return value
     .replace(/^\[Subagent Task\]\s*/i, '')
-    .replace(/^Task richiesto da .*?:\s*/i, '')
-    .replace(/^Sei [^.\n]+\.\s*/i, '')
+    .replace(/^Task richiesto da .*?:\s*/i, '') // lang-ok: matches stored prompt text
+    .replace(/^Sei [^.\n]+\.\s*/i, '') // lang-ok: matches stored prompt text
     .replace(/^Begin\.?\s*/i, '')
     .trim();
 }

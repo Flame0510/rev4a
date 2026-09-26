@@ -34,14 +34,20 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
+      # Event values come in through env, never pasted into the script: a tag name or a
+      # dispatch input is text someone typed, and is only validated below.
       - name: Resolve and validate the version
         id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then
+            RAW="$RELEASE_TAG"
           else
-            RAW="${{ inputs.version }}"
+            RAW="$INPUT_VERSION"
             if [ -z "$RAW" ]; then RAW="$(node -p "require('./package.json').version")"; fi
           fi
           VERSION="${RAW#v}"
@@ -60,14 +66,16 @@ jobs:
       # npm ci before the bump: the lockfile stays the committed one.
       - name: Install
         run: npm ci
+        env:
+          REV4A_SKIP_POSTINSTALL_BUILD: '1'
 
       - name: Align package.json with the release version
         run: npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
 
-      # Gate: no build, no publish.
       - name: Check the language (100% English)
         run: node scripts/check-language.mjs
 
+      # Gate: no build, no publish.
       - name: Build
         run: npm run build
 

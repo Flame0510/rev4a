@@ -48,9 +48,9 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
       {isMobile && (
         <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
           {[
-            { key: 'graph', label: 'GRAFO' },
+            { key: 'graph', label: 'GRAPH' },
             { key: 'feed', label: 'FEED' },
-            { key: 'costs', label: 'COSTI' },
+            { key: 'costs', label: 'COSTS' },
           ].map((t) => (
             <button
               key={t.key}
@@ -101,11 +101,11 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
               <button
                 type="button"
                 className="agent-btn"
-                aria-label="Reimposta vista grafo"
+                aria-label="Reset graph view"
                 onClick={() => topologyRef.current?.resetView()}
                 style={resetButtonStyle}
               >
-                ⊙ Reimposta vista
+                ⊙ Reset view
               </button>
             </div>
             {hasSessionsLoaded ? (

@@ -7,7 +7,8 @@ import { type NextRequest } from "next/server";
  * newest supported version the registry publishes. Returns 202 with the version;
  * poll GET /api/agents/image-status for completion, percent and the latest status line.
  *
- * Requires auth. 400 for an unsupported version, 409 if a download is already running.
+ * Requires auth. 400 for an unsupported version, 409 if a download is already running,
+ * 503 when Docker is not available.
  *
  * DELETE /api/agents/download-image
  *
@@ -18,6 +19,7 @@ import { NextResponse } from 'next/server';
 import { cancelDownload, defaultDownloadVersion, downloadAgentImage, getIsDownloading } from '@/lib/buildAgentImage';
 import { isSupportedVersion } from '@/lib/agent-versions';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { dockerAvailable } from '@/lib/docker-socket';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,9 +46,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (getIsDownloading()) {
     return NextResponse.json({ error: 'A download is already in progress' }, { status: 409 });
   }
+  // Refused here rather than inside downloadAgentImage: that check throws before any
+  // outcome is recorded, so the banner would get a 202 and then nothing to explain it.
+  if (!dockerAvailable()) {
+    return NextResponse.json({ error: 'Docker is not available — start Docker and try again' }, { status: 503 });
+  }
 
-  // Start download in background — fire and forget. A cancel (or the wizard's own
-  // stream closing) makes this reject with 'canceled', not a real failure: skip the log.
+  // Start download in background — fire and forget. A cancel (DELETE below) makes this
+  // reject with 'canceled', not a real failure: skip the log.
   downloadAgentImage({ version }).catch((e: unknown) => {
     if ((e as Error).message !== 'canceled') {
       console.error(`[download-image] OpenClaw ${version}:`, (e as Error).message);

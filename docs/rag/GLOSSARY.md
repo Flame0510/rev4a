@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-26
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -46,7 +46,7 @@ A scheduled task that runs an agent automatically at a fixed time (e.g. every ni
 The main page of Rev4a (`/`). Shows live sessions, cost summary, health cards for Rev4a's runtime, cron and lineage, and a real-time event feed. It shows no CPU, RAM, disk or load average, and there is no setup banner: an incomplete wizard redirects to `/wizard`.
 
 ## Event
-A lifecycle occurrence for a session: spawned, completed, errored, or a tool call made. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
+A lifecycle occurrence for a session: spawned, completed, failed, or missing too long (spawn timeout); the daemon also records system anomalies (high CPU or RAM) as events. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
 
 ## Gateway
 The routing layer that connects agents to AI providers. The Gateway page manages provider API keys and the model catalogue, and pushes that catalogue to every agent. Which model a given agent runs is set elsewhere, in the Model section of that agent's detail panel.

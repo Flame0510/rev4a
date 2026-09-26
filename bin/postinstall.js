@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
  * Post-install hook: build Next.js app if .next doesn't exist.
+ *
+ * Skipped when REV4A_SKIP_POSTINSTALL_BUILD is set: CI and the release workflow run
+ * `npm run build` as an explicit step, and a second build here would run before every
+ * other check and swallow its own failure.
  */
 const { existsSync } = require('fs');
 const { join } = require('path');
@@ -8,7 +12,7 @@ const { join } = require('path');
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
 
-if (!existsSync(NEXT_DIR)) {
+if (!process.env.REV4A_SKIP_POSTINSTALL_BUILD && !existsSync(NEXT_DIR)) {
   try {
     const { execSync } = require('child_process');
     console.log('[rev4a] Building dashboard… (one-time, may take a minute)');

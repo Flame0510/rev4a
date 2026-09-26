@@ -4,7 +4,7 @@
  * identifiers, comments, docs, UI strings (AGENTS.md §2.1).
  *
  * The word list is deliberately conservative: only words that are **not** English words.
- * `come`, `per`, `non`, `la`, `al`, `tra` are left out on purpose, they would fire on
+ * `come`, `per`, `non`, `la`, `al` are left out on purpose, they would fire on
  * English text; the list is content words plus unmistakable function words. A line
  * carrying `lang-ok` is skipped, for the legitimate case where the Italian is the point
  * (a fixture, a note about the rule):
@@ -12,8 +12,9 @@
  *   // lang-ok: the exact text a user reported
  *
  * It catches Italian *words*, not Italian thinking written in English, and it never
- * translates: the fix is manual. Wired into the release workflow (a release cannot ship
- * Italian) and available locally as `npm run check:language`.
+ * translates: the fix is manual. Run by CI on every push to main and every pull request,
+ * again by the release workflow before publishing, and available locally as
+ * `npm run check:language` (and as a pre-commit hook, `.githooks/pre-commit`).
  *
  * Usage:
  *   node scripts/check-language.mjs            # every tracked file
@@ -47,6 +48,11 @@ const WORDS = [
   'puoi', 'posso', 'siamo', 'abbiamo', 'erano', 'servono', 'vuole', 'vuoi', 'quale', 'quali',
   'disponibile', 'necessario', 'corretto', 'sbagliato', 'mancante', 'vuoto', 'ultimo', 'ultima',
   'italiano', 'italiana', 'italiane', 'inglese', 'pero', 'cosi', 'piu', 'ecco', 'grazie',
+  // Added after a later review found UI labels, alert text and a doc line the list above
+  // missed (session drawer, lineage and dashboard toolbars, system-health alerts).
+  'stato', 'tipo', 'costo', 'costi', 'durata', 'inizio', 'aggiorn', 'azioni', 'recenti',
+  'grafo', 'reimposta', 'periodo', 'agenti', 'agente', 'apri', 'soglia', 'coprire',
+  'contenuti', 'allinea', 'allineare', 'campioni', 'consecutivi',
 ];
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.md', '.json', '.sh', '.yml', '.yaml', '.css', '.html'];
