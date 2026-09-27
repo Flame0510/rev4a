@@ -8,6 +8,7 @@ import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import ModelSection from './ModelSection';
+import CostSection from './CostSection';
 import BrowserAccessSection, { OpenControlUiButton } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
 import { validatePortInput } from '@/lib/agent-ports';
@@ -1192,6 +1193,12 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="MODEL" />
         <ModelSection agentId={agent.agentId} onSaved={onModelSaved} agentBusy={busy} />
+      </div>
+
+      {/* Costs - what this agent spent, as its own OpenClaw priced it */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<BracesIcon size={12} />} label="COSTS" />
+        <CostSection container={agent.name} />
       </div>
 
       {/* Config - View openclaw.json */}

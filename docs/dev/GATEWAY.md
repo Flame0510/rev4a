@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-27
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -69,14 +69,15 @@ against the Rev4a provider proxy using this token. See [`PROVIDERS.md`](PROVIDER
 
 ### Sync Flow
 
-When a provider key is saved, a model toggle is changed, Sync All is pressed, or
-Rev4a starts, the Gateway:
+When a provider key is saved, a model toggle is changed, Sync All is pressed, Rev4a
+starts, or a time-of-day price changes (see [Costs](#costs-openclaw-prices-every-call)),
+the Gateway:
 
 1. **Reads** `models.config.json` and the overrides, and keeps the models that are
    enabled and whose provider has a key. If the file cannot be read and no earlier
    read succeeded, the sync stops here and reports `configError`
 2. **Builds** a `models.providers.rev4a` config block (without `rev4a/` prefix on
-   model IDs)
+   model IDs), each model carrying the `cost` in force now
 3. **Lists** every container with the `AGENT_ID` Docker label, **running or
    not**. Stopped agents are included so that starting one later does not bring
    back an old catalogue
@@ -91,6 +92,48 @@ Rev4a starts, the Gateway:
    it through `docker exec` and hot-apply it; the others through `docker cp`, with
    the file's original mode, and apply it when started or resumed
 7. **Does NOT restart** the gateway
+
+### Costs: OpenClaw prices every call
+
+Every model in the `rev4a` block carries a `cost` — `{ input, output, cacheRead,
+cacheWrite }` in $ per 1M tokens, from `priceAt()` in `lib/model-pricing.ts`. That is the
+field OpenClaw's own cost accounting reads first after an agent's `models.json`, so each
+agent prices every call, session and day itself, with the cache split out, and shows it in
+its own Control UI too. Rev4a computes no cost: the daemon reads OpenClaw's figures into
+`costs.db` and the Costs page (`/costs`) shows them (see
+[DATABASE.md](DATABASE.md#costs-database-costsdb)).
+
+- **No price, no `cost`.** A model without an entry in `model-pricing.json` or with a
+  dynamic router price (`-1`, OpenRouter Auto) gets none, and OpenClaw counts its calls
+  as "missing cost" rather than $0. The Costs page lists them, by model.
+- **Free models** (all-zero price) are written with $0.000001 per 1M tokens for every
+  rate: OpenClaw treats an all-zero `cost` as no price and would count every call as
+  unpriced. A billion tokens come to $0.001.
+- **Unknown cache rate.** An entry without `cacheRead` falls back to the input rate
+  (cached tokens priced as if the cache gave no discount); one without `cacheWrite` to
+  1.25 × the input rate — vendors that bill cache writes apart charge more than input
+  (Anthropic's five-minute cache: 1.25×), and the ones that report no cache writes never
+  use it. Either way an overestimate, never an undercount. `refresh:pricing` writes them
+  for OpenRouter models when OpenRouter publishes them (104 and 44 of 181 entries when
+  added); direct vendors are filled by hand from their pricing page.
+- **Time-of-day prices.** DeepSeek bills half its rates off-peak (peak 01:00–04:00 and
+  06:00–10:00 UTC, Monday–Friday). `PRICE_SCHEDULES` in `lib/model-pricing.ts` holds
+  that schedule; `priceAt()` writes the rate of the moment, and
+  `lib/price-schedule-sync.ts` (started by `instrumentation.ts`) checks at most every
+  minute — and exactly at a change due within the minute — whether the bands in force
+  differ from the ones last written, and runs a full sync when they do; a sync that
+  missed an agent is retried every 5 minutes, at most 3 times for one band — an agent busy
+  with an update, recreate, restore or edit writes the prices itself when it finishes; the
+  bands count as written after any sync, since a sync that misses one agent writes all the
+  others — and a new change is written at once, whatever retry was pending. A check rather than one timer to the next
+  change: a timer fires late after the machine sleeps, a check a minute after it wakes
+  (simulated: asleep 01:05–05:00 UTC across the 04:00 change → synced at 05:00). OpenClaw keeps the cost it recorded at call
+  time, so a later change of rate does not reprice a call (verified with a real call,
+  priced off-peak and read again after the switch to peak). Chinese public holidays,
+  which DeepSeek bills off-peak all day, are priced as peak — a small overestimate.
+- **Calls made before a model had a price** are priced by OpenClaw when read, at the
+  rate in force then; OpenClaw reindexes its transcripts after a price change, which is
+  why a read can briefly answer `cacheStatus: refreshing`.
 
 ### Model ID Convention
 
@@ -503,11 +546,12 @@ The OpenRouter payload carries `pricing.prompt`, `pricing.completion`,
 same pass.
 
 For direct-provider prices, use the provider's own pricing page. DeepSeek's is
-at `api-docs.deepseek.com/quick_start/pricing`, and note it charges **peak and
-off-peak rates** (peak: 01:00–04:00 and 06:00–10:00 UTC, Mon–Fri; off-peak is
-half). `model-pricing.json` holds one figure per model and cannot express that,
-nor cache-hit rates — **record the peak rate**, so the dashboard overstates
-spend rather than understating it.
+at `api-docs.deepseek.com/quick_start/pricing`. Record the **peak** rates, and
+the cache-hit rate as `cacheRead` (`cacheWrite` is the input rate for a vendor that
+bills a cache miss as ordinary input); the off-peak discount is applied by
+`PRICE_SCHEDULES` in `lib/model-pricing.ts`, which is where a schedule change goes.
+These prices are what every agent's OpenClaw computes its costs with (see
+[Costs](#costs-openclaw-prices-every-call)).
 
 ### What to check, in order
 

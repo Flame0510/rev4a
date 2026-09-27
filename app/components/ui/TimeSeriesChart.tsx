@@ -22,6 +22,8 @@ interface TimeSeriesChartProps {
   bucket: number;
   yMax?: number;
   unit?: string;
+  /** Formats a value (grid labels, end label, tooltip, table) instead of `<rounded><unit>` — e.g. dollars. */
+  formatValue?: (v: number) => string;
   height?: number;
   /** While a new range loads the previous render stays, dimmed. */
   stale?: boolean;
@@ -29,6 +31,8 @@ interface TimeSeriesChartProps {
 }
 
 const PAD = { top: 12, right: 44, bottom: 22, left: 34 };
+/** Width of one character of the 10 px monospace labels, for sizing the margins. */
+const CHAR_W = 6.2;
 
 /**
  * One series over time: a 2px line for the value, a 10% wash up to the peak, a hairline
@@ -44,6 +48,7 @@ export function TimeSeriesChart({
   bucket,
   yMax = 100,
   unit = '%',
+  formatValue,
   height = 160,
   stale = false,
   formatTime,
@@ -61,10 +66,22 @@ export function TimeSeriesChart({
     return () => ro.disconnect();
   }, []);
 
-  const plotW = Math.max(0, width - PAD.left - PAD.right);
+  // With a custom format (`$0.0054`) the margins grow to fit the labels instead of cutting
+  // them; percentage charts keep the fixed margins.
+  const valueText = (v: number) => (formatValue ? formatValue(v) : `${Math.round(v * 10) / 10}${unit}`);
+  const tickText = (v: number) => (formatValue ? formatValue(v) : `${Math.round(v)}${unit}`);
+  const tickValues = [0, 50, 100].map((v) => (v / 100) * yMax);
+  const lastValue = [...points].reverse().find((p) => p.value !== null)?.value ?? null;
+  const padLeft = formatValue
+    ? Math.max(PAD.left, Math.ceil(Math.max(...tickValues.map((v) => tickText(v).length)) * CHAR_W) + 8)
+    : PAD.left;
+  const padRight = formatValue && lastValue !== null
+    ? Math.max(PAD.right, Math.ceil(valueText(lastValue).length * CHAR_W) + 14)
+    : PAD.right;
+  const plotW = Math.max(0, width - padLeft - padRight);
   const plotH = height - PAD.top - PAD.bottom;
   const span = Math.max(1, to - from);
-  const x = (ts: number) => PAD.left + ((ts - from) / span) * plotW;
+  const x = (ts: number) => padLeft + ((ts - from) / span) * plotW;
   const y = (v: number) => PAD.top + plotH - (Math.max(0, Math.min(yMax, v)) / yMax) * plotH;
 
   const valid = useMemo(() => points.filter((p) => p.value !== null), [points]);
@@ -95,7 +112,8 @@ export function TimeSeriesChart({
 
   const last = valid[valid.length - 1];
   const shown = active !== null ? valid[active] : null;
-  const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${Math.round(v * 10) / 10}${unit}`);
+  const fmt = (v: number | null | undefined) =>
+    v === null || v === undefined ? '—' : valueText(v);
 
   function onPointerMove(e: PointerEvent<SVGRectElement>) {
     if (!valid.length || plotW <= 0) return;
@@ -137,9 +155,9 @@ export function TimeSeriesChart({
           <svg width={width} height={height} aria-hidden="true">
             {[0, 50, 100].map((v) => (
               <g key={v}>
-                <line x1={PAD.left} x2={PAD.left + plotW} y1={y((v / 100) * yMax)} y2={y((v / 100) * yMax)} className="ui-chart__grid" />
-                <text x={PAD.left - 6} y={y((v / 100) * yMax) + 3} textAnchor="end" className="ui-chart__tick">
-                  {Math.round((v / 100) * yMax)}{unit}
+                <line x1={padLeft} x2={padLeft + plotW} y1={y((v / 100) * yMax)} y2={y((v / 100) * yMax)} className="ui-chart__grid" />
+                <text x={padLeft - 6} y={y((v / 100) * yMax) + 3} textAnchor="end" className="ui-chart__tick">
+                  {tickText((v / 100) * yMax)}
                 </text>
               </g>
             ))}
@@ -157,7 +175,7 @@ export function TimeSeriesChart({
             <defs>
               {/* Marks stay inside the plot, never over the axis labels. */}
               <clipPath id={clipId}>
-                <rect x={PAD.left} y={0} width={plotW} height={PAD.top + plotH} />
+                <rect x={padLeft} y={0} width={plotW} height={PAD.top + plotH} />
               </clipPath>
             </defs>
             <g clipPath={`url(#${clipId})`}>
@@ -182,10 +200,10 @@ export function TimeSeriesChart({
               </g>
             )}
             {!valid.length && (
-              <text x={PAD.left + plotW / 2} y={PAD.top + plotH / 2} textAnchor="middle" className="ui-chart__tick">No samples in this range</text>
+              <text x={padLeft + plotW / 2} y={PAD.top + plotH / 2} textAnchor="middle" className="ui-chart__tick">No samples in this range</text>
             )}
             <rect
-              x={PAD.left}
+              x={padLeft}
               y={PAD.top}
               width={plotW}
               height={plotH}

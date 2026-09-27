@@ -4,6 +4,18 @@ export function formatUsd(value: number | null | undefined): string {
   return `$${Number(value ?? 0).toFixed(2)}`;
 }
 
+/**
+ * Dollars with the precision a small figure needs: an agent's day can be a fraction of a
+ * cent, which formatUsd would show as $0.00. Used wherever agent costs are shown.
+ */
+export function formatCost(value: number | null | undefined): string {
+  const v = Number(value ?? 0);
+  if (!v) return '$0.00';
+  if (v < 0.01) return `${v.toFixed(4)}`;
+  if (v < 1) return `${v.toFixed(3)}`;
+  return `${v.toFixed(2)}`;
+}
+
 export function formatUsdOrDash(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
   return formatUsd(value);

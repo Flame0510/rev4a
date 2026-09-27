@@ -60,6 +60,16 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/costs',
+    label: 'Costs',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M10 5.8C9.6 5.3 8.9 5 8 5c-1.2 0-2 .6-2 1.5S6.8 7.8 8 8s2 .6 2 1.5S9.2 11 8 11c-.9 0-1.6-.3-2-.8M8 3.8V5M8 11v1.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: '/system',
     label: 'System',
     icon: (

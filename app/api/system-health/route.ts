@@ -2,12 +2,14 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { latestMetricSample } from '@/lib/metrics-db';
 import { maybeSendAlert } from '@/lib/alerts';
-import { summarizeBilling } from '@/lib/billing';
+import { dashboardCosts } from '@/lib/agent-costs';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
-import type { ModelCost } from '@/lib/types';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
+
+/** A day above this (US dollars, UTC day) raises the cost check to a warning. */
+const HIGH_DAILY_SPEND_USD = 10;
 
 type Health = 'ok' | 'warning' | 'error';
 type Severity = 'info' | 'warning' | 'critical';
@@ -146,7 +148,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ? [columnExists(db, 'events', 'type') ? 'type' : null, columnExists(db, 'events', 'event') ? 'event' : null].filter(Boolean).join(", ''), COALESCE(")
       : '';
     const eventErrorCount = eventExpr
-      ? (db.prepare(`SELECT COUNT(*) AS total FROM events WHERE LOWER(COALESCE(${eventExpr}, '')) LIKE '%error%' AND ts >= ?`).get(Math.floor(Date.now() / 1000) - 86400) as { total: number }).total
+      ? (db.prepare(`SELECT COUNT(*) AS total FROM events WHERE LOWER(COALESCE(${eventExpr}, '')) LIKE '%error%' AND ts >= ?`).get(Date.now() - 86_400_000) as { total: number }).total // events.ts is in milliseconds
       : 0;
     checks.push({
       id: 'runtime.errors24h',
@@ -168,54 +170,53 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const todayModels = db.prepare(
-      `SELECT model,
-        COALESCE(SUM(cost_usd), 0) AS cost_usd,
-        COALESCE(SUM(tokens_in), 0) AS tokens_in,
-        COALESCE(SUM(tokens_out), 0) AS tokens_out,
-        COUNT(*) AS sessions
-       FROM sessions WHERE started_at >= ?
-       GROUP BY model ORDER BY cost_usd DESC`,
-    ).all(Math.floor(startOfDay.getTime() / 1000)) as ModelCost[];
-    const billing = summarizeBilling(todayModels);
-    checks.push({
-      id: 'cost.usageBasedToday',
-      label: 'Usage-based cost today',
-      health: billing.usageBasedCost > 10 ? 'warning' : 'ok',
-      value: `$${billing.usageBasedCost.toFixed(2)}`,
-      details: `DB estimate $${billing.dbEstimatedCost.toFixed(2)}; fixed ${billing.buckets.fixed.sessions} sessions; credits ${billing.buckets.credits.sessions} sessions`,
-      source: 'cost',
-    });
-    if (billing.usageBasedCost > 10) {
-      recommendations.push({
-        id: 'cost.review-usage-based',
-        severity: 'warning',
-        source: 'cost',
-        title: 'High usage-based cost',
-        details: `Provider usage-based today: $${billing.usageBasedCost.toFixed(2)}. Counts OpenRouter and the other pay-per-use providers, not the fixed plans.`,
-        actionHref: '/gateway',
-        dismissible: true,
-        createdAt,
-      });
-    }
-    if (billing.unknownModels.length > 0 && billing.buckets.unknown.cost_usd > 1) {
-      recommendations.push({
-        id: 'cost.classify-unknown-models',
-        severity: 'warning',
-        source: 'cost',
-        title: 'Unclassified models in billing',
-        details: `${billing.unknownModels.length} unclassified models have DB estimate $${billing.buckets.unknown.cost_usd.toFixed(2)}.`,
-        actionHref: '/gateway',
-        dismissible: true,
-        createdAt,
-      });
-    }
     db.close();
   } catch (error) {
     checks.push({ id: 'runtime.db', label: 'Rev4a DB', health: 'error', value: 'error', details: (error as Error).message, source: 'runtime' });
     recommendations.push({ id: 'runtime.db-error', severity: 'critical', source: 'runtime', title: 'Rev4a DB unreadable', details: (error as Error).message, dismissible: false, createdAt });
+  }
+
+  // What the agents spent today (UTC day), as their own OpenClaw priced it (costs.db).
+  const spend = dashboardCosts();
+  if (spend?.error) {
+    checks.push({ id: 'cost.usageBasedToday', label: 'Spent today', health: 'warning', value: 'error', details: `costs.db unreadable: ${spend.error}`, source: 'cost' });
+  } else {
+    const today = spend?.today ?? 0;
+    const missing = spend?.missingToday ?? 0;
+    checks.push({
+      id: 'cost.usageBasedToday',
+      label: 'Spent today',
+      health: today > HIGH_DAILY_SPEND_USD || missing > 0 ? 'warning' : 'ok',
+      value: `$${today.toFixed(2)}`,
+      details: spend
+        ? `Priced by the agents' OpenClaw, UTC day${missing ? `; ${missing} call(s) without a price` : ''}`
+        : 'No figures yet: the daemon reads the agents every 5 min',
+      source: 'cost',
+    });
+    if (today > HIGH_DAILY_SPEND_USD) {
+      recommendations.push({
+        id: 'cost.review-usage-based',
+        severity: 'warning',
+        source: 'cost',
+        title: 'High spend today',
+        details: `The agents have spent $${today.toFixed(2)} today (UTC).`,
+        actionHref: '/costs',
+        dismissible: true,
+        createdAt,
+      });
+    }
+    if (missing > 0) {
+      recommendations.push({
+        id: 'cost.unpriced-calls',
+        severity: 'warning',
+        source: 'cost',
+        title: 'Calls without a price',
+        details: `${missing} model call(s) today could not be priced: their model has no price in Rev4a, or a dynamic one (OpenRouter Auto).`,
+        actionHref: '/costs',
+        dismissible: true,
+        createdAt,
+      });
+    }
   }
 
   try {

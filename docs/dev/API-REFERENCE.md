@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -469,12 +469,12 @@ Returns all sessions (up to 2000), newest first, joined with lineage labels.
     "model": "openai-codex/gpt-5.4",
     "tokens_in": 12500,
     "tokens_out": 3200,
-    "cost_usd": 0.085,
+    "cost_usd": 0,
     "status": "idle",
     "task_preview": "Run hygiene audit...",
-    "started_at": 1749200000,
+    "started_at": 1749200000000,
     "ended_at": null,
-    "updated_at": 1749201000,
+    "updated_at": 1749201000000,
     "trello_card_url": null,
     "lineage_label": null,
     "lineage_agent_name": null
@@ -517,8 +517,76 @@ One session with its events and any child sessions.
 
 ## Stats & Costs
 
+Agent costs come from `costs.db`: what each agent's own OpenClaw priced, copied by the
+daemon (the queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts`). `GET /api/costs/usage` feeds the Costs
+page, `GET /api/costs` the dashboard, `GET /api/costs/agent` the agent panel. `GET
+/api/stats` and `GET /api/stats-since` still read the `sessions` table of `events.db`,
+whose `cost_usd` is no longer estimated (always 0).
+
+### `GET /api/costs/usage?range=today|7d|30d`
+What the agents spent in a range of UTC days, today included (default `7d`), read from
+`costs.db` (written by the daemon every 5 minutes, see `docs/dev/DATABASE.md`). Rev4a
+computes no cost: every figure is the one OpenClaw recorded with the prices Rev4a syncs.
+
+**Auth:** browser cookie or Bearer
+
+**Response:**
+```json
+{
+  "available": true,
+  "range": "7d",
+  "startDate": "2026-09-21",
+  "endDate": "2026-09-27",
+  "intervalS": 300,
+  "pricing": { "vendor": "DeepSeek", "band": "off-peak", "nextChange": 1790557200000, "source": "https://api-docs.deepseek.com/quick_start/pricing" },
+  "totals": { "cost": 0.0086, "tokens": 114053, "input": 47436, "output": 2233, "cacheRead": 64384, "cacheWrite": 0,
+              "inputCost": 0.0071, "outputCost": 0.0013, "cacheReadCost": 0.0002, "cacheWriteCost": 0, "missing": 0 },
+  "daily": [ { "date": "2026-09-21", "cost": 0.0071, "tokens": 96806, "missing": 0 } ],
+  "byAgent": [ { "container": "agent_9253eee3", "agentId": "agent_9253eee3", "name": "test", "cost": 0.0077, "tokens": 96806,
+                 "missing": 0, "collectedAt": 1790526404843, "attemptedAt": 1790526404843, "error": null } ],
+  "byModel": [ { "provider": "rev4a", "model": "deepseek/deepseek-flash", "cost": 0.0086, "tokens": 114053, "calls": 13 } ],
+  "sessions": [ { "container": "agent_9253eee3", "agentName": "test", "sessionId": "…", "sessionKey": "agent:main:…", "label": "…",
+                  "agentId": "main", "model": "deepseek/deepseek-flash", "cost": 0.004, "tokens": 18681, "missing": 0, "lastActivity": 1790322536609 } ],
+  "unpriced": [ { "model": "rev4a/deepseek/deepseek-v4-flash", "calls": 84, "agents": ["test", "test 2"] } ],
+  "reconciliation": [ { "vendor": "deepseek", "currency": "USD", "from": 1790529518869, "to": 1790536317000,
+                        "billed": 0.02, "priced": 0.0171, "topUps": 0, "readings": 3, "comparable": true } ]
+}
+```
+
+- `daily` has one entry per day of the range, zeros included.
+- `missing` counts calls OpenClaw could not price (no price for their model): they are in
+  the tokens, not in the cost. `unpriced` lists them by model over each agent's last 30
+  days.
+- `byAgent` holds every agent read, running or not, with use in the range, an error, or
+  a read in the last 15 minutes; `error` is why its last read stored nothing (OpenClaw's
+  own reason, e.g. "Gateway not reachable…"). An agent still being read (`attemptedAt`
+  within 3 × `intervalS`) with an `error` or a `collectedAt` older than that is not
+  current; a stopped or deleted agent is no longer read and keeps its last figures.
+- `sessions`: the 20 most expensive sessions active in the range; a session's figures are
+  its total over the last 30 days.
+- `pricing`: the band DeepSeek bills at now and when it changes, when a DeepSeek model is
+  on offer; `null` otherwise.
+- `reconciliation`: per vendor with a configured key (DeepSeek, OpenRouter), what it
+  billed next to what the agents priced over the same hourly readings — `{ vendor,
+  currency, from, to, billed, priced, topUps, readings, comparable }`. `billed` is the
+  balance drop (DeepSeek; rises are `topUps`, not spend) or the usage growth (OpenRouter);
+  `priced` the growth of the agents' total for that vendor's models. `billed`/`priced`
+  are `null` until two readings exist; `comparable` is false for a non-USD balance.
+  `vendor` is the lowercase key (`deepseek`, `openrouter`); `pricing.vendor` is a display
+  name. Known gaps, shown rather than corrected: the same key may also pay for the
+  assistant or clients outside Rev4a; a top-up and spend in the same hour net out; an
+  agent missed by a pass joins the agents' total one pass later; calls never priced are
+  priced by OpenClaw when read, so the agents' total can grow for calls made earlier.
+- `available: false` (zeros, empty lists) until the daemon has created `costs.db`.
+
+**Errors:** `400` for another `range`; `500` when `costs.db` cannot be read.
+
+---
+
 ### `GET /api/stats`
-Current-month aggregate stats (tokens + cost) grouped by model.
+Current-month aggregate stats (tokens + cost) grouped by model, from the `sessions` table
+(`started_at` is in milliseconds). The costs are the `sessions.cost_usd` column, which is no
+longer estimated: 0, except rows written before 2026-09-27. Agent spend is `GET /api/costs/usage`.
 
 **Auth:** Bearer or browser cookie
 
@@ -526,13 +594,13 @@ Current-month aggregate stats (tokens + cost) grouped by model.
 ```json
 {
   "total": {
-    "total": 1.24,
+    "total": 0,
     "total_in": 850000,
     "total_out": 210000,
     "sessions": 47
   },
   "byModel": [
-    { "model": "openai-codex/gpt-5.4", "cost": 0.95, "tokens_in": 600000, "tokens_out": 150000, "sessions": 30 }
+    { "model": "rev4a/deepseek/deepseek-flash", "cost": 0, "tokens_in": 600000, "tokens_out": 150000, "sessions": 30 }
   ]
 }
 ```
@@ -540,7 +608,8 @@ Current-month aggregate stats (tokens + cost) grouped by model.
 ---
 
 ### `GET /api/stats-since?ts=<unix_ms>`
-Total cost (USD) since a given timestamp.
+Sum of `sessions.cost_usd` since a given timestamp — 0 for sessions polled since 2026-09-27
+(see `GET /api/stats`).
 
 **Auth:** Bearer or browser cookie
 
@@ -548,27 +617,48 @@ Total cost (USD) since a given timestamp.
 
 **Response:**
 ```json
-{ "total": 0.42 }
+{ "total": 0 }
 ```
 
 ---
 
 ### `GET /api/costs`
-Full cost breakdown: today, 7d, 30d, all-time, per-model, plus cost-override for the current month.
+The dashboard's figures: today's spend (UTC day), all-time spend, today's calls without a
+price, and today's spend by model — from `costs.db`. The SSE stream (`GET /api/stream`)
+sends the same `today`.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or Bearer
 
 **Response:**
 ```json
 {
-  "today": 0.12,
-  "week": 1.85,
-  "month": 6.40,
-  "allTime": 42.10,
-  "override": null,
-  "byModel": [ ... ]
+  "today": 0.0112,
+  "allTime": 0.0559,
+  "allTimeSource": "agents_openclaw",
+  "missingToday": 0,
+  "byModel": [ { "model": "deepseek/deepseek-flash", "cost_usd": 0.0112, "tokens": 244157, "calls": 7 } ]
 }
 ```
+
+`byModel` lists the models that cost something today; the free and unpriced ones are on the
+Costs page.
+
+**Errors:** `500` when `costs.db` cannot be read.
+
+---
+
+### `GET /api/costs/agent?container=<name>`
+One agent's spend for its panel, from `costs.db`.
+
+**Auth:** browser cookie or Bearer
+
+**Response:** `{ "available": true, "intervalS": 300, "today": 0.011, "week": 0.019,
+"month": 0.022, "tokensMonth": 2409574, "topModel": { "model": "deepseek/deepseek-flash",
+"cost": 0.022 }, "unpricedMonth": 81, "collectedAt": 1790529516737, "error": null }` —
+UTC days (today, last 7, last 30); `collectedAt`/`error` from the agent's last read.
+`{ "available": false, "intervalS": 300 }` before `costs.db` exists.
+
+**Errors:** `400` for an invalid container name; `500` when `costs.db` cannot be read.
 
 ---
 
@@ -619,13 +709,17 @@ Paginated event log.
 ---
 
 ### `GET /api/stream`
-Server-Sent Events stream. Pushes a combined payload every ~3 s.
+Server-Sent Events stream. Every 5 s it sends one message per kind, each `{ type, data }`:
+`events` (new rows of the `events` table, only when there are any), `sessions` (the 100 most
+recent sessions with their lineage label) and `costs` (`{ "today": … }`, what the agents spent
+today, UTC day — the same figure as `GET /api/costs`).
 
-**Auth:** browser cookie
+**Auth:** browser cookie or Bearer
 
 **Event format:**
 ```
-data: {"events":[...],"sessions":[...],"costs":{"today":0.12},"lineage":[...]}
+data: {"type":"sessions","data":[...]}
+data: {"type":"costs","data":{"today":0.0112}}
 ```
 
 Use `EventSource` in the browser or `curl -N` for testing.
@@ -1973,14 +2067,16 @@ say so; it does not fail the others.
     { "id": "runtime.sessions", "label": "Runtime sessions", "health": "ok", "value": 1, "details": "last session activity 3m ago", "source": "runtime" }
   ],
   "recommendations": [
-    { "id": "cost.review-usage-based", "severity": "warning", "source": "cost", "title": "High usage-based cost", "details": "…", "actionHref": "/gateway", "dismissible": true, "createdAt": "2026-09-26T10:00:00.000Z" }
+    { "id": "cost.review-usage-based", "severity": "warning", "source": "cost", "title": "High spend today", "details": "…", "actionHref": "/costs", "dismissible": true, "createdAt": "2026-09-26T10:00:00.000Z" }
   ],
   "generatedAt": "2026-09-26T10:00:00.000Z"
 }
 ```
 
 Checks: `runtime.sessions`, `runtime.heartbeat`, `runtime.errors24h`,
-`cost.usageBasedToday`, `cron.jobs`. `health` (overall and per check) is `"ok"` /
+`cost.usageBasedToday` ("Spent today": the agents' spend today, UTC day, from `costs.db`;
+a warning above $10 or with calls without a price, each with its recommendation,
+`cost.review-usage-based` / `cost.unpriced-calls`), `cron.jobs`. `health` (overall and per check) is `"ok"` /
 `"warning"` / `"error"`; a recommendation's `severity` is `"info"` / `"warning"` /
 `"critical"`. `generatedAt` and `createdAt` are ISO strings.
 

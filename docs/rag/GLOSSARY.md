@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -31,7 +31,10 @@ A communication channel (Telegram) configured on an agent. Channels allow users 
 Modal in the agent detail panel for configuring Telegram channels. Connect with bot token, restart agent, manage pairings (approve pending codes, revoke approved senders). Pairings are polled every 5 seconds with automatic cancellation of stale requests via AbortController.
 
 ## Cost
-The estimated cost of an agent session in USD, calculated from tokens used and per-model pricing. Rev4a shows cost by today, 7 days, 30 days, all-time, and by model.
+What an agent spent in USD. Each agent's OpenClaw prices every model call itself, with the prices Rev4a writes into it (input, output, cached input), and Rev4a reads those figures every 5 minutes. The Costs page (`/costs`) shows them for today, 7 or 30 days — by day, by agent, by model, and the most expensive sessions. The dashboard's "Spent today" card shows the same figures for today, and each agent's panel on the Agents page has a COSTS section with its own. The Costs page also compares the agents' figures with what DeepSeek and OpenRouter actually billed (their balance or usage, read every hour).
+
+## Off-peak
+DeepSeek bills half price outside its peak hours (peak: 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday). Rev4a writes the lower prices into the agents when off-peak starts and the full ones when it ends, so each call is priced at the rate in force when it ran. The Costs page header shows the current band.
 
 ## Cost Override
 A manual correction for a month's total cost, stored through `/api/cost-override`. There is currently no screen for it: no page in the dashboard reads or writes an override, so it can only be set by calling the API directly.
@@ -85,7 +88,7 @@ Replace an agent's persistent volume with a previously created backup. The conta
 Undo an agent's latest OpenClaw update: the backup taken just before the update is put back and the agent starts again on its previous version. Anything the agent did after the update is lost. Offered in the agent's OPENCLAW VERSION section while that backup exists.
 
 ## Session
-One instance of an agent doing work. Tracks: start/end time, tokens used, cost, model, status, and task description. A session starts when an agent receives a task and ends when it completes or fails.
+One instance of an agent doing work. Tracks: start/end time, tokens used, model, status, and task description; what a session cost is on the Costs page (most expensive sessions). A session starts when an agent receives a task and ends when it completes or fails.
 
 ## Pairing
 A security mechanism for Telegram channels. When a user sends `/start` to the bot, a 4-digit pairing code is generated. An admin must approve this code in the Channel Manager to add the user to the allowlist. Approved senders can be revoked at any time.
@@ -134,6 +137,6 @@ The directory where an agent's operational files live (config, memory files, ski
 The page with the machine Rev4a runs on: CPU (with cores and load), memory and swap, and each disk's used and free space, now and over 1 hour, 24 hours, 7 days or 30 days. A bar turns yellow and then red when it reaches a threshold (CPU and memory 85 % / 95 %, disk 80 % / 90 %), and the level is written next to it.
 
 ## System Health
-A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, the daemon heartbeat (how old its latest machine sample is), errors in the last 24 hours, today's usage-based cost, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
+A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, the daemon heartbeat (how old its latest machine sample is), errors in the last 24 hours, today's what the agents spent today, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
 
 It reports no CPU, RAM, disk or load average: those are on the System page (`/system`), sampled every 30 seconds by the daemon and kept for 30 days.

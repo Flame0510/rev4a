@@ -86,7 +86,12 @@ function round(n) {
 function serialisePricing(pricing) {
   const num = (n) => String(n);
   const body = Object.entries(pricing)
-    .map(([id, p]) => `  ${JSON.stringify(id)}: {\n    "input": ${num(p.input)},\n    "output": ${num(p.output)}\n  }`)
+    .map(([id, p]) => {
+      const rates = [['input', p.input], ['output', p.output], ['cacheRead', p.cacheRead], ['cacheWrite', p.cacheWrite]]
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `    "${k}": ${num(v)}`);
+      return `  ${JSON.stringify(id)}: {\n${rates.join(',\n')}\n  }`;
+    })
     .join(',\n');
   return `{\n${body}\n}\n`;
 }
@@ -243,11 +248,18 @@ async function main() {
     } else {
       const current = pricing[m.id];
       const next = { input: round(input), output: round(output) };
-      if (!current || current.input !== next.input || current.output !== next.output) {
+      // Cache rates when OpenRouter publishes them: OpenClaw prices cached tokens with
+      // these, and without one they fall back to the input rate (lib/model-pricing.ts).
+      const cacheRead = perMillion(up.pricing?.input_cache_read);
+      const cacheWrite = perMillion(up.pricing?.input_cache_write);
+      if (cacheRead !== null) next.cacheRead = round(cacheRead);
+      if (cacheWrite !== null) next.cacheWrite = round(cacheWrite);
+      const show = (x) => `${x.input}/${x.output}` + (x.cacheRead !== undefined ? ` cache ${x.cacheRead}` : '');
+      if (!current || ['input', 'output', 'cacheRead', 'cacheWrite'].some((k) => current[k] !== next[k])) {
         priceChanges.push({
           id: m.id,
-          from: current ? `$${current.input}/$${current.output}` : '(none)',
-          to: `$${next.input}/$${next.output}`,
+          from: current ? show(current) : '(none)',
+          to: show(next),
         });
         pricing[m.id] = next;
       }

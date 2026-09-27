@@ -1,10 +1,11 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
-Rev4a keeps three SQLite files in WAL mode, by default all in the data directory's `data/`:
+Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (sessions and events, below), `metrics.db` (machine metrics, see
-[Metrics Database](#metrics-database-metricsdb)) and `credentials.db` (see
+[Metrics Database](#metrics-database-metricsdb)), `costs.db` (what the agents spent, see
+[Costs Database](#costs-database-costsdb)) and `credentials.db` (see
 [Credentials Database](#credentials-database-credentialsdb)).
 
 ## Location
@@ -23,7 +24,7 @@ PRAGMA synchronous = NORMAL;
 
 - The daemon writes; the Next.js API routes open read-only connections
 - `events.db`: `PRAGMA wal_checkpoint(PASSIVE)` after each daemon poll cycle, `FULL` every 10
-- `metrics.db`: SQLite's automatic checkpoint (every 1000 pages) — no explicit one
+- `metrics.db`, `costs.db`: SQLite's automatic checkpoint (every 1000 pages) — no explicit one
 - WAL files (`*.db-shm`, `*.db-wal`) — do not delete while the daemon is running
 
 ## Tables
@@ -38,11 +39,11 @@ CREATE TABLE sessions (
   model        TEXT,
   tokens_in    INTEGER DEFAULT 0,
   tokens_out   INTEGER DEFAULT 0,
-  cost_usd     REAL    DEFAULT 0,
+  cost_usd     REAL    DEFAULT 0,  -- always 0 since 2026-09-27: agent costs are in costs.db
   status       TEXT    DEFAULT 'idle',
   task_preview TEXT,
-  started_at   INTEGER,           -- Unix seconds
-  ended_at     INTEGER,           -- Unix seconds, null if active
+  started_at   INTEGER,           -- Unix ms
+  ended_at     INTEGER,           -- Unix ms, null if active
   updated_at   INTEGER,           -- Unix ms, updated only on real changes
   trello_card_url TEXT
 );
@@ -59,12 +60,18 @@ CREATE TABLE events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   ts         INTEGER NOT NULL,   -- Unix ms
   session_id TEXT    NOT NULL,
-  type       TEXT    NOT NULL,   -- spawn | complete | error | tool_call
+  type       TEXT    NOT NULL,   -- see below
   data       TEXT                -- JSON payload
 );
 
 CREATE INDEX idx_events_session ON events(session_id, ts);
 ```
+
+Types written today: `spawn`, `complete`, `fail`, `spawn_timeout` (the daemon's session poll),
+`system_anomaly` (the daemon's machine metrics, session `system`), `agent_created` and
+`agent_deleted` (the create and delete routes, session `system:agents`). **No retention:**
+rows are never pruned — on a development machine with a nearly full disk, `system_anomaly`
+reached ~4 000 rows in a month.
 
 ### `lineage` — explicit parent→child declarations
 
@@ -90,7 +97,7 @@ CREATE TABLE cost_override (
 );
 ```
 
-When a `cost_override` row exists for the current month, the UI displays the override value instead of the computed sum.
+Nothing reads `cost_override` except `/api/cost-override` itself: no page shows an override.
 
 The daemon also writes a `system_anomaly` event (session `system`) when the machine
 crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). No feature
@@ -195,17 +202,20 @@ container started again. Rows are never pruned.
 ## Useful Queries
 
 ```sql
--- Total cost this month
-SELECT SUM(cost_usd) FROM sessions
-WHERE started_at >= strftime('%s', date('now', 'start of month'));
+-- costs.db: what the agents spent this month (UTC days), by agent
+SELECT s.name, SUM(d.cost) AS spent, SUM(d.missing) AS unpriced
+FROM agent_cost_daily d LEFT JOIN agent_cost_sources s USING (container)
+WHERE d.date >= strftime('%Y-%m-01', 'now')
+GROUP BY d.container ORDER BY spent DESC;
 
--- Active sessions right now
-SELECT session_id, label, model, status, cost_usd
+-- costs.db: spend by model, last 30 days
+SELECT model, SUM(cost) AS spent, SUM(calls) AS calls
+FROM agent_cost_model_daily WHERE date >= date('now', '-29 days')
+GROUP BY provider, model ORDER BY spent DESC;
+
+-- events.db: active sessions right now
+SELECT session_id, label, model, status
 FROM sessions WHERE status = 'working';
-
--- Cost by model (all time)
-SELECT model, SUM(cost_usd) AS total, COUNT(*) AS sessions
-FROM sessions GROUP BY model ORDER BY total DESC;
 
 -- Last poll time (freshness check)
 SELECT datetime(MAX(ts)/1000, 'unixepoch', 'localtime') AS last_event
@@ -240,6 +250,19 @@ off the machine. `restore.sh` refuses an archive with links in it and a running
 `rev4a.service` when it runs, and replaces the data directory as a whole (a leftover
 SQLite `-wal` cannot mix into the restored state), then resets the permissions. Agent volumes are not included —
 the dashboard's cold backups cover them.
+
+### Other tables
+
+- `alert_state` — one row per alert key (`lib/alerts.ts`): whether it was sent and resolved, so
+  an alert is not sent twice.
+- `tool_calls` and `chat_messages` — created by `lib/db-bootstrap.mjs` and never written by
+  any code: `GET /api/tool-calls` reads an always-empty table, nothing reads `chat_messages`.
+  Kept until the `events.db` cleanup removes them.
+
+`events.db` is Rev4a's own record — what it did to agents (the job tables, created and
+deleted) and what it saw (anomalies, alerts). What agents do is read from OpenClaw: agent
+spend is in `costs.db`; sessions and lineage move to the lineage collector, and with it
+`sessions`, `lineage` and the poll's `spawn`/`complete` events leave this file.
 
 ## Metrics Database (`metrics.db`)
 
@@ -294,6 +317,83 @@ has dropped back under, or once after each daemon start: the state is kept in me
 
 Installs from before this database may still have a `system_metrics` table in
 `events.db`: nothing reads or writes it any more, and it can be dropped.
+
+## Costs Database (`costs.db`)
+
+What each agent spent, **as its own OpenClaw priced it** — Rev4a computes no cost here.
+Every model in the synced `rev4a` provider block carries its price
+([GATEWAY.md](GATEWAY.md#costs-openclaw-prices-every-call)); each agent's OpenClaw prices
+every call with it, and the daemon copies the figures here, so a stopped or deleted agent
+keeps its history.
+
+**Location:** `data/costs.db`, next to `events.db`, resolved like `metrics.db`.
+**Created by** the daemon when it starts, its only writer; the queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts` — for
+`GET /api/costs/usage`, `GET /api/costs`, `GET /api/costs/agent`, the SSE stream and
+system-health. No file yet → the API answers `available: false`. If the daemon
+cannot open it, it logs `[COSTS] disabled` and the rest of the daemon keeps running.
+**Collection:** 20 s after the daemon starts, then every 5 minutes. First every **running**
+container with an `AGENT_ID` label gets one short call, so that the ones whose index needs
+rebuilding do it in parallel; then, one at a time, two Gateway calls through
+`docker exec … openclaw gateway call` on the agent's port 3000 (token resolved inside the
+container, never on the host's argv), both with `agentScope: "all"` over the last 30 UTC
+days: `usage.cost` (per day, split into input / output / cache read / cache write, and
+the calls it could not price) and `sessions.usage` (per model per day, and the 50 most
+recent sessions). OpenClaw answers from an index of its transcripts that it rebuilds
+after a price change or a restart; an answer whose `cacheStatus` is not `fresh` is never
+stored — asked up to 6 times, 20 s apart (a rebuild took about 60 s on the VPS, from
+4 to 290 transcript files alike), then the previous figures stay and the container's row
+records the error — OpenClaw's own reason ("Gateway not reachable…") or how long the index
+stayed unfresh. An answer missing its lists is refused before anything is deleted. An agent with nothing in the range answers without
+`cacheStatus`, which counts as fresh.
+**Days** are UTC dates, OpenClaw's default and the clock DeepSeek's rates follow.
+**Retention:** the last 30 days are rewritten on every pass (late or repriced calls land in
+the right day); older rows are kept as last read.
+
+```sql
+-- One row per container per UTC day with any use: OpenClaw's usage.cost daily entry.
+CREATE TABLE agent_cost_daily (
+  container TEXT NOT NULL, date TEXT NOT NULL,          -- 'YYYY-MM-DD'
+  input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER, total_tokens INTEGER,
+  cost REAL, input_cost REAL, output_cost REAL, cache_read_cost REAL, cache_write_cost REAL,
+  missing INTEGER,                                      -- calls OpenClaw could not price
+  PRIMARY KEY (container, date)
+);
+-- Per model per day: sessions.usage aggregates.modelDaily.
+CREATE TABLE agent_cost_model_daily (
+  container TEXT NOT NULL, date TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+  tokens INTEGER, cost REAL, calls INTEGER,
+  PRIMARY KEY (container, date, provider, model)
+);
+-- One row per session seen; its figures are the session's total over the 30-day window.
+CREATE TABLE agent_cost_sessions (
+  container TEXT NOT NULL, session_id TEXT NOT NULL,
+  session_key TEXT, label TEXT, agent_id TEXT, provider TEXT, model TEXT,
+  tokens INTEGER, cost REAL, missing INTEGER,
+  first_activity INTEGER, last_activity INTEGER,        -- Unix milliseconds
+  PRIMARY KEY (container, session_id)
+);
+CREATE INDEX idx_cost_sessions_last ON agent_cost_sessions(last_activity);
+-- The check against the bill: at most once an hour, after a pass, each vendor's own figure
+-- and, read at the same moment, the agents' cumulative priced total for that vendor's
+-- models (agent_cost_model_daily rows whose model starts with '<vendor>/'). Kept 400 days.
+CREATE TABLE vendor_balance (
+  ts INTEGER NOT NULL,        -- Unix ms
+  vendor TEXT NOT NULL,       -- 'deepseek' | 'openrouter' (a key must be configured)
+  currency TEXT,
+  balance REAL,               -- DeepSeek: total balance; OpenRouter: credits − usage
+  usage REAL,                 -- OpenRouter: lifetime usage (only grows); NULL for DeepSeek
+  agents_cost REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (vendor, ts)
+);
+-- One row per container ever read: its name (AGENT_NAME) and how the last pass went.
+CREATE TABLE agent_cost_sources (
+  container TEXT PRIMARY KEY, agent_id TEXT, name TEXT,
+  collected_at INTEGER,       -- last stored pass, Unix ms
+  attempted_at INTEGER,       -- last attempt, Unix ms
+  error TEXT,                 -- why the last attempt stored nothing; NULL after a good one
+  missing_by_model TEXT       -- JSON {"rev4a/<model>": calls} over the 30-day window
+);
+```
 
 ## Credentials Database (`credentials.db`)
 

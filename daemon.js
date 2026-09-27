@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
  * Rev4a Daemon — SQLite event logger
- * Polls OpenClaw sessions every 30s, writes events to SQLite, and samples the host
- * machine (CPU, RAM, swap, storage) every 30s on a timer of its own.
+ * Polls OpenClaw sessions every 30s, writes events to SQLite, samples the host machine
+ * (CPU, RAM, swap, storage) every 30s, and every 5 min reads what each running agent
+ * spent, as its OpenClaw priced it, into costs.db — each on a timer of its own.
  */
 
 'use strict';
 
 const os = require('os');
 const fs = require('fs');
-const { spawnSync, execSync } = require('child_process');
+const { spawnSync, execSync, execFile } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 
@@ -22,41 +23,8 @@ const DATA_DIR = process.env.REV4A_DATA_DIR
 const DB_PATH = process.env.REV4A_DB || path.join(DATA_DIR, 'data', 'events.db');
 const POLL_INTERVAL_MS = 30_000;
 
-// Cost rates per 1M tokens (separate in/out pricing)
-const MODEL_PRICING = {
-  'claude-sonnet-4':  { in: 3.00,  out: 15.00 },
-  'claude-opus-4':    { in: 15.00, out: 75.00 },
-  'gpt-5-mini':       { in: 0.15,  out: 0.60  },
-  'codex':            { in: 3.00,  out: 15.00 },
-  'gemini':           { in: 0.075, out: 0.30  },
-  'flash':            { in: 0.075, out: 0.30  },
-  'deepseek':         { in: 0.55,  out: 2.19  },
-  'default':          { in: 3.00,  out: 15.00 },
-};
-
-// Direct aliases for models that do not match by substring
-const MODEL_ALIASES = {
-  'cheap': 'flash',
-  'fast':  'claude-sonnet-4',
-  'big':   'claude-opus-4',
-  'coder': 'codex',
-  'pro':   'gemini',
-  'reason': 'deepseek',
-};
-
-
-function estimateCost(model, tokensIn, tokensOut) {
-  if (!tokensIn && !tokensOut) return 0;
-  const m = (model || '').toLowerCase();
-  // Check direct aliases first (e.g. 'cheap' → 'flash')
-  const aliasKey = Object.keys(MODEL_ALIASES).find(a => m === a || m.endsWith('/' + a));
-  const resolved = aliasKey ? MODEL_ALIASES[aliasKey] : null;
-  const key = resolved
-    || Object.keys(MODEL_PRICING).find(k => k !== 'default' && m.includes(k))
-    || 'default';
-  const p = MODEL_PRICING[key];
-  return ((tokensIn || 0) / 1_000_000 * p.in) + ((tokensOut || 0) / 1_000_000 * p.out);
-}
+// No cost is estimated here. What agents spend is priced by each agent's own OpenClaw
+// and read by the Agent Costs timer below into costs.db; sessions.cost_usd stays 0.
 
 // ── DB Setup ────────────────────────────────────────────────────────────────
 
@@ -448,6 +416,435 @@ function collectSystemMetrics() {
   }
 }
 
+// ── Agent Costs ──────────────────────────────────────────────────────────────
+//
+// What each agent spent, as its own OpenClaw computed it. Rev4a writes every model's
+// price into the synced `rev4a` provider block (app/api/gateway/sync.ts); OpenClaw then
+// prices each call, session and day itself. This timer reads those figures from each
+// running agent's Gateway and keeps them, so a stopped or deleted agent keeps its
+// history. Nothing here computes a cost.
+
+/**
+ * Its own database next to events.db, like metrics.db: the daemon is the only writer;
+ * the API reads it through lib/costs-db.ts (same path) — the Costs page, the dashboard,
+ * system-health and the agent panel. Days are UTC dates, as
+ * OpenClaw buckets them by default and as DeepSeek schedules its rates.
+ *
+ * Opened in a try: a costs.db that cannot be opened turns collection off with a log line.
+ */
+const COSTS_DB_PATH = path.join(path.dirname(DB_PATH), 'costs.db');
+const costs = openCostsStore();
+
+function openCostsStore() {
+  try {
+    const cdb = new Database(COSTS_DB_PATH);
+    cdb.pragma('journal_mode = WAL');
+    cdb.pragma('synchronous = NORMAL');
+    cdb.exec(`
+CREATE TABLE IF NOT EXISTS agent_cost_daily (
+  container TEXT NOT NULL,
+  date TEXT NOT NULL,
+  input INTEGER NOT NULL DEFAULT 0,
+  output INTEGER NOT NULL DEFAULT 0,
+  cache_read INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  input_cost REAL NOT NULL DEFAULT 0,
+  output_cost REAL NOT NULL DEFAULT 0,
+  cache_read_cost REAL NOT NULL DEFAULT 0,
+  cache_write_cost REAL NOT NULL DEFAULT 0,
+  missing INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (container, date)
+);
+CREATE TABLE IF NOT EXISTS agent_cost_model_daily (
+  container TEXT NOT NULL,
+  date TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (container, date, provider, model)
+);
+CREATE TABLE IF NOT EXISTS agent_cost_sessions (
+  container TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  session_key TEXT,
+  label TEXT,
+  agent_id TEXT,
+  provider TEXT,
+  model TEXT,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  missing INTEGER NOT NULL DEFAULT 0,
+  first_activity INTEGER,
+  last_activity INTEGER,
+  PRIMARY KEY (container, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cost_sessions_last ON agent_cost_sessions(last_activity);
+-- The vendor's own figure next to what the agents priced, taken together (see
+-- collectVendorBalances): the difference between two rows compares the same interval.
+CREATE TABLE IF NOT EXISTS vendor_balance (
+  ts INTEGER NOT NULL,
+  vendor TEXT NOT NULL,
+  currency TEXT,
+  balance REAL,
+  usage REAL,
+  agents_cost REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (vendor, ts)
+);
+CREATE TABLE IF NOT EXISTS agent_cost_sources (
+  container TEXT PRIMARY KEY,
+  agent_id TEXT,
+  name TEXT,
+  collected_at INTEGER,
+  attempted_at INTEGER,
+  error TEXT,
+  missing_by_model TEXT
+);
+`);
+    return {
+      db: cdb,
+      clearDaily: cdb.prepare('DELETE FROM agent_cost_daily WHERE container = ? AND date >= ?'),
+      clearModelDaily: cdb.prepare('DELETE FROM agent_cost_model_daily WHERE container = ? AND date >= ?'),
+      insertDaily: cdb.prepare(`
+        INSERT INTO agent_cost_daily (container, date, input, output, cache_read, cache_write, total_tokens,
+          cost, input_cost, output_cost, cache_read_cost, cache_write_cost, missing)
+        VALUES (@container, @date, @input, @output, @cache_read, @cache_write, @total_tokens,
+          @cost, @input_cost, @output_cost, @cache_read_cost, @cache_write_cost, @missing)
+      `),
+      insertModelDaily: cdb.prepare(`
+        INSERT OR REPLACE INTO agent_cost_model_daily (container, date, provider, model, tokens, cost, calls)
+        VALUES (@container, @date, @provider, @model, @tokens, @cost, @calls)
+      `),
+      upsertSession: cdb.prepare(`
+        INSERT INTO agent_cost_sessions (container, session_id, session_key, label, agent_id, provider, model,
+          tokens, cost, missing, first_activity, last_activity)
+        VALUES (@container, @session_id, @session_key, @label, @agent_id, @provider, @model,
+          @tokens, @cost, @missing, @first_activity, @last_activity)
+        ON CONFLICT(container, session_id) DO UPDATE SET
+          session_key = excluded.session_key, label = excluded.label, agent_id = excluded.agent_id,
+          provider = excluded.provider, model = excluded.model, tokens = excluded.tokens, cost = excluded.cost,
+          missing = excluded.missing, first_activity = excluded.first_activity, last_activity = excluded.last_activity
+      `),
+      insertBalance: cdb.prepare(`
+        INSERT OR REPLACE INTO vendor_balance (ts, vendor, currency, balance, usage, agents_cost)
+        VALUES (@ts, @vendor, @currency, @balance, @usage, @agents_cost)
+      `),
+      lastBalanceTs: cdb.prepare('SELECT MAX(ts) AS ts FROM vendor_balance WHERE vendor = ?'),
+      pruneBalances: cdb.prepare('DELETE FROM vendor_balance WHERE ts < ?'),
+      agentsCostFor: cdb.prepare(`SELECT COALESCE(SUM(cost), 0) AS cost FROM agent_cost_model_daily WHERE model LIKE ? || '/%'`),
+      upsertSource: cdb.prepare(`
+        INSERT INTO agent_cost_sources (container, agent_id, name, collected_at, attempted_at, error, missing_by_model)
+        VALUES (@container, @agent_id, @name, @collected_at, @attempted_at, @error, @missing_by_model)
+        ON CONFLICT(container) DO UPDATE SET
+          agent_id = excluded.agent_id, name = excluded.name,
+          collected_at = COALESCE(excluded.collected_at, agent_cost_sources.collected_at),
+          attempted_at = excluded.attempted_at, error = excluded.error,
+          missing_by_model = COALESCE(excluded.missing_by_model, agent_cost_sources.missing_by_model)
+      `),
+    };
+  } catch (err) {
+    log(`[COSTS] disabled: cannot open ${COSTS_DB_PATH}: ${err.message}`);
+    return null;
+  }
+}
+
+const COSTS_INTERVAL_MS = 5 * 60 * 1000;
+const COSTS_FIRST_DELAY_MS = 20_000;
+/** Days re-read on every pass: late calls and repriced ones land in the right day. */
+const COSTS_WINDOW_DAYS = 30;
+/** The most recent sessions kept per pass; older ones stay as last read. */
+const COSTS_SESSIONS_LIMIT = 50;
+/**
+ * OpenClaw answers from an index of its transcripts, rebuilt in the background after a
+ * price change or a restart; until then it answers zeros with `cacheStatus` not `fresh`.
+ * Such an answer is never stored: ask again a little later, a few times. Measured on a
+ * VPS (2026-09-27): about 60 s to rebuild, from 4 to 290 transcript files alike.
+ */
+const COSTS_FRESH_ATTEMPTS = 6;
+const COSTS_FRESH_WAIT_MS = 20_000;
+const COSTS_CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * Runs `openclaw "$@"` against the agent's own Gateway on port 3000, with the token
+ * resolved inside the container as the entrypoint does (lib/agent-devices.ts, same
+ * script): it never reaches argv on the host. Arguments stay positional.
+ */
+const COSTS_GATEWAY_CLI = [
+  'export OPENCLAW_GATEWAY_PORT=3000',
+  'if [ -f /root/.agent-token ]; then OPENCLAW_GATEWAY_TOKEN=$(head -1 /root/.agent-token | tr -d "[:space:]"); export OPENCLAW_GATEWAY_TOKEN; fi',
+  'exec openclaw "$@"',
+].join('; ');
+
+const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
+
+/**
+ * Why a command failed, in words a person can act on. `openclaw gateway call --json`
+ * prints its error as JSON on stdout (`{"ok":false,"error":{"message":…}}`) and exits 1,
+ * with stderr often empty; Node's own message is the whole command line. So: the JSON
+ * error, else the last stderr line, else the kind of failure — never the argv.
+ */
+function failureReason(err, stdout, stderr) {
+  if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'answer larger than the read limit';
+  if (err.killed) return 'timed out';
+  const out = String(stdout || '');
+  const start = out.indexOf('{');
+  if (start >= 0) {
+    try {
+      const j = JSON.parse(out.slice(start));
+      const m = j?.error?.message ?? (typeof j?.error === 'string' ? j.error : null);
+      if (m) return String(m).split('\n')[0];
+    } catch { /* not JSON: fall through */ }
+  }
+  const line = String(stderr || '').trim().split('\n').filter(Boolean).pop();
+  return line || `exited with code ${err.code ?? 'unknown'}`;
+}
+
+function execFileAsync(cmd, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: EXEC_MAX_BUFFER, encoding: 'utf-8' }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(failureReason(err, stdout, stderr)));
+      resolve(stdout);
+    });
+  });
+}
+
+async function gatewayCall(container, method, params) {
+  const out = await execFileAsync('docker', ['exec', container, 'sh', '-c', COSTS_GATEWAY_CLI, 'sh',
+    'gateway', 'call', method, '--json', '--timeout', String(COSTS_CALL_TIMEOUT_MS - 5000), '--params', JSON.stringify(params)],
+  COSTS_CALL_TIMEOUT_MS);
+  const start = out.indexOf('{');
+  if (start < 0) throw new Error(`${method}: no JSON in the answer`);
+  return JSON.parse(out.slice(start));
+}
+
+/** A Docker container name, as `docker ps` prints it; anything else is never exec'd. */
+const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+/**
+ * Each field quoted and escaped by Docker itself (`json`, `printf "%q"`), so a display
+ * name holding a tab or a newline stays one field of one line. Only AGENT_NAME is read
+ * from the environment.
+ */
+const INSPECT_FORMAT = '{{json .Name}}\t{{json (index .Config.Labels "AGENT_ID")}}\t'
+  + '{{range .Config.Env}}{{if eq (index (split . "=") 0) "AGENT_NAME"}}{{printf "%q" .}}{{end}}{{end}}';
+
+function parseQuoted(field) {
+  if (!field) return null;
+  try { return JSON.parse(field); } catch { return null; }
+}
+
+/** Running agent containers with their AGENT_ID and AGENT_NAME. */
+async function listRunningAgents() {
+  const names = (await execFileAsync('docker', ['ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}}'], 10_000))
+    .split('\n').map((s) => s.trim()).filter((n) => CONTAINER_NAME_RE.test(n));
+  if (!names.length) return [];
+  let raw;
+  try {
+    raw = await execFileAsync('docker', ['inspect', '--format', INSPECT_FORMAT, ...names], 10_000);
+  } catch {
+    // One container removed between `ps` and `inspect` fails the batch: ask one by one.
+    const parts = [];
+    for (const n of names) {
+      parts.push(await execFileAsync('docker', ['inspect', '--format', INSPECT_FORMAT, n], 10_000).catch(() => ''));
+    }
+    raw = parts.join('\n');
+  }
+  return raw.split('\n').filter(Boolean).map((line) => {
+    const [name, agentId, env] = line.split('\t');
+    const container = String(parseQuoted(name) ?? '').replace(/^\//, '');
+    const agentName = String(parseQuoted(env) ?? '').replace(/^AGENT_NAME=/, '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+    return { container, agentId: parseQuoted(agentId) || null, name: agentName || null };
+  }).filter((a) => CONTAINER_NAME_RE.test(a.container));
+}
+
+const utcDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * An answer to store: its index is `fresh`, or there is no index to speak of — an agent
+ * with nothing in the range answers without `cacheStatus` at all.
+ */
+function isFresh(answer) {
+  const status = answer?.cacheStatus?.status;
+  return status === undefined || status === 'fresh';
+}
+
+/**
+ * The shape the store step relies on. It deletes the 30-day window before inserting, so
+ * an answer missing its lists (an error object that somehow exited 0) must never reach
+ * it: that would wipe the window and store nothing.
+ */
+function wellFormed(cost, usage) {
+  return cost?.ok !== false && usage?.ok !== false
+    && Array.isArray(cost?.daily) && Array.isArray(usage?.sessions)
+    && usage?.aggregates !== null && typeof usage?.aggregates === 'object';
+}
+
+async function collectAgentCosts(agent) {
+  const endDate = utcDate(Date.now());
+  const startDate = utcDate(Date.now() - (COSTS_WINDOW_DAYS - 1) * 86_400_000);
+  const range = { agentScope: 'all', startDate, endDate };
+  let cost = null;
+  let usage = null;
+  let status = null;
+  for (let attempt = 0; attempt < COSTS_FRESH_ATTEMPTS; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, COSTS_FRESH_WAIT_MS));
+    cost = await gatewayCall(agent.container, 'usage.cost', range);
+    usage = await gatewayCall(agent.container, 'sessions.usage', { ...range, limit: COSTS_SESSIONS_LIMIT });
+    if (isFresh(cost) && isFresh(usage)) break;
+    status = (isFresh(cost) ? usage : cost)?.cacheStatus?.status ?? null;
+    cost = null;
+  }
+  if (!cost) {
+    throw new Error(`OpenClaw's usage index still "${status}" after ${COSTS_FRESH_ATTEMPTS} tries; the previous figures are kept`);
+  }
+  if (!wellFormed(cost, usage)) throw new Error('unexpected answer from OpenClaw; the previous figures are kept');
+
+  const container = agent.container;
+  costs.db.transaction(() => {
+    costs.clearDaily.run(container, startDate);
+    for (const d of Array.isArray(cost.daily) ? cost.daily : []) {
+      if (!num(d.totalTokens) && !num(d.missingCostEntries) && !num(d.totalCost)) continue;
+      costs.insertDaily.run({
+        container, date: String(d.date),
+        input: num(d.input), output: num(d.output), cache_read: num(d.cacheRead), cache_write: num(d.cacheWrite),
+        total_tokens: num(d.totalTokens), cost: num(d.totalCost), input_cost: num(d.inputCost),
+        output_cost: num(d.outputCost), cache_read_cost: num(d.cacheReadCost), cache_write_cost: num(d.cacheWriteCost),
+        missing: num(d.missingCostEntries),
+      });
+    }
+    costs.clearModelDaily.run(container, startDate);
+    for (const m of Array.isArray(usage.aggregates?.modelDaily) ? usage.aggregates.modelDaily : []) {
+      costs.insertModelDaily.run({
+        container, date: String(m.date), provider: String(m.provider ?? 'unknown'), model: String(m.model ?? 'unknown'),
+        tokens: num(m.tokens), cost: num(m.cost), calls: num(m.count),
+      });
+    }
+    for (const s of Array.isArray(usage.sessions) ? usage.sessions : []) {
+      const u = s.usage || {};
+      const id = s.sessionId || u.sessionId || s.key;
+      if (!id) continue;
+      costs.upsertSession.run({
+        container, session_id: String(id), session_key: s.key ?? null, label: s.label ?? null,
+        agent_id: s.agentId ?? null, provider: s.modelProvider ?? null, model: s.model ?? null,
+        tokens: num(u.totalTokens), cost: num(u.totalCost), missing: num(u.missingCostEntries),
+        first_activity: u.firstActivity ?? null, last_activity: u.lastActivity ?? s.updatedAt ?? null,
+      });
+    }
+    costs.upsertSource.run({
+      container, agent_id: agent.agentId, name: agent.name, collected_at: Date.now(), attempted_at: Date.now(),
+      error: null, missing_by_model: JSON.stringify(cost.totals?.missingCostByModel || {}),
+    });
+  })();
+}
+
+// ── Vendor balances ──
+//
+// The check against the bill: what the vendor says it charged, next to what the agents'
+// OpenClaw priced, over the same interval. Right after a pass of collectCosts — at most
+// once an hour — the daemon reads each vendor's own figure and, in the same row, the
+// agents' cumulative priced total for that vendor's models. Between two rows the balance
+// drop (DeepSeek) or the usage growth (OpenRouter) is what the vendor billed, and the
+// agents_cost growth is what the agents priced. Other users of the same key (the
+// assistant, clients outside Rev4a) and top-ups show up as a difference; the API names
+// both. Read-only calls, never billed.
+
+const BALANCE_INTERVAL_MS = 60 * 60 * 1000;
+const BALANCE_RETENTION_MS = 400 * 24 * 3600 * 1000;
+const PROVIDER_KEYS_PATH = path.join(DATA_DIR, 'data', 'provider-keys.json');
+
+const VENDOR_BALANCES = {
+  /** { currency, balance } — DeepSeek's total balance (topped-up plus granted). */
+  deepseek: async (key) => {
+    const r = await vendorFetch('https://api.deepseek.com/user/balance', key);
+    if (!r.ok) throw new Error(`DeepSeek balance API returned ${r.status}`);
+    const j = await r.json();
+    const info = (j.balance_infos || []).find((i) => i.currency === 'USD') || (j.balance_infos || [])[0];
+    if (!info) throw new Error('DeepSeek returned no balance');
+    return { currency: info.currency, balance: Number(info.total_balance), usage: null };
+  },
+  /** OpenRouter's lifetime usage, which only grows: the cleanest measure of spend. */
+  openrouter: async (key) => {
+    const r = await vendorFetch('https://openrouter.ai/api/v1/credits', key);
+    if (!r.ok) throw new Error(`OpenRouter credits API returned ${r.status}`);
+    const d = (await r.json()).data || {};
+    return { currency: 'USD', balance: Number(d.total_credits) - Number(d.total_usage), usage: Number(d.total_usage) };
+  },
+};
+
+/**
+ * A request that failed before any HTTP answer (network, invalid header) keeps only its
+ * kind: Node's message for an invalid header value quotes the header — the key itself,
+ * when a pasted key carries a line break.
+ */
+async function vendorFetch(url, key) {
+  try {
+    return await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+  } catch (e) {
+    throw new Error(e?.name === 'TimeoutError' ? 'request timed out' : 'request failed (network, or a malformed key)');
+  }
+}
+
+async function collectVendorBalances() {
+  let keys = {};
+  try { keys = JSON.parse(fs.readFileSync(PROVIDER_KEYS_PATH, 'utf8')); } catch { return; }
+  const ts = Date.now();
+  for (const [vendor, read] of Object.entries(VENDOR_BALANCES)) {
+    if (!keys[vendor]) continue;
+    // Per vendor: one that failed last time is asked again next pass, not next hour.
+    const last = costs.lastBalanceTs.get(vendor).ts;
+    if (last && Date.now() - last < BALANCE_INTERVAL_MS - 60_000) continue;
+    try {
+      const b = await read(keys[vendor]);
+      if (!Number.isFinite(b.balance)) throw new Error('no numeric balance');
+      costs.insertBalance.run({ ts, vendor, currency: b.currency, balance: b.balance, usage: b.usage,
+        agents_cost: costs.agentsCostFor.get(vendor).cost });
+    } catch (e) {
+      log(`[COSTS] ${vendor} balance: ${e.message}`);
+    }
+  }
+  costs.pruneBalances.run(ts - BALANCE_RETENTION_MS);
+}
+
+let costsRunning = false;
+async function collectCosts() {
+  if (!costs || costsRunning) return;
+  costsRunning = true;
+  try {
+    let agents;
+    try {
+      agents = await listRunningAgents();
+    } catch (e) {
+      log(`[COSTS] Docker unreachable: ${e.message}`);
+      return;
+    }
+    // Wake every agent first: the first call starts its index rebuild, and the rebuilds
+    // then run in parallel (about a minute each) instead of one after the other — after a
+    // price change every agent rebuilds, and in turn a pass would outlast the interval.
+    for (const agent of agents) {
+      await gatewayCall(agent.container, 'usage.cost', { agentScope: 'all', startDate: utcDate(Date.now()), endDate: utcDate(Date.now()) })
+        .catch(() => { /* the read below reports it */ });
+    }
+    // Then one agent at a time: each call is a short-lived CLI in that container.
+    for (const agent of agents) {
+      try {
+        await collectAgentCosts(agent);
+      } catch (e) {
+        costs.upsertSource.run({
+          container: agent.container, agent_id: agent.agentId, name: agent.name, collected_at: null,
+          attempted_at: Date.now(), error: String(e.message).slice(0, 300), missing_by_model: null,
+        });
+      }
+    }
+    // Only after the agents were read, so both sides of the row describe the same moment.
+    await collectVendorBalances().catch((e) => log(`[COSTS] balances: ${e.message}`));
+  } finally {
+    costsRunning = false;
+  }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function log(msg) {
@@ -609,7 +1006,7 @@ function pollSessions() {
     const model = s.model || null;
     const tokens_in = s.inputTokens || 0;
     const tokens_out = s.outputTokens || 0;
-    const cost_usd = estimateCost(model, tokens_in, tokens_out);
+    const cost_usd = 0;
     const started_at = s.updatedAt ? s.updatedAt - (s.ageMs || 0) : now;
     const updated_at = s.updatedAt || now;
 
@@ -660,14 +1057,14 @@ function pollSessions() {
         ts: now,
         session_id,
         type: 'complete',
-        data: JSON.stringify({ cost_usd, tokens: tokens_in + tokens_out }),
+        data: JSON.stringify({ tokens: tokens_in + tokens_out }),
       });
     } else if (prevSnapshot && prevSnapshot.status !== 'error' && status === 'error') {
       pendingEvents.push({
         ts: now,
         session_id,
         type: 'fail',
-        data: JSON.stringify({ cost_usd, tokens: tokens_in + tokens_out, reason: 'openclaw_error_signal' }),
+        data: JSON.stringify({ tokens: tokens_in + tokens_out, reason: 'openclaw_error_signal' }),
       });
     }
 
@@ -821,14 +1218,28 @@ const firstSample = metrics
   : null;
 if (metrics) log(`Machine metrics every ${METRICS_INTERVAL_MS / 1000}s into ${METRICS_DB_PATH}`);
 
+// Agent costs: first pass shortly after start (agents may still be booting), then every
+// interval. Off when costs.db failed.
+function sampleCosts() {
+  collectCosts().catch((e) => log(`[COSTS ERROR] ${e.message}`));
+}
+let costsTimer = null;
+const firstCosts = costs
+  ? setTimeout(() => { sampleCosts(); costsTimer = setInterval(sampleCosts, COSTS_INTERVAL_MS); }, COSTS_FIRST_DELAY_MS)
+  : null;
+if (costs) log(`Agent costs every ${COSTS_INTERVAL_MS / 60000} min into ${COSTS_DB_PATH}`);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
   clearInterval(timer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
+  clearTimeout(firstCosts);
+  clearInterval(costsTimer);
   db.close();
   metrics?.db.close();
+  costs?.db.close();
   process.exit(0);
 });
 
@@ -837,7 +1248,10 @@ process.on('SIGINT', () => {
   clearInterval(timer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
+  clearTimeout(firstCosts);
+  clearInterval(costsTimer);
   db.close();
   metrics?.db.close();
+  costs?.db.close();
   process.exit(0);
 });

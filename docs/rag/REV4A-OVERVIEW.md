@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -80,6 +80,9 @@ Connects agents to AI providers. Add and remove provider API keys, enable or dis
 Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container.
 
 The page shows no CPU or memory figures and has no start, stop, or restart buttons: it is read-only apart from the terminal link. Container lifecycle is managed from the Agents page.
+
+### Costs (`/costs`)
+What each agent spent, as its own OpenClaw priced it with the prices Rev4a syncs. Pick today, 7 days or 30 days (UTC days): the total, where the money went (input, output, cache), the tokens and how much input came from cache, a chart of the spend per day, the spend by agent and by model, and the most expensive sessions. Calls that could not be priced are listed by model, and agents whose figures are not current are flagged. When a DeepSeek model is on offer, the header shows whether DeepSeek is billing peak or off-peak (half price) and until when. Figures are read from the agents every 5 minutes. *Against the bill* compares them with what DeepSeek and OpenRouter actually charged (their balance or usage, read every hour); a small gap is normal, since the same key may pay for the assistant too. Each agent's own spend is also in its panel on the Agents page (COSTS).
 
 ### System (`/system`)
 The machine Rev4a runs on. Three cards — CPU (percent, cores, load average), memory (used, available, swap) and storage (each disk with its used and free space, and whether it is the system disk, where Docker keeps agents, or where Rev4a keeps its data) — then charts of CPU, memory and each disk over 1 hour, 24 hours, 7 days or 30 days (for CPU and memory the average line with the peak shaded). Hover a chart (or focus it and use the arrow keys) to read a point; each chart has a Table view. Bars turn yellow and red when they reach their thresholds. Figures refresh every 30 seconds; history is kept 30 days.

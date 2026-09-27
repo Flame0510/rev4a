@@ -7,12 +7,14 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    let startupSynced = false;
     try {
       const { syncAllAgents } = await import('./app/api/gateway/sync');
       // The outcome used to be discarded. syncAllAgents reports failures instead of
       // throwing, so the catch below never saw a sync that reached no container —
       // Docker not yet up at boot left the fleet stale with nothing in the log.
       const outcome = syncAllAgents();
+      startupSynced = outcome.ok;
       if (outcome.ok) {
         console.log(`[rev4a] Startup sync: ${outcome.summary}`);
       } else {
@@ -21,6 +23,15 @@ export async function register() {
     } catch {
       // Best-effort — don't block startup if sync fails
       console.warn('[rev4a] Failed to sync agents on startup');
+    }
+    // Prices that change with the time of day (DeepSeek off-peak): write the new rates
+    // into every agent at each change, so OpenClaw prices each call at the rate it ran at.
+    // A startup sync that missed an agent is written again by the first check.
+    try {
+      const { startPriceScheduleSync } = await import('./lib/price-schedule-sync');
+      startPriceScheduleSync(startupSynced);
+    } catch {
+      console.warn('[rev4a] Could not start the price schedule re-sync');
     }
     // Updates cut off by the restart: no job runs in a fresh process, so any update
     // still marked active becomes `interrupted` and waits for the operator.

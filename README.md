@@ -18,9 +18,9 @@
 - **Live event stream** — Real-time session lineage, agent spawning, cost reporting
 - **Workspace browser** — Browse and edit agent files live from the dashboard
 - **Provider proxy** — OpenAI-compatible chat completions proxy that routes through a shared key vault
-- **System health** — runtime sessions, daemon heartbeat and errors, cron jobs and usage cost, with recommendations
+- **System health** — runtime sessions, daemon heartbeat and errors, cron jobs and what the agents spent today, with recommendations
 - **System** — the host machine's CPU, memory, swap and storage, now and over 1h / 24h / 7d / 30d (sampled every 30 s, kept 30 days)
-- **Cost tracking** — Per-session, per-model, per-time-range usage and cost reporting
+- **Costs** — what each agent spent, priced by its own OpenClaw with the prices Rev4a syncs (cache rates included, DeepSeek off-peak applied): by day, agent, model and session, with the calls that could not be priced
 - **PWA-ready** — Install on phone for mobile monitoring
 
 ---

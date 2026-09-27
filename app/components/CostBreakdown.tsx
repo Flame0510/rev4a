@@ -12,7 +12,7 @@ interface CostBreakdownProps {
 export default function CostBreakdown({ byModel, loading = false }: CostBreakdownProps) {
   return (
     <article className="panel cost-panel">
-      <h2>Costs by Model (Today)</h2>
+      <h2>Spent by Model (Today, UTC)</h2>
       <div>
         {loading ? (
           <div style={{ padding: 12 }}>

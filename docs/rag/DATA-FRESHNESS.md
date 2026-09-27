@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -11,7 +11,7 @@ Understanding how current the data in Rev4a is — and what is truly real-time v
 **Update frequency:** every 30 seconds
 
 The daemon polls `openclaw sessions --json --all-agents` on a fixed 30-second
-timer. Session statuses, token counts, and costs are therefore up to 30 seconds
+timer. Session statuses and token counts are therefore up to 30 seconds
 behind reality.
 
 The interval is fixed: it does not speed up while a session is `working`. Do not tell
@@ -56,12 +56,24 @@ the collector is not running instead of showing stale numbers as current.
 
 ---
 
-## Cost totals
+## Agent costs (Costs page)
 
-**Update frequency:** every 30 seconds (recalculated from sessions on each API call)
+**Update frequency:** every 5 minutes. The Rev4a daemon asks each running agent
+what it spent and keeps the figures in their own database (`costs.db`); the page
+refreshes every minute. An agent whose figures could not be read recently is listed
+under **Not current** with the reason.
 
-The cost figures shown in the dashboard are always computed fresh from the
-database on each page load or SSE push. They are not cached.
+The costs are computed by each agent's own OpenClaw, with the prices Rev4a writes
+into the agent for every model. A call to a model without a price is counted but not
+priced: the page lists those under **Calls without a price**. Days are UTC. DeepSeek
+bills half price off-peak; Rev4a switches the agents' prices at each change, so each
+call is priced at the rate it ran at.
+
+## Cost totals (dashboard)
+
+The dashboard's "Spent today" card and "Spent by model" list show the same figures as the
+Costs page, for today (UTC day): up to 5 minutes behind the agents. The vendor readings
+behind *Against the bill* on the Costs page are taken once an hour.
 
 **Cost override:** `/api/cost-override` exists, but no page in the dashboard
 reads or writes it. There is no UI for setting one, so do not direct a user to
@@ -143,7 +155,7 @@ The tracked set is `USER.md`, `MEMORY.md`, `AGENTS.md`, `SOUL.md`, `HEARTBEAT.md
 
 System health is a card on the **Dashboard**, not a page of its own. Its checks
 cover session runtime, the daemon heartbeat, errors in the last 24 hours, today's
-usage-based cost, and cron jobs. CPU, RAM and disk are on the System page (`/system`)
+what the agents spent today, and cron jobs. CPU, RAM and disk are on the System page (`/system`)
 and the Dashboard's Machine card instead.
 
 To check directly on the server:

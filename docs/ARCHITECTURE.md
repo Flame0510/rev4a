@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -136,7 +136,8 @@ The central container, running the Next.js dashboard + orchestration API.
   hand (identity, `enabled`, `deprecated`, and an optional `info` block for what no API
   publishes: the vendor's size claim, benchmarks, the docs link, notes).
   `model-pricing.json` and `model-details.json` are **generated** by
-  `npm run refresh:pricing` (`scripts/refresh-model-pricing.mjs`): prices from OpenRouter,
+  `npm run refresh:pricing` (`scripts/refresh-model-pricing.mjs`): prices from OpenRouter
+  (cache rates included; direct vendors' prices by hand from their pricing pages),
   and per model the description, architecture and benchmarks from OpenRouter plus the size,
   weight mix, licence and dates from the Hugging Face card. Two scripts back the curation
   of `info`: `npm run info:suggest` (`scripts/model-info-suggest.mjs`) prints the candidate
@@ -578,7 +579,9 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 4. Sample the host machine (CPU, RAM, swap, storage) every 30 s into `metrics.db`, on a
    timer of its own
 5. Detect anomalies (CPU > 85%, RAM > 90%, a disk > 90%) and record them as events
-6. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
+6. Read what each running agent spent, as its own OpenClaw priced it, every 5 min into
+   `costs.db`, and each vendor's balance or usage every hour (see [Agent Costs](#agent-costs))
+7. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
 
 ### Poll Interval
 
@@ -586,33 +589,12 @@ A fixed 30 s timer, whether or not sessions are working. When the OpenClaw CLI i
 the host, the session poll logs it once and stays idle; the machine metrics keep being
 sampled, since they have their own timer.
 
-### Cost Estimation
+### Session costs
 
-Costs are estimated from token counts using per-model pricing:
-
-| Model key | Match strategy | In (per 1M) | Out (per 1M) |
-|---|---|---|---|
-| `claude-sonnet-4` | substring | $3.00 | $15.00 |
-| `claude-opus-4` | substring | $15.00 | $75.00 |
-| `gpt-5-mini` | substring | $0.15 | $0.60 |
-| `codex` | substring | $3.00 | $15.00 |
-| `gemini` | substring | $0.075 | $0.30 |
-| `flash` | substring | $0.075 | $0.30 |
-| `deepseek` | substring | $0.55 | $2.19 |
-| `default` | fallback | $3.00 | $15.00 |
-
-**Aliases** (resolved before substring match):
-
-| Alias | Resolves to |
-|---|---|
-| `cheap` | `flash` |
-| `fast` | `claude-sonnet-4` |
-| `big` | `claude-opus-4` |
-| `coder` | `codex` |
-| `pro` | `gemini` |
-| `reason` | `deepseek` |
-
-Formula: `cost = (tokens_in / 1_000_000 * price_in) + (tokens_out / 1_000_000 * price_out)`
+The session poll writes no cost: `sessions.cost_usd` stays 0. It used to be estimated from a
+fixed 2025 rate table (`$3 / $15` per 1M for anything unknown), which the dashboard showed as
+spend. What the agents actually spend is priced by each agent's own OpenClaw and read by the
+Agent Costs timer — see [Agent Costs](#agent-costs).
 
 ### Upsert Logic
 
@@ -646,6 +628,34 @@ taken at load), then one every 30 s. Samples older than 30 days are pruned at ev
 `[METRICS] disabled` in the log — and the session poll keeps running. The API side reads
 it through `lib/metrics-db.ts` (read-only, `null` when there is nothing to read);
 `GET /api/metrics` serves the System page (`/system`) and the dashboard's Machine card.
+
+### Agent Costs
+
+Rev4a computes no cost. Every model in the `rev4a` provider block synced into the agents
+carries its price (`cost`, from `model-pricing.json` through `priceAt()`), so each agent's
+OpenClaw prices every call itself — per call, session and day, cache split out. A vendor
+priced by time of day (DeepSeek off-peak) is re-synced at each change of band by
+`lib/price-schedule-sync.ts`, started from `instrumentation.ts`; OpenClaw keeps the cost
+recorded at call time. Details in `docs/dev/GATEWAY.md` (Costs).
+
+Every 5 min (first pass 20 s after start) the daemon first wakes every running agent with one
+short call — OpenClaw rebuilds its transcript index in about a minute after a restart or a
+price change, and woken together the agents rebuild in parallel — then asks each, one at a
+time, for its figures over the last 30 UTC days — `usage.cost` and
+`sessions.usage` through `docker exec … openclaw gateway call` on the agent's port 3000,
+the token resolved inside the container — and rewrites that window in `costs.db` (schema
+in `docs/dev/DATABASE.md`). An answer from an index OpenClaw is still rebuilding is never
+stored. The readers — `GET /api/costs/usage` (the Costs page, `/costs`), `GET /api/costs` and
+the SSE stream (the dashboard), the system-health cost check, and `GET /api/costs/agent` (the
+agent panel) — share one read-only handle (`lib/costs-db.ts`) and one set of spend queries
+(`lib/agent-costs.ts`); the vendor readings are read by `lib/cost-reconciliation.ts`.
+
+After a pass, at most once an hour, the daemon also reads each vendor's own figure —
+DeepSeek's balance, OpenRouter's lifetime usage (read-only calls, never billed) — and stores
+it next to the agents' cumulative priced total for that vendor's models, in the same row
+(`vendor_balance`). Between two rows, what the vendor billed and what the agents priced
+cover the same interval: the Costs page's *Against the bill* (`lib/cost-reconciliation.ts`).
+`costs.db` is opened in a try: if it cannot be, collection is off (`[COSTS] disabled`).
 
 ### Anomaly Detection
 

@@ -201,7 +201,7 @@ export default function SystemCockpit({
             <Link href="/system" className="ui-link">Open System →</Link>
           </div>
         </Surface>
-        <Metric title="Usage cost" value={String(costCheck?.value ?? fmtMoney(0))} subtitle={costCheck?.details ?? `DB estimate ${fmtMoney(costs.today)}`} tone="accent" loading={systemLoading} />
+        <Metric title="Spent today" value={String(costCheck?.value ?? fmtMoney(costs.today))} subtitle={costCheck?.details ?? 'Priced by the agents\' OpenClaw, UTC day'} tone="accent" loading={systemLoading} />
       </div>
 
       <div className="cockpit__main">

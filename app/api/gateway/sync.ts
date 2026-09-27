@@ -24,6 +24,7 @@ import { activeUpdateAgentIds } from '@/lib/agent-update-state';
 import { activeRecreateAgentIds } from '@/lib/agent-recreate-state';
 import { activeRestoreAgentIds } from '@/lib/agent-restore-state';
 import { activeEditAgentIds } from '@/lib/agent-edit-state';
+import { priceAt, type ModelCost } from '@/lib/model-pricing';
 
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
@@ -83,11 +84,24 @@ function containerVersionSync(name: string): string | null {
   return null;
 }
 
-function getActiveRev4aModels(version?: string | null): { id: string; name: string; input?: string[] }[] {
+/** One model of the `rev4a` block, as OpenClaw's `models.providers.*.models[]` takes it. */
+export interface Rev4aModelEntry { id: string; name: string; input?: string[]; cost?: ModelCost }
+
+/**
+ * `cost` is what makes OpenClaw price every call itself (per call, session and day, the
+ * cache split out): the rates in force now, from model-pricing.json. A model without a
+ * price gets none, and OpenClaw counts its calls as "missing cost" instead of $0. A
+ * vendor priced by time of day is re-synced at each change of rate
+ * (lib/price-schedule-sync.ts); OpenClaw keeps the cost it recorded at call time.
+ */
+function getActiveRev4aModels(version?: string | null): Rev4aModelEntry[] {
+  const now = new Date();
   return loadOfferedModels()
     .map((m) => {
-      const entry: { id: string; name: string; input?: string[] } = { id: m.id, name: m.name };
+      const entry: Rev4aModelEntry = { id: m.id, name: m.name };
       if (m.modality) entry.input = modalityToInput(m.modality, version);
+      const cost = priceAt(m.id, now);
+      if (cost) entry.cost = cost;
       return entry;
     });
 }
@@ -244,7 +258,7 @@ function writeContainerJson(container: AgentContainer, remotePath: string, data:
  * Shared between the create route and syncAllAgents — single source of truth
  * for the provider block injected into every agent container.
  */
-export function buildRev4aProviderConfig(version?: string | null): { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string; input?: string[] }[] } {
+export function buildRev4aProviderConfig(version?: string | null): { baseUrl: string; apiKey: string; api: string; models: Rev4aModelEntry[] } {
   const providerKeys = readProviderKeys();
   const rev4aApiKey = providerKeys['rev4a'] || '';
   const activeModels = getActiveRev4aModels(version);
@@ -404,7 +418,7 @@ export function syncAllAgents(): SyncOutcome {
  */
 function syncContainer(
   container: AgentContainer,
-  rev4aProviderConfig: { baseUrl: string; apiKey: string; api: string; models: { id: string; name: string }[] },
+  rev4aProviderConfig: { baseUrl: string; apiKey: string; api: string; models: Rev4aModelEntry[] },
 ): string {
   const remotePath = '/root/.openclaw/openclaw.json';
   // Read first. If this throws, the container is reported as failed and nothing

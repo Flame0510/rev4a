@@ -9,9 +9,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const db = openDb();
     const now = new Date();
-    const startOfMonth = Math.floor(
-      new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000,
-    );
+    // sessions.started_at is in milliseconds (daemon.js).
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const total = db
       .prepare(
         `SELECT COALESCE(SUM(cost_usd),0) as total, COALESCE(SUM(tokens_in),0) as total_in,

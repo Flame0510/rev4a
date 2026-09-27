@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-27
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -20,7 +20,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How does the custom agent bootstrap work?"
 - "Where is the lineage graph?"
 - "How do I open the file explorer?"
-- "Which page shows costs?"
+- "Which page shows costs?" — The Costs page (`/costs`): what each agent spent, by day, agent, model and session.
 - "Where do I manage credentials (GitHub, Trello, etc.)?"
 - "How do I connect an agent to Telegram?"
 - "How do I approve a Telegram pairing?"
@@ -93,7 +93,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 ## Troubleshooting Questions
 
 - "Why is my agent not showing up?"
-- "Why are costs missing for some sessions?"
+- "Why are costs missing for some sessions?" — On the Costs page, calls to a model without a price are listed under "Calls without a price": the model left the catalogue or has no price yet.
 - "Why can't I connect to the container terminal?"
 - "Why is the gateway sync not working?"
 - "How do I check if the daemon is running?"

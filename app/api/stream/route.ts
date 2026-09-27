@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server';
 import { DB_PATH } from '@/lib/db';
 import Database from 'better-sqlite3';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { dashboardCosts } from '@/lib/agent-costs';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,12 +33,9 @@ export async function GET(request: NextRequest): Promise<Response> {
                       LEFT JOIN lineage l ON s.session_id = l.child_id
                       ORDER BY s.started_at DESC LIMIT 100`)
             .all();
-          const costs = db
-            .prepare('SELECT SUM(cost_usd) AS today FROM sessions WHERE started_at >= ?')
-            .get(Math.floor(new Date().setHours(0, 0, 0, 0) / 1000)) as
-            | { today: number | null }
-            | undefined;
           db.close();
+          // What the agents' OpenClaw priced today (UTC day), like GET /api/costs.
+          const costs = dashboardCosts();
 
           if (newEvents.length > 0) {
             lastEventId = newEvents[newEvents.length - 1].id;

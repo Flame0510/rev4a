@@ -684,6 +684,12 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   .system-cards, .system-charts { grid-template-columns: minmax(0, 1fr); }
 }
 
+.costs-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.costs-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 991px) {
+  .costs-cards, .costs-lists { grid-template-columns: minmax(0, 1fr); }
+}
+
 .cockpit { overflow: auto; height: 100%; padding: 20px; }
 .cockpit__metrics { display: grid; grid-template-columns: minmax(260px, 1.2fr) repeat(3, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .cockpit__machine-item { white-space: nowrap; color: var(--text); }

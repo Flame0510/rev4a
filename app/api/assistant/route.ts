@@ -19,7 +19,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/': {
     title: 'Dashboard',
     description: 'Main overview with live session list, cost summary by model, health cards for Rev4a\'s own runtime, cron and lineage, and a real-time event feed. The Machine card shows the server\'s CPU, RAM and fullest disk right now, coloured past a threshold, with a link to the System page.',
-    actions: ['Click any session row to open the Session Drawer for full details and tool call history', 'View cost breakdown by model and time period', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
+    actions: ['Click any session row to open the Session Drawer for full details and tool call history', 'See what the agents spent today, by model (the Costs page has 7 and 30 days)', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
     hints: 'The Session Drawer shows you the complete tool call history for any session — just click a row.',
   },
   '/agents': {
@@ -45,6 +45,12 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     description: 'Scheduled cron jobs that run agents on a recurring schedule. Shows schedule expression (cron syntax), last run time, next run time, and status for each job.',
     actions: ['See all scheduled cron jobs at a glance', 'Check when each cron last ran and when it will run next', 'View job status (scheduled, running, completed, error)'],
     hints: 'Cron jobs use standard cron syntax. If a job shows "error" status, it means the last execution failed.',
+  },
+  '/costs': {
+    title: 'Costs',
+    description: 'What each agent spent, as its own OpenClaw priced it with the prices Rev4a writes into every agent (input, output and cached input, DeepSeek at half price off-peak). Today, 7 days or 30 days in UTC days: the total, the split by input, output and cache, tokens and the share of input served from cache, the spend per day, by agent, by model, and the most expensive sessions. Read from the agents by the Rev4a daemon every 5 minutes.',
+    actions: ['Switch between Today, 7 days and 30 days', 'See which agent and which model cost the most', 'Find the most expensive sessions', 'Check which calls could not be priced, by model', 'See whether DeepSeek is billing peak or off-peak right now'],
+    hints: '"Against the bill" compares the agents\' figures with what DeepSeek and OpenRouter actually charged (balance or usage, read hourly); a small gap is normal because the same key also pays for this assistant. One agent\'s spend is also in its panel on the Agents page (COSTS). A model listed under "Calls without a price" has no price in Rev4a (it left the catalogue or has none yet): its calls are counted but not in the totals. "Not current" means the daemon could not read that agent recently; the reason is shown next to it.',
   },
   '/system': {
     title: 'System',
@@ -123,6 +129,7 @@ Navigation links inside Rev4a:
 - Gateway → /gateway
 - Cron Jobs → /crons
 - Containers → /containers
+- Costs (what each agent spent) → /costs
 - System (CPU, RAM, disk of the server) → /system
 - Config → /config
 - Lineage → /lineage?period=7d

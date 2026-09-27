@@ -52,10 +52,12 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `bin/**` (CLI, `rev4a serve` start-up) | `docs/REV4A.md` — Service Management; `README.md` — env vars |
 | `server.js`, `terminal-ws-server.js`, `app/containers/terminal/**` | `docs/CONTAINER-TERMINAL.md`; `docs/dev/API-REFERENCE.md` — `GET /api/terminal-ws` |
 | `instrumentation.ts` | `docs/dev/GATEWAY.md` — Sync Flow |
+| `lib/model-pricing.ts` (prices, `PRICE_SCHEDULES`), `lib/price-schedule-sync.ts` | `docs/dev/GATEWAY.md` — Costs: OpenClaw prices every call |
+| `daemon.js` cost collector, `lib/agent-costs.ts`, `lib/cost-reconciliation.ts`, `app/api/costs/**`, `app/costs/**`, `app/agents/CostSection.tsx` | `docs/ARCHITECTURE.md` — Agent Costs; `docs/dev/DATABASE.md` — Costs Database; `docs/dev/API-REFERENCE.md` — Stats & Costs; `docs/FRONTEND-ARCHITECTURE.md` — Costs page |
 | `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |
-| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. Prices and the generated model details come from `npm run refresh:pricing` (`model-pricing.json`, `model-details.json` — never hand-edited); the catalogue's `info` blocks (what no API publishes) are curated with `npm run info:suggest` and gated by `npm run info:verify` (`docs/dev/GATEWAY.md` — Curating an info block) |
+| Model catalogue change (new/removed models) | `models.config.json` — add/remove/rename models; `docs/dev/GATEWAY.md` — Model Catalogue section. The generated model details and the OpenRouter prices come from `npm run refresh:pricing` (`model-details.json` is never hand-edited); direct vendors' prices in `model-pricing.json`, cache rates included, are kept by hand from each vendor's pricing page (`docs/dev/GATEWAY.md` — Where the truth lives); the catalogue's `info` blocks (what no API publishes) are curated with `npm run info:suggest` and gated by `npm run info:verify` (`docs/dev/GATEWAY.md` — Curating an info block) |
 | New feature (any) | `docs/rag/REV4A-OVERVIEW.md` and `docs/rag/WHAT-I-CAN-ANSWER.md` if PULSE should know about it |
 | Auth / middleware | `docs/ARCHITECTURE.md` — security/auth section |
 | `.github/workflows/ci.yml` | This file — Continuous integration section |

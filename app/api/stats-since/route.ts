@@ -11,7 +11,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const db = openDb();
     const row = db
       .prepare('SELECT COALESCE(SUM(cost_usd),0) as total FROM sessions WHERE started_at >= ?')
-      .get(Math.floor(ts / 1000)) as { total: number } | undefined;
+      .get(ts) as { total: number } | undefined; // both in milliseconds
     db.close();
     return NextResponse.json({ total: row?.total ?? 0 });
   } catch (e: unknown) {
