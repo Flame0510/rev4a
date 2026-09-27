@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-09-28
 
 ---
 
@@ -105,6 +105,18 @@ Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FR
 7. **No one-off card styles.** If a new page needs a visual pattern, extract a component instead of duplicating markup.
 8. **Every async action button MUST show loading state.** Use the `Button` component's `loading` prop. Disable the button and all sibling action buttons during the operation. Every approve, revoke, delete, connect, restart, or similar action must have its own dedicated loading state (never share a generic `loading` boolean across unrelated buttons — a single state holding a *key* that identifies the running action satisfies this and is the pattern to use; see rules 6a-6c in `docs/FRONTEND-ARCHITECTURE.md`). The button text should change to reflect the action: "Approving…", "Revoking…", "Restarting…", etc.
 9. **Prevent race conditions on repeated fetch calls.** When a fetch can be triggered while a previous call is still in flight (polling intervals, tab switches, user double-click, modal open/close), use `AbortController` via a `useRef` to cancel the stale request before starting a new one. Pattern: `abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller; fetch(url, { signal: controller.signal })`. Check `e?.name !== 'AbortError'` in catch to silence abort noise. This applies especially to: polling logic, data re-fetches after mutations, and any fetch triggered by user interaction that could fire multiple times before resolution.
+
+### 2.2c No Backward Compatibility (for now)
+
+Nobody runs Rev4a in production yet, and the maintainer upgrades every agent to the new
+OpenClaw version before going live. So do **not** spend code, UI or warnings on older agent
+versions: no version checks, fallbacks, compat branches, migration banners or warnings that
+only serve agents not yet upgraded. Design for the structure going forward; an older agent
+only has to keep opening its Control UI from Rev4a.
+
+Before adding a version check or a warning, ask whether it only serves pre-upgrade agents —
+if so, leave it out, or keep it to a minimal guard. Revisit this rule when Rev4a is used by
+others (open source): then an update can meet agents on older versions.
 
 ### 2.3 Documentation-First Workflow
 
