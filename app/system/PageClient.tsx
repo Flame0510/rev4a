@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiFetch';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
+import { formatMb } from '@/lib/utils/format';
 import { Meter, meterLevel, Page, PageHeader, Pill, Surface, Tabs, TimeSeriesChart } from '../components/ui';
+import { AgentsSection } from './AgentsSection';
+import { RecentAlerts } from './RecentAlerts';
 import { SystemCardsSkeleton, SystemChartsSkeleton, SystemDescription } from './SystemSkeleton';
 
 type Range = '1h' | '24h' | '7d' | '30d';
@@ -51,13 +54,6 @@ interface MetricsPayload {
 }
 
 const ROLE_LABEL: Record<string, string> = { root: 'system', docker: 'Docker data', data: 'Rev4a data' };
-
-function formatMb(mb: number | null | undefined): string {
-  if (mb === null || mb === undefined) return '—';
-  if (mb >= 1024 * 1024) return `${(mb / 1024 / 1024).toFixed(2)} TB`;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${mb} MB`;
-}
 
 function formatUptime(s: number): string {
   const d = Math.floor(s / 86_400);
@@ -258,6 +254,10 @@ export default function SystemPageClient() {
         ))}
       </div>
       )}
+
+      <AgentsSection range={range} span={span} formatTime={formatTime} />
+
+      <RecentAlerts timeZone={timeZone} />
     </Page>
   );
 }

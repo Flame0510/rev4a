@@ -4,6 +4,32 @@ export function formatUsd(value: number | null | undefined): string {
   return `$${Number(value ?? 0).toFixed(2)}`;
 }
 
+/** Megabytes as MB, GB or TB with the precision a reader wants: '692 MB', '1.6 GB'. */
+export function formatMb(mb: number | null | undefined): string {
+  if (mb === null || mb === undefined || !Number.isFinite(mb)) return '—';
+  if (mb >= 1024 * 1024) return `${(mb / 1024 / 1024).toFixed(2)} TB`;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${Math.round(mb)} MB`;
+}
+
+/** A CPU share in percent, with the decimals a small figure needs (an idle agent is 0.02 % of Docker's cores). */
+export function formatSharePercent(percent: number | null | undefined): string {
+  if (percent === null || percent === undefined || !Number.isFinite(percent)) return '—';
+  if (percent === 0) return '0%';
+  if (percent < 0.01) return '<0.01%';
+  if (percent < 1) return `${percent.toFixed(2)}%`;
+  if (percent < 10) return `${percent.toFixed(1)}%`;
+  return `${Math.round(percent)}%`;
+}
+
+/** Bytes per second as B/s, KB/s or MB/s. */
+export function formatRate(bytesPerSecond: number | null | undefined): string {
+  if (bytesPerSecond === null || bytesPerSecond === undefined || !Number.isFinite(bytesPerSecond)) return '—';
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  if (bytesPerSecond >= 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(bytesPerSecond)} B/s`;
+}
+
 /**
  * Dollars with the precision a small figure needs: an agent's day can be a fraction of a
  * cent, which formatUsd would show as $0.00. Used wherever agent costs are shown.
@@ -11,9 +37,9 @@ export function formatUsd(value: number | null | undefined): string {
 export function formatCost(value: number | null | undefined): string {
   const v = Number(value ?? 0);
   if (!v) return '$0.00';
-  if (v < 0.01) return `${v.toFixed(4)}`;
-  if (v < 1) return `${v.toFixed(3)}`;
-  return `${v.toFixed(2)}`;
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
 }
 
 export function formatUsdOrDash(value: number | null | undefined): string {

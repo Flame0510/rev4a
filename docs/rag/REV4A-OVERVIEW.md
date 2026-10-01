@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -77,15 +77,19 @@ Interactive graph showing session family trees — which agent spawned which chi
 Connects agents to AI providers. Add and remove provider API keys, enable or disable individual models in the catalogue read from `models.config.json`, and push the resulting model list to every agent container. It does not assign models to agents: choosing which model an agent runs is done per agent, in the Model section of the agent's detail panel on the Agents page. Every model row has a **Details** button: the modal shows the model's description, price and provider, its architecture and parameter count when the weights are public, reasoning modes, capabilities, benchmarks with sources, licence and how much disk the weights take — the numbers come from the model card on Hugging Face and from curated entries that cite a source, never from estimates.
 
 ### Containers (`/containers`)
-Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container.
+Full list of all Docker containers on the server, including stopped ones. Each row shows name, status, image, IP, ports, and an agent pill where applicable. Click "Terminal" to open an interactive shell into that container. A running container also shows what it consumes now — CPU share, memory and processes — with a "Charts" link to its history on the System page.
 
-The page shows no CPU or memory figures and has no start, stop, or restart buttons: it is read-only apart from the terminal link. Container lifecycle is managed from the Agents page.
+The page has no start, stop, or restart buttons: it is read-only apart from the terminal link. Container lifecycle is managed from the Agents page.
 
 ### Costs (`/costs`)
 What each agent spent, as its own OpenClaw priced it with the prices Rev4a syncs. Pick today, 7 days or 30 days (UTC days): the total, where the money went (input, output, cache), the tokens and how much input came from cache, a chart of the spend per day, the spend by agent and by model, and the most expensive sessions. Calls that could not be priced are listed by model, and agents whose figures are not current are flagged. When a DeepSeek model is on offer, the header shows whether DeepSeek is billing peak or off-peak (half price) and until when. Figures are read from the agents every 5 minutes. *Against the bill* compares them with what DeepSeek and OpenRouter actually charged (their balance or usage, read every hour); a small gap is normal, since the same key may pay for the assistant too. Each agent's own spend is also in its panel on the Agents page (COSTS).
 
 ### System (`/system`)
 The machine Rev4a runs on. Three cards — CPU (percent, cores, load average), memory (used, available, swap) and storage (each disk with its used and free space, and whether it is the system disk, where Docker keeps agents, or where Rev4a keeps its data) — then charts of CPU, memory and each disk over 1 hour, 24 hours, 7 days or 30 days (for CPU and memory the average line with the peak shaded). Hover a chart (or focus it and use the arrow keys) to read a point; each chart has a Table view. Bars turn yellow and red when they reach their thresholds. Figures refresh every 30 seconds; history is kept 30 days.
+
+### Agents and containers (on the System page)
+Under the machine's charts: what Docker holds on disk (images, volumes, writable layers, build cache, and how much of each no container uses), then one row per container sorted by CPU. A closed row shows its name, whether it is an agent, and its CPU share, memory, storage and processes now, with the average and peak over the chosen range (1 hour to 30 days); open it for the same three charts as the machine — CPU, Memory, Storage — for that container. "Everything else" is what is not a container (the host, Rev4a, other software). Each agent's panel on the Agents page has the same numbers in its RESOURCES section, with a link to its charts. Below, the machine's recent alerts: CPU, memory or a disk that crossed its limit, and when.
+When Docker still sees a container but it has no current statistics, its row says "no data". If collection stops, the current figures are hidden and old rows say "not current" instead of implying a live reading.
 
 ### Container Terminal (`/containers/terminal/[id]`)
 Live web terminal into a running Docker container — like SSH in the browser: Tab completion, command history, `top`, `vi`, resizing with the window. If the connection drops (network, laptop sleep) the shell keeps running for 2 minutes and reconnecting picks it up; reloading the page resumes it too. **Close** ends the shell. If the container is stopped or missing, the page says so and offers **Reconnect**. Only a logged-in user can open it.

@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -55,6 +55,21 @@ Dashboard's Machine card. If the newest sample is older than 90 seconds the page
 the collector is not running instead of showing stale numbers as current.
 
 ---
+
+## Container consumption (System page, Containers page, agent panel)
+
+**Update frequency:** every 60 seconds for CPU, memory, processes, network and block I/O of
+each running container; every 10 minutes for the disk Docker holds (volumes, writable layers,
+images, build cache). Both are sampled by the Rev4a daemon on timers of their own and kept 30
+days in `metrics.db`. The first figures after the daemon starts take about 20 seconds (a CPU
+figure needs two readings). A stopped container leaves a gap in its charts, not zeros.
+
+CPU is a share of Docker's cores and memory a share of Docker's memory: on Docker Desktop that
+is its virtual machine (for example 8 GB of a 16 GB Mac), on a server it is the machine. If the
+newest sample is older than three minutes the System page says it is not collecting — the
+figures still on show are the last known ones, not live. The agent panel stands its "now" rows
+down, and the Containers page clears its usage row rather than leave stale figures. A container
+still seen in Docker's list but without fresh statistics says "no data", not "stopped".
 
 ## Agent costs (Costs page)
 

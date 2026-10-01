@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-28
+> **Last updated:** 2026-10-01
 
 ---
 
@@ -96,7 +96,7 @@ access to them.
 
 Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FRONTEND-ARCHITECTURE.md` before writing any UI code.**
 
-1. **Use shared primitives.** All UI lives in `app/components/ui/`. `Button`, `Input`, `Select`, `Modal`, `Toast`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `Pill`, `Metric`, `StatusCard`, `Meter`, `TimeSeriesChart`, `Surface`, `Page`. Never replicate them.
+1. **Use shared primitives.** All UI lives in `app/components/ui/`. `Button`, `Input`, `Select`, `Modal`, `Toast`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `Pill`, `Metric`, `StatusCard`, `Meter`, `TimeSeriesChart`, `Accordion`, `Surface`, `Page`. Never replicate them.
 2. **No inline styles on interactive elements.** Buttons, inputs, selects use the shared component. Only layout wrappers use inline style.
 3. **Square visual language.** `border-radius: 0`, no shadows, flat design. The violet accent (`--color-accent-500`) only.
 4. **Interactive elements must be `<button type="button">`.** Not `<span onClick>`, not `<div onClick>`.

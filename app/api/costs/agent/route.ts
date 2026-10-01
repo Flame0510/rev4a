@@ -1,11 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openCostsDb } from '@/lib/costs-db';
 import { COLLECT_INTERVAL_S, lastDays, readCostSummary } from '@/lib/agent-costs';
+import { CONTAINER_NAME_RE } from '@/lib/docker-stats';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
-
-const CONTAINER_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 /**
  * GET /api/costs/agent?container=<name> — one agent's spend for its panel: today, the
@@ -17,7 +16,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (denied) return denied as NextResponse;
 
   const container = request.nextUrl.searchParams.get('container') ?? '';
-  if (!CONTAINER_RE.test(container)) return NextResponse.json({ error: 'Invalid container name' }, { status: 400 });
+  if (!CONTAINER_NAME_RE.test(container)) return NextResponse.json({ error: 'Invalid container name' }, { status: 400 });
 
   let db;
   try {

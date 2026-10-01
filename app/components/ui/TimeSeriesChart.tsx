@@ -20,7 +20,12 @@ interface TimeSeriesChartProps {
   to: number;
   /** Seconds per point; two points further apart than 1.5 buckets are not joined. */
   bucket: number;
-  yMax?: number;
+  /**
+   * The top of the y axis. A number fixes it (100 for a percentage); `'auto'` takes a rounded
+   * ceiling just above the highest value or peak plotted — for a series that is a small
+   * fraction of its natural scale, like one agent's share of the machine.
+   */
+  yMax?: number | 'auto';
   unit?: string;
   /** Formats a value (grid labels, end label, tooltip, table) instead of `<rounded><unit>` — e.g. dollars. */
   formatValue?: (v: number) => string;
@@ -28,6 +33,17 @@ interface TimeSeriesChartProps {
   /** While a new range loads the previous render stays, dimmed. */
   stale?: boolean;
   formatTime: (ts: number) => string;
+}
+
+/** A rounded ceiling (1, 2 or 5 times a power of ten) just above the highest value or peak. */
+function autoYMax(points: TimeSeriesPoint[]): number {
+  let top = 0;
+  for (const p of points) top = Math.max(top, p.value ?? 0, p.peak ?? 0);
+  if (!(top > 0)) return 1;
+  const target = top * 1.1;
+  const base = 10 ** Math.floor(Math.log10(target));
+  const m = target / base;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * base;
 }
 
 const PAD = { top: 12, right: 44, bottom: 22, left: 34 };
@@ -46,7 +62,7 @@ export function TimeSeriesChart({
   from,
   to,
   bucket,
-  yMax = 100,
+  yMax: yMaxProp = 100,
   unit = '%',
   formatValue,
   height = 160,
@@ -65,6 +81,8 @@ export function TimeSeriesChart({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  const yMax = yMaxProp === 'auto' ? autoYMax(points) : yMaxProp;
 
   // With a custom format (`$0.0054`) the margins grow to fit the labels instead of cutting
   // them; percentage charts keep the fixed margins.

@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -2045,6 +2045,81 @@ average and peak: 60 s for `1h`, 720 s for `24h`, 5040 s for `7d`, 21 600 s for 
   means the daemon is not sampling; the page says so.
 - `host` is read live by the API process, which runs on the same host.
 
+### `GET /api/metrics/containers?range=1h|24h|7d|30d`
+What every container consumes — now, and as an average and peak over the range — plus what is
+not a container and the disk Docker holds. From `metrics.db` (the daemon samples every 60 s,
+see `docs/dev/DATABASE.md`). Default range `1h`.
+
+**Auth:** browser cookie or Bearer
+
+**Response:**
+```json
+{
+  "available": true, "range": "1h", "interval_s": 60,
+  "host": { "ncpu": 10, "mem_total_mb": 7837 },
+  "sampled_at": 1790789760, "age_s": 10,
+  "containers": [
+    { "container": "agent_9253eee3", "name": "test", "agent_id": "agent_9253eee3", "is_agent": true,
+      "running": true, "last_seen": 1790789760,
+      "now": { "cpu_cores": 0.022, "cpu_percent": 0.22, "mem_mb": 668, "mem_percent": 8.5, "pids": 12,
+               "net_rx_bps": 0, "net_tx_bps": 0, "blk_read_bps": 0, "blk_write_bps": 0 },
+      "range": { "cpu_avg_percent": 1.02, "cpu_max_percent": 2.17, "mem_avg_mb": 679, "mem_max_mb": 701 },
+      "storage": { "volume_mb": 1544, "layer_mb": 10, "total_mb": 1554, "ts": 1790789645 } }
+  ],
+  "rest": { "cpu_percent": 42.26, "mem_mb": 11864 },
+  "docker_storage": { "ts": 1790789645, "images_mb": 4734, "images_reclaimable_mb": 3518,
+                      "build_cache_mb": 1597, "build_cache_reclaimable_mb": 1597,
+                      "volumes_mb": 10120, "unused_volumes_mb": 7337, "layers_mb": 30,
+                      "unused_volumes": [ { "name": "rev4a-backups", "size_mb": 7337 } ] }
+}
+```
+
+- `cpu_percent` is a share of Docker's cores (`host.ncpu`), `mem_percent` of Docker's memory —
+  on Docker Desktop that is its VM, on the VPS the machine. `cpu_cores` is the raw figure.
+- `now` is `null` for a container that is not running (no sample within 3 intervals of the
+  newest sample — running is judged against the newest sample, not the wall clock, so a
+  stopped daemon does not make every container look stopped);
+  `running: false` ones stay listed while they were seen in the range. A rate that is null in
+  the newest sample (the first after a start) is replaced by the previous reading.
+- The list is sorted running first, then by CPU now. `storage` is the named volumes plus the
+  writable layer, from the last Docker disk reading (every 10 min).
+- `rest` is the machine's newest sample minus the running containers (the containers' CPU
+  re-scaled to the machine's cores first, so on Docker Desktop the two shares still compare):
+  the host, Rev4a and other software (`null` without a machine sample or Docker's figures).
+- `docker_storage.*_reclaimable_mb` and `unused_volumes` (the 5 largest): what **no container
+  uses** — images of older agent versions you may still roll back to count as such; a volume
+  like the cold backups' is listed, not advised for removal. `volumes_mb` sums all volumes;
+  `unused_volumes_mb` is the total of what no container uses, `unused_volumes` only names the
+  five largest.
+- `available: false` until the daemon has created the tables; with the tables present and no
+  rows yet it answers `available: true` with an empty list.
+
+**With `&container=<name>`** — that container's history, bucketed like `GET /api/metrics`:
+```json
+{ "available": true, "range": "1h", "interval_s": 60, "host": { "ncpu": 10, "mem_total_mb": 7837 },
+  "container": "agent_9253eee3", "name": "test", "bucket_s": 120,
+  "history": [ { "ts": 1790789640, "cpu_avg": 1.41, "cpu_max": 2.17, "mem_avg": 685, "mem_max": 701 } ],
+  "storage_bucket_s": 1200, "storage_history": [ { "ts": 1790788800, "total_mb": 1554 } ] }
+```
+`cpu_*` are shares of Docker's cores, `mem_*` MB. A container that was not running has no
+points for that stretch (a gap). A name that matches the rules but was never sampled answers
+`available: true` with an empty history.
+
+**Errors:** `400` for another `range` or an invalid container name. A `metrics.db` that
+cannot be opened (missing, corrupt) answers `available: false`, not an error.
+
+### `GET /api/metrics/alerts?limit=10`
+The machine's latest `system_anomaly` events (CPU above 85 % or memory above 90 % on two
+samples in a row, a disk at 90 %), newest first, from `events.db`. `limit` 1–50, default 10.
+
+**Auth:** browser cookie or Bearer
+
+**Response:**
+```json
+{ "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
+```
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk` or `null`.
+
 ---
 
 ## System Health
@@ -2302,26 +2377,25 @@ Full key management documentation at [PROVIDERS.md](PROVIDERS.md).
 ## Containers
 
 ### `GET /api/containers`
-List all running Docker containers with resource usage.
+Every Docker container, running or stopped, with its identity and network details. What a
+running container consumes lives in `GET /api/metrics/containers`.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or Bearer
 
-**Response:**
+**Response:** a bare array —
 ```json
-{
-  "containers": [
-    {
-      "name": "openclaw-atlas",
-      "image": "openclaw-agent-base:2026.9.3",
-      "status": "running",
-      "ports": ["0.0.0.0:3731->3000/tcp"],
-      "created": "2026-06-20T10:00:00Z",
-      "cpu_percent": 2.1,
-      "mem_usage_mb": 340
-    }
-  ]
-}
+[
+  { "id": "a1b2c3d4e5f6", "name": "openclaw-atlas", "image": "openclaw-agent-base:2026.9.3",
+    "status": "Up 3 hours", "state": "running", "ports": "0.0.0.0:3731->3000/tcp",
+    "ip": "172.18.0.2", "agentId": "agent_atlas", "displayName": "Atlas", "created": null }
+]
 ```
+
+- `name` is the daemon's `primaryName` (the name with one leading slash) — the same key the
+  metrics store and the `/system?agent=` link use.
+- `displayName` is the agent's `AGENT_NAME`, read from the inspect. If an inspect fails, the
+  row still comes from Docker's list (`ip` and `displayName` then `null`): a container is
+  never dropped, and never renamed, because one call failed.
 
 The container list is the only container route. There is no logs endpoint and no
 action endpoint: logs are read through the terminal WebSocket, and lifecycle

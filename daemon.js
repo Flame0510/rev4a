@@ -2,8 +2,9 @@
 /**
  * Rev4a Daemon — SQLite event logger
  * Polls OpenClaw sessions every 30s, writes events to SQLite, samples the host machine
- * (CPU, RAM, swap, storage) every 30s, and every 5 min reads what each running agent
- * spent, as its OpenClaw priced it, into costs.db — each on a timer of its own.
+ * (CPU, RAM, swap, storage) every 30s, samples what each container consumes every 60s
+ * (metrics.db), and every 5 min reads what each running agent spent, as its OpenClaw priced
+ * it, into costs.db — each on a timer of its own.
  */
 
 'use strict';
@@ -13,6 +14,9 @@ const fs = require('fs');
 const { spawnSync, execSync, execFile } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
+// Shared with the dashboard (lib/docker-socket.ts): one copy of where the Docker socket is.
+const { dockerRequestJson } = require('./lib/docker-socket-path.js');
+const dockerStats = require('./lib/docker-stats.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
 // dir is REV4A_DATA_DIR or ~/.config/rev4a — the API reads the files the daemon writes.
@@ -184,6 +188,57 @@ CREATE TABLE IF NOT EXISTS system_disks (
 );
 CREATE INDEX IF NOT EXISTS idx_disks_ts ON system_disks(ts);
 CREATE INDEX IF NOT EXISTS idx_disks_mount_ts ON system_disks(mount, ts);
+
+-- What each running container consumes, one row per container per sample (60 s). CPU is in
+-- cores (CPU-seconds per second) and every rate in bytes per second, both null for the first
+-- sample after a start and after a counter reset. Memory is the working set. A stopped
+-- container has no rows: a gap, not zeros.
+CREATE TABLE IF NOT EXISTS container_metrics (
+  ts INTEGER NOT NULL,
+  container TEXT NOT NULL,
+  cpu_cores REAL,
+  mem_mb INTEGER,
+  pids INTEGER,
+  net_rx_bps INTEGER,
+  net_tx_bps INTEGER,
+  blk_read_bps INTEGER,
+  blk_write_bps INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_container_metrics_ts ON container_metrics(ts);
+CREATE INDEX IF NOT EXISTS idx_container_metrics_c_ts ON container_metrics(container, ts);
+
+-- Who each container is: the agent's name (AGENT_NAME), whether it is an agent, and its named
+-- volumes (the link to docker_storage).
+CREATE TABLE IF NOT EXISTS container_sources (
+  container TEXT PRIMARY KEY,
+  agent_id TEXT,
+  name TEXT,
+  is_agent INTEGER NOT NULL DEFAULT 0,
+  volumes TEXT,
+  last_seen INTEGER NOT NULL
+);
+
+-- Docker's own cores and memory: the denominators for a container's share (on Docker Desktop
+-- that is its VM, not the Mac).
+CREATE TABLE IF NOT EXISTS docker_host (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  ncpu INTEGER,
+  mem_total_mb INTEGER,
+  updated_at INTEGER
+);
+
+-- Disk Docker holds, read from /system/df every 10 min: kind 'volume' (name = the volume;
+-- reclaimable_mb = its size when no container uses it), 'layer' (a container's writable layer),
+-- 'images' and 'build_cache' (totals, with what could be freed).
+CREATE TABLE IF NOT EXISTS docker_storage (
+  ts INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  size_mb INTEGER,
+  reclaimable_mb INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_docker_storage_ts ON docker_storage(ts);
+CREATE INDEX IF NOT EXISTS idx_docker_storage_kind_ts ON docker_storage(kind, name, ts);
 `);
     return {
       db: mdb,
@@ -200,6 +255,26 @@ CREATE INDEX IF NOT EXISTS idx_disks_mount_ts ON system_disks(mount, ts);
       pruneMetrics: mdb.prepare('DELETE FROM system_metrics WHERE ts < ?'),
       pruneDisks: mdb.prepare('DELETE FROM system_disks WHERE ts < ?'),
       getLastTwoMetrics: mdb.prepare('SELECT cpu_percent, ram_used_mb, ram_total_mb FROM system_metrics ORDER BY ts DESC LIMIT 2'),
+      insertContainerMetric: mdb.prepare(`
+        INSERT INTO container_metrics (ts, container, cpu_cores, mem_mb, pids, net_rx_bps, net_tx_bps, blk_read_bps, blk_write_bps)
+        VALUES (@ts, @container, @cpu_cores, @mem_mb, @pids, @net_rx_bps, @net_tx_bps, @blk_read_bps, @blk_write_bps)
+      `),
+      upsertContainerSource: mdb.prepare(`
+        INSERT INTO container_sources (container, agent_id, name, is_agent, volumes, last_seen)
+        VALUES (@container, @agent_id, @name, @is_agent, @volumes, @last_seen)
+        ON CONFLICT(container) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name,
+          is_agent = excluded.is_agent, volumes = excluded.volumes, last_seen = excluded.last_seen
+      `),
+      upsertDockerHost: mdb.prepare(`
+        INSERT INTO docker_host (id, ncpu, mem_total_mb, updated_at) VALUES (1, @ncpu, @mem_total_mb, @updated_at)
+        ON CONFLICT(id) DO UPDATE SET ncpu = excluded.ncpu, mem_total_mb = excluded.mem_total_mb, updated_at = excluded.updated_at
+      `),
+      insertDockerStorage: mdb.prepare(`
+        INSERT INTO docker_storage (ts, kind, name, size_mb, reclaimable_mb) VALUES (@ts, @kind, @name, @size_mb, @reclaimable_mb)
+      `),
+      pruneContainerMetrics: mdb.prepare('DELETE FROM container_metrics WHERE ts < ?'),
+      pruneContainerSources: mdb.prepare('DELETE FROM container_sources WHERE last_seen < ?'),
+      pruneDockerStorage: mdb.prepare('DELETE FROM docker_storage WHERE ts < ?'),
     };
   } catch (err) {
     log(`[METRICS] disabled: cannot open ${METRICS_DB_PATH}: ${err.message}`);
@@ -416,6 +491,90 @@ function collectSystemMetrics() {
   }
 }
 
+// ── Container consumption ────────────────────────────────────────────────────
+//
+// What each running container uses — CPU, memory, processes, network, block I/O — and the
+// disk Docker holds for them, so the System page can say *who* is using the machine. Read from
+// the Docker Engine API (lib/docker-stats.js); written to metrics.db, next to the machine's
+// own numbers. Every running container, agents and the rest alike: the page tells them apart.
+
+const CONTAINERS_INTERVAL_MS = 60_000;
+/** The first pass only primes the CPU counters; the second, this long after, is the first with a CPU figure. */
+const CONTAINERS_FIRST_DELAY_MS = 6_000;
+const CONTAINERS_SECOND_DELAY_MS = 15_000;
+const STORAGE_INTERVAL_MS = 10 * 60_000;
+const STORAGE_FIRST_DELAY_MS = 25_000;
+
+// A rate over a gap longer than three intervals (a laptop that slept, skipped passes) is no rate.
+const containerSampler = dockerStats.createContainerSampler({
+  request: dockerRequestJson,
+  maxWindowS: (3 * CONTAINERS_INTERVAL_MS) / 1000,
+});
+let containersRunning = false;
+let dockerContainersDown = false;
+
+async function collectContainerMetrics() {
+  if (!metrics || containersRunning) return;
+  containersRunning = true;
+  try {
+    let sample;
+    try {
+      sample = await containerSampler.sample();
+      dockerContainersDown = false;
+    } catch (e) {
+      // Docker down or not yet up: said once, not every minute; it recovers by itself.
+      if (!dockerContainersDown) log(`[CONTAINERS] Docker unreachable: ${e.message}`);
+      dockerContainersDown = true;
+      return;
+    }
+    metrics.db.transaction(() => {
+      for (const row of sample.rows) metrics.insertContainerMetric.run({ ts: sample.ts, ...row });
+      for (const source of sample.sources) metrics.upsertContainerSource.run({ ...source, last_seen: sample.ts });
+      if (sample.host) metrics.upsertDockerHost.run({ ncpu: sample.host.ncpu, mem_total_mb: sample.host.memTotalMb, updated_at: sample.ts });
+      metrics.pruneContainerMetrics.run(sample.ts - METRICS_RETENTION_S);
+      metrics.pruneContainerSources.run(sample.ts - METRICS_RETENTION_S);
+    })();
+  } finally {
+    containersRunning = false;
+  }
+}
+
+let storageRunning = false;
+let dockerStorageFailing = false;
+
+async function collectDockerStorage() {
+  if (!metrics || storageRunning) return;
+  storageRunning = true;
+  try {
+    let df;
+    try {
+      df = dockerStats.parseStorage(await dockerRequestJson('GET', '/system/df', dockerStats.DF_TIMEOUT_MS));
+      if (!df) throw new Error('not a /system/df answer');
+      dockerStorageFailing = false;
+    } catch (e) {
+      // The last reading stays in the table: a failed one records nothing.
+      if (!dockerStorageFailing) log(`[CONTAINERS] Docker storage unreadable: ${e.message}`);
+      dockerStorageFailing = true;
+      return;
+    }
+    const ts = Math.floor(Date.now() / 1000);
+    const mb = (bytes) => (bytes === null ? null : Math.round(bytes / dockerStats.MB));
+    metrics.db.transaction(() => {
+      for (const v of df.volumes) {
+        metrics.insertDockerStorage.run({ ts, kind: 'volume', name: v.name, size_mb: mb(v.sizeBytes), reclaimable_mb: v.unused ? mb(v.sizeBytes) : 0 });
+      }
+      for (const l of df.layers) {
+        metrics.insertDockerStorage.run({ ts, kind: 'layer', name: l.container, size_mb: mb(l.sizeBytes), reclaimable_mb: null });
+      }
+      metrics.insertDockerStorage.run({ ts, kind: 'images', name: '', size_mb: mb(df.images.sizeBytes), reclaimable_mb: mb(df.images.reclaimableBytes) });
+      metrics.insertDockerStorage.run({ ts, kind: 'build_cache', name: '', size_mb: mb(df.buildCache.sizeBytes), reclaimable_mb: mb(df.buildCache.reclaimableBytes) });
+      metrics.pruneDockerStorage.run(ts - METRICS_RETENTION_S);
+    })();
+  } finally {
+    storageRunning = false;
+  }
+}
+
 // ── Agent Costs ──────────────────────────────────────────────────────────────
 //
 // What each agent spent, as its own OpenClaw computed it. Rev4a writes every model's
@@ -620,8 +779,8 @@ async function gatewayCall(container, method, params) {
   return JSON.parse(out.slice(start));
 }
 
-/** A Docker container name, as `docker ps` prints it; anything else is never exec'd. */
-const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+/** A Docker container name, as `docker ps` prints it; anything else is never exec'd (one rule: lib/docker-stats.js). */
+const CONTAINER_NAME_RE = dockerStats.CONTAINER_NAME_RE;
 /**
  * Each field quoted and escaped by Docker itself (`json`, `printf "%q"`), so a display
  * name holding a tab or a newline stays one field of one line. Only AGENT_NAME is read
@@ -1218,6 +1377,32 @@ const firstSample = metrics
   : null;
 if (metrics) log(`Machine metrics every ${METRICS_INTERVAL_MS / 1000}s into ${METRICS_DB_PATH}`);
 
+// Container consumption: a priming pass, a short wait for the first CPU figure, then every
+// interval; the disk Docker holds on a slower timer. Off when metrics.db failed.
+function sampleContainers() {
+  collectContainerMetrics().catch((e) => log(`[CONTAINERS ERROR] ${e.message}`));
+}
+function sampleStorage() {
+  collectDockerStorage().catch((e) => log(`[CONTAINERS ERROR] ${e.message}`));
+}
+let containersTimer = null;
+let containersPasses = 0;
+function scheduleContainers(delay) {
+  containersTimer = setTimeout(() => {
+    sampleContainers();
+    containersPasses++;
+    scheduleContainers(containersPasses === 1 ? CONTAINERS_SECOND_DELAY_MS : CONTAINERS_INTERVAL_MS);
+  }, delay);
+}
+let storageTimer = null;
+const firstStorage = metrics
+  ? setTimeout(() => { sampleStorage(); storageTimer = setInterval(sampleStorage, STORAGE_INTERVAL_MS); }, STORAGE_FIRST_DELAY_MS)
+  : null;
+if (metrics) {
+  scheduleContainers(CONTAINERS_FIRST_DELAY_MS);
+  log(`Container consumption every ${CONTAINERS_INTERVAL_MS / 1000}s, Docker storage every ${STORAGE_INTERVAL_MS / 60000} min, into ${METRICS_DB_PATH}`);
+}
+
 // Agent costs: first pass shortly after start (agents may still be booting), then every
 // interval. Off when costs.db failed.
 function sampleCosts() {
@@ -1235,6 +1420,9 @@ process.on('SIGTERM', () => {
   clearInterval(timer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
+  clearTimeout(containersTimer);
+  clearTimeout(firstStorage);
+  clearInterval(storageTimer);
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
   db.close();
@@ -1248,6 +1436,9 @@ process.on('SIGINT', () => {
   clearInterval(timer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
+  clearTimeout(containersTimer);
+  clearTimeout(firstStorage);
+  clearInterval(storageTimer);
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
   db.close();

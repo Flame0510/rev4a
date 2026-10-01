@@ -56,12 +56,12 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     title: 'System',
     description: 'The machine Rev4a runs on: CPU (percent, cores, load average 1/5/15 min), memory (used, available, swap) and storage (each disk with used and free space, and whether it is the system disk, Docker\'s data or Rev4a\'s data), now and over 1h, 24h, 7d or 30d. Sampled by the Rev4a daemon every 30 seconds, kept 30 days.',
     actions: ['Read the current CPU, memory, swap and disk usage', 'Switch the charts between 1h, 24h, 7d and 30d', 'Hover a chart (or focus it and use the arrow keys) to read the average and peak at a point', 'Open a chart\'s Table view for the numbers'],
-    hints: 'Bars turn yellow then red past their thresholds: CPU and memory at 85% and 95%, disks at 80% and 90%. If the page says "Not collecting", the Rev4a daemon is not sampling: check that rev4a serve is running.',
+    hints: 'Below the charts, "Agents and containers" shows what Docker holds on disk and one row per container (sorted by CPU) with its CPU share, memory, storage and processes; open a row for its own CPU, Memory and Storage charts, which follow the same range. "Recent alerts" lists what crossed its limit and when. Bars turn yellow then red past their thresholds: CPU and memory at 85% and 95%, disks at 80% and 90%. If the page says "Not collecting", the Rev4a daemon is not sampling: check that rev4a serve is running.',
   },
   '/containers': {
     title: 'Containers',
     description: 'List of all Docker containers on the server, running or stopped (not just agents). Shows container ID, name, image, status, state, ports, and IP address.',
-    actions: ['View every container, running or stopped, with its details', 'Click "Terminal" on any container to open an interactive shell', 'Check each container\'s status, image, IP and ports (no CPU or memory figures are shown)'],
+    actions: ['View every container, running or stopped, with its details', 'Click "Terminal" on any container to open an interactive shell', 'Check each container\'s status, image, IP and ports, and what a running one consumes now (CPU share, memory, processes), with a link to its charts on the System page'],
     hints: 'Containers marked with an agentId belong to OpenClaw agents. Others are infrastructure containers like databases or reverse proxies.',
   },
   '/containers/terminal/[id]': {

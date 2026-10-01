@@ -1,9 +1,9 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
-`events.db` (sessions and events, below), `metrics.db` (machine metrics, see
+`events.db` (sessions and events, below), `metrics.db` (machine and container metrics, see
 [Metrics Database](#metrics-database-metricsdb)), `costs.db` (what the agents spent, see
 [Costs Database](#costs-database-costsdb)) and `credentials.db` (see
 [Credentials Database](#credentials-database-credentialsdb)).
@@ -317,6 +317,62 @@ has dropped back under, or once after each daemon start: the state is kept in me
 
 Installs from before this database may still have a `system_metrics` table in
 `events.db`: nothing reads or writes it any more, and it can be dropped.
+
+### Container consumption (also in `metrics.db`)
+
+What each running container uses, and the disk Docker holds, so the System page can say
+*who* is using the machine. The daemon writes it from the Docker Engine API
+(`lib/docker-stats.js`; where the socket is comes from `lib/docker-socket-path.js`, shared
+with the dashboard's `lib/docker-socket.ts`); `lib/container-metrics.ts` reads it for
+`GET /api/metrics/containers`, the agent panel and the Containers page. The tables are
+created with `CREATE TABLE IF NOT EXISTS` when the daemon starts, so an update adds them;
+until then the API answers `available: false`.
+
+**Sampling:** containers every 60 s, on a timer of its own — a priming pass 6 s after the
+daemon starts (it only records the gauges: a CPU figure needs two readings), the first
+complete one 15 s later — and Docker's disk (`/system/df`) every 10 min, the first reading
+25 s after start. **Retention:** 30 days, pruned at every sample. A stopped container has no
+rows: a gap, not zeros. Size, estimated: 60 s × 10 containers × 30 days ≈ 430 000 rows ≈ 35 MB
+(to be measured on the VPS; rollups to 5 min may be added if it grows).
+
+```sql
+-- One row per running container per sample. CPU in cores (CPU-seconds per second), rates in
+-- bytes per second; each is NULL on the first sample after a start and when its counter went
+-- backwards (the container restarted) — never a negative rate or a spike. Memory is the
+-- working set: usage − inactive page cache, what `docker stats` shows.
+CREATE TABLE container_metrics (
+  ts INTEGER NOT NULL,            -- Unix seconds
+  container TEXT NOT NULL,
+  cpu_cores REAL,
+  mem_mb INTEGER,
+  pids INTEGER,
+  net_rx_bps INTEGER, net_tx_bps INTEGER,
+  blk_read_bps INTEGER, blk_write_bps INTEGER
+);
+CREATE INDEX idx_container_metrics_ts ON container_metrics(ts);
+CREATE INDEX idx_container_metrics_c_ts ON container_metrics(container, ts);
+
+-- Who each container is: an agent's name (AGENT_NAME), whether it is an agent, and its named
+-- volumes (the link to docker_storage). Forgotten after the retention.
+CREATE TABLE container_sources (
+  container TEXT PRIMARY KEY,
+  agent_id TEXT, name TEXT, is_agent INTEGER NOT NULL DEFAULT 0,
+  volumes TEXT,                   -- comma-separated volume names
+  last_seen INTEGER NOT NULL
+);
+
+-- Docker's own cores and memory: the denominators for a container's share (on Docker Desktop
+-- that is its VM — 8 GB of a 16 GB Mac — not the machine). One row.
+CREATE TABLE docker_host (id INTEGER PRIMARY KEY CHECK (id = 1), ncpu INTEGER, mem_total_mb INTEGER, updated_at INTEGER);
+
+-- Disk Docker holds, one set of rows per reading: kind 'volume' (name = the volume;
+-- reclaimable_mb = its size when no container uses it), 'layer' (name = a container, its
+-- writable layer), 'images' and 'build_cache' (totals; reclaimable_mb = what no container /
+-- no build uses). A size Docker could not compute is NULL.
+CREATE TABLE docker_storage (ts INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', size_mb INTEGER, reclaimable_mb INTEGER);
+CREATE INDEX idx_docker_storage_ts ON docker_storage(ts);
+CREATE INDEX idx_docker_storage_kind_ts ON docker_storage(kind, name, ts);
+```
 
 ## Costs Database (`costs.db`)
 

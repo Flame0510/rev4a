@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -101,9 +101,9 @@ When environment variables are saved via the Config page (Save & Restart):
 |---|---|
 | `/` | System overview — health, sessions, the machine's CPU / RAM / disk (links to `/system`), what the agents spent today (as on `/costs`), live feed |
 | `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard, channel manager (Telegram pairing) |
-| `/containers` | All Docker containers on the host |
+| `/containers` | All Docker containers on the host, each running one with its CPU, memory and processes now (from the daemon's container samples) and a link to its charts |
 | `/costs` | What each agent spent, as its own OpenClaw priced it with the rates Rev4a syncs: today / 7 / 30 UTC days, by day, by agent, by model, the most expensive sessions, the calls that could not be priced, the DeepSeek band now, and a check against what DeepSeek and OpenRouter actually billed (read by the daemon every 5 min into `costs.db`; each agent's own figures are also in its panel, COSTS) |
-| `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s) |
+| `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s); **Agents and containers**: what Docker holds on disk, and one row per container — CPU, memory, storage, processes — that opens to its own CPU / Memory / Storage charts (sampled every 60 s; a recently seen row without current statistics says "no data", and stale current figures are hidden; each agent's numbers are also in its panel, RESOURCES); and the machine's recent alerts |
 | `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
@@ -308,7 +308,7 @@ Store third-party service credentials and install them into agent containers.
 ### Container management (`/containers`)
 View all running Docker containers with:
 - Name, image, status, ports, uptime
-- Resource usage (CPU, memory)
+- Resource usage now (CPU share, memory, processes) for each running container, with *Charts →* to its history on `/system`
 - Quick links to agent control UIs
 
 ### Agent management (`/agents`)

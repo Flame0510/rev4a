@@ -16,7 +16,7 @@ import { Surface } from '../components/ui';
 export function SystemDescription({ host }: { host: string | null }) {
   return (
     <>
-      CPU, memory and storage of the machine Rev4a runs on.
+      CPU, memory and storage of the machine Rev4a runs on, and of each container.
       {/* width 0 + min-width 100%: the line takes the header's width without adding its own
           (unwrapped) width to the header's minimum — else a long hostname widens the page. */}
       <span style={{ display: 'block', width: 0, minWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -109,6 +109,58 @@ export function SystemRangeSkeleton() {
         <div key={i} style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
           <Skeleton width={w} height={11} />
         </div>
+      ))}
+    </div>
+  );
+}
+
+/** The section heading, shared by the real Agents section and its placeholder, so nothing moves when it loads. */
+export function SystemAgentsHeading() {
+  return (
+    <div className="system-section-heading">
+      <div className="ui-eyebrow">Agents and containers</div>
+      <p className="ui-muted" style={{ fontSize: 12 }}>
+        Sorted by CPU now. Averages and peaks follow the range above; open one for its charts.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The Agents section before its first answer: the Docker storage block and three closed
+ * accordions, each shimmer inside the class of the text it stands in for (the real header
+ * classes, a `div` where the real one is a button), so the boxes have the real heights.
+ */
+export function SystemAgentsSkeleton() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} aria-busy="true" aria-label="Loading containers">
+      <Surface as="section">
+        <div className="ui-kicker"><Skeleton as="span" inline width={96} height={10} /></div>
+        <div className="system-docker-storage" style={{ marginTop: 10 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i}>
+              <div className="ui-kicker"><Skeleton as="span" inline width={64} height={10} /></div>
+              <div style={{ fontSize: 16, marginTop: 6 }}><Skeleton as="span" inline width={72} height={16} /></div>
+              <div className="ui-muted" style={{ fontSize: 11, marginTop: 4 }}><Skeleton as="span" inline width={120} height={10} /></div>
+            </div>
+          ))}
+        </div>
+        <p className="ui-muted" style={{ fontSize: 11, marginTop: 10 }}><Skeleton as="span" inline width={150} height={10} /></p>
+      </Surface>
+      {[0, 1, 2].map((i) => (
+        <section className="ui-accordion" key={i}>
+          <div className="ui-accordion__header" style={{ cursor: 'default' }}>
+            <span className="ui-accordion__caret" aria-hidden="true">▶</span>
+            <span className="ui-accordion__title"><Skeleton as="span" inline width={110 + i * 20} height={13} /></span>
+            <span className="ui-accordion__summary">
+              <Skeleton as="span" inline width={62} height={12} />
+              <Skeleton as="span" inline width={88} height={12} />
+              <Skeleton as="span" inline width={80} height={12} />
+              <Skeleton as="span" inline width={52} height={12} />
+            </span>
+            <span className="ui-accordion__detail"><Skeleton as="span" inline width={300} height={11} /></span>
+          </div>
+        </section>
       ))}
     </div>
   );

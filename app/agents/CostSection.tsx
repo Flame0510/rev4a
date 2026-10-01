@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiFetch';
 import { formatCost } from '@/lib/utils/format';
+import { PanelRow } from './PanelRow';
 
 interface AgentCosts {
   available: boolean;
@@ -30,8 +31,6 @@ function formatAge(ms: number): string {
   const h = Math.round(min / 60);
   return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} d ago`;
 }
-
-const ROW = { display: 'flex', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid var(--border)', fontSize: 12 } as const;
 
 export default function CostSection({ container }: { container: string }) {
   const [data, setData] = useState<AgentCosts | null>(null);
@@ -81,12 +80,7 @@ export default function CostSection({ container }: { container: string }) {
 
   return (
     <div>
-      {rows.map(([label, value]) => (
-        <div key={label} style={ROW}>
-          <span style={{ color: '#888' }}>{label}</span>
-          <span style={{ color: 'var(--text)', textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>{value}</span>
-        </div>
-      ))}
+      {rows.map(([label, value]) => <PanelRow key={label} label={label} value={value} />)}
       {(stale || data.error) && (
         <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--yellow)', borderBottom: '1px solid var(--border)' }}>
           {data.error ?? 'Not read recently: a stopped agent keeps the figures of its last read.'}

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { formatMb, formatSharePercent } from '@/lib/utils/format';
 import { Button, Pill } from '../components/ui';
 
 interface ContainerInfo {
@@ -16,17 +17,40 @@ interface ContainerInfo {
   displayName?: string | null;
 }
 
+/** What a running container consumes now, from GET /api/metrics/containers; absent when the daemon has not sampled it. */
+interface Usage { cpu: number | null; mem: number | null; pids: number | null }
+
 export default function ContainersClient() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
+  const [usage, setUsage] = useState<Record<string, Usage>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
 
   async function load(signal?: AbortSignal) {
     try {
-      const res = await fetch('/api/containers', { signal });
+      const [res, usageRes] = await Promise.all([
+        fetch('/api/containers', { signal }),
+        // The figures are a bonus: a daemon that has not sampled yet must not break the list.
+        fetch('/api/metrics/containers?range=1h', { signal }).catch(() => null),
+      ]);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
       if (!signal?.aborted) setContainers(Array.isArray(data) ? data : []);
+      // The figures are shown only while they are current: a failed request, tables not created
+      // yet, or a daemon that stopped sampling (newest sample older than three intervals) clears
+      // them — a live container must not keep its last CPU as if it were now.
+      const u = usageRes?.ok ? await usageRes.json().catch(() => null) : null;
+      if (!signal?.aborted) {
+        const current = u?.available && typeof u.age_s === 'number' && u.age_s <= u.interval_s * 3;
+        const next: Record<string, Usage> = {};
+        if (current) {
+          for (const row of u.containers ?? []) {
+            if (row.running && row.now) next[row.container] = { cpu: row.now.cpu_percent, mem: row.now.mem_mb, pids: row.now.pids };
+          }
+        }
+        setUsage(next);
+      }
     } catch(e: any) {
       if (e?.name === 'AbortError') return;
       if (!signal?.aborted) setError(e.message);
@@ -35,11 +59,19 @@ export default function ContainersClient() {
     }
   }
 
-  useEffect(() => {
+  // One request at a time: a manual refresh or a new poll aborts the request before it, so a
+  // slow answer can never overwrite a newer one.
+  function refresh() {
+    abortRef.current?.abort();
     const controller = new AbortController();
+    abortRef.current = controller;
     load(controller.signal);
-    const i = setInterval(() => { if (!controller.signal.aborted) load(controller.signal); }, 15000);
-    return () => { controller.abort(); clearInterval(i); };
+  }
+
+  useEffect(() => {
+    refresh();
+    const i = setInterval(refresh, 15000);
+    return () => { abortRef.current?.abort(); clearInterval(i); };
   }, []);
 
   return (
@@ -51,7 +83,7 @@ export default function ContainersClient() {
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
             {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{new Date().toLocaleTimeString('it-IT')}</span>
           </span>
-          <Button variant="ghost" size="sm" onClick={() => load()}>↻</Button>
+          <Button variant="ghost" size="sm" onClick={refresh} aria-label="Refresh containers">↻</Button>
         </div>
       </div>
 
@@ -112,6 +144,16 @@ export default function ContainersClient() {
               {c.ip && <span style={{ fontFamily: 'var(--font-mono-stack)', color: '#888' }}>{c.ip}</span>}
               {c.ports && <span style={{ fontFamily: 'var(--font-mono-stack)', color: '#888' }}>{c.ports}</span>}
             </div>
+
+            {/* What it consumes now — running containers the daemon has sampled */}
+            {c.state === 'running' && usage[c.name] && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono-stack)' }}>
+                <span>CPU {formatSharePercent(usage[c.name].cpu)}</span>
+                <span>Memory {formatMb(usage[c.name].mem)}</span>
+                <span>PIDs {usage[c.name].pids ?? '—'}</span>
+                <Link href={`/system?agent=${encodeURIComponent(c.name)}`} className="ui-link">Charts →</Link>
+              </div>
+            )}
 
             {/* Agent badge — only for Rev4a-managed agents */}
             {(c.displayName || c.agentId) && (

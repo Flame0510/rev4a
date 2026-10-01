@@ -1,6 +1,6 @@
 import os from 'os';
 import { NextResponse, type NextRequest } from 'next/server';
-import { openMetricsDb } from '@/lib/metrics-db';
+import { METRIC_RANGES as RANGES, openMetricsDb, type MetricRange as Range } from '@/lib/metrics-db';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -9,12 +9,10 @@ export const dynamic = 'force-dynamic';
 const SAMPLE_INTERVAL_S = 30;
 
 /**
- * History ranges and their span in seconds; each is cut into about POINTS buckets, never
- * shorter than two samples — a 30 s bucket on a 30 s timer that drifts a second would
- * leave empty buckets, drawn as gaps, where no sample is missing.
+ * History ranges are in lib/metrics-db.ts; each is cut into about POINTS buckets, never
+ * shorter than two samples — a 30 s bucket on a 30 s timer that drifts a second would leave
+ * empty buckets, drawn as gaps, where no sample is missing.
  */
-const RANGES = { '1h': 3600, '24h': 86_400, '7d': 7 * 86_400, '30d': 30 * 86_400 } as const;
-type Range = keyof typeof RANGES;
 const POINTS = 120;
 
 interface LatestRow {

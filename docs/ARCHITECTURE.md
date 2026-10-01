@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -72,7 +72,7 @@
 
 **Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and installs them into containers on explicit sync. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
 
-**Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any running one. Fully functional. (Machine CPU, RAM and disk are on `/system`.)
+**Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any running one. Fully functional. Each running container's CPU, memory and processes are on its row, with a link to its charts on `/system`, which also shows the machine's CPU, RAM and disk.
 
 **Workspace API:** Lazy-loaded file tree explorer with real-time reads (no caching), supports both host and container workspaces via `docker exec`.
 
@@ -578,10 +578,12 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 3. Emit `spawn` / `complete` / `fail` / `spawn_timeout` events into the `events` table
 4. Sample the host machine (CPU, RAM, swap, storage) every 30 s into `metrics.db`, on a
    timer of its own
-5. Detect anomalies (CPU > 85%, RAM > 90%, a disk > 90%) and record them as events
-6. Read what each running agent spent, as its own OpenClaw priced it, every 5 min into
+5. Sample what each container consumes every 60 s, and the disk Docker holds every 10 min,
+   into `metrics.db` (see [Container Consumption](#container-consumption))
+6. Detect anomalies (CPU > 85%, RAM > 90%, a disk at 90%) and record them as events
+7. Read what each running agent spent, as its own OpenClaw priced it, every 5 min into
    `costs.db`, and each vendor's balance or usage every hour (see [Agent Costs](#agent-costs))
-7. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
+8. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
 
 ### Poll Interval
 
@@ -628,6 +630,35 @@ taken at load), then one every 30 s. Samples older than 30 days are pruned at ev
 `[METRICS] disabled` in the log — and the session poll keeps running. The API side reads
 it through `lib/metrics-db.ts` (read-only, `null` when there is nothing to read);
 `GET /api/metrics` serves the System page (`/system`) and the dashboard's Machine card.
+
+### Container Consumption
+
+The System page says *that* the machine is busy; this says *who*. On a timer of its own the
+daemon reads every running container from the Docker Engine API — `GET /containers/{id}/stats?stream=false&one-shot=true`,
+10–20 ms a container, where `docker stats --no-stream` waits a second each and returns formatted
+strings — and writes `container_metrics` into `metrics.db` (schema in `docs/dev/DATABASE.md`):
+
+- **CPU** from the cumulative CPU time (ns): the difference between two samples over the
+  elapsed time, in cores; the first sample after a start only primes the counters. A counter
+  that goes backwards (the container restarted) gives no figure for that sample, never a spike.
+- **Memory** is the working set — usage minus the inactive page cache (`inactive_file` on
+  cgroup v2, `total_inactive_file` on v1), what `docker stats` shows.
+- **Processes, network and block I/O** as gauges and per-second rates. A container that stops
+  leaves a gap; one that is gone takes its counters with it.
+- **Names:** an agent's `AGENT_NAME` (read once per container id from its inspect), else the
+  container's name. Every running container is sampled — agents, and the rest as "container".
+- **Docker's disk** (`/system/df`, every 10 min): each named volume — which gives each agent's
+  storage, through the volume names its mounts list —, each writable layer, the images and the
+  build cache with what no container/build uses. Sizes and "unused" are readings, not advice.
+- The shares need Docker's own cores and memory (`/info`, re-read every 10 min): on Docker
+  Desktop those are its VM's (8 GB of a 16 GB Mac), on the VPS the machine's.
+
+The socket path rules (env, `/var/run`, Docker Desktop's `~/.docker/run`, `docker context`) live
+once, in `lib/docker-socket-path.js`, required by both the daemon and `lib/docker-socket.ts`. A
+Docker that is down is logged once and recovered from by itself; a failed disk reading leaves the
+previous one in place. `lib/container-metrics.ts` reads it all for `GET /api/metrics/containers`
+(the System page's *Agents and containers* section, the agent panel's RESOURCES, the Containers
+page). Anomalies per container (processes, sustained memory) are not raised yet.
 
 ### Agent Costs
 

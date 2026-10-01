@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-01
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -11,6 +11,9 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "Where do I find the agents page?"
 - "How do I get to the container list?"
 - "Where do I see CPU, RAM or disk usage of the server?" — The System page (`/system`), and the Machine card on the Dashboard.
+- "Which agent is using the most CPU or memory?" — The "Agents and containers" section of the System page: one row per container, sorted by CPU, with memory, storage and processes; open a row for its charts. An agent's own panel has the same numbers under RESOURCES.
+- "What is filling the disk?" — The "Docker storage" block on the System page: images, volumes (an unused volume is named), writable layers and build cache.
+- "Why is there a red bar or an alert on the System page?" — "Recent alerts" at the bottom of the System page lists what crossed its limit and when.
 - "Where can I see the first-run wizard?"
 - "Is there a page for cron jobs?"
 - "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers and the model catalogue. Which model an agent runs is on the Agents page, in that agent's detail panel.
