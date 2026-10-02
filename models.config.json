@@ -188,13 +188,13 @@
         "benchmarks": [
           {
             "name": "Kimi Code Bench v2",
-            "value": 62.0,
+            "value": 62,
             "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
             "asOf": "2026-06-11"
           },
           {
             "name": "MCP Atlas",
-            "value": 76.0,
+            "value": 76,
             "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
             "asOf": "2026-06-11"
           },
@@ -345,7 +345,7 @@
           },
           {
             "name": "HLE",
-            "value": 31.0,
+            "value": 31,
             "source": "https://huggingface.co/zai-org/GLM-5.1",
             "asOf": "2026-04-03"
           }
@@ -365,7 +365,7 @@
         "benchmarks": [
           {
             "name": "GPQA-Diamond",
-            "value": 86.0,
+            "value": 86,
             "source": "https://huggingface.co/zai-org/GLM-5",
             "asOf": "2026-02-11"
           },
@@ -653,7 +653,7 @@
           },
           {
             "name": "GPQA",
-            "value": 86.0,
+            "value": 86,
             "source": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
             "asOf": "2026-04-15"
           }
@@ -773,13 +773,13 @@
         "benchmarks": [
           {
             "name": "Kimi Code Bench v2",
-            "value": 62.0,
+            "value": 62,
             "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
             "asOf": "2026-06-11"
           },
           {
             "name": "MCP Atlas",
-            "value": 76.0,
+            "value": 76,
             "source": "https://huggingface.co/moonshotai/Kimi-K2.7-Code",
             "asOf": "2026-06-11"
           },
@@ -986,7 +986,7 @@
           },
           {
             "name": "HLE",
-            "value": 31.0,
+            "value": 31,
             "source": "https://huggingface.co/zai-org/GLM-5.1",
             "asOf": "2026-04-03"
           }
@@ -1006,7 +1006,7 @@
         "benchmarks": [
           {
             "name": "GPQA-Diamond",
-            "value": 86.0,
+            "value": 86,
             "source": "https://huggingface.co/zai-org/GLM-5",
             "asOf": "2026-02-11"
           },
@@ -1145,6 +1145,37 @@
         "params": "Architecture: Sparse MoE (Mixture of Experts), 310B total / 15B activated parameters",
         "docUrl": "https://mimo.xiaomi.com/mimo-v2-5",
         "notes": "MiMo-V2.5 is a native omnimodal model supporting text, image, video, and audio understanding."
+      }
+    },
+    {
+      "id": "openrouter/xiaomi/mimo-v2.6-pro-ultraspeed",
+      "name": "Xiaomi MiMo V2.6 Pro UltraSpeed (OR)",
+      "provider": "openrouter",
+      "enabled": true,
+      "modality": "text+image+audio+video->text"
+    },
+    {
+      "id": "openrouter/xiaomi/mimo-v2.6-pro",
+      "name": "Xiaomi MiMo V2.6 Pro (OR)",
+      "provider": "openrouter",
+      "enabled": true,
+      "modality": "text+image+audio+video->text",
+      "info": {
+        "params": "MiMo-V2.6-Pro is a routed Mixture-of-Experts model with 384 experts, 8 activated per token, 70 layers (60 sliding-window, 10 global attention) and a 1M-token context.",
+        "docUrl": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL",
+        "notes": "Benchmarked on agent work: DeepSWE v1.1 71.9, Terminal Bench 2.1 89.9, OSWorld-Verified 82.0. Uses MTP speculative decoding with 5 SWA layers, window 1024."
+      }
+    },
+    {
+      "id": "openrouter/xiaomi/mimo-v2.6-flash",
+      "name": "Xiaomi MiMo V2.6 Flash (OR)",
+      "provider": "openrouter",
+      "enabled": true,
+      "modality": "text+image+audio+video->text",
+      "info": {
+        "params": "MiMo-V2.6-Flash is a routed Mixture-of-Experts model with 256 experts, 8 activated per token, 48 layers (39 sliding-window, 9 global attention) and a 1M-token context.",
+        "docUrl": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL",
+        "notes": "Benchmarked on agent work: DeepSWE v1.1 67.9, Terminal Bench 2.1 87.6, OSWorld-Verified 80.8. Uses MTP speculative decoding with 5 SWA layers, window 1024."
       }
     },
     {
@@ -1876,7 +1907,7 @@
           },
           {
             "name": "SWE-bench Verified",
-            "value": 72.0,
+            "value": 72,
             "source": "https://huggingface.co/Qwen/Qwen3.5-122B-A10B",
             "asOf": "2026-02-24"
           }
