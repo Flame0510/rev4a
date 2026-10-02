@@ -54,6 +54,8 @@ interface MetricsPayload {
 }
 
 const ROLE_LABEL: Record<string, string> = { root: 'system', docker: 'Docker data', data: 'Rev4a data' };
+/** A filesystem's display name: the bare "/" is the root volume — clearer as a word. Its mount stays in the aria-label and, for other filesystems, is the name. */
+const diskLabel = (mount: string) => (mount === '/' ? 'Root' : mount);
 
 function formatUptime(s: number): string {
   const d = Math.floor(s / 86_400);
@@ -194,7 +196,7 @@ export default function SystemPageClient() {
           {latest?.disks.map((d) => (
             <div key={d.mount} style={{ marginTop: 14 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13 }}>{d.mount}</span>
+                <span style={{ fontSize: 13 }}>{diskLabel(d.mount)}</span>
                 <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {d.roles.map((r) => <Pill key={r}>{ROLE_LABEL[r] ?? r}</Pill>)}
                 </span>
@@ -240,7 +242,7 @@ export default function SystemPageClient() {
         </Surface>
         {(data?.disk_history ?? []).map((d) => (
           <Surface as="section" key={d.mount}>
-            <div className="ui-kicker">Storage · {d.mount}</div>
+            <div className="ui-kicker">Storage · {diskLabel(d.mount)}</div>
             <TimeSeriesChart
               label={`Storage in use on ${d.mount}`}
               points={d.points.map((p) => ({ ts: p.ts, value: p.percent }))}
