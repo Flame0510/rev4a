@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-02
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -449,6 +449,9 @@ repo. The copy is skipped when the workspace is already populated (see
 
 One job: provider configuration. API keys, which catalogue models this deployment
 offers, and pushing that catalogue to every agent.
+
+For DeepSeek models, each model row shows the current peak/off-peak band and its
+current rate. An open page refreshes those figures after the next band change.
 
 - Reads the model catalogue from `models.config.json`, merged with user toggles in
   `<data dir>/model-overrides.json`

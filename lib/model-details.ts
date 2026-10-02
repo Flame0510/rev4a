@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadModelsConfig, type ModelInfo } from '@/lib/model-catalogue';
 import { providerLabel } from '@/lib/provider-labels';
-import { getPricing } from '@/lib/model-pricing';
+import { getPricing, priceScheduleFor } from '@/lib/model-pricing';
 
 /** What `scripts/refresh-model-pricing.mjs` writes per id. All optional. */
 export interface GeneratedDetails {
@@ -48,7 +48,7 @@ export interface ModelDetailsView {
   modality?: string;
   enabled: boolean;
   deprecated: boolean;
-  price: { input: number; output: number; source: 'openrouter' | 'vendor' } | null;
+  price: { input: number; output: number; source: 'openrouter' | 'vendor'; scheduled: boolean } | null;
   details: GeneratedDetails | null;
   info: ModelInfo | null;
   /** When the generated part was produced. */
@@ -115,7 +115,7 @@ export function getModelDetails(id: string): ModelDetailsView | null {
     modality: entry.modality,
     enabled: entry.enabled,
     deprecated: entry.deprecated === true,
-    price: pricing ? { ...pricing, source: id.startsWith('openrouter/') ? 'openrouter' : 'vendor' } : null,
+    price: pricing ? { ...pricing, source: id.startsWith('openrouter/') ? 'openrouter' : 'vendor', scheduled: !!priceScheduleFor(id) } : null,
     details,
     info,
     asOf: file.generatedAt ?? null,
