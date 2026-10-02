@@ -37,8 +37,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      # The build is its own step below; without this, bin/postinstall.js would build
-      # during `npm ci`, before the language check, and hide its own failure.
+      # The build is its own step below; without this, bin/postinstall.js would run a
+      # full `next build` during `npm ci`, before the language check, and the build
+      # would then run a second time.
       - name: Install
         run: npm ci
         env:
@@ -50,6 +51,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Typecheck the npm tarball under node_modules
+        run: npm run check:package-types
 
       - name: Build
         run: npm run build

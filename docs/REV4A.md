@@ -56,7 +56,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | No | How long `rev4a serve` waits for the Docker daemon at start-up (default `90`, capped at 600) |
 | `REV4A_DEV_ORIGINS` | No | Extra comma-separated hostnames or IPs allowed to reach `next dev`; no effect on a production build |
-| `REV4A_SKIP_POSTINSTALL_BUILD` | No | `1` in CI: `npm ci` then skips the post-install `next build` (the workflows build as a separate step). Any non-empty value skips it, `0` included — leave it unset to build |
+| `REV4A_SKIP_POSTINSTALL_BUILD` | No | `1` in CI: `npm ci` then skips the post-install `next build` (the workflows build as a separate step). An installation build failure exits non-zero; startup checks `.next/BUILD_ID` before serving. Any non-empty value skips the post-install build, `0` included — leave it unset to build |
 
 See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 
@@ -198,7 +198,7 @@ that too; run Sync All Agents once Docker is up.
 ### Memory (a host that runs several agents)
 
 `rev4a update` installs the new version and the server rebuilds Next before it comes
-back (`rev4a` wipes `.next`, so the build always runs). That build is the memory peak
+back (the install's postinstall build, or a startup build when none exists). That build is the memory peak
 of the whole installation: with several agent Gateways resident (roughly 0.5-0.8 GB
 each) a host with no swap can hit the kernel OOM killer during the update — it killed
 `next-server` on a 7.7 GB VPS, which then stayed unreachable until a reboot.

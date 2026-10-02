@@ -431,6 +431,7 @@ function build() {
     // Generous on purpose: a build is the slowest step of an install, and killing it
     // because it passed two minutes takes the server down over slowness alone.
     execSync('npx next build', { stdio: 'inherit', cwd: ROOT, timeout: 30 * 60_000 });
+    if (!existsSync(join(NEXT_DIR, 'BUILD_ID'))) throw new Error('next build returned without a BUILD_ID');
     log('BUILD', 'Build complete');
   } catch (err) {
     log('BUILD', `Build failed: ${err.message}`);
@@ -487,8 +488,8 @@ function preflight() {
   }
   ensureRev4aRules();
 
-  if (!existsSync(NEXT_DIR)) {
-    log('PREFLIGHT', 'No build found — running build first…');
+  if (!existsSync(join(NEXT_DIR, 'BUILD_ID'))) {
+    log('PREFLIGHT', 'No complete build found — running build first…');
     build();
   }
 }
@@ -769,11 +770,9 @@ if (cmd === 'update') {
         stdio: 'inherit',
         timeout: 20 * 60_000,
       });
-      // Wipe old build so rev4a serve rebuilds with the new version
-      const nextDir = join(ROOT, '.next');
-      if (existsSync(nextDir)) {
-        try { execSync(`rm -rf "${nextDir}"`, { stdio: 'inherit' }); } catch {}
-      }
+      // postinstall builds the freshly installed package and fails the install if it
+      // cannot; keep that build for the restart. The fallback covers a skipped build.
+      if (!existsSync(join(ROOT, '.next', 'BUILD_ID'))) build();
     }
     console.log('Update complete. Restarting…');
     try {

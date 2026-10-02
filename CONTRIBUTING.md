@@ -115,20 +115,32 @@ it, and it is the gate a change passes *before* it is merged:
 1. `npm run check:language` — the 100% English rule (first, because it is the cheapest
    and it names the offending file and line)
 2. `npm run typecheck` — `tsc --noEmit`
-3. `npm run build` — the Next.js production build
+3. `npm run check:package-types` — pack the publishable files, require a sibling `.d.ts`
+   for every CommonJS `.js`/`.mjs` in `lib/`, and typecheck the unpacked package under
+   `node_modules/@flame0510/project-aether`
+4. `npm run build` — the Next.js production build
 
 A new push to the same branch cancels the run still in flight. The job's token is
 read-only and not kept in `.git/config` after checkout. `npm ci` runs with
 `REV4A_SKIP_POSTINSTALL_BUILD=1`: without it `bin/postinstall.js` would run a full
-`next build` during the install — before the language check, and swallowing its own
-failure — and the build would then run a second time.
+`next build` during the install — before the language check — and the build would then
+run a second time. Outside CI, an unsuccessful post-install build fails the install.
 
-The release workflow repeats the language check and the build on purpose: it is the last
-gate before npm and must not assume CI has run on that commit.
+The release workflow repeats the language, package-path typecheck and build gates on
+purpose: it is the last gate before npm and must not assume CI has run on that commit.
 
-Until a test suite exists, these three steps are the project's only automated net — there
-are no unit or end-to-end tests. Treat a green CI as "it compiles and speaks English",
-not as "it works".
+The Docker stats parser also has focused tests (`node scripts/test-docker-stats.mjs`).
+These gates do not replace a running-instance check for behavior changes.
+
+`npm-shrinkwrap.json` is the published dependency lock for the globally installed app.
+`package-lock.json` cannot be published by npm, even if named in `package.json`'s
+`files`. Keep one lockfile: after changing dependencies, update the shrinkwrap with
+`npm install` and verify the tarball with `npm run check:package-types`. The package
+also pins Next.js directly, so a global install cannot silently select a newer minor
+version. npm 10 and 11 honor the shrinkwrap; npm 12 ignores it, so its global dependency
+tree is not fully locked. TypeScript and the `@types/*` packages used by `next build`
+belong in `dependencies`: npm global installs omit `devDependencies`, and Next's
+automatic type-package installer can select a different package manager and versions.
 
 ---
 
@@ -145,8 +157,9 @@ This triggers `.github/workflows/release-publish.yml`, which:
 
 1. Checks out the tag and derives the version from it (validated as semver — a
    malformed tag like `v1.2` fails before publishing anything)
-2. Installs, bumps `package.json` to that version, builds — the build is a
-   gate, a broken build never gets published
+2. Installs, bumps `package.json` and `npm-shrinkwrap.json` to that version, checks the
+   packed package under `node_modules`, and builds — a broken package or build cannot
+   be published
 3. Skips the publish (with a warning, not a failed run) if that version
    already exists on npm — safe to re-run a release
 4. Publishes to npm with `NPM_TOKEN`

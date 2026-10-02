@@ -57,7 +57,7 @@ const WORDS = [
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.md', '.json', '.sh', '.yml', '.yaml', '.css', '.html'];
 /** Lockfiles: generated, huge, and never the place a word is written by hand. */
-const IGNORED = new Set(['package-lock.json', 'scripts/check-language.mjs']);
+const IGNORED = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'scripts/check-language.mjs']);
 const MARKER = 'lang-ok';
 
 const staged = process.argv.includes('--staged');

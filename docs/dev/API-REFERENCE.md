@@ -2891,8 +2891,10 @@ the update kills this process on its way in (`fuser -k <port>/tcp`) and `rev4a s
 brings the child back on the new binary via its `.restart-flag`, so the connection
 drops and the page has to wait for the server to answer again.
 
-The child's output goes to `update.log` in the data directory — the update restarts
-the process that spawned it, so that file is the only record of what happened.
+The child's output goes to `update.log` under `<REV4A_DATA_DIR>/data` (or
+`~/.config/rev4a/data` by default) — the update restarts the process that spawned
+it, so that file is the only record of what happened. The endpoint creates the
+directory if needed and reports a failure if it cannot start the updater.
 
 **Auth:** browser cookie or bearer token
 

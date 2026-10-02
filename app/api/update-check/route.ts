@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { execSync, spawn } from 'child_process';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { REV4A_DATA } from '@/lib/rev4a-paths';
 
 // Fallback used only when package.json cannot be read — the published npm
 // package name is the single source of truth, so never hardcode it elsewhere.
@@ -103,13 +104,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
 
-  const { spawn } = require('child_process');
-  const { join } = require('path');
-  const { openSync, closeSync, appendFileSync } = require('fs');
-
-  const dataDir = process.env.REV4A_DATA_DIR ||
-    join(process.env.HOME || '/root', '.config', 'rev4a', 'data');
+  const dataDir = join(REV4A_DATA, 'data');
   const logPath = join(dataDir, 'update.log');
+
+  try {
+    mkdirSync(dataDir, { recursive: true });
+  } catch {
+    return NextResponse.json({ success: false, error: 'Could not prepare the update directory.' }, { status: 500 });
+  }
 
   let log: number | null = null;
   try {
@@ -126,9 +128,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   if (log !== null) closeSync(log);
 
-  child.on('error', (e: Error) => {
-    try { appendFileSync(logPath, `[dashboard] could not start the update: ${e.message}\n`); } catch {}
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    try { appendFileSync(logPath, `[dashboard] could not start the update: ${message}\n`); } catch {}
+    return NextResponse.json({ success: false, error: 'Could not start the update.' }, { status: 500 });
+  }
   child.unref();
 
   return NextResponse.json({

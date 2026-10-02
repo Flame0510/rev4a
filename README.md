@@ -39,6 +39,10 @@ rev4a serve
 
 Rev4a auto-builds on first run, generates `.env` with credentials,
 and starts all services. Open `http://localhost:3740` and follow the setup wizard.
+An npm install also builds the dashboard during installation; it fails if the
+production build cannot complete. Startup checks for `.next/BUILD_ID` and retries an
+incomplete build before starting the server. The published package includes a dependency
+lock and the TypeScript packages needed to build from a global installation.
 
 ```bash
 # Custom port:
@@ -84,7 +88,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
 | `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
 | `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated hostnames or IPs allowed to reach `next dev` (e.g. a LAN address, without scheme or port); no effect on a production build |
-| `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Any non-empty value skips it, `0` included |
+| `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Outside CI, a failed post-install build fails the installation. Any non-empty value skips it, `0` included |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 

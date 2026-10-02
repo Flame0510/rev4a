@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-02
 
 ---
 
@@ -78,6 +78,14 @@ script will never see.
 - **SQLite** — via `better-sqlite3`, synchronous API
 - **Systemd** — production process management via `rev4a.service`
 - **Python NOT allowed** — no Python scripts, no Jupyter, no notebooks in this repo
+- **CommonJS in `lib/` needs types** — every `.js` or `.mjs` there must have a sibling
+  `.d.ts`. The npm tarball is installed under `node_modules`, where TypeScript treats
+  these imports as package modules and cannot infer their types from `allowJs` alone.
+  `npm run check:package-types` checks both the packed files and that resolution path.
+- **Global builds need runtime dependencies** — npm global installs omit
+  `devDependencies`; keep TypeScript and the `@types/*` packages used by `next build`
+  in `dependencies`. The published shrinkwrap locks their installed versions on npm 10
+  and 11; npm 12 ignores it.
 
 ### 2.2a Workspace Skills
 
@@ -141,6 +149,8 @@ others (open source): then an update can meet agents on older versions.
 - [ ] Ran `npm run check:language`? Then reread the diff and the commit message
       yourself — the script is a word list, it misses Italian syntax and never
       reads the message (see §2.1).
+- [ ] Ran `npm run check:package-types`? It checks the npm tarball under `node_modules`,
+      where a local repository build cannot catch missing CommonJS declarations.
 
 **Guideline:** Write docs while you implement, not after. A change without
 documentation is incomplete.
@@ -220,6 +230,7 @@ When the user asks you to do something on this repository:
 npm run dev          # Start Next.js dev server
 npm run build        # Build for production
 npm run typecheck    # tsc --noEmit (CI gate)
+npm run check:package-types  # Typecheck the packed app under node_modules
 npm run check:language  # 100% English rule (CI gate)
 rev4a serve        # Start all services (dashboard + daemon + terminal)
 npm start            # Same as rev4a serve
