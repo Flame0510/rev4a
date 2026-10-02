@@ -147,9 +147,9 @@ const CACHE_WRITE_FALLBACK = 1.25;
  *
  * Null when there is nothing to write: no entry, or a dynamic router price (-1), whose
  * calls OpenClaw then counts as unpriced. A free model (all zero) gets FREE_RATE. A cache
- * rate the file does not carry falls back to a rate that does not undercount: the input
- * rate for a cache read (as if the cache gave no discount), CACHE_WRITE_FALLBACK × input
- * for a cache write.
+ * rate the file does not carry falls back to the input rate for a cache read (as if the
+ * cache gave no discount), or CACHE_WRITE_FALLBACK × input for a cache write. These
+ * estimates avoid treating an unknown rate as free; they are not vendor quotes.
  */
 export function priceAt(modelId: string, at: Date = new Date()): ModelCost | null {
   const p = getPricing(modelId);

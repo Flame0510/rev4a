@@ -113,9 +113,10 @@ its own Control UI too. Rev4a computes no cost: the daemon reads OpenClaw's figu
   (cached tokens priced as if the cache gave no discount); one without `cacheWrite` to
   1.25 × the input rate — vendors that bill cache writes apart charge more than input
   (Anthropic's five-minute cache: 1.25×), and the ones that report no cache writes never
-  use it. Either way an overestimate, never an undercount. `refresh:pricing` writes them
-  for OpenRouter models when OpenRouter publishes them (107 and 44 of 184 entries when
-  added); direct vendors are filled by hand from their pricing page.
+  use it. These fallbacks avoid treating an unknown cache rate as free, but can differ
+  from what a vendor bills. `refresh:pricing` writes published OpenRouter cache rates;
+  the file currently has cache-read rates for 107 models and cache-write rates for 44 of
+  184 entries. Direct vendors are filled by hand from their pricing page.
 - **Time-of-day prices.** DeepSeek bills half its rates off-peak (peak 01:00–04:00 and
   06:00–10:00 UTC, Monday–Friday). `PRICE_SCHEDULES` in `lib/model-pricing.ts` holds
   that schedule; `priceAt()` writes the rate of the moment, and
