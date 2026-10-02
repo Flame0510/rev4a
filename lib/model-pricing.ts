@@ -108,7 +108,9 @@ export function formatPricing(p: ModelPricing | null | undefined): string {
 
 /** The time-of-day schedule a model is billed on, or null for a flat price. */
 export function priceScheduleFor(modelId: string): PriceSchedule | null {
-  return PRICE_SCHEDULES[modelId.split('/')[0]] ?? null;
+  // Own keys only: an id segment like "constructor" must not find Object.prototype.
+  const vendor = modelId.split('/')[0];
+  return Object.hasOwn(PRICE_SCHEDULES, vendor) ? PRICE_SCHEDULES[vendor] : null;
 }
 
 function isPeak(schedule: PriceSchedule, at: Date): boolean {

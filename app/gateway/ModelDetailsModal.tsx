@@ -24,7 +24,7 @@ interface DetailsView {
   modality?: string;
   enabled: boolean;
   deprecated: boolean;
-  price: { input: number; output: number; source: 'openrouter' | 'vendor' } | null;
+  price: { input: number; output: number; source: 'openrouter' | 'vendor'; scheduled: boolean } | null;
   details: {
     description?: string;
     created?: string;
@@ -182,7 +182,9 @@ export default function ModelDetailsModal({ modelId, onClose }: { modelId: strin
           <div style={{ fontSize: 10, color: 'var(--violet)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 4px' }}>Price</div>
           <PropertyList rows={[
             { label: 'Input / output', value: formatPrice(view.price) },
-            ...(view.price ? [{ label: 'Per 1M tokens, from', value: view.providerLabel, dim: true }] : []),
+            // The static file holds the list (peak) rate for a time-of-day vendor; the row
+            // behind this modal shows the rate in force. Name the difference, not the vendor twice.
+            ...(view.price ? [{ label: 'Per 1M tokens, from', value: view.price.scheduled ? `${view.providerLabel} · list price` : view.providerLabel, dim: true }] : []),
           ]} />
 
           {/* Architecture: the factory facts from the model card, open weights only */}

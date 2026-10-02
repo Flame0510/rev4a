@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-09-27
+> **Last updated:** 2026-10-02
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -114,7 +114,7 @@ its own Control UI too. Rev4a computes no cost: the daemon reads OpenClaw's figu
   1.25 × the input rate — vendors that bill cache writes apart charge more than input
   (Anthropic's five-minute cache: 1.25×), and the ones that report no cache writes never
   use it. Either way an overestimate, never an undercount. `refresh:pricing` writes them
-  for OpenRouter models when OpenRouter publishes them (104 and 44 of 181 entries when
+  for OpenRouter models when OpenRouter publishes them (107 and 44 of 184 entries when
   added); direct vendors are filled by hand from their pricing page.
 - **Time-of-day prices.** DeepSeek bills half its rates off-peak (peak 01:00–04:00 and
   06:00–10:00 UTC, Monday–Friday). `PRICE_SCHEDULES` in `lib/model-pricing.ts` holds
@@ -131,6 +131,11 @@ its own Control UI too. Rev4a computes no cost: the daemon reads OpenClaw's figu
   time, so a later change of rate does not reprice a call (verified with a real call,
   priced off-peak and read again after the switch to peak). Chinese public holidays,
   which DeepSeek bills off-peak all day, are priced as peak — a small overestimate.
+  Where the band is visible: the Costs page header (a pill with the time of the next
+  change), the agent panel's COSTS section (Rates now), and the Gateway page — a
+  band-priced model's row carries a PEAK / OFF-PEAK chip next to its price, and that price
+  is the rate in force now (off-peak it shows half the list price), refreshed just after
+  each change while the page stays open (`nextPriceChangeMs`).
 - **Calls made before a model had a price** are priced by OpenClaw when read, at the
   rate in force then; OpenClaw reindexes its transcripts after a price change, which is
   why a read can briefly answer `cacheStatus: refreshing`.
@@ -205,6 +210,9 @@ sources, each one labelled in the modal:
 | Identity, enabled, modality, deprecation | `models.config.json` | curated by hand |
 | Price | `model-pricing.json` | refreshed for `openrouter/*`, hand for direct vendors |
 | Description, specs, benchmarks | `model-details.json` | **generated**, never hand-edited |
+
+For a scheduled vendor, the modal labels the static rate as a list price; the Gateway
+row shows the rate in force and its peak/off-peak band.
 
 `npm run refresh:pricing` (script `scripts/refresh-model-pricing.mjs`) fetches the
 OpenRouter catalogue once and writes both the prices and `model-details.json`:

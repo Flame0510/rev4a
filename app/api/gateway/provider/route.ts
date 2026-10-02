@@ -10,7 +10,7 @@ import { execSync } from 'child_process';
 import { readProviderKeys, writeProviderKeys } from './keys';
 import { dockerUnreachableReason, syncAllAgents, type SyncOutcome } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
-import { getPricing } from '@/lib/model-pricing';
+import { getPricing, nextPriceChange, priceAt, priceBandAt } from '@/lib/model-pricing';
 import { getModelParams } from '@/lib/model-details';
 import { PROVIDER_LABELS } from '@/lib/provider-labels';
 import { loadModelsConfig, toggleModelOverride, type ModelConfigEntry } from '@/lib/model-catalogue';
@@ -172,6 +172,7 @@ export async function GET(request: NextRequest) {
   // Sizes for the row's "next to the price" hint: open-weight models only (see
   // docs/dev/GATEWAY.md), absent for a model whose vendor does not publish one.
   const paramsByModel = getModelParams();
+  const pricingAt = new Date();
 
   const providers = Object.entries(PROVIDER_CONFIGS).map(([key, cfg]) => {
     const providerModels = allModels.filter((m) => m.provider === key);
@@ -190,12 +191,29 @@ export async function GET(request: NextRequest) {
         }
         if (m.modality) entry.modality = m.modality;
         if (paramsByModel[m.id]) entry.params = paramsByModel[m.id];
+        // The band billed right now for a time-of-day vendor (DeepSeek peak / off-peak):
+        // null for every model priced the same all day. The synced agent prices follow it
+        // (lib/price-schedule-sync.ts); the row shows the same thing — including the price,
+        // which is the rate in force now, not the peak list price.
+        const band = priceBandAt(m.id, pricingAt);
+        if (band) {
+          entry.band = band;
+          // The live OpenRouter overlay outranks the static band arithmetic (disjoint
+          // today — only `deepseek` is scheduled, only `openrouter/*` is live-priced —
+          // but keep it explicit so a future schedule never silent-replaces live prices).
+          if (!entry.pricingLive) {
+            const now = priceAt(m.id, pricingAt);
+            if (now) entry.pricing = now;
+          }
+        }
         return entry;
       }),
       ...(providerKeys[key] ? { apiKey: providerKeys[key] } : {}),
     };
   });
-  return NextResponse.json({ providers });
+  // When the band flips next, so an open page can refresh the chips right after it.
+  const nextChange = nextPriceChange(allModels.map((m) => m.id), pricingAt);
+  return NextResponse.json({ providers, nextPriceChangeMs: nextChange ? nextChange.getTime() : null });
 }
 
 /**

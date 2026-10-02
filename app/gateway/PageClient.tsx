@@ -23,6 +23,8 @@ interface ModelInfo {
   modality?: string;
   /** Total parameters, when the model's card publishes them (open weights only). */
   params?: number;
+  /** The vendor band billed right now (DeepSeek peak / off-peak); absent for fixed-rate models. */
+  band?: 'peak' | 'off-peak';
 }
 
 interface GatewayProvider {
@@ -37,6 +39,8 @@ interface GatewayProvider {
 
 interface ProviderApiResponse {
   providers: GatewayProvider[];
+  /** When the band flips next, so an open page refreshes the chips just after it. */
+  nextPriceChangeMs?: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,15 +104,25 @@ export default function GatewayPageClient() {
   // Accordion state — which provider cards are expanded
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const expandedInitRef = useRef(false);
+  const loadAbortRef = useRef<AbortController | null>(null);
+  const [bandChangeAt, setBandChangeAt] = useState<number | null>(null);
+  const [retryAt, setRetryAt] = useState<number | null>(null);
 
   /* ---- Data loading ---- */
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const loadAll = useCallback(async (silent = false) => {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    if (!silent) setLoading(true);
     try {
-      const provRes = await fetch('/api/gateway/provider');
-      if (provRes.ok) {
+      const provRes = await fetch('/api/gateway/provider', { signal: controller.signal });
+      if (!provRes.ok) throw new Error(`Could not load providers (HTTP ${provRes.status})`);
+      setError(null);
+      setRetryAt(null);
+      {
         const provJson: ProviderApiResponse = await provRes.json();
         setProviders(provJson.providers);
+        setBandChangeAt(provJson.nextPriceChangeMs ?? null);
 
         // Auto-expand configured providers on first load
         if (!expandedInitRef.current) {
@@ -119,50 +133,78 @@ export default function GatewayPageClient() {
           });
           if (configured.size > 0) setExpandedProviders(configured);
         }
-        // Load keys from provider response (all configured providers now return apiKey)
-        const keyEntries: Record<string, string> = {};
-        const origEntries: Record<string, string> = {};
-        provJson.providers.forEach((p: any) => {
-          if (p.configured && p.apiKey) {
-            keyEntries[p.provider] = p.apiKey;
-            origEntries[p.provider] = p.apiKey;
-          }
-        });
-        setApiKeyInputs((prev) => ({ ...prev, ...keyEntries }));
-        setOriginalKeys((prev) => ({ ...prev, ...origEntries }));
-
-        // Auto-fetch balances for supported providers that have keys configured
-        const balanceProvs = provJson.providers
-          .filter((p: any) => p.configured && ['deepseek','openrouter','glm'].includes(p.provider))
-          .map((p: any) => p.provider);
-        for (const bp of balanceProvs) {
-          try {
-            const bRes = await fetch(`/api/gateway/provider/balance?provider=${bp}`);
-            const bJson = await bRes.json();
-            if (bRes.ok && bJson.balance) {
-              setBalances((prev) => ({ ...prev, [bp]: { balance: bJson.balance, label: bJson.label } }));
-            } else if (bJson.reason === 'no-balance-api') {
-              // Permanent: this provider has no balance API for the account — hide the badge.
-              setBalances((prev) => ({ ...prev, [bp]: { balance: '', unsupported: true } }));
-            } else {
-              setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: bJson.error || 'Failed' } }));
+        // A scheduled band refresh only updates model rows. It must not overwrite a key
+        // the operator is editing or re-run the slower balance requests.
+        if (!silent) {
+          // Load keys from provider response (all configured providers now return apiKey)
+          const keyEntries: Record<string, string> = {};
+          const origEntries: Record<string, string> = {};
+          provJson.providers.forEach((p: any) => {
+            if (p.configured && p.apiKey) {
+              keyEntries[p.provider] = p.apiKey;
+              origEntries[p.provider] = p.apiKey;
             }
-          } catch (e: unknown) {
-            setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: e instanceof Error ? e.message : String(e) } }));
+          });
+          setApiKeyInputs((prev) => ({ ...prev, ...keyEntries }));
+          setOriginalKeys((prev) => ({ ...prev, ...origEntries }));
+
+          // Auto-fetch balances for supported providers that have keys configured
+          const balanceProvs = provJson.providers
+            .filter((p: any) => p.configured && ['deepseek','openrouter','glm'].includes(p.provider))
+            .map((p: any) => p.provider);
+          for (const bp of balanceProvs) {
+            try {
+              const bRes = await fetch(`/api/gateway/provider/balance?provider=${bp}`, { signal: controller.signal });
+              const bJson = await bRes.json();
+              if (bRes.ok && bJson.balance) {
+                setBalances((prev) => ({ ...prev, [bp]: { balance: bJson.balance, label: bJson.label } }));
+              } else if (bJson.reason === 'no-balance-api') {
+                // Permanent: this provider has no balance API for the account — hide the badge.
+                setBalances((prev) => ({ ...prev, [bp]: { balance: '', unsupported: true } }));
+              } else {
+                setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: bJson.error || 'Failed' } }));
+              }
+            } catch (e: unknown) {
+              if ((e as Error)?.name === 'AbortError') throw e;
+              setBalances((prev) => ({ ...prev, [bp]: { balance: '—', error: e instanceof Error ? e.message : String(e) } }));
+            }
           }
         }
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      if ((e as Error)?.name !== 'AbortError') {
+        setError(e instanceof Error ? e.message : String(e));
+        if (silent) setRetryAt(Date.now() + 60_000);
+      }
     } finally {
-      setLoading(false);
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null;
+        setLoading(false);
+      }
     }
   }, []);
 
-  useEffect(() => { void loadAll(); }, [loadAll]);
+  useEffect(() => {
+    void loadAll();
+    return () => { loadAbortRef.current?.abort(); };
+  }, [loadAll]);
+
+  // Band chips: when a rate change is due, reload just past it — silently, so an open page
+  // flips PEAK / OFF-PEAK with the prices the agents actually get, without flickering skeletons.
+  useEffect(() => {
+    const next = retryAt ?? bandChangeAt;
+    if (!next) return;
+    const t = setTimeout(() => { void loadAll(true); }, Math.max(5_000, next - Date.now() + (retryAt ? 0 : 2_000)));
+    return () => { clearTimeout(t); };
+  }, [bandChangeAt, retryAt, loadAll]);
 
   /** Format pricing for display — shared with the details modal (app/lib/model-format.ts). */
   const fmtPrice = formatPrice;
+
+  /** The band chips' tooltip: when the band in force now ends, in UTC. */
+  const bandUntilLabel = bandChangeAt
+    ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(new Date(bandChangeAt))
+    : null;
 
   /**
    * Local model filter. Matches against both the display name and the id,
@@ -658,6 +700,14 @@ export default function GatewayPageClient() {
                                   <span style={{ marginLeft: 8, color: 'var(--violet)', fontWeight: 500 }}>
                                     {fmtPrice(pricing)}
                                   </span>
+                                  {m.band && (
+                                    <span
+                                      title={`Time-of-day rates: ${m.band} until ${bandUntilLabel ? `${bandUntilLabel} UTC` : 'the next change'} — the agents' synced prices follow the band.`}
+                                      style={{ marginLeft: 6, display: 'inline-block', verticalAlign: 'middle' }}
+                                    >
+                                      <Pill tone={m.band === 'peak' ? 'warning' : 'success'}>{m.band === 'peak' ? 'PEAK' : 'OFF-PEAK'}</Pill>
+                                    </span>
+                                  )}
                                   {typeof m.params === 'number' && (
                                     <span
                                       style={{ marginLeft: 8, color: 'var(--text-dim)' }}

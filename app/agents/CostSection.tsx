@@ -13,6 +13,8 @@ import { PanelRow } from './PanelRow';
 interface AgentCosts {
   available: boolean;
   intervalS: number;
+  /** The vendor band billed right now (DeepSeek peak / off-peak), when one of its models is on offer. */
+  pricing?: { vendor: string; band: 'peak' | 'off-peak'; nextChange: number | null; source: string } | null;
   today?: number;
   week?: number;
   month?: number;
@@ -69,12 +71,18 @@ export default function CostSection({ container }: { container: string }) {
   }
 
   const stale = !data.collectedAt || Date.now() - data.collectedAt > data.intervalS * 3 * 1000;
-  const rows: [string, string][] = [
+  const utcTime = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+  // What the gateway charges right now: the band the agent's calls are billed at until the
+  // next change (the rows below are history, priced as each call happened).
+  const rows: [string, string][] = data.pricing ? [
+    ['Rates now', `${data.pricing.vendor} ${data.pricing.band}${data.pricing.nextChange ? ` · until ${utcTime.format(new Date(data.pricing.nextChange))} UTC` : ''}`],
+  ] : [];
+  rows.push(
     ['Today (UTC)', formatCost(data.today)],
     ['Last 7 days', formatCost(data.week)],
     ['Last 30 days', `${formatCost(data.month)} · ${Math.round((data.tokensMonth ?? 0) / 1000)}k tokens`],
     ['Top model (30 days)', data.topModel ? `${data.topModel.model} · ${formatCost(data.topModel.cost)}` : '-'],
-  ];
+  );
   if (data.unpricedMonth) rows.push(['Calls without a price (30 days)', String(data.unpricedMonth)]);
   rows.push(['Last read', data.collectedAt ? formatAge(Date.now() - data.collectedAt) : 'never']);
 

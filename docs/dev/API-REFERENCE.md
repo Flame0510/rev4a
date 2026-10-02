@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-02
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -251,10 +251,15 @@ Returns current provider configuration state.
 
 **Response:** each provider carries its models, and a model carries `params` (the total
 parameter count) when its Hugging Face card publishes one — the Gateway row shows it next
-to the price, and a model without a card simply omits it.
+to the price, and a model without a card simply omits it. A model priced by time of day
+carries `band` (`"peak"` or `"off-peak"`, what the vendor bills right now — the Gateway row
+shows it as a chip) and its `pricing` is the rate in force at answer time, not the peak
+list price: it flips with the band, like the agents' synced prices. The top level carries
+`nextPriceChangeMs`, when the band flips next, so an open page can refresh the chips.
 
 ```json
 {
+  "nextPriceChangeMs": 1790532000000,
   "providers": [
     {
       "provider": "deepseek",
@@ -263,8 +268,8 @@ to the price, and a model without a card simply omits it.
       "baseUrl": "https://api.deepseek.com",
       "docsUrl": "https://platform.deepseek.com/api_keys",
       "models": [
-        { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "enabled": true },
-        { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "enabled": true }
+        { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "enabled": true, "band": "off-peak", "pricing": { "input": 0.15, "output": 0.6, "cacheRead": 0.003, "cacheWrite": 0.15 } },
+        { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "enabled": true, "band": "off-peak", "pricing": { "input": 0.66, "output": 1.98, "cacheRead": 0.022, "cacheWrite": 0.66 } }
       ]
     }
   ]
@@ -320,8 +325,8 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 ---
 
 ### `GET /api/models/details?id=<model id>`
-Everything the details modal shows for one model, and nothing more: fields the sources do
-not have are **absent**, never `null` and never a guess.
+Everything the details modal shows for one model, and nothing more: unknown optional
+facts are omitted; `price` and `info` can be `null` when absent.
 
 **Auth:** browser cookie or bearer token
 
@@ -330,7 +335,7 @@ not have are **absent**, never `null` and never a guess.
 {
   "id": "glm/glm-5.3-flash", "name": "GLM-5.3 Flash", "provider": "glm",
   "modality": "text+image+video->text", "enabled": false, "deprecated": false,
-  "price": { "input": 0.15, "output": 0.5, "source": "vendor" },
+  "price": { "input": 0.15, "output": 0.5, "source": "vendor", "scheduled": false },
   "details": { "description": "…", "created": "2026-08-26", "context": 1310720,
                "providerContext": 1048576, "maxOutput": 943718,
                "reasoning": { "mandatory": true, "default_effort": "max", "supported_efforts": ["max","high","low"] },
@@ -338,13 +343,15 @@ not have are **absent**, never `null` and never a guess.
                "benchmarks": { "design_arena": [ … ], "artificial_analysis": { … } },
                "huggingFaceId": "zai-org/GLM-5.3-Flash", "url": "https://openrouter.ai/…" },
   "info": null,
-  "asOf": "2026-09-23T14:02:40.271Z",
+  "asOf": "2026-10-02T10:46:53.452Z",
   "detailsSource": "openrouter"
 }
 ```
 
 `price.source` is `openrouter` for an `openrouter/*` entry and `vendor` for a direct one,
-which keeps prices honest: the refresh script never writes a vendor price. `details` comes
+which keeps prices honest: the refresh script never writes a vendor price. `price.scheduled`
+identifies a time-of-day list price; the Gateway row separately shows the rate in force.
+`details` comes
 from the generated `model-details.json` (`npm run refresh:pricing`, see
 `docs/dev/GATEWAY.md`), `info` from the catalogue's hand-written block, and `asOf` is when
 the generated part was produced. An id the catalogue does not carry answers `404`.
@@ -652,11 +659,14 @@ One agent's spend for its panel, from `costs.db`.
 
 **Auth:** browser cookie or Bearer
 
-**Response:** `{ "available": true, "intervalS": 300, "today": 0.011, "week": 0.019,
+**Response:** `{ "available": true, "intervalS": 300, "pricing": { "vendor": "DeepSeek", "band": "off-peak", "nextChange": 1790532000000, "source": "https://api-docs.deepseek.com/quick_start/pricing" }, "today": 0.011, "week": 0.019,
 "month": 0.022, "tokensMonth": 2409574, "topModel": { "model": "deepseek/deepseek-flash",
 "cost": 0.022 }, "unpricedMonth": 81, "collectedAt": 1790529516737, "error": null }` —
-UTC days (today, last 7, last 30); `collectedAt`/`error` from the agent's last read.
-`{ "available": false, "intervalS": 300 }` before `costs.db` exists.
+UTC days (today, last 7, last 30); `pricing` is the band billed right now, the same object
+the Costs page header shows (`null` when no scheduled model is on offer); `collectedAt`/`error`
+from the agent's last read. Before `costs.db` exists, the response is
+`{ "available": false, "intervalS": 300, "pricing": null }` (or the current pricing
+object when a scheduled model is on offer).
 
 **Errors:** `400` for an invalid container name; `500` when `costs.db` cannot be read.
 

@@ -1,10 +1,25 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openCostsDb } from '@/lib/costs-db';
 import { COLLECT_INTERVAL_S, lastDays, readCostSummary } from '@/lib/agent-costs';
+import { loadOfferedModels } from '@/lib/model-catalogue';
+import { nextPriceChange, priceBandAt, priceScheduleFor } from '@/lib/model-pricing';
 import { CONTAINER_NAME_RE } from '@/lib/docker-stats';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
+
+/** The band DeepSeek bills at right now, when one of its models is on offer — the same object the Costs page header shows. Never throws: the panel's poll must not 500 over a broken key or catalogue file. */
+function currentPricing() {
+  try {
+    const scheduled = loadOfferedModels().map((m) => m.id).filter((id) => priceScheduleFor(id));
+    if (!scheduled.length) return null;
+    const pricingAt = new Date();
+    const next = nextPriceChange(scheduled, pricingAt);
+    return { vendor: 'DeepSeek', band: priceBandAt(scheduled[0], pricingAt), nextChange: next ? next.getTime() : null, source: priceScheduleFor(scheduled[0])!.source };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * GET /api/costs/agent?container=<name> — one agent's spend for its panel: today, the
@@ -18,13 +33,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const container = request.nextUrl.searchParams.get('container') ?? '';
   if (!CONTAINER_NAME_RE.test(container)) return NextResponse.json({ error: 'Invalid container name' }, { status: 400 });
 
+  const pricing = currentPricing();
+
   let db;
   try {
     db = openCostsDb();
   } catch (e) {
     return NextResponse.json({ error: `costs.db could not be read: ${(e as Error).message}` }, { status: 500 });
   }
-  if (!db) return NextResponse.json({ available: false, intervalS: COLLECT_INTERVAL_S });
+  if (!db) return NextResponse.json({ available: false, intervalS: COLLECT_INTERVAL_S, pricing });
 
   try {
     const dates = lastDays(30);
@@ -38,6 +55,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       available: true,
       intervalS: COLLECT_INTERVAL_S,
+      pricing,
       today: sum(1),
       week: sum(7),
       month: s.totals.cost,
