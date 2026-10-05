@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-02
+> **Last updated:** 2026-10-06
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -2851,11 +2851,31 @@ no value, masked or otherwise, is returned.
 **Response:** `{ "hasPassword": true, "hasJwtSecret": true, "hasToken": false }`
 
 ### `GET /api/envcheck`
-The process environment, with `REV4A_PASSWORD`, `REV4A_TOKEN`,
-`REV4A_JWT_SECRET` and `PROVIDER_DEEPSEEK_API_KEY` redacted. Every other
-variable is returned **in the clear**, so treat the response as sensitive.
+A fixed list of environment keys, for diagnostics: `REV4A_PASSWORD`, `REV4A_TOKEN`,
+`REV4A_JWT_SECRET`, `REV4A_ALERTS_ENABLED`, `REV4A_DB`, `REV4A_WORKSPACE_ROOT`,
+`PROVIDER_DEEPSEEK_API_KEY`, `NODE_ENV`. It is not a dump of the process environment:
+keys outside that list are never returned.
+
+The four secrets — `REV4A_PASSWORD`, `REV4A_TOKEN`, `REV4A_JWT_SECRET` and
+`PROVIDER_DEEPSEEK_API_KEY` — are reported as `set` or `not set` only. No part of their
+value is returned, not even a prefix. The other keys return their value, or `(not set)`
+when missing or empty.
 
 **Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+{
+  "REV4A_PASSWORD": "set",
+  "REV4A_TOKEN": "not set",
+  "REV4A_JWT_SECRET": "set",
+  "REV4A_ALERTS_ENABLED": "1",
+  "REV4A_DB": "(not set)",
+  "REV4A_WORKSPACE_ROOT": "/workspace",
+  "PROVIDER_DEEPSEEK_API_KEY": "set",
+  "NODE_ENV": "production"
+}
+```
 
 ### `GET /api/provider-usage`
 Usage and quota state per provider, including live OpenRouter figures.
