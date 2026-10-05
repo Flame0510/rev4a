@@ -20,10 +20,9 @@ After a successful `POST /api/auth/login`, the server sets an `rev4a_token`
 cookie (signed JWT, 7-day expiry). All subsequent UI requests use this cookie
 automatically.
 
-### API-only fallbacks (in order of precedence)
-1. `Authorization: Bearer <token>`
-2. `?token=<token>` query param
-3. `x-agent-token` header
+### API-only auth
+`Authorization: Bearer <REV4A_TOKEN>`. No other fallback is accepted: a `?token=` query
+parameter is ignored (it would end up in logs and browser history).
 
 For Control UI deep links, prefer `#token=<token>` instead of `?token=<token>`. The hash fragment is consumed by the browser client before the WebSocket connects.
 

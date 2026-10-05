@@ -136,7 +136,7 @@ REV4A_JWT_SECRET=***  # Secret for signing JWTs
 1. User visits `/login`, enters password
 2. POST `/api/auth/login` validates password, returns a `rev4a_token` cookie (JWT, 7-day expiry)
 3. All subsequent API calls use the cookie (`credentials: 'same-origin'`)
-4. API-only auth fallbacks: `Authorization: Bearer <token>`, `?token=<token>`, or `x-agent-token` header
+4. API-only auth: `Authorization: Bearer <REV4A_TOKEN>` (no query-string token is accepted)
 5. Control UI bootstrap links should use `#token=<token>` so the browser client can import the shared secret before opening the socket
 
 ---

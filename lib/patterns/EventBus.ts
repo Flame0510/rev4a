@@ -51,9 +51,7 @@ class Rev4aEventBusClass {
 
   private connect(): void {
     this.disconnect();
-    // EventSource cannot send headers; pass token via query param for browser auth
-    const token = process.env.NEXT_PUBLIC_REV4A_TOKEN ?? '';
-    this.source = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`);
+    this.source = new EventSource('/api/stream');
 
     this.source.onmessage = (e: MessageEvent<string>) => {
       try {
