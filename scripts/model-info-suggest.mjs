@@ -6,7 +6,7 @@
  *
  * **It never writes.** Prints the material and, with `--json`, a skeleton to complete:
  * the assistant or the maintainer reads the model card, transcribes the numbers and
- * records the source, exactly as the plan requires (plans/MODEL-DETAILS-PLAN.md: facts
+ * records the source, exactly as the plan requires (plans/done/MODEL-DETAILS-PLAN.md: facts
  * plus curation, never derived).
  *
  * Sources, in order: the model card on Hugging Face (a README, so readable), then the

@@ -63,6 +63,9 @@ Reviewers work in English and are **read-only**:
 - Anything that used to succeed silently and now fails loudly: intended, but check
   every caller copes.
 
+- **Upgrade safety (AGENTS.md §2.2c).** An install updated from the previous release: old databases
+  and config, the first run on a large existing table, agents on older OpenClaw versions, rollback.
+
 ### Lens B — Edge cases and failure modes
 
 - **Errors turned into empty values.** Every `catch` that returns `{}`, `[]`, `''`

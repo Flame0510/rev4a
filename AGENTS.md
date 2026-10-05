@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-02
+> **Last updated:** 2026-10-05
 
 ---
 
@@ -114,17 +114,29 @@ Rev4a has a shared UI design system. **Read `docs/DESIGN-SYSTEM.md` and `docs/FR
 8. **Every async action button MUST show loading state.** Use the `Button` component's `loading` prop. Disable the button and all sibling action buttons during the operation. Every approve, revoke, delete, connect, restart, or similar action must have its own dedicated loading state (never share a generic `loading` boolean across unrelated buttons — a single state holding a *key* that identifies the running action satisfies this and is the pattern to use; see rules 6a-6c in `docs/FRONTEND-ARCHITECTURE.md`). The button text should change to reflect the action: "Approving…", "Revoking…", "Restarting…", etc.
 9. **Prevent race conditions on repeated fetch calls.** When a fetch can be triggered while a previous call is still in flight (polling intervals, tab switches, user double-click, modal open/close), use `AbortController` via a `useRef` to cancel the stale request before starting a new one. Pattern: `abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller; fetch(url, { signal: controller.signal })`. Check `e?.name !== 'AbortError'` in catch to silence abort noise. This applies especially to: polling logic, data re-fetches after mutations, and any fetch triggered by user interaction that could fire multiple times before resolution.
 
-### 2.2c No Backward Compatibility (for now)
+### 2.2c Upgrade Safety (since 2026-10-05)
 
-Nobody runs Rev4a in production yet, and the maintainer upgrades every agent to the new
-OpenClaw version before going live. So do **not** spend code, UI or warnings on older agent
-versions: no version checks, fallbacks, compat branches, migration banners or warnings that
-only serve agents not yet upgraded. Design for the structure going forward; an older agent
-only has to keep opening its Control UI from Rev4a.
+Rev4a is open source: people install it with npm and update it from the dashboard banner, and most of
+them cannot fix a broken install by hand. **An update must never break an existing install.** This replaces
+the earlier "no backward compatibility" rule; it applies to every change made from 2026-10-05 on (code
+written before that date is not audited retroactively, but anything touched again must meet it).
 
-Before adding a version check or a warning, ask whether it only serves pre-upgrade agents —
-if so, leave it out, or keep it to a minimal guard. Revisit this rule when Rev4a is used by
-others (open source): then an update can meet agents on older versions.
+For every change, before it is called done, answer in the PR or the report:
+
+1. **Existing data.** What happens to databases, config files, `.env`, `provider-keys.json` and agent
+   volumes written by the previous releases? Schema changes are additive and idempotent
+   (`CREATE … IF NOT EXISTS`, `ADD COLUMN` guarded); nothing is dropped or rewritten without a migration
+   that is safe to run twice and on a half-migrated file.
+2. **First run after the update.** Large existing tables, missing files, old defaults, a daemon started
+   before the dashboard: the first pass must not block, crash or take minutes.
+3. **Older agents.** Agents on an older OpenClaw version keep working (at least: listed, started, stopped,
+   Control UI reachable). A feature they cannot support is hidden or explained, not broken.
+4. **Behaviour users will notice.** Data that is now deleted, renamed or moved; a changed default; a new
+   requirement. It goes in the release notes.
+5. **Rollback.** Can the previous version still run on the data this version wrote? If not, say so and
+   make the update take a backup first.
+
+Reviewers and checkers check these five points like any other defect. A missing answer is a finding.
 
 ### 2.3 Documentation-First Workflow
 
@@ -146,6 +158,7 @@ others (open source): then an update can meet agents on older versions.
 - [ ] Does `AGENTS.md` need updating? (New rules or conventions.)
 - [ ] Are there new dependencies? Add them to the relevant docs.
 - [ ] Does `README.md` need updating? (New features, changed setup.)
+- [ ] Answered the five upgrade-safety questions (§2.2c) for this change?
 - [ ] Ran `npm run check:language`? Then reread the diff and the commit message
       yourself — the script is a word list, it misses Italian syntax and never
       reads the message (see §2.1).
