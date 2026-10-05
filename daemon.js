@@ -17,6 +17,7 @@ const path = require('path');
 // Shared with the dashboard (lib/docker-socket.ts): one copy of where the Docker socket is.
 const { dockerRequestJson } = require('./lib/docker-socket-path.js');
 const dockerStats = require('./lib/docker-stats.js');
+const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
 // dir is REV4A_DATA_DIR or ~/.config/rev4a — the API reads the files the daemon writes.
@@ -1414,6 +1415,24 @@ const firstCosts = costs
   : null;
 if (costs) log(`Agent costs every ${COSTS_INTERVAL_MS / 60000} min into ${COSTS_DB_PATH}`);
 
+// Events retention: delete events older than 30 days. It only needs events.db, so it runs on
+// every host: no OpenClaw, no metrics.db, no costs.db required. Not tied to the session poll.
+const EVENTS_RETENTION_FIRST_DELAY_MS = 10_000;
+const EVENTS_RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+function pruneOldEvents() {
+  try {
+    const n = pruneEvents(db, Date.now());
+    if (n > 0) log(`Events retention: ${n} events older than ${EVENTS_RETENTION_MS / 86_400_000} days deleted`);
+  } catch (e) {
+    log(`[EVENTS RETENTION ERROR] ${e.message}`);
+  }
+}
+let eventsRetentionTimer = null;
+const firstEventsRetention = setTimeout(() => {
+  pruneOldEvents();
+  eventsRetentionTimer = setInterval(pruneOldEvents, EVENTS_RETENTION_INTERVAL_MS);
+}, EVENTS_RETENTION_FIRST_DELAY_MS);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
@@ -1425,6 +1444,8 @@ process.on('SIGTERM', () => {
   clearInterval(storageTimer);
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
+  clearTimeout(firstEventsRetention);
+  clearInterval(eventsRetentionTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1441,6 +1462,8 @@ process.on('SIGINT', () => {
   clearInterval(storageTimer);
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
+  clearTimeout(firstEventsRetention);
+  clearInterval(eventsRetentionTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();

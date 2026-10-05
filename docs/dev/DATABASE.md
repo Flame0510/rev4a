@@ -69,9 +69,15 @@ CREATE INDEX idx_events_session ON events(session_id, ts);
 
 Types written today: `spawn`, `complete`, `fail`, `spawn_timeout` (the daemon's session poll),
 `system_anomaly` (the daemon's machine metrics, session `system`), `agent_created` and
-`agent_deleted` (the create and delete routes, session `system:agents`). **No retention:**
-rows are never pruned — on a development machine with a nearly full disk, `system_anomaly`
-reached ~4 000 rows in a month.
+`agent_deleted` (the create and delete routes, session `system:agents`).
+
+**Retention:** two rules. The session poll deletes cron-session events older than 7 days. On
+its own timer the daemon deletes every event older than 30 days, whatever its type or session
+(`lib/events-retention.js`, `pruneEvents`): first pass about 10 s after start, then every 6
+hours, in batches of at most 5 000 rows so the API's readers are not blocked. A row exactly at
+the cutoff stays. This timer needs only `events.db`, so it runs on hosts with no OpenClaw and
+when `metrics.db` failed to open. On a development machine with a nearly full disk,
+`system_anomaly` reached ~4 000 rows in a month.
 
 ### `lineage` — explicit parent→child declarations
 

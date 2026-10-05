@@ -702,6 +702,13 @@ After each sample the daemon inserts a `system_anomaly` event into `events.db`
 No feature consumes `system_anomaly` events yet; they only pass through the generic
 event feeds.
 
+### Events Retention
+
+On its own timer (first pass 10 s after start, then every 6 hours) the daemon deletes events
+older than 30 days from `events.db` (`lib/events-retention.js`), in batches of at most 5 000
+rows. It does not depend on OpenClaw being installed or on `metrics.db` opening, so it runs on
+every host. The 7-day cron-session retention in the poll is separate.
+
 ### DB Safety
 
 - WAL mode + `PRAGMA synchronous = NORMAL` for concurrent read safety
