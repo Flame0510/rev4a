@@ -50,6 +50,11 @@ fi
 #   - tools.web.search.provider is "duckduckgo" when no provider is set
 #   - agents.defaults.heartbeat.every is "0m" when unset: every heartbeat tick is a
 #     model-calling turn, so the recurring cadence is opt-in
+#   - agents.defaults.compaction.maxActiveTranscriptBytes is "20mb" when unset: a run
+#     compacts before the model-visible transcript grows past it, so a long-lived
+#     session cannot keep inflating memory and cost
+#   - agents.defaults.contextPruning.mode is "cache-ttl" when unset: old tool results
+#     are trimmed from the in-memory context (1h TTL keeps prompt-cache prefixes stable)
 #
 # The config is read with one node process and written only through
 # `openclaw config patch`, which validates. The plugin path goes in first: the
@@ -73,6 +78,8 @@ DEFAULTS=$(DDG_PLUGIN_DIR="$DDG_PLUGIN_DIR" node -e '
   if (hasPlugin && !paths.includes(dir)) out.paths = { plugins: { load: { paths: [...paths, dir] } } };
   if (hasPlugin && !cfg.tools?.web?.search?.provider) out.provider = { tools: { web: { search: { provider: "duckduckgo" } } } };
   if (cfg.agents?.defaults?.heartbeat?.every === undefined) out.heartbeat = { agents: { defaults: { heartbeat: { every: "0m" } } } };
+  if (cfg.agents?.defaults?.compaction?.maxActiveTranscriptBytes === undefined) out.compaction = { agents: { defaults: { compaction: { maxActiveTranscriptBytes: "20mb" } } } };
+  if (cfg.agents?.defaults?.contextPruning?.mode === undefined) out.contextPruning = { agents: { defaults: { contextPruning: { mode: "cache-ttl", ttl: "1h" } } } };
   for (const [name, patch] of Object.entries(out)) console.log(name + " " + JSON.stringify(patch));
 ' 2>/dev/null || echo "unreadable")
 

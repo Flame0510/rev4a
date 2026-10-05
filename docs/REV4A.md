@@ -425,6 +425,11 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   - `tools.web.search.provider: "duckduckgo"` when no provider is set
   - `agents.defaults.heartbeat.every: "0m"` when unset: every heartbeat tick is a
     model-calling turn, so the recurring cadence is opt-in
+  - `agents.defaults.compaction.maxActiveTranscriptBytes: "20mb"` when unset: a run
+    compacts before the model-visible transcript grows past that, so a long-lived session
+    cannot keep inflating memory and cost
+  - `agents.defaults.contextPruning.mode: "cache-ttl"` (and `ttl: "1h"`) when unset: old
+    tool results are trimmed from the in-memory context before each request
 
   An explicit value, such as a heartbeat turned on for one agent, is never overwritten.
   The config is read with one node process and written through `openclaw config patch`,
