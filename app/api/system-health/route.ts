@@ -5,6 +5,7 @@ import { maybeSendAlert } from '@/lib/alerts';
 import { dashboardCosts } from '@/lib/agent-costs';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { countFailureEvents } from '@/lib/runtime-errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,15 +51,6 @@ function getSeconds(value: unknown): number {
 function getEnvNumber(name: string, fallback: number): number {
   const value = Number(process.env[name] ?? fallback);
   return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function tableExists(db: ReturnType<typeof openDb>, tableName: string): boolean {
-  const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
-  return Boolean(row);
-}
-
-function columnExists(db: ReturnType<typeof openDb>, tableName: string, columnName: string): boolean {
-  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as { name: string }[]).some((column) => column.name === columnName);
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -144,15 +136,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       stale: hasSystemMetrics ? (latestMetricAgeSeconds === null ? true : latestMetricAgeSeconds > staleThresholdSeconds) : false,
     });
 
-    const eventExpr = tableExists(db, 'events')
-      ? [columnExists(db, 'events', 'type') ? 'type' : null, columnExists(db, 'events', 'event') ? 'event' : null].filter(Boolean).join(", ''), COALESCE(")
-      : '';
-    const eventErrorCount = eventExpr
-      ? (db.prepare(`SELECT COUNT(*) AS total FROM events WHERE LOWER(COALESCE(${eventExpr}, '')) LIKE '%error%' AND ts >= ?`).get(Date.now() - 86_400_000) as { total: number }).total // events.ts is in milliseconds
-      : 0;
+    const eventErrorCount = countFailureEvents(db, Date.now() - 86_400_000);
     checks.push({
       id: 'runtime.errors24h',
-      label: 'Errors last 24h',
+      label: 'Failed runs (24h)',
       health: eventErrorCount > 0 ? 'warning' : 'ok',
       value: eventErrorCount,
       source: 'runtime',
@@ -163,7 +150,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         severity: 'warning',
         source: 'runtime',
         title: 'Review recent errors',
-        details: `${eventErrorCount} error events in the last 24h.`,
+        details: `${eventErrorCount} failed or timed-out runs in the last 24h.`,
         actionHref: '/lineage',
         dismissible: true,
         createdAt,

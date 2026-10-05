@@ -2157,7 +2157,11 @@ say so; it does not fail the others.
 }
 ```
 
-Checks: `runtime.sessions`, `runtime.heartbeat`, `runtime.errors24h`,
+Checks: `runtime.sessions`, `runtime.heartbeat`, `runtime.errors24h`
+("Failed runs (24h)": the failure events of the last 24 hours — the `events` rows whose
+`type` is `fail` or `spawn_timeout`, the two types `daemon.js` writes for a failed run
+and for a sub-agent that timed out; the `events.ts` column is in milliseconds and any
+count above zero is a warning that raises the `runtime.review-errors` recommendation),
 `cost.usageBasedToday` ("Spent today": the agents' spend today, UTC day, from `costs.db`;
 a warning above $10 or with calls without a price, each with its recommendation,
 `cost.review-usage-based` / `cost.unpriced-calls`), `cron.jobs`. `health` (overall and per check) is `"ok"` /
