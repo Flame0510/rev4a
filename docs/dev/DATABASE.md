@@ -466,6 +466,13 @@ to agent containers via CLI auth or env files.
 **Location:** `data/credentials.db` (same directory as `events.db`)
 **Custom path:** Set `REV4A_CREDENTIALS_DB` env var to override.
 **WAL mode:** Enabled.
+**File mode:** `credentials.db` and its `-wal` and `-shm` companions are `0600`, readable
+by their owner only — like `.env`, `provider-keys.json` and `agents-token.json`. A new file
+is created that way instead of inheriting the process umask; an install from an earlier
+release with `0644` files is tightened at the next start (`lib/credentials/file-mode.ts`,
+called once per process by `bootstrap()` before SQLite opens the database). If the chmod
+fails — a read-only filesystem, Windows, a process that is not the owner — it is logged
+once per file and the vault keeps working.
 
 ### `credential_profiles` — credential hub metadata
 

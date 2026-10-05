@@ -2,13 +2,21 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { DB_PATH } from '@/lib/db';
+import { secureDbFiles } from './file-mode';
 
 // credentials.db lives alongside events.db in the same data directory
 export const CREDENTIALS_DB_PATH =
   process.env.REV4A_CREDENTIALS_DB ??
   path.join(path.dirname(DB_PATH), 'credentials.db');
 
+// Tighten the vault files once per process, before SQLite creates credentials.db under the umask.
+let filesSecured = false;
+
 function bootstrap(): void {
+  if (!filesSecured) {
+    filesSecured = true;
+    secureDbFiles(CREDENTIALS_DB_PATH);
+  }
   fs.mkdirSync(path.dirname(CREDENTIALS_DB_PATH), { recursive: true });
   const db = new Database(CREDENTIALS_DB_PATH);
   db.pragma('journal_mode = WAL');
@@ -42,6 +50,9 @@ function bootstrap(): void {
     CREATE INDEX IF NOT EXISTS idx_cred_audit_ts ON credential_audit_log(ts);
   `);
   db.close();
+  // Again after SQLite's first open: a database path that is a symlink to a missing file is
+  // created by SQLite itself, under the umask, so it is tightened only now.
+  secureDbFiles(CREDENTIALS_DB_PATH);
 }
 
 // Track whether the full bootstrap (including migrations) has run

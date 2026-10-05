@@ -7,6 +7,15 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    // The credential vault holds secrets in clear: tighten it to 0600 at every start, so an
+    // install updated from a version that created it 0644 is fixed now, not at its first use.
+    try {
+      const { secureDbFiles } = await import('./lib/credentials/file-mode');
+      const { CREDENTIALS_DB_PATH } = await import('./lib/credentials/db');
+      secureDbFiles(CREDENTIALS_DB_PATH);
+    } catch {
+      console.warn('[rev4a] Could not check the credential vault file mode');
+    }
     let startupSynced = false;
     try {
       const { syncAllAgents } = await import('./app/api/gateway/sync');
