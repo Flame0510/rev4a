@@ -36,3 +36,12 @@ globals.css.pre-cleanup
 
 # Local working documents (plans, backlog, runbooks), never committed
 /plans/
+
+# Secrets and local state that must never be published: keys at any depth, Rev4a backup archives, and root-level token files (anchored with `/` so tracked files deeper in the tree stay tracked)
+*.pem
+*.key
+rev4a-backup-*.tar.gz
+/provider-keys.json
+/agents-token.json
+id_rsa
+id_ed25519
