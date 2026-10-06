@@ -5,8 +5,11 @@
  * POST /api/agents/download-image (the Agents page banner) and
  * POST /api/setup/agent-image (the setup wizard, streamed).
  *
- * The image is pulled from the registry as `<registry>:<version>` and kept as
- * `openclaw-agent-base:<version>` (see lib/agent-images.ts). When the pull fails and
+ * The image is pulled from the registry as `<registry>:<version>` — or, when the release
+ * pins an image revision for the version, as `<registry>:<version>-<sha>` — and kept as
+ * `openclaw-agent-base:<version>` (plus `<version>-rev.<sha>` for a pinned revision; see
+ * lib/agent-images.ts). A version whose local image is a different revision than the pinned
+ * one is downloaded again; agents keep the image they run. When the pull fails and
  * this repository's Dockerfile builds that same version, the image is built locally
  * instead — development without registry access. Any other version cannot be built
  * from here, so its download fails.
@@ -17,8 +20,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { isSupportedVersion, localImageRef, newestSupportedVersion } from '@/lib/agent-versions';
-import { localVersionExists, pullAgentImage, remoteSupportedVersions, runDocker } from '@/lib/agent-images';
+import { imageRevisionStatus, isSupportedVersion, localImageRef, newestSupportedVersion, pinnedImageRevision, registryImageTag } from '@/lib/agent-versions';
+import { listLocalAgentImages, localVersionExists, pullAgentImage, remoteSupportedVersions, runDocker } from '@/lib/agent-images';
 import { dockerAvailable } from '@/lib/docker-socket';
 
 const DOCKERFILE_DIR = path.join(process.cwd(), 'agent-templates', 'base-image');
@@ -214,7 +217,19 @@ export async function downloadAgentImage(opts: DownloadOptions = {}): Promise<Do
     if (!isSupportedVersion(version)) throw new Error(`OpenClaw ${version} is not supported by this Rev4a`);
     downloadingVersion = version;
 
-    const present = await localVersionExists(version);
+    // Present means the pinned revision when one is pinned: an older build is downloaded again.
+    // A failed listing (the container read is part of it) must not fail the download: without
+    // a pin, fall back to "the version tag exists", as before revisions; with one, try the pull.
+    const pin = pinnedImageRevision(version);
+    let revisionStatus: string;
+    try {
+      revisionStatus = imageRevisionStatus(version, await listLocalAgentImages());
+    } catch {
+      // Unknown revision: an existing image counts as outdated when pinned (never replaced by a
+      // local build below), as current when not pinned.
+      revisionStatus = (await localVersionExists(version)) ? (pin ? 'outdated' : 'current') : 'missing';
+    }
+    const present = revisionStatus === 'current';
     stopIfCanceled();
     if (present) {
       event('complete', `OpenClaw ${version} image already downloaded`);
@@ -239,12 +254,18 @@ export async function downloadAgentImage(opts: DownloadOptions = {}): Promise<Do
     } catch (e) {
       appendLog(`Registry download failed: ${(e as Error).message}`);
       if (signal.aborted) throw new Error('canceled');
+      // A pinned build that cannot be downloaded must not be replaced by something else
+      // while an image of this version exists: it stays as it is, tags untouched, and the
+      // job fails. Only a missing version may fall back to a local build, below.
+      if (pin && revisionStatus !== 'missing') {
+        throw new Error(`The pinned build ${registryImageTag(version)} could not be downloaded: ${(e as Error).message}`);
+      }
       if (dockerfileVersion() !== version) {
         throw new Error(`Could not download OpenClaw ${version}: ${(e as Error).message}`);
       }
     }
 
-    event('log', 'Registry download failed, building the image locally…');
+    event('log', pin ? `The pinned build ${registryImageTag(version)} could not be downloaded, building the image locally…` : 'Registry download failed, building the image locally…');
     downloadPercent = null;
     stopIfCanceled();
     await runDocker(
@@ -259,8 +280,11 @@ export async function downloadAgentImage(opts: DownloadOptions = {}): Promise<Do
         },
       },
     );
-    event('complete', `OpenClaw ${version} image built locally`);
-    lastDownloadResult = { version, result: 'succeeded', source: 'build', message: `OpenClaw ${version} image built locally`, at: Date.now() };
+    const builtMessage = pin
+      ? `OpenClaw ${version} image built locally because the pinned build ${registryImageTag(version)} could not be downloaded`
+      : `OpenClaw ${version} image built locally`;
+    event('complete', builtMessage);
+    lastDownloadResult = { version, result: 'succeeded', source: 'build', message: builtMessage, at: Date.now() };
     return { version, source: 'build' };
   } catch (e) {
     const version = downloadingVersion === 'pending' ? (opts.version ?? 'unknown') : downloadingVersion;

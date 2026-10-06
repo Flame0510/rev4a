@@ -14,8 +14,13 @@ import {
   LOCAL_IMAGE_REPOSITORY,
   compareVersions,
   isSupportedVersion,
+  identityRevision,
+  isRevisionTag,
   localImageRef,
+  localRevisionRef,
   parseOpenClawVersion,
+  pinnedImageRevision,
+  registryImageTag,
   registryRepository,
 } from '@/lib/agent-versions';
 
@@ -303,8 +308,34 @@ export function runDocker(
 }
 
 /**
- * Pull `<registry>:<version>` and tag it `openclaw-agent-base:<version>`. The registry
- * reference is removed afterwards, so local images list under the version tag only: after
+ * Before `<version>` moves to the image of `incomingRef`: when the current `<version>`
+ * image is a different one and has no `-rev.` tag, tag it `<version>-rev.<12 hex of its id>`.
+ * Best effort: a failure here must not block the download.
+ */
+async function keepPreviousImage(version: string, incomingRef: string): Promise<void> {
+  try {
+    const inspect = (ref: string) =>
+      dockerFetch<{ Id?: unknown; RepoTags?: string[] | null }>('GET', `/images/${encodeURIComponent(ref)}/json`);
+    const [current, incoming] = await Promise.all([inspect(localImageRef(version)), inspect(incomingRef)]);
+    if (typeof current?.Id !== 'string' || typeof incoming?.Id !== 'string' || current.Id === incoming.Id) return;
+    const hasRevTag = (current.RepoTags ?? []).some(
+      (t) => t.startsWith(`${LOCAL_IMAGE_REPOSITORY}:${version}-rev.`) && isRevisionTag(t.slice(tagPrefix.length)),
+    );
+    if (hasRevTag) return;
+    await runDocker(['tag', current.Id, localRevisionRef(version, identityRevision(current.Id))], { timeoutMs: 30_000 });
+  } catch {
+    // No current image, or docker refused: nothing to preserve.
+  }
+}
+
+/**
+ * Pull `<registry>:<version>` and tag it `openclaw-agent-base:<version>`. When the release
+ * pins an image revision for the version, the pull is the immutable
+ * `<registry>:<version>-<sha>` and the image also gets `openclaw-agent-base:<version>-rev.<sha>`,
+ * which is how a later status check knows which build the local image is. The revision tag
+ * goes first, so a failure between the two tags never moves `<version>` to a half-marked
+ * image. The previous image under `<version>` keeps running agents; it only loses the tag.
+ * The registry reference is removed afterwards, so local images list under the version tag only: after
  * a successful tag that is an untag (the layers stay); when the tag failed or was
  * cancelled it is the image's only name, and the pulled image is deleted with it.
  */
@@ -313,9 +344,15 @@ export async function pullAgentImage(
   opts: { onLine?: (line: string) => void; signal?: AbortSignal } = {},
 ): Promise<void> {
   if (!isSupportedVersion(version)) throw new Error(`OpenClaw ${version} is not supported by this Rev4a`);
-  const remote = `${registryRepository()}:${version}`;
+  const remote = `${registryRepository()}:${registryImageTag(version)}`;
+  const pin = pinnedImageRevision(version);
   await runDocker(['pull', remote], { ...opts, timeoutMs: PULL_TIMEOUT_MS });
   try {
+    // The build about to take `<version>` may be a different image than the current one.
+    // Give the current one an identity tag first, so it stays listable and prunable
+    // instead of becoming an untagged image nothing lists.
+    if (pin) await keepPreviousImage(version, remote);
+    if (pin) await runDocker(['tag', remote, localRevisionRef(version, pin)], { ...opts, timeoutMs: 30_000 });
     await runDocker(['tag', remote, localImageRef(version)], { ...opts, timeoutMs: 30_000 });
   } finally {
     // Also when the tag failed or was cancelled: left behind, the registry reference
@@ -330,7 +367,8 @@ export async function pullAgentImage(
  * Kept: every image a container uses, running or stopped, and the newest and the
  * previous OpenClaw version present — the previous one is what a rollback runs. Other
  * images lose all their tags. A kept image loses its extra tags (`latest`,
- * `2026.9.3-local`) when it has a version tag. Nothing is forced: Docker refuses to
+ * `2026.9.3-local`) when it has a version tag; its `<version>-rev.<sha>` tag stays. An earlier build of a version
+ * that only has a `-rev.<sha>` tag left is removed unless a container uses it. Nothing is forced: Docker refuses to
  * remove an image a container uses, the last safety net. A removed version can be
  * pulled again while the registry publishes it. Returns the references removed.
  */
@@ -342,11 +380,15 @@ export async function pruneAgentImages(): Promise<string[]> {
 
   const removed: string[] = [];
   for (const img of images) {
-    const keep = img.usedBy.length > 0 || (img.version !== null && keepVersions.has(img.version));
+    // An earlier build of a version that kept only its `-rev.<sha>` tag, because a newer
+    // build took the version tag, is not "the newest version" any more: only containers keep it.
+    const superseded = img.tags.length > 0 && img.tags.every((t) => t.startsWith(tagPrefix) && isRevisionTag(t.slice(tagPrefix.length)));
+    const keep = img.usedBy.length > 0 || (!superseded && img.version !== null && keepVersions.has(img.version));
     const versionTags = img.tags.filter((t) => {
       if (!t.startsWith(tagPrefix)) return false;
       const tag = t.slice(tagPrefix.length);
-      return parseOpenClawVersion(tag) === tag;
+      // A revision tag (`<version>-rev.<sha>`) is the image's identity, like the version tag.
+      return parseOpenClawVersion(tag) === tag || isRevisionTag(tag);
     });
     const targets = keep ? (versionTags.length ? img.tags.filter((t) => !versionTags.includes(t)) : []) : img.tags;
     for (const tag of targets) {

@@ -44,8 +44,11 @@ directory, where the update's output is written.
 
 The Agents page includes a banner for the **agent base image**, which is kept per
 OpenClaw version. It is hidden when a supported version is downloaded and nothing newer
-is published. When no image is downloaded it offers **Download Image**; when a newer
-supported OpenClaw version is published it says so and offers **Download <version>**.
+is published and every downloaded version's image is the newest build. When no image is downloaded it offers **Download Image**; when a newer
+supported OpenClaw version is published it says so and offers **Download <version>**; when the image of a downloaded version is an older
+build than the one this Rev4a release expects it says "A newer build of the agent image
+<version> is available" and offers **Download new build of <version>**. Agents keep their
+current image until they are recreated or updated.
 Downloading changes no agent: new agents are created on the newest version downloaded,
 existing agents keep their version (a recreate never changes it), and their card shows
 **UPDATE AVAILABLE**.

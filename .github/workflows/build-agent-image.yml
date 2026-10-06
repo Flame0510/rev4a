@@ -79,6 +79,8 @@ jobs:
             TAGS="${TAGS},${BASE}:latest"
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          # The same short sha as the immutable tag; baked in as the revision label.
+          echo "revision=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "Publishing: $TAGS"
 
       - name: Log in to GitHub Container Registry
@@ -113,4 +115,5 @@ jobs:
           push: true
           build-args: |
             OPENCLAW_VERSION=${{ steps.version.outputs.version }}
+            IMAGE_REVISION=${{ steps.tags.outputs.revision }}
           tags: ${{ steps.tags.outputs.tags }}

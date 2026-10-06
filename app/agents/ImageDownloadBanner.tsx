@@ -4,9 +4,10 @@
  * Agent base image banner on the Agents page.
  *
  * Shown when no supported OpenClaw version of the agent image is downloaded, when
- * the registry publishes a newer supported version, and while a download runs.
- * Downloading touches no agent: each agent keeps its OpenClaw version until it is
- * updated on its own.
+ * the registry publishes a newer supported version, when a downloaded version is an
+ * older build than the one this Rev4a release pins (`outdatedVersions`), and while a
+ * download runs. Downloading touches no agent: each agent keeps its image, and its
+ * OpenClaw version, until it is recreated or updated from its own panel.
  *
  * The percent and the status line are real (docker pull's own per-layer lines, via
  * GET /api/agents/image-status — see lib/buildAgentImage.ts); the bar is indeterminate
@@ -48,6 +49,8 @@ interface ImageStatus {
   newestLocal: string | null;
   /** Newest supported version on the registry that is not downloaded yet. */
   available: string | null;
+  /** Downloaded versions whose local image is not the revision this release pins. */
+  outdatedVersions?: string[];
 }
 
 const POLL_MS = 2000;
@@ -196,7 +199,8 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
   }, []);
 
   const isDownloading = status.downloading || actionLoading;
-  const showBanner = status.needsUpdate || isDownloading || justCompleted || justCanceled || error;
+  const outdated = status.exists ? (status.outdatedVersions ?? [])[0] ?? null : null;
+  const showBanner = status.needsUpdate || outdated !== null || isDownloading || justCompleted || justCanceled || error;
 
   if (!showBanner && status.exists && !isDownloading) return null;
 
@@ -281,23 +285,27 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
   // show just the error, not an "available" line with no version to name.
   const headline = !status.exists
     ? '⚠ Agent base image not found.'
-    : status.available ? `⚠ OpenClaw ${status.available} is available.` : null;
+    : status.available ? `⚠ OpenClaw ${status.available} is available.`
+    : outdated ? `⚠ A newer build of the agent image ${outdated} is available.` : null;
+  const downloadTarget = status.available ?? outdated;
   return (
     <Banner warning>
       <div style={{ flex: 1 }}>
         {headline && (
           <>
             <strong style={{ color: 'var(--yellow)' }}>{headline}</strong>
-            {' '}{status.exists
-              ? 'Download it for new agents; existing agents keep their version until they are updated.'
-              : 'Download it to create agent containers.'}
+            {' '}{!status.exists
+              ? 'Download it to create agent containers.'
+              : status.available
+                ? 'Download it for new agents; existing agents keep their version until they are updated.'
+                : 'Agents keep their current image until you recreate or update them.'}
           </>
         )}
         {error && <div style={{ color: 'var(--red)', fontSize: headline ? 11 : 12, marginTop: headline ? 4 : 0 }}>{headline ? '' : '⚠ '}{error}</div>}
       </div>
-      {(status.exists ? status.available : true) && (
-        <Button variant="primary" size="sm" onClick={() => { void handleDownload(status.available); }} loading={actionLoading}>
-          {actionLoading ? 'Starting…' : status.exists ? `Download ${status.available}` : 'Download Image'}
+      {(status.exists ? downloadTarget : true) && (
+        <Button variant="primary" size="sm" onClick={() => { void handleDownload(downloadTarget); }} loading={actionLoading} disabled={actionLoading}>
+          {actionLoading ? 'Starting…' : status.exists ? (status.available ? `Download ${status.available}` : `Download new build of ${downloadTarget}`) : 'Download Image'}
         </Button>
       )}
     </Banner>

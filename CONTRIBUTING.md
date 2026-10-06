@@ -197,6 +197,17 @@ for people running the image by hand. A new OpenClaw release migrates an agent's
 one way — the previous release refuses the migrated database — so moving `:latest` is a
 deliberate step, never a side effect of merging a Dockerfile change.
 
+**Rebuilds of a version reach installs only through a revision pin.** An install that
+already has `openclaw-agent-base:<version>` never pulls `:<version>` again, so a rebuilt
+image is invisible to it. After a rebuild is published, set `imageRevision` on that
+version in `lib/agent-versions.json` to the `<short sha>` of the build (the suffix of its
+immutable `:<version>-<short sha>` tag, also the image's `org.opencontainers.image.revision`
+label) and release Rev4a. Installs then see the local image as outdated, the Agents page
+banner offers the new build, and the download pulls `:<version>-<short sha>` and tags it
+`openclaw-agent-base:<version>` and `openclaw-agent-base:<version>-rev.<short sha>`; a fresh
+install gets the pinned build the same way. Running agents keep their image until they are
+recreated or updated. A version without `imageRevision` is addressed by `:<version>` as before.
+
 **Supporting a new OpenClaw version** is one change: bump `ARG OPENCLAW_VERSION` in the
 Dockerfile and add the version at the top of `lib/agent-versions.json`, with the model
 `input` values that release accepts. Keep the previous versions listed while agents

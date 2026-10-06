@@ -1819,7 +1819,11 @@ in flight, so polling this endpoint does not re-query the registry every time.
   "localVersions": ["2026.9.3"],
   "newestLocal": "2026.9.3",
   "available": null,
-  "registryReachable": true
+  "registryReachable": true,
+  "revisions": [
+    { "version": "2026.9.3", "status": "current", "expected": "3513098", "local": "3513098" }
+  ],
+  "outdatedVersions": []
 }
 ```
 
@@ -1837,6 +1841,8 @@ in flight, so polling this endpoint does not re-query the registry every time.
 | `serverTime` | The server's clock (epoch ms) when it answered; clients age `lastResult.at` with it instead of their own clock |
 | `lastResult` | The last download's outcome (`getLastDownloadResult()`, `lib/buildAgentImage.ts`), or null before any download has run this process. `result` is `succeeded` / `failed` / `canceled`; `source` (`present` / `registry` / `build`) only on success. Kept regardless of whether a download is running now, so a client that missed the live transition — a page reload, a return from another screen — still sees it via `at` (epoch ms); overwritten by the next download, never cleared on its own. Same idea as `finished` in `lib/cold-backup.ts` |
 | `registryReachable` | The tag list could be read |
+| `revisions` | One entry per supported version: `status` is `missing` (no local image), `current`, or `outdated` (a revision is pinned in `lib/agent-versions.json` and the local image's revision is unknown or different); `expected` is the pinned revision or null (also null when `REV4A_AGENT_IMAGE_REGISTRY` is set, which turns the pin off); `local` is the revision read from a local `<version>-rev.<sha>` tag on the image holding the `<version>` tag (the pinned one when the image carries several, else the first), or null |
+| `outdatedVersions` | The versions whose status is `outdated`; the banner offers a download for them. `needsUpdate` does not include them |
 
 ### `POST /api/agents/download-image`
 Downloads one OpenClaw version of the agent image in the background. Returns 202

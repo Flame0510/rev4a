@@ -9,15 +9,31 @@
  * `modelInput` is the model `input` list written into `models.json` for that version:
  * OpenClaw validates it against the modalities it knows, so a value an older release
  * does not know invalidates the whole catalogue.
+ *
+ * `imageRevision` (optional) is the short commit sha of the published image rebuild this
+ * release expects for that version: the registry holds it as the immutable tag
+ * `<version>-<sha>`. Without it the version is addressed by `<version>` alone.
  */
 import table from './agent-versions.json';
+import {
+  identityRevision,
+  isRevisionTag,
+  localImageRevision as localRevision,
+  pinnedRevision,
+  registryTag,
+  revisionRef,
+  revisionStatus,
+  type RevisionImage,
+  type RevisionStatus,
+} from './image-revision';
 
 export interface SupportedVersion {
   version: string;
   modelInput: string[];
+  imageRevision?: string;
 }
 
-export const SUPPORTED_VERSIONS: readonly SupportedVersion[] = table.supported;
+export const SUPPORTED_VERSIONS: readonly SupportedVersion[] = table.supported as SupportedVersion[];
 
 /** Local image repository; agents run `openclaw-agent-base:<version>`. */
 export const LOCAL_IMAGE_REPOSITORY: string = table.localRepository;
@@ -78,3 +94,46 @@ export function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
+
+// ── Image revisions ──────────────────────────────────────────────────────────
+//
+// A rebuild of the same OpenClaw version keeps its `<version>` tag, so the version alone
+// cannot tell two builds apart. Rev4a records which revision a local image is with a
+// second local tag, `openclaw-agent-base:<version>-rev.<sha>`, set when it downloads a
+// pinned revision. The rule itself lives in image-revision.js (CommonJS, shared with
+// bin/rev4a.js); these are typed wrappers bound to this table. The `rev.` marker matters:
+// VERSION_RE accepts `-<digits>`, and a short sha can be all digits.
+
+export type ImageRevisionStatus = RevisionStatus;
+export type { RevisionImage };
+
+/** The local tag that records revision `revision` of `version`. */
+export const localRevisionRef = (version: string, revision: string): string =>
+  revisionRef(LOCAL_IMAGE_REPOSITORY, version, revision);
+
+export { isRevisionTag };
+
+/** The image revision this release expects for a version, or null (no pin, or a registry override). */
+export function pinnedImageRevision(version: string): string | null {
+  return pinnedRevision(SUPPORTED_VERSIONS.find((v) => v.version === version));
+}
+
+/** The registry tag to pull for a version: `<version>-<sha>` when pinned, else `<version>`. */
+export const registryImageTag = (version: string): string => registryTag(version, pinnedImageRevision(version));
+
+/** The revision of the local image of `version` (the pinned one when it carries several); null when there is none or it has no revision tag. */
+export const localImageRevision = (
+  version: string,
+  images: RevisionImage[],
+  pin: string | null = pinnedImageRevision(version),
+): string | null => localRevision(LOCAL_IMAGE_REPOSITORY, version, images, pin);
+
+/** The revision tag value for an image with none: the first 12 hex chars of its id. */
+export { identityRevision };
+
+/** `missing`, `current` or `outdated` (pin set, local revision unknown or different). */
+export const imageRevisionStatus = (
+  version: string,
+  images: RevisionImage[],
+  pin: string | null = pinnedImageRevision(version),
+): ImageRevisionStatus => revisionStatus(LOCAL_IMAGE_REPOSITORY, version, images, pin);

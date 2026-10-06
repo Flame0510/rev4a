@@ -118,7 +118,7 @@ Agents page.
 **Update frequency:** polled every 2 seconds, continuously
 
 `GET /api/agents/image-status` lists the supported OpenClaw versions downloaded and
-compares them with the versions the registry publishes. The registry list is refreshed
+compares them with the versions the registry publishes, and checks that each downloaded version is the image build this release expects (a newer build of the same version shows as outdated). The registry list is refreshed
 at most every 10 minutes, so a newly published version can take that long to appear.
 The banner polls the endpoint every 2 seconds for as long as the page is open, not only
 while something is running.

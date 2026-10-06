@@ -21,10 +21,14 @@ FROM node:24-bookworm-slim
 # with `docker image inspect` without starting a container.
 ARG OPENCLAW_VERSION=2026.9.3
 ARG SUPABASE_VERSION=2.109.1
+# The short commit sha of this build; the workflow passes it. It matches the immutable
+# `<version>-<sha>` tag, which is what lib/agent-versions.json's `imageRevision` names.
+ARG IMAGE_REVISION=dev
 
 LABEL description="OpenClaw Agent Base — Rev4a multicontainer ecosystem"
 LABEL maintainer="Rev4a Agency"
 LABEL org.opencontainers.image.version="${OPENCLAW_VERSION}"
+LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive

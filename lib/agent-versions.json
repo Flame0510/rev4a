@@ -4,6 +4,7 @@
   "supported": [
     {
       "version": "2026.9.3",
+      "imageRevision": "3513098",
       "modelInput": ["text", "image", "audio", "video"]
     }
   ]

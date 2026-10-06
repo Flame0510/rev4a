@@ -399,6 +399,27 @@ downloading touches no agent. Create uses the newest supported version downloade
 keeps the agent's version. An agent card shows **UPDATE AVAILABLE** when a newer supported
 version is downloaded.
 
+**Image revisions.** A rebuild of a version keeps its `<version>` tag, so an entry in
+`lib/agent-versions.json` may pin `imageRevision` (a short sha): the registry's immutable
+`<version>-<sha>` tag. The download then pulls that tag and tags it locally
+`openclaw-agent-base:<version>` and `openclaw-agent-base:<version>-rev.<sha>`; the local
+`<version>` image is that revision when the same image id also carries the `-rev.<sha>`
+tag (`-rev.` keeps an all-digit sha from parsing as part of a version). A local image
+without the tag, or with another revision, is *outdated*: the banner offers the new build.
+Agents keep the image they run; an agent moves to the new build only when it is created,
+recreated or updated from its panel. No pin, or `REV4A_AGENT_IMAGE_REGISTRY` set, means the
+version alone decides, as before. A locally built fallback image carries no revision tag.
+
+If the pinned build cannot be downloaded: when the version already exists locally the
+download fails with "The pinned build <version>-<sha> could not be downloaded: <error>",
+no local build is attempted and no tag moves, so the existing image stays. When the version
+is missing locally, the local build fallback still runs so the install works; its outcome
+says it was built locally because the pinned build could not be downloaded, and the status
+stays *outdated*. When a pinned download replaces a different image under `<version>`,
+the previous image is first tagged `<version>-rev.<first 12 hex chars of its image id>` (if
+it has no `-rev.` tag), so it stays listed; retention removes it once no container uses it.
+An image with several `-rev.` tags is *current* when any of them is the pinned revision.
+
 Built from `node:24-bookworm-slim`, includes:
 - OpenClaw, pinned by the `OPENCLAW_VERSION` build argument and recorded as the
   `org.opencontainers.image.version` label

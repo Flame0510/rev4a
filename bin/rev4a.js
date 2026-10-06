@@ -43,6 +43,8 @@ const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 // Supported OpenClaw versions and image repositories, shared with the server.
 const AGENT_VERSIONS = require(join(ROOT, 'lib', 'agent-versions.json'));
+// The pinned-revision rule, shared with the server (lib/agent-versions.ts).
+const IMAGE_REVISION = require(join(ROOT, 'lib', 'image-revision.js'));
 const DOCKER_NETWORK = 'rev4a-network';
 // How long `serve` waits for the Docker daemon before starting without it. Like
 // REV4A_DATA_DIR it is read from the real process environment (a systemd
@@ -209,7 +211,12 @@ function ensureAgentImage() {
   const version = AGENT_VERSIONS.supported[0].version;
   const localRef = `${AGENT_VERSIONS.localRepository}:${version}`;
   const registry = (process.env.REV4A_AGENT_IMAGE_REGISTRY || '').trim() || AGENT_VERSIONS.registryRepository;
-  const remoteRef = `${registry}:${version}`;
+  // This path only runs when `<version>` is absent locally (the check above returns
+  // otherwise), so it never replaces an existing image and needs no identity tag.
+  // A pinned image revision is pulled by its immutable tag and recorded locally, like
+  // pullAgentImage in lib/agent-images.ts (same rule: lib/image-revision.js).
+  const pin = IMAGE_REVISION.pinnedRevision(AGENT_VERSIONS.supported[0]);
+  const remoteRef = `${registry}:${IMAGE_REVISION.registryTag(version, pin)}`;
 
   try {
     const r = execSync(`docker image inspect ${localRef} --format '{{.Id}}'`, { stdio: 'pipe', timeout: 10_000 });
@@ -224,6 +231,9 @@ function ensureAgentImage() {
   log('IMAGE', `Pulling agent base image ${remoteRef}…`);
   try {
     execSync(`docker pull ${remoteRef}`, { stdio: 'inherit', timeout: 1_800_000 });
+    if (pin) {
+      execSync(`docker tag ${remoteRef} ${IMAGE_REVISION.revisionRef(AGENT_VERSIONS.localRepository, version, pin)}`, { stdio: 'inherit', timeout: 10_000 });
+    }
     execSync(`docker tag ${remoteRef} ${localRef}`, { stdio: 'inherit', timeout: 10_000 });
     try {
       execSync(`docker rmi ${remoteRef}`, { stdio: 'pipe', timeout: 30_000 }); // untag; the layers stay
