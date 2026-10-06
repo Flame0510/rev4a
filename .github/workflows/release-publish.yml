@@ -26,6 +26,11 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # The job only reads the repository and publishes with NPM_TOKEN; it never
+    # writes through GITHUB_TOKEN. npm publish is not run with --provenance, so
+    # id-token: write is not needed either.
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
@@ -33,6 +38,9 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          # The token is not needed after checkout; keep it out of .git/config while
+          # npm ci runs third-party install scripts.
+          persist-credentials: false
 
       # Event values come in through env, never pasted into the script: a tag name or a
       # dispatch input is text someone typed, and is only validated below.
@@ -51,8 +59,17 @@ jobs:
             if [ -z "$RAW" ]; then RAW="$(node -p "require('./package.json').version")"; fi
           fi
           VERSION="${RAW#v}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::Invalid version: '$RAW'. Expected the form vX.Y.Z."
+          # A newline or a carriage return would let the value inject extra lines into
+          # $GITHUB_OUTPUT, so refuse it before anything is written there.
+          if [[ "$VERSION" == *$'\n'* || "$VERSION" == *$'\r'* ]]; then
+            # The rejected value is not echoed: a second line could carry a workflow command.
+            echo "::error::Invalid version: it contains a newline or carriage return."
+            exit 1
+          fi
+          # grep matches per line, so the old '^...$' check was not a whole-string match:
+          # "1.2.3\nfoo" passed it. This bash regex anchors ^ and $ to the whole string.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version. Expected the form vX.Y.Z (any v prefix is stripped)."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
