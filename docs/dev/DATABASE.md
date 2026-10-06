@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (sessions and events, below), `metrics.db` (machine and container metrics, see
@@ -92,22 +92,17 @@ CREATE TABLE lineage (
 
 Populated by agents calling `lineage.js` at spawn time or via `POST /api/lineage`.
 
-### `cost_override` — manual monthly billing corrections
-
-```sql
-CREATE TABLE cost_override (
-  month      TEXT PRIMARY KEY,   -- YYYY-MM
-  amount     REAL,
-  note       TEXT,
-  updated_at INTEGER             -- Unix ms
-);
-```
-
-Nothing reads `cost_override` except `/api/cost-override` itself: no page shows an override.
-
 The daemon also writes a `system_anomaly` event (session `system`) when the machine
 crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). No feature
 consumes those events yet; they only pass through the generic event feeds.
+
+### Removed dead tables
+
+Removed on 2026-10-06: `tool_calls` and `chat_messages` were created by
+`lib/db-bootstrap.mjs` but never written by any code (`GET /api/tool-calls` always returned an
+empty list); `cost_override` was written only by its own API, which no page used. The two
+routes are gone. New installs no longer create them. Older databases
+still contain them; nothing reads them.
 
 ### `agent_upgrades` — agent updates and rollbacks
 
@@ -261,9 +256,6 @@ the dashboard's cold backups cover them.
 
 - `alert_state` — one row per alert key (`lib/alerts.ts`): whether it was sent and resolved, so
   an alert is not sent twice.
-- `tool_calls` and `chat_messages` — created by `lib/db-bootstrap.mjs` and never written by
-  any code: `GET /api/tool-calls` reads an always-empty table, nothing reads `chat_messages`.
-  Kept until the `events.db` cleanup removes them.
 
 `events.db` is Rev4a's own record — what it did to agents (the job tables, created and
 deleted) and what it saw (anomalies, alerts). What agents do is read from OpenClaw: agent

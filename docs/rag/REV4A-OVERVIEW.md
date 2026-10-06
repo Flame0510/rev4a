@@ -1,13 +1,13 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
 ## What can you do in Rev4a?
 
 ### Dashboard (`/`)
-The main page. See live sessions (who's working right now), cost summary, an overall health indicator, and a real-time event feed. Click any session row to open the Session Drawer and see every tool call the agent made.
+The main page. See live sessions (who's working right now), cost summary, an overall health indicator, and a real-time event feed. Click any session row to open the Session Drawer and see the session's recent actions.
 
 The health cards cover Rev4a's own runtime, cron and watchdog, and lineage. The Machine card shows the server's CPU, RAM and fullest disk right now, coloured when it reaches a threshold, and links to the System page for details. There is no wizard banner on the dashboard; an incomplete setup redirects to `/wizard` instead.
 
@@ -159,6 +159,5 @@ A session is one unit of agent work. It starts when an agent receives a task and
 - Cost in USD
 - Model used
 - Status (idle, working, completed, error)
-- Tool calls made during the session
 
 Sessions can have parent-child relationships (lineage): one agent spawns another to delegate work.

@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -90,10 +90,6 @@ The dashboard's "Spent today" card and "Spent by model" list show the same figur
 Costs page, for today (UTC day): up to 5 minutes behind the agents. The vendor readings
 behind *Against the bill* on the Costs page are taken once an hour.
 
-**Cost override:** `/api/cost-override` exists, but no page in the dashboard
-reads or writes it. There is no UI for setting one, so do not direct a user to
-"the cost override screen".
-
 ---
 
 ## Cron jobs
@@ -161,7 +157,6 @@ The tracked set is `USER.md`, `MEMORY.md`, `AGENTS.md`, `SOUL.md`, `HEARTBEAT.md
 |---|---|
 | Cron sessions older than 7 days | The daemon prunes cron session rows after 7 days |
 | Sessions never polled by daemon | If the daemon was down, sessions from that window are missing |
-| Tool calls for a session | Only captured if the OpenClaw session export includes them |
 | Costs before Rev4a was installed | Historical data before the first daemon run is not available |
 
 ---

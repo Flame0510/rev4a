@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -35,9 +35,6 @@ What an agent spent in USD. Each agent's OpenClaw prices every model call itself
 
 ## Off-peak
 DeepSeek bills half price outside its peak hours (peak: 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday). Rev4a writes the lower prices into the agents when off-peak starts and the full ones when it ends, so each call is priced at the rate in force when it ran. The Costs page header and the agent panel's COSTS section (Rates now) show the current band.
-
-## Cost Override
-A manual correction for a month's total cost, stored through `/api/cost-override`. There is currently no screen for it: no page in the dashboard reads or writes an override, so it can only be set by calling the API directly.
 
 ## Credential
 A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. A credential is installed into a container only when the user syncs it, and removed on de-sync; any credential can be synced to any container. Every reveal is written to an audit table that no route or view reads.
@@ -117,9 +114,6 @@ The unit of text processed by an AI model. Input tokens (your prompt) and output
 
 ## Tool
 A capability available to agents: running shell commands, reading files, searching the web, etc. Tools can be built-in, from plugins, or from MCP servers.
-
-## Tool Call
-A record of an agent using a tool during a session. Useful for auditing what an agent actually did. Shown in the Session Drawer.
 
 ## Traefik
 Optional reverse proxy an operator can put in front of the Rev4a dashboard or of an agent's port. Rev4a does not configure it and sets no routing labels on agents: an agent's Control UI is reached on its published port. Rev4a itself runs on port 3740 and does not require Traefik.

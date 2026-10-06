@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -42,7 +42,6 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I add an API key for a provider?"
 - "How do I filter agents by status?"
 - "How do I open a terminal for a container?"
-- "How do I see the tool calls for a session?"
 - "How do I configure a provider?"
 - "How do I set up the gateway?"
 - "How do I enable/disable models on the gateway?"
@@ -56,7 +55,6 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I delete an agent?"
 - "How do I restart the Rev4a server?"
 - "How do I change environment variables?"
-- "How do I add a cost override?" — There is no screen for it. The endpoint exists, but nothing in the dashboard calls it.
 - "How do I see the session lineage?"
 - "How do I log in to an agent's control UI?"
 - "Why does the Control UI ask me to approve this browser?"
@@ -76,7 +74,6 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "What is the Provider Gateway?"
 - "What is the difference between a plugin and a skill?"
 - "What are MCP tools?"
-- "What does 'cost override' mean?"
 - "What is the vault?"
 - "What are credentials in Rev4a?"
 - "What is an agent template?"

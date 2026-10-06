@@ -30,7 +30,6 @@ const WHITELIST = [
 ];
 
 const ALREADY_PROTECTED = new Set([
-  'app/api/cost-override/route.ts',
   'app/api/skills/promote/route.js',
   'app/api/skills/save/route.js',
   'app/api/skills/delete/route.js',

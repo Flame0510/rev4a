@@ -19,8 +19,8 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/': {
     title: 'Dashboard',
     description: 'Main overview with live session list, cost summary by model, health cards for Rev4a\'s own runtime, cron and lineage, and a real-time event feed. The Machine card shows the server\'s CPU, RAM and fullest disk right now, coloured past a threshold, with a link to the System page.',
-    actions: ['Click any session row to open the Session Drawer for full details and tool call history', 'See what the agents spent today, by model (the Costs page has 7 and 30 days)', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
-    hints: 'The Session Drawer shows you the complete tool call history for any session — just click a row.',
+    actions: ['Click any session row to open the Session Drawer for full details and recent actions', 'See what the agents spent today, by model (the Costs page has 7 and 30 days)', 'See live events as they happen', 'Take a screenshot of the dashboard (mobile)'],
+    hints: 'The Session Drawer shows the recent actions of any session — just click a row.',
   },
   '/agents': {
     title: 'Agents',

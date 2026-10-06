@@ -671,28 +671,6 @@ object when a scheduled model is on offer).
 
 ---
 
-### `GET /api/cost-override?month=YYYY-MM`
-Read manual cost override for a month.
-
-**Auth:** Bearer or browser cookie
-
-**Response:** `{ "month": "2026-06", "amount": 124.10, "note": "GitHub billing" }` or `{ "month": "2026-06", "amount": null, "note": null }` if not set.
-
----
-
-### `POST /api/cost-override`
-Set or update a manual cost override.
-
-**Auth:** Bearer or browser cookie
-
-**Body:** `{ "month": "2026-06", "amount": 124.10, "note": "GitHub billing" }`
-
-**Response:** `{ "ok": true }`
-
-**Error:** `400` if `amount` missing.
-
----
-
 ## Events
 
 ### `GET /api/events?limit=50&offset=0`
@@ -779,24 +757,6 @@ Workspace filesystem change stream for the editor.
 - The stream polls every 3 seconds.
 - Hidden paths and directories such as `.trash` and `node_modules` are ignored.
 - Only a fixed allowlist of file extensions is included.
-
----
-
-## Tool Calls
-
-### `GET /api/tool-calls?session_id=<id>`
-Tool call events for a session.
-
-**Auth:** Bearer or browser cookie
-
-**Query params:** `session_id` (required)
-
-**Response:**
-```json
-[
-  { "id": 12, "ts": 1749200100000, "session_id": "...", "type": "tool_call", "data": "{...}" }
-]
-```
 
 ---
 

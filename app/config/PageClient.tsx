@@ -20,7 +20,7 @@ const ENV_METADATA: Record<
   },
   REV4A_TOKEN: {
     label: 'Internal Auth Token',
-    description: 'Token for internal API authentication (skills API, cost-override, JWT fallback)',
+    description: 'Token for internal API authentication (skills API, JWT fallback)',
     placeholder: 'Internal auth token',
     sensitive: true,
   },
