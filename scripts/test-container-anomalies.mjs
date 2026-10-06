@@ -107,10 +107,10 @@ test('cooldown is per rule: pids and memory each wait their own 60 minutes', () 
   const first = [];
   for (let i = 0; i < 5; i++) first.push(...obs(d, hot, T0 + i * MIN)); // pids at +1, memory at +4
   assert.deepEqual(first.map((a) => a.metric), ['container_pids', 'container_memory']);
-  assert.deepEqual(obs(d, hot, T0 + 60 * MIN), []); // pids 59 min, memory 56 min
-  assert.deepEqual(obs(d, hot, T0 + 61 * MIN).map((a) => a.metric), ['container_pids']);
-  assert.deepEqual(obs(d, hot, T0 + 63 * MIN), []); // memory 59 min
-  assert.deepEqual(obs(d, hot, T0 + 64 * MIN).map((a) => a.metric), ['container_memory']);
+  // One sample a minute, as the daemon takes them (a longer gap would reset the streaks).
+  const at = {};
+  for (let m = 5; m <= 64; m++) for (const x of obs(d, hot, T0 + m * MIN)) at[x.metric] = m;
+  assert.deepEqual(at, { container_pids: 61, container_memory: 64 }); // 60 min after +1 and +4
 });
 
 test('cooldown: exactly 59 and 60 minutes after a pids event', () => {
@@ -188,6 +188,54 @@ test('huge finite values never overflow into an alarm', () => {
   assert.deepEqual(run(createContainerAnomalyDetector(), [row('a', 1, big)], 6, T0, MIN, big), [0, 0, 0, 0, 0, 0]);
   assert.deepEqual(run(createContainerAnomalyDetector(), [row('a', 1, big)], 6, T0, MIN, 1000), [0, 0, 0, 0, 0, 0]);
   assert.deepEqual(run(createContainerAnomalyDetector(), [row('a', 1, 1000)], 6, T0, MIN, big), [0, 0, 0, 0, 0, 0]);
+});
+
+const src = (...names) => names.map((container) => ({ container }));
+const withSources = (rows, sources) => ({ ...sample(rows), sources });
+
+test('stats missing (in sources, not in rows) keeps the streak unchanged', () => {
+  const d = createContainerAnomalyDetector();
+  assert.equal(obs(d, withSources([row('a', 1500)], src('a')), T0).length, 0);
+  assert.equal(obs(d, withSources([], src('a')), T0 + MIN).length, 0); // no read: no increment
+  assert.equal(obs(d, withSources([row('a', 1500)], src('a')), T0 + 2 * MIN).length, 1); // second hot read
+});
+
+test('stats missing does not reset a streak either', () => {
+  const d = createContainerAnomalyDetector();
+  obs(d, withSources([row('a', 1500)], src('a')), T0);
+  for (let i = 1; i <= 3; i++) obs(d, withSources([], src('a')), T0 + i * MIN);
+  assert.equal(obs(d, withSources([row('a', 1500)], src('a')), T0 + 4 * MIN).length, 1);
+});
+
+test('absent from rows and sources is forgotten', () => {
+  const d = createContainerAnomalyDetector();
+  obs(d, withSources([row('a', 1500)], src('a')), T0);
+  obs(d, withSources([], src('b')), T0 + MIN);
+  assert.equal(obs(d, withSources([row('a', 1500)], src('a', 'b')), T0 + 2 * MIN).length, 0);
+});
+
+test('a sample without sources: absent from rows is forgotten', () => {
+  const d = createContainerAnomalyDetector();
+  obs(d, sample([row('a', 1500)]), T0);
+  obs(d, sample([]), T0 + MIN);
+  assert.equal(obs(d, sample([row('a', 1500)]), T0 + 2 * MIN).length, 0);
+});
+
+test('a gap over 180 s resets every streak; exactly 180 s does not', () => {
+  const d = createContainerAnomalyDetector();
+  obs(d, sample([row('a', 1500)]), T0);
+  assert.equal(obs(d, sample([row('a', 1500)]), T0 + 180 * 1000 + 1).length, 0);
+  assert.equal(obs(d, sample([row('a', 1500)]), T0 + 180 * 1000 + 1 + MIN).length, 1);
+  const e = createContainerAnomalyDetector();
+  obs(e, sample([row('a', 1500)]), T0);
+  assert.equal(obs(e, sample([row('a', 1500)]), T0 + 180 * 1000).length, 1);
+});
+
+test('a gap also resets the streak of a container whose stats are missing', () => {
+  const d = createContainerAnomalyDetector();
+  obs(d, withSources([row('a', 1500)], src('a')), T0);
+  obs(d, withSources([], src('a')), T0 + 3 * 60 * 60 * 1000);
+  assert.equal(obs(d, withSources([row('a', 1500)], src('a')), T0 + 3 * 60 * 60 * 1000 + MIN).length, 0);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

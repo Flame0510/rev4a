@@ -2088,7 +2088,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five), newest f
 ```json
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
-`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk` or `null`.
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory` or `null`.
 
 ---
 
@@ -2285,7 +2285,7 @@ Full design, decisions, and usage guide at [WORKSPACE.md](WORKSPACE.md).
 ### `GET /api/workspace?action=list`
 List available workspaces (VPS host + Docker containers with `AGENT_ID` label).
 
-**Auth:** Bearer, query param, x-agent-token, or browser cookie
+**Auth:** Bearer token or the `rev4a_token` browser cookie
 
 **Response:**
 ```json

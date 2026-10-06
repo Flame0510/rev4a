@@ -10,9 +10,10 @@ const MAX_LIMIT = 50;
 interface AnomalyData { metric?: unknown; message?: unknown; threshold?: unknown; values?: unknown }
 
 /**
- * GET /api/metrics/alerts?limit=10 — the machine's latest `system_anomaly` events (CPU, RAM
- * or a disk over its threshold, written by daemon.js into events.db), newest first. Nothing
- * else in `events`: the generic /api/events has no type filter.
+ * GET /api/metrics/alerts?limit=10 — the latest `system_anomaly` events (the machine's CPU, RAM
+ * or a disk over its threshold, and a container's process count or sustained memory; written
+ * by daemon.js into events.db), newest first. Nothing else in `events`: the generic
+ * /api/events has no type filter.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return {
           ts: row.ts,
           metric: typeof data.metric === 'string' ? data.metric : null,
-          message: typeof data.message === 'string' ? data.message : 'Machine anomaly',
+          message: typeof data.message === 'string' ? data.message : 'Anomaly',
           threshold: typeof data.threshold === 'number' ? data.threshold : null,
           values: Array.isArray(data.values) ? data.values.filter((v): v is number => typeof v === 'number') : [],
         };

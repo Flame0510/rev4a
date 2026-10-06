@@ -74,8 +74,9 @@ Types written today: `spawn`, `complete`, `fail`, `spawn_timeout` (the daemon's 
 **Retention:** two rules. The session poll deletes cron-session events older than 7 days. On
 its own timer the daemon deletes every event older than 30 days, whatever its type or session
 (`lib/events-retention.js`, `pruneEvents`): first pass about 10 s after start, then every 6
-hours, in batches of at most 5 000 rows so the API's readers are not blocked. A row exactly at
-the cutoff stays. This timer needs only `events.db`, so it runs on hosts with no OpenClaw and
+hours, in batches of at most 5 000 rows, so other writers (in WAL mode readers are never blocked) wait only for one batch. A pass deletes at
+most 100 000 rows; when it hits that limit, the next pass runs after 60 s instead of 6 h, until
+the backlog is gone. A row exactly at the cutoff stays. This timer needs only `events.db`, so it runs on hosts with no OpenClaw and
 when `metrics.db` failed to open. On a development machine with a nearly full disk,
 `system_anomaly` reached ~4 000 rows in a month.
 
@@ -93,8 +94,9 @@ CREATE TABLE lineage (
 Populated by agents calling `lineage.js` at spawn time or via `POST /api/lineage`.
 
 The daemon also writes a `system_anomaly` event (session `system`) when the machine
-crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). No feature
-consumes those events yet; they only pass through the generic event feeds.
+crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). The System
+page's Recent alerts reads them (`GET /api/metrics/alerts`); otherwise they only pass through
+the generic event feeds.
 
 ### Removed dead tables
 
@@ -464,8 +466,11 @@ to agent containers via CLI auth or env files.
 **File mode:** `credentials.db` and its `-wal` and `-shm` companions are `0600`, readable
 by their owner only — like `.env`, `provider-keys.json` and `agents-token.json`. A new file
 is created that way instead of inheriting the process umask; an install from an earlier
-release with `0644` files is tightened at the next start (`lib/credentials/file-mode.ts`,
-called once per process by `bootstrap()` before SQLite opens the database). If the chmod
+release with `0644` files is tightened at every server start (`instrumentation.ts` calls
+`secureDbFiles` from `lib/credentials/file-mode.ts`), and again by `bootstrap()` in
+`lib/credentials/db.ts`, once per process: before SQLite first opens the database, and after
+it, because SQLite creates a database path that is a symlink to a missing file itself, under the
+umask. If the chmod
 fails — a read-only filesystem, Windows, a process that is not the owner — it is logged
 once per file and the vault keeps working.
 

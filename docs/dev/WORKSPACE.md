@@ -1,7 +1,7 @@
 # Workspace — Multi-Workspace File Explorer
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-10-06
 
 ---
 
@@ -67,7 +67,7 @@ infrastructure containers (Traefik, databases, etc.) that are not agent workspac
 
 List all available workspaces.
 
-**Auth:** Bearer token, query param, `x-agent-token` header, or browser cookie
+**Auth:** Bearer token or the `rev4a_token` browser cookie
 
 **Response:**
 ```json

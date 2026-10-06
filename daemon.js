@@ -543,7 +543,7 @@ async function collectContainerMetrics() {
     try {
       const nowMs = Date.now();
       // A container that left the sample cannot be retried: forget its failed writes (no growth).
-      const present = new Set(sample.rows.map((r) => r && r.container));
+      const present = new Set([...sample.rows, ...(sample.sources || [])].map((r) => r && r.container));
       for (const key of failedAnomalyKeys) if (!present.has(key.slice(key.indexOf(':') + 1))) failedAnomalyKeys.delete(key);
       for (const a of containerAnomalies.observe(sample, nowMs)) {
         // One write per try: a failing one must not skip the others, and its cooldown
@@ -1322,11 +1322,14 @@ function pollSessions() {
     // Only if missing long enough
     const missingFor = now - (snap.updatedAt || now);
     if (missingFor < TIMEOUT_THRESHOLD_MS) continue;
+    // The snapshot remembers its timeout was logged: events retention prunes the table, so the
+    // table alone would log it again every 30 days.
+    if (snap.timeoutLogged) continue;
     // Prevent logging the same timeout multiple times (check if already logged)
     const alreadyLogged = db.prepare(
       `SELECT id FROM events WHERE session_id = ? AND type = 'spawn_timeout' LIMIT 1`
     ).get(session_id);
-    if (alreadyLogged) continue;
+    if (alreadyLogged) { snap.timeoutLogged = true; continue; }
 
     // Insert timeout event
     insertEvent.run({
@@ -1339,6 +1342,7 @@ function pollSessions() {
         message: `Subagent missing for ${Math.round(missingFor / 60000)} min without completing`,
       }),
     });
+    snap.timeoutLogged = true;
     log(`[TIMEOUT] ${session_id} missing for ${Math.round(missingFor / 60000)} min`);
   }
 
@@ -1365,10 +1369,10 @@ function pollSessions() {
     log(`Retention cleanup: ${r1.changes} cron sessions, ${r2.changes} cron events deleted`);
   }
 
-  // Prune knownSessions — delete completed sessions older than 30 days
+  // Prune knownSessions — delete completed sessions, and vanished ones whose timeout was logged, older than 30 days
   const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
   for (const [id, snap] of knownSessions) {
-    if (snap.status === 'completed' && snap.updatedAt && snap.updatedAt < cutoff) {
+    if ((snap.status === 'completed' || snap.timeoutLogged) && snap.updatedAt && snap.updatedAt < cutoff) {
       knownSessions.delete(id);
     }
   }
@@ -1444,19 +1448,26 @@ if (costs) log(`Agent costs every ${COSTS_INTERVAL_MS / 60000} min into ${COSTS_
 // every host: no OpenClaw, no metrics.db, no costs.db required. Not tied to the session poll.
 const EVENTS_RETENTION_FIRST_DELAY_MS = 10_000;
 const EVENTS_RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// A pass deletes at most this many rows (the first one on a huge table would block the event
+// loop for many seconds); while passes keep hitting it, the next one follows after a minute.
+const EVENTS_RETENTION_MAX_ROWS = 100_000;
+const EVENTS_RETENTION_CATCH_UP_MS = 60 * 1000;
+let eventsRetentionTimer = null;
+function scheduleEventsRetention(delayMs) {
+  eventsRetentionTimer = setTimeout(pruneOldEvents, delayMs);
+}
 function pruneOldEvents() {
+  let next = EVENTS_RETENTION_INTERVAL_MS;
   try {
-    const n = pruneEvents(db, Date.now());
+    const n = pruneEvents(db, Date.now(), { maxRows: EVENTS_RETENTION_MAX_ROWS });
     if (n > 0) log(`Events retention: ${n} events older than ${EVENTS_RETENTION_MS / 86_400_000} days deleted`);
+    if (n >= EVENTS_RETENTION_MAX_ROWS) next = EVENTS_RETENTION_CATCH_UP_MS;
   } catch (e) {
     log(`[EVENTS RETENTION ERROR] ${e.message}`);
   }
+  scheduleEventsRetention(next);
 }
-let eventsRetentionTimer = null;
-const firstEventsRetention = setTimeout(() => {
-  pruneOldEvents();
-  eventsRetentionTimer = setInterval(pruneOldEvents, EVENTS_RETENTION_INTERVAL_MS);
-}, EVENTS_RETENTION_FIRST_DELAY_MS);
+const firstEventsRetention = setTimeout(pruneOldEvents, EVENTS_RETENTION_FIRST_DELAY_MS);
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
@@ -1470,7 +1481,7 @@ process.on('SIGTERM', () => {
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
   clearTimeout(firstEventsRetention);
-  clearInterval(eventsRetentionTimer);
+  clearTimeout(eventsRetentionTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1488,7 +1499,7 @@ process.on('SIGINT', () => {
   clearTimeout(firstCosts);
   clearInterval(costsTimer);
   clearTimeout(firstEventsRetention);
-  clearInterval(eventsRetentionTimer);
+  clearTimeout(eventsRetentionTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();

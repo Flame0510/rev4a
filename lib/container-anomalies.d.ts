@@ -17,6 +17,8 @@ export interface ContainerAnomaly {
 export interface ContainerAnomalySample {
   host?: { memTotalMb?: number | null } | null;
   rows?: { container: string; mem_mb?: number | null; pids?: number | null }[];
+  /** Every container Docker listed. One here but not in `rows` keeps its streaks. */
+  sources?: { container: string }[];
 }
 
 export function createContainerAnomalyDetector(options?: { cooldownMs?: number }): {

@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-10-02
+> **Last updated:** 2026-10-06
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -128,7 +128,7 @@ Rev4a uses password-based login with JWT cookies.
 **Env vars:**
 ```
 REV4A_PASSWORD=***    # Login password
-REV4A_TOKEN=***       # API token (Bearer / query param / x-agent-token)
+REV4A_TOKEN=***       # API token (sent as Authorization: Bearer; the browser uses the rev4a_token cookie)
 REV4A_JWT_SECRET=***  # Secret for signing JWTs
 ```
 
@@ -420,7 +420,9 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   stopped, and the gateway refuses the old schema rather than migrating it. The version is
   recorded only after a successful run, so a failed migration is retried on the next boot.
   A failure does not block boot.
-- **Image defaults**, before the gateway starts, written only where missing:
+- **Image defaults**, before the gateway starts, at every start, written only where missing
+  (so existing agents get them when they are recreated or updated onto the image, and a
+  long transcript is compacted for the first time then):
   - the image's plugin directories in `plugins.load.paths`
   - `tools.web.search.provider: "duckduckgo"` when no provider is set
   - `agents.defaults.heartbeat.every: "0m"` when unset: every heartbeat tick is a
@@ -428,10 +430,12 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   - `agents.defaults.compaction.maxActiveTranscriptBytes: "20mb"` when unset: a run
     compacts before the model-visible transcript grows past that, so a long-lived session
     cannot keep inflating memory and cost
-  - `agents.defaults.contextPruning.mode: "cache-ttl"` (and `ttl: "1h"`) when unset: old
-    tool results are trimmed from the in-memory context before each request
+  - `agents.defaults.contextPruning` set to `{mode: "cache-ttl", ttl: "1h"}` when `mode` is
+    unset: old tool results are trimmed from the in-memory context before each request. The
+    patch sets both `mode` and `ttl` (other `contextPruning` keys are kept: `openclaw config
+    patch` merges objects), so a `ttl` set without a `mode` is replaced by `1h`
 
-  An explicit value, such as a heartbeat turned on for one agent, is never overwritten.
+  Any other explicit value, such as a heartbeat turned on for one agent, is never overwritten.
   The config is read with one node process and written through `openclaw config patch`,
   which validates; if `openclaw.json` cannot be read as JSON, the defaults are skipped and
   the log says so.

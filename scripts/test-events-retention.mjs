@@ -91,5 +91,31 @@ test('each statement deletes at most 5000 rows', () => {
   assert.deepEqual(sizes, [5000, 5000, 2000]);
 });
 
+test('maxRows invalid throws RangeError', () => {
+  const db = mkdb();
+  for (const v of [0, -1, 1.5, NaN, Infinity, '5', null]) {
+    assert.throws(() => pruneEvents(db, NOW, { maxRows: v }), RangeError);
+  }
+});
+test('maxRows stops after the batch that reaches it; the rest goes on the next pass', () => {
+  const db = mkdb();
+  const old = NOW - 40 * DAY;
+  fill(db, Array.from({ length: 12_000 }, () => [old, 'a']));
+  assert.equal(pruneEvents(db, NOW, { maxRows: 5000 }), 5000);
+  assert.equal(count(db), 7000);
+  assert.equal(pruneEvents(db, NOW, { maxRows: 5000 }), 5000); // reached again: stops, 2000 left
+  assert.equal(count(db), 2000);
+  assert.equal(pruneEvents(db, NOW, { maxRows: 5000 }), 2000);
+  assert.equal(count(db), 0);
+});
+test('maxRows larger than the backlog deletes it all; default is unlimited', () => {
+  const db = mkdb();
+  fill(db, Array.from({ length: 12_000 }, () => [NOW - 40 * DAY, 'a']));
+  assert.equal(pruneEvents(db, NOW, { maxRows: 1_000_000 }), 12_000);
+  fill(db, Array.from({ length: 12_000 }, () => [NOW - 40 * DAY, 'a']));
+  assert.equal(pruneEvents(db, NOW), 12_000);
+  assert.equal(count(db), 0);
+});
+
 if (failed) { console.log(`${failed} case(s) failed`); process.exit(1); }
 console.log('all cases passed');

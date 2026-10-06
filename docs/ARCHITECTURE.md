@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-06
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -708,8 +708,9 @@ evaluates nothing). Same event shape; the detector keeps its streaks and cooldow
 | `container_pids` | `pids` ≥ 1000 on 2 consecutive samples of the same container | at most once per 60 min per container |
 | `container_memory` | `mem_mb` ≥ 90 % of Docker's memory (`memTotalMb`) on 5 consecutive samples | at most once per 60 min per container; no rule without a known total |
 
-A sample that lacks a container, or a missing / non-numeric value, resets that streak;
-a container that is gone is forgotten. After a daemon restart the streaks start over.
+A sample with a missing / non-numeric value resets that streak. A container whose stats
+read failed but that Docker still lists keeps its streaks; a container that is gone is
+forgotten, and a gap of more than 180 s between two samples resets the streaks. After a daemon restart the streaks start over.
 The machine rules keep their 5-minute cooldown.
 
 No feature consumes `system_anomaly` events yet except Recent alerts on the System page;
@@ -719,7 +720,8 @@ otherwise they only pass through the generic event feeds.
 
 On its own timer (first pass 10 s after start, then every 6 hours) the daemon deletes events
 older than 30 days from `events.db` (`lib/events-retention.js`), in batches of at most 5 000
-rows. It does not depend on OpenClaw being installed or on `metrics.db` opening, so it runs on
+rows, at most 100 000 rows per pass; when a pass hits that limit, the next one runs after
+60 s instead of 6 hours. It does not depend on OpenClaw being installed or on `metrics.db` opening, so it runs on
 every host. The 7-day cron-session retention in the poll is separate.
 
 ### DB Safety

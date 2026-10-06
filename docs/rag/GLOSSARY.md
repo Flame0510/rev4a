@@ -131,6 +131,6 @@ The directory where an agent's operational files live (config, memory files, ski
 The page with the machine Rev4a runs on: CPU (with cores and load), memory and swap, and each disk's used and free space, now and over 1 hour, 24 hours, 7 days or 30 days. A bar turns yellow and then red when it reaches a threshold (CPU and memory 85 % / 95 %, disk 80 % / 90 %), and the level is written next to it.
 
 ## System Health
-A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, the daemon heartbeat (how old its latest machine sample is), errors in the last 24 hours, today's what the agents spent today, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
+A card on the Dashboard reporting whether Rev4a itself is working, not the hardware it runs on. `/api/system-health` returns checks for session runtime, the daemon heartbeat (how old its latest machine sample is), failed runs in the last 24 hours ("Failed runs (24h)": failed or timed-out runs), what the agents spent today, and cron jobs, each with a health of `ok`, `warning` or `error`, plus a list of recommendations.
 
 It reports no CPU, RAM, disk or load average: those are on the System page (`/system`), sampled every 30 seconds by the daemon and kept for 30 days.

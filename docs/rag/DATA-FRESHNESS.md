@@ -158,14 +158,15 @@ The tracked set is `USER.md`, `MEMORY.md`, `AGENTS.md`, `SOUL.md`, `HEARTBEAT.md
 | Cron sessions older than 7 days | The daemon prunes cron session rows after 7 days |
 | Sessions never polled by daemon | If the daemon was down, sessions from that window are missing |
 | Costs before Rev4a was installed | Historical data before the first daemon run is not available |
+| Events older than 30 days | The daemon deletes every event older than 30 days, whatever its type |
 
 ---
 
 ## How to check if data is fresh
 
 System health is a card on the **Dashboard**, not a page of its own. Its checks
-cover session runtime, the daemon heartbeat, errors in the last 24 hours, today's
-what the agents spent today, and cron jobs. CPU, RAM and disk are on the System page (`/system`)
+cover session runtime, the daemon heartbeat, failed runs in the last 24 hours
+("Failed runs (24h)": failed or timed-out runs), what the agents spent today, and cron jobs. CPU, RAM and disk are on the System page (`/system`)
 and the Dashboard's Machine card instead.
 
 To check directly on the server:

@@ -5,6 +5,8 @@ export const EVENTS_RETENTION_MS: number;
 export interface PruneEventsOptions {
   /** Retention window in milliseconds; at least one day. Defaults to EVENTS_RETENTION_MS. */
   retentionMs?: number;
+  /** Stop after the batch that reaches this many deleted rows (positive integer). Default: no limit. */
+  maxRows?: number;
 }
 
 /** Minimal shape of a better-sqlite3 database that pruneEvents needs. */
