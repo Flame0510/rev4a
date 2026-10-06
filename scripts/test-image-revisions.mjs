@@ -39,9 +39,11 @@ function test(name, fn) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }
 }
 
-test('the release pins 2026.9.3 to 3513098', () => {
-  assert.equal(pinnedImageRevision('2026.9.3'), '3513098');
-  assert.equal(registryImageTag('2026.9.3'), '2026.9.3-3513098');
+// The pin changes with every published image rebuild: check its shape, not its value.
+test('the pinned revision of 2026.9.3 is a short sha and names its registry tag', () => {
+  const pin = pinnedImageRevision('2026.9.3');
+  assert.match(pin, /^[0-9a-f]{7}$/);
+  assert.equal(registryImageTag('2026.9.3'), `2026.9.3-${pin}`);
   assert.equal(pinnedImageRevision('2099.1.1'), null);
   assert.equal(registryImageTag('2099.1.1'), '2099.1.1');
 });

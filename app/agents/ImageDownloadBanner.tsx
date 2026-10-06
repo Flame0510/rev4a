@@ -7,7 +7,7 @@
  * the registry publishes a newer supported version, when a downloaded version is an
  * older build than the one this Rev4a release pins (`outdatedVersions`), and while a
  * download runs. Downloading touches no agent: each agent keeps its image, and its
- * OpenClaw version, until it is recreated or updated from its own panel.
+ * OpenClaw version, until it is recreated from its own panel (or updated to a newer version).
  *
  * The percent and the status line are real (docker pull's own per-layer lines, via
  * GET /api/agents/image-status — see lib/buildAgentImage.ts); the bar is indeterminate
@@ -298,7 +298,7 @@ export default function ImageDownloadBanner({ onImageReady }: { onImageReady?: (
               ? 'Download it to create agent containers.'
               : status.available
                 ? 'Download it for new agents; existing agents keep their version until they are updated.'
-                : 'Agents keep their current image until you recreate or update them.'}
+                : 'Agents keep their current image until you recreate them.'}
           </>
         )}
         {error && <div style={{ color: 'var(--red)', fontSize: headline ? 11 : 12, marginTop: headline ? 4 : 0 }}>{headline ? '' : '⚠ '}{error}</div>}

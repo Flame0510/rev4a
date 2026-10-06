@@ -38,20 +38,27 @@ mounted read-only by the container runtime.
 
 ## What Survives a Container Recreate
 
-Only `/root` (your volume) survives when Rev4a recreates your container, updates
-OpenClaw or restores a backup. Everything outside `/root` is lost, including programs
-you installed there.
+Only `/root` (your volume) survives when Rev4a recreates your container or updates
+OpenClaw. Everything outside `/root` is lost, including programs you installed there.
+A plain restart keeps everything; the difference only shows after a recreate.
 
-- **`apt-get install` (or `apt install`) is recorded and installed again
-  automatically** after a recreate, together with the apt sources you added (a file
-  under `/etc/apt/sources.list.d/`, `/etc/apt/keyrings/` or `/usr/share/keyrings/`) and
-  the key files those sources name with `signed-by` (a key stored under `/root` is
-  already kept). Only the
-  packages you name are recorded, not their dependencies. To stop it, remove the
-  package with `apt-get remove` or `apt-get purge`.
+**First check whether your image records apt installs:** `readlink /usr/local/sbin/apt-get`
+prints `rev4a-apt` on images built since 2026-10-06. If it prints nothing, your image is
+older: nothing is recorded yet, and anything you install outside `/root` will be lost at the
+next recreate — tell the user when a tool you depend on lives there.
+
+On an image that records:
+- **`apt-get install` / `apt install` is recorded and installed again automatically**
+  after a recreate (in the background, a few minutes after start), together with the apt
+  sources you added under `/etc/apt/` and the key files those sources name with
+  `signed-by`. Only the packages you name are recorded, not their dependencies. To stop it,
+  remove the package with `apt-get remove` or `apt-get purge`. The outcome of the last
+  reinstall is in `/root/.rev4a/packages-status.json`.
+- **Not recorded:** packages installed **before** your image recorded (reinstall them once),
+  local `.deb` files (`apt install ./x.deb`, `dpkg -i`), and `/usr/bin/apt-get` called by
+  its full path.
 - **Anything installed another way is lost** unless it lives under `/root`: an
   `npm install -g`, a downloaded binary, a language runtime. Keep such tools under
-  `/root/.local` (its `bin` directory is on `PATH`), for example
-  `npm install -g --prefix /root/.local <package>`, and copy a downloaded binary to
-  `/root/.local/bin`.
-- A plain restart keeps everything; the difference only shows after a recreate.
+  `/root/.local`, for example `npm install -g --prefix /root/.local <package>`, and copy a
+  downloaded binary to `/root/.local/bin` (on `PATH` in images that record apt installs; on
+  older ones call it by its full path).

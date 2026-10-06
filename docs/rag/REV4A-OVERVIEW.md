@@ -48,10 +48,19 @@ is published and every downloaded version's image is the newest build. When no i
 supported OpenClaw version is published it says so and offers **Download <version>**; when the image of a downloaded version is an older
 build than the one this Rev4a release expects it says "A newer build of the agent image
 <version> is available" and offers **Download new build of <version>**. Agents keep their
-current image until they are recreated or updated.
+current image until they are recreated (a new build of the same version reaches an agent only by a recreate; an update to a newer OpenClaw version moves it too).
 Downloading changes no agent: new agents are created on the newest version downloaded,
 existing agents keep their version (a recreate never changes it), and their card shows
 **UPDATE AVAILABLE**.
+
+**Programs agents install.** Only an agent's `/root` volume survives a recreate or an
+OpenClaw update. On agent images built since 2026-10-06, what an agent installs with
+`apt-get install` / `apt install` is recorded (with the apt sources and keys it added) and
+installed again automatically in the background after a recreate; packages installed before
+that image, local `.deb` files and tools installed another way (`npm -g`, downloaded
+binaries) are not, and should live under `/root/.local`. The dashboard does not show the
+outcome yet: it is in `/root/.rev4a/packages-status.json` inside the agent (open the agent's
+terminal), with the state `running`, `ok`, `partial`, `failed` or `nothing-to-do`.
 
 **Updating an agent:** the detail panel's "OPENCLAW VERSION" section shows the version the
 agent runs and, when a newer one is downloaded, **Update to <version>**. The update takes

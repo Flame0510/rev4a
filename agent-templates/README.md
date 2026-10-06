@@ -38,12 +38,14 @@ anyone keeping a list:
   recorded. A recording failure is one `[rev4a-apt]` line on stderr and never changes
   the exit code. The image's own apt files are listed in
   `/usr/local/share/rev4a/apt-baseline`, written at build time, and are not copied.
-- The restore writes back only paths under `/etc/apt/` and `/usr/share/keyrings/` plus the key files a saved source names; any other saved path is ignored with a log line. If a previous run was cut off mid-install it first runs `dpkg --configure -a`. A recording lock older than a minute is treated as stale.
 - `rev4a-packages-restore` is started by the entrypoint in the background just before
   the gateway, which never waits for it. It puts the saved sources back, finds the
   recorded packages dpkg no longer has, runs `apt-get update` and installs each one
-  (`name=version`, or `name` when that version left the repository), with the real
-  `apt-get`, (the whole run, planning included) within 15 minutes, falling back to the bare name only when apt says the exact version is not available. A plain restart finds nothing missing and ends at once.
+  (`name=version`; the bare `name` only when apt says that exact version is not
+  available), with the real
+  `apt-get`, the whole run (planning included) within 15 minutes. A plain restart finds
+  nothing missing and ends at once.
+- The restore writes back only paths under `/etc/apt/` and `/usr/share/keyrings/` plus the key files a saved source names; any other saved path is ignored with a log line. If a previous run was cut off mid-install it first runs `dpkg --configure -a`. A recording lock older than a minute is treated as stale.
 - The outcome is `/root/.rev4a/packages-status.json`:
   `{"at": <ms>, "state": "running"|"ok"|"partial"|"failed"|"nothing-to-do", "restored": [...],
   "versionChanged": [...], "failed": [{"name", "error"}]}`. `restored` lists every

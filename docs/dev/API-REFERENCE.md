@@ -134,7 +134,8 @@ are not distinguished.
 ### `POST /api/setup/agent-image`
 Download the newest supported version the registry publishes, streaming progress as SSE
 (`status`, `progress`, `step`, `log`, `complete`, `error`). Nothing is downloaded when
-that version is already here.
+that version is already here as its pinned build (the same rules as
+`POST /api/agents/download-image`).
 
 **Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
@@ -1821,7 +1822,7 @@ in flight, so polling this endpoint does not re-query the registry every time.
   "available": null,
   "registryReachable": true,
   "revisions": [
-    { "version": "2026.9.3", "status": "current", "expected": "3513098", "local": "3513098" }
+    { "version": "2026.9.3", "status": "current", "expected": "28cf675", "local": "28cf675" }
   ],
   "outdatedVersions": []
 }
@@ -1862,13 +1863,18 @@ newest supported version the registry publishes.
 Docker is not available (refused here, before `202`, so the client gets the reason).
 
 The download is `lib/buildAgentImage.ts` → `downloadAgentImage({ version, onEvent, signal })`:
-- nothing to do when `openclaw-agent-base:<version>` is already here
-- `docker pull <registry>:<version>`, tag `openclaw-agent-base:<version>`, untag the
-  registry reference — also when the tag step fails or is cancelled, so no
+- nothing to do when the local `openclaw-agent-base:<version>` is already the pinned build
+  (`imageRevision` in `lib/agent-versions.json`), or, for a version without a pin, when it is
+  present at all
+- `docker pull <registry>:<version>-<pin>` (or `:<version>` without a pin), tag it
+  `openclaw-agent-base:<version>` (and `openclaw-agent-base:<version>-rev.<pin>`), untag the
+  registry reference; the previous build keeps an identity tag `<version>-rev.<12 hex>` so
+  retention can remove it once unused — also when the tag step fails or is cancelled, so no
   `<registry>:<version>` reference is left behind (`pullAgentImage()` in `lib/agent-images.ts`)
-- when the pull fails and the repository Dockerfile's `ARG OPENCLAW_VERSION` is that
-  version, `docker build --build-arg OPENCLAW_VERSION=<version>` instead; any other
-  version fails
+- when a pinned pull fails while the version is already present, the job fails and nothing
+  is touched; when the version is missing and the repository Dockerfile's
+  `ARG OPENCLAW_VERSION` is that version, `docker build --build-arg OPENCLAW_VERSION=<version>`
+  instead (that build has no revision tag, so it stays `outdated`); any other version fails
 - one download at a time (in-process lock, `getIsDownloading()` /
   `getDownloadingVersion()`); docker's output also goes to
   `/tmp/rev4a-download-<timestamp>.log` (mode 0600; logs older than 24 h are removed when a download ends) for diagnosis

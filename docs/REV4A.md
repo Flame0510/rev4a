@@ -406,8 +406,8 @@ version is downloaded.
 `<version>` image is that revision when the same image id also carries the `-rev.<sha>`
 tag (`-rev.` keeps an all-digit sha from parsing as part of a version). A local image
 without the tag, or with another revision, is *outdated*: the banner offers the new build.
-Agents keep the image they run; an agent moves to the new build only when it is created,
-recreated or updated from its panel. No pin, or `REV4A_AGENT_IMAGE_REGISTRY` set, means the
+Agents keep the image they run; an agent moves to the new build only when it is created or
+recreated (Update moves an agent to a newer OpenClaw version, not to a new build of the same one). No pin, or `REV4A_AGENT_IMAGE_REGISTRY` set, means the
 version alone decides, as before. A locally built fallback image carries no revision tag.
 
 If the pinned build cannot be downloaded: when the version already exists locally the
@@ -444,7 +444,7 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   recorded only after a successful run, so a failed migration is retried on the next boot.
   A failure does not block boot.
 - **Image defaults**, before the gateway starts, at every start, written only where missing
-  (so existing agents get them when they are recreated or updated onto the image, and a
+  (so existing agents get them when they are recreated onto the image, and a
   long transcript is compacted for the first time then):
   - the image's plugin directories in `plugins.load.paths`
   - `tools.web.search.provider: "duckduckgo"` when no provider is set
@@ -462,7 +462,6 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   The config is read with one node process and written through `openclaw config patch`,
   which validates; if `openclaw.json` cannot be read as JSON, the defaults are skipped and
   the log says so.
-- **Durable apt restore limits**: the restore writes back only saved paths under `/etc/apt/` and `/usr/share/keyrings/` plus key files named by a saved source (`signed-by` / `Signed-By:`, including deb822 continuation lines); anything else on the volume is ignored with a log line. It runs `dpkg --configure -a` first when dpkg was left half-configured. The recorder's list lock is stale after 60 s whatever its pid.
 - **Durable apt installs**, in the background just before the gateway (it never waits for
   apt): `rev4a-packages-restore` puts back the apt sources and keyrings saved under
   `/root/.rev4a/apt/`, finds the packages of `/root/.rev4a/packages.txt` that dpkg no longer
@@ -482,6 +481,7 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   boot tries again; rolling back to an older image leaves the list on the volume, unused.
   Tools installed other than with apt (`npm -g`, `pip`, a binary) must live under `/root`
   (`/root/.local/bin` is on `PATH`); the agent rules say so.
+- **Durable apt restore limits**: the restore writes back only saved paths under `/etc/apt/` and `/usr/share/keyrings/` plus key files named by a saved source (`signed-by` / `Signed-By:`, including deb822 continuation lines); anything else on the volume is ignored with a log line. It runs `dpkg --configure -a` first when dpkg was left half-configured. The recorder's list lock is stale after 60 s whatever its pid.
 - Starts OpenClaw gateway with `--allow-unconfigured`: `openclaw gateway --bind lan --port 3000 --auth token --token "<token>" --allow-unconfigured`
 - Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 
