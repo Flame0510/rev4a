@@ -18,6 +18,7 @@ const path = require('path');
 const { dockerRequestJson } = require('./lib/docker-socket-path.js');
 const dockerStats = require('./lib/docker-stats.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
+const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
 // dir is REV4A_DATA_DIR or ~/.config/rev4a — the API reads the files the daemon writes.
@@ -511,6 +512,9 @@ const containerSampler = dockerStats.createContainerSampler({
   request: dockerRequestJson,
   maxWindowS: (3 * CONTAINERS_INTERVAL_MS) / 1000,
 });
+// Keeps its own streaks and its 60-minute cooldown (started by markRecorded after a successful write), so its events are written with a null key.
+const containerAnomalies = createContainerAnomalyDetector();
+const failedAnomalyKeys = new Set(); // keys whose last write failed: logged once, not every pass
 let containersRunning = false;
 let dockerContainersDown = false;
 
@@ -535,6 +539,27 @@ async function collectContainerMetrics() {
       metrics.pruneContainerMetrics.run(sample.ts - METRICS_RETENTION_S);
       metrics.pruneContainerSources.run(sample.ts - METRICS_RETENTION_S);
     })();
+    // Only a sample that was read and stored gets here; a failed one returned above.
+    try {
+      const nowMs = Date.now();
+      // A container that left the sample cannot be retried: forget its failed writes (no growth).
+      const present = new Set(sample.rows.map((r) => r && r.container));
+      for (const key of failedAnomalyKeys) if (!present.has(key.slice(key.indexOf(':') + 1))) failedAnomalyKeys.delete(key);
+      for (const a of containerAnomalies.observe(sample, nowMs)) {
+        // One write per try: a failing one must not skip the others, and its cooldown
+        // starts only once the event is stored, so it is tried again on the next pass.
+        try {
+          recordAnomaly(null, a.metric, a.values, a.threshold, a.message);
+          containerAnomalies.markRecorded(a.key, nowMs);
+          failedAnomalyKeys.delete(a.key);
+        } catch (e) {
+          if (!failedAnomalyKeys.has(a.key)) log(`[CONTAINERS] could not record ${a.key}: ${e.message}`);
+          failedAnomalyKeys.add(a.key);
+        }
+      }
+    } catch (e) {
+      log(`[CONTAINERS] anomaly check failed: ${e.message}`);
+    }
   } finally {
     containersRunning = false;
   }

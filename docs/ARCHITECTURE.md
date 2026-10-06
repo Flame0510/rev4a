@@ -699,8 +699,21 @@ After each sample the daemon inserts a `system_anomaly` event into `events.db`
 | RAM | > 90% on two consecutive samples | at most once per 5 min |
 | Disk (each filesystem) | ≥ 90% | once when it reaches it, no cooldown — again only after it drops back under, or after the daemon restarts |
 
-No feature consumes `system_anomaly` events yet; they only pass through the generic
-event feeds.
+The container samples (every 60 s, `collectContainerMetrics`) add two rules, evaluated by
+`lib/container-anomalies.js` only after a sample was read and stored (a failed Docker read
+evaluates nothing). Same event shape; the detector keeps its streaks and cooldown in memory:
+
+| Metric | Condition | Repeats |
+|---|---|---|
+| `container_pids` | `pids` ≥ 1000 on 2 consecutive samples of the same container | at most once per 60 min per container |
+| `container_memory` | `mem_mb` ≥ 90 % of Docker's memory (`memTotalMb`) on 5 consecutive samples | at most once per 60 min per container; no rule without a known total |
+
+A sample that lacks a container, or a missing / non-numeric value, resets that streak;
+a container that is gone is forgotten. After a daemon restart the streaks start over.
+The machine rules keep their 5-minute cooldown.
+
+No feature consumes `system_anomaly` events yet except Recent alerts on the System page;
+otherwise they only pass through the generic event feeds.
 
 ### Events Retention
 

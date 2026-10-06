@@ -46,7 +46,7 @@ A scheduled task that runs an agent automatically at a fixed time (e.g. every ni
 The main page of Rev4a (`/`). Shows live sessions, cost summary, health cards for Rev4a's runtime, cron and lineage, and a real-time event feed. Its Machine card shows the server's CPU, RAM and fullest disk right now, with a link to the System page. There is no setup banner: an incomplete wizard redirects to `/wizard`.
 
 ## Event
-A lifecycle occurrence for a session: spawned, completed, failed, or missing too long (spawn timeout); the daemon also records system anomalies (high CPU or RAM) as events. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
+A lifecycle occurrence for a session: spawned, completed, failed, or missing too long (spawn timeout); the daemon also records system anomalies (high CPU or RAM, a container with too many processes or nearly all of Docker's memory) as events. Events appear in the live feed on the Dashboard and are pushed via SSE every 5 seconds.
 
 ## Gateway
 The routing layer that connects agents to AI providers. The Gateway page manages provider API keys and the model catalogue, and pushes that catalogue to every agent. Which model a given agent runs is set elsewhere, in the Model section of that agent's detail panel.

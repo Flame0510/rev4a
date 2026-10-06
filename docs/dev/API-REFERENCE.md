@@ -2078,8 +2078,9 @@ points for that stretch (a gap). A name that matches the rules but was never sam
 cannot be opened (missing, corrupt) answers `available: false`, not an error.
 
 ### `GET /api/metrics/alerts?limit=10`
-The machine's latest `system_anomaly` events (CPU above 85 % or memory above 90 % on two
-samples in a row, a disk at 90 %), newest first, from `events.db`. `limit` 1–50, default 10.
+The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
+samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
+samples in a row; `container_memory`: 90 % of Docker's memory on five), newest first, from `events.db`. `limit` 1–50, default 10.
 
 **Auth:** browser cookie or Bearer
 

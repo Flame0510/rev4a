@@ -68,7 +68,7 @@ CREATE INDEX idx_events_session ON events(session_id, ts);
 ```
 
 Types written today: `spawn`, `complete`, `fail`, `spawn_timeout` (the daemon's session poll),
-`system_anomaly` (the daemon's machine metrics, session `system`), `agent_created` and
+`system_anomaly` (the daemon's machine and container metrics, session `system`), `agent_created` and
 `agent_deleted` (the create and delete routes, session `system:agents`).
 
 **Retention:** two rules. The session poll deletes cron-session events older than 7 days. On
@@ -312,6 +312,9 @@ CREATE INDEX idx_disks_mount_ts ON system_disks(mount, ts);
 90 % on two consecutive samples (at most once per 5 minutes per metric), and a filesystem
 at 90 % or more once when it reaches the threshold, with no cooldown (again only after it
 has dropped back under, or once after each daemon start: the state is kept in memory).
+Containers add two metrics, `container_pids` (1000 or more processes on 2 consecutive
+samples) and `container_memory` (90 % of Docker's memory on 5 consecutive samples), each at
+most once per 60 minutes per container; `values` holds the process count or the percentage.
 
 Installs from before this database may still have a `system_metrics` table in
 `events.db`: nothing reads or writes it any more, and it can be dropped.
