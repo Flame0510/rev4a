@@ -21,6 +21,39 @@ under `/opt`, why the entrypoint applies the image defaults on every boot, and w
 Rev4a re-applies its own settings at create and recreate. Entrypoint behaviour:
 [docs/REV4A.md](../docs/REV4A.md#agent-templates).
 
+### Durable apt installs
+
+Only `/root` survives a recreate, an OpenClaw update or a restore; an `apt-get install`
+lands in the container layer and would be lost. The image makes it durable without
+anyone keeping a list:
+
+- `rev4a-apt` is installed as `/usr/local/sbin/apt-get` and `/usr/local/sbin/apt`
+  (ahead of `/usr/bin` on `PATH`). It runs the real command with the same arguments,
+  output and exit code. After a successful `install` it records the packages named on
+  the command line (not their dependencies) as `name=version` in
+  `/root/.rev4a/packages.txt`, and copies the apt sources and keyrings that are not part
+  of the image, and the key files those sources name with `signed-by` / `Signed-By:`
+  (absolute files outside `/root`), to `/root/.rev4a/apt/` keeping their paths. A successful `remove` or `purge` drops the entry.
+  Simulations (`-s`, `--dry-run`, `--download-only`) and local `.deb` files are not
+  recorded. A recording failure is one `[rev4a-apt]` line on stderr and never changes
+  the exit code. The image's own apt files are listed in
+  `/usr/local/share/rev4a/apt-baseline`, written at build time, and are not copied.
+- The restore writes back only paths under `/etc/apt/` and `/usr/share/keyrings/` plus the key files a saved source names; any other saved path is ignored with a log line. If a previous run was cut off mid-install it first runs `dpkg --configure -a`. A recording lock older than a minute is treated as stale.
+- `rev4a-packages-restore` is started by the entrypoint in the background just before
+  the gateway, which never waits for it. It puts the saved sources back, finds the
+  recorded packages dpkg no longer has, runs `apt-get update` and installs each one
+  (`name=version`, or `name` when that version left the repository), with the real
+  `apt-get`, (the whole run, planning included) within 15 minutes, falling back to the bare name only when apt says the exact version is not available. A plain restart finds nothing missing and ends at once.
+- The outcome is `/root/.rev4a/packages-status.json`:
+  `{"at": <ms>, "state": "running"|"ok"|"partial"|"failed"|"nothing-to-do", "restored": [...],
+  "versionChanged": [...], "failed": [{"name", "error"}]}`. `restored` lists every
+  package installed again; `versionChanged` is the subset that came back in another
+  version.
+
+Tools installed any other way (`npm -g`, `pip`, a downloaded binary) are not recorded:
+the agent keeps them under `/root/.local`, whose `bin` is on `PATH`. The rules the agent
+reads are in `rev4a-rules/AGENTS.md`. Test: `bash scripts/test-rev4a-apt.sh`.
+
 ### Access
 
 An agent's Control UI is reached on its published host port,

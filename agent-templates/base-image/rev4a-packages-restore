@@ -1,0 +1,313 @@
+#!/bin/bash
+# rev4a-packages-restore — reinstalls what the agent installed with apt before its
+# container was recreated.
+#
+# The entrypoint starts it in the background just before the gateway, so the gateway
+# never waits for apt. It puts back the apt sources, keyrings and key files that
+# rev4a-apt saved under /root/.rev4a/apt (never overwriting a file that exists), then
+# installs every package of /root/.rev4a/packages.txt that dpkg no longer has, with the
+# real apt-get (never the recorder). A plain restart finds nothing missing and ends at
+# once.
+#
+# The whole run (restoring files, planning, update, installs) is bounded by one
+# `timeout`: the work happens in a child of this script, which records its progress in a
+# work directory, so a timeout still yields a status that says what was done.
+#
+# The outcome goes to /root/.rev4a/packages-status.json:
+#   { "at": <ms>, "state": "running"|"ok"|"partial"|"failed"|"nothing-to-do",
+#     "restored": [name...], "versionChanged": [name...],
+#     "failed": [{"name": ..., "error": ...}] }
+# "restored" lists every package installed again; "versionChanged" is the subset whose
+# installed version differs from the recorded one.
+#
+# It never fails: every error ends in the status file and exit code 0.
+#
+# `rev4a-packages-restore --plan` only prints the missing packages (name=version).
+#
+# Environment overrides, used by scripts/test-rev4a-apt.sh:
+#   REV4A_STATE_DIR, REV4A_FS_ROOT, REV4A_DPKG_QUERY, REV4A_REAL_APT_GET,
+#   REV4A_REAL_APT_CACHE, REV4A_REAL_DPKG, REV4A_PACKAGES_TIMEOUT (seconds for the whole run, default 900)
+
+STATE_DIR=${REV4A_STATE_DIR:-/root/.rev4a}
+FS_ROOT=${REV4A_FS_ROOT:-}
+DPKG_QUERY=${REV4A_DPKG_QUERY:-dpkg-query}
+REAL_APT=${REV4A_REAL_APT_GET:-/usr/bin/apt-get}
+APT_CACHE=${REV4A_REAL_APT_CACHE:-/usr/bin/apt-cache}
+DPKG=${REV4A_REAL_DPKG:-/usr/bin/dpkg}
+TIMEOUT=${REV4A_PACKAGES_TIMEOUT:-900}
+LIST="$STATE_DIR/packages.txt"
+STATUS="$STATE_DIR/packages-status.json"
+SELF=$0
+
+log() { echo "[rev4a-packages] $*"; }
+
+# The valid name=version lines of packages.txt; other lines are ignored with one note.
+read_list() {
+  [ -f "$1" ] || return 0
+  tr -d '\r' < "$1" | awk -v p="[rev4a-packages]" '
+    { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "") }
+    $0 == "" || substr($0, 1, 1) == "#" { next }
+    {
+      i = index($0, "="); n = substr($0, 1, i - 1); v = substr($0, i + 1)
+      if (i > 0 && n ~ /^[a-z0-9][a-z0-9+.-]+(:[a-z0-9-]+)?$/ && v ~ /^[A-Za-z0-9.+~:_-]+$/) print n "=" v
+      else bad++
+    }
+    END { if (bad) print p " ignored " bad " invalid line(s) in packages.txt" > "/dev/stderr" }'
+}
+
+installed_version() {
+  local out
+  out=$("$DPKG_QUERY" -W -f='${db:Status-Abbrev}|${Version}\n' "$1" 2>/dev/null | head -n 1)
+  case "$out" in ii*) printf '%s' "${out#*|}" ;; esac
+}
+
+# Recorded packages that dpkg does not have installed, as name=version lines.
+plan() {
+  local line name
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name=${line%%=*}
+    [ -n "$(installed_version "$name")" ] || printf '%s\n' "$line"
+  done <<EOT
+$(read_list "$LIST")
+EOT
+}
+
+# Key files a source file names: `signed-by=` in the one-line format, and `Signed-By:`
+# in deb822, whose value may sit on the same line, after an empty field, or on the
+# indented lines that follow; an inline armored key (BEGIN/END block) names no path.
+source_keys() {
+  grep -io 'signed-by=[^] ]*' "$1" 2>/dev/null | sed 's/^[^=]*=//' | tr ',' '\n'
+  awk '
+    {
+      if ($0 ~ /^[Ss][Ii][Gg][Nn][Ee][Dd]-[Bb][Yy]:/) { inf = 1; arm = 0; line = $0; sub(/^[^:]*:/, "", line) }
+      else if (inf && $0 ~ /^[ \t]/) { line = $0 }
+      else { inf = 0; next }
+      if (line ~ /-----BEGIN/) arm = 1
+      if (arm) { if (line ~ /-----END/) arm = 0; next }
+      gsub(/[,\t]/, " ", line)
+      n = split(line, t, " ")
+      for (i = 1; i <= n; i++) if (substr(t[i], 1, 1) == "/") print t[i]
+    }' "$1" 2>/dev/null
+}
+
+# Keys named by the saved apt sources (a function: bash 3.2 cannot parse a case
+# inside $( )).
+saved_source_keys() {
+  local saved rel
+  find "$1" -type f 2>/dev/null | while IFS= read -r saved; do
+    rel=${saved#"$1"}
+    case "$rel" in
+      /etc/apt/*.list|/etc/apt/*.sources|/etc/apt/sources.list) source_keys "$saved" ;;
+    esac
+  done | sort -u
+}
+
+# Put back the saved apt sources, keyrings and keys that are missing.
+restore_files() {
+  local dest="$STATE_DIR/apt" saved rel allowed
+  [ -d "$dest" ] || return 0
+  # Besides /etc/apt and /usr/share/keyrings, only the keys a saved source names.
+  allowed=$(saved_source_keys "$dest")
+  find "$dest" -type f 2>/dev/null | while IFS= read -r saved; do
+    rel=${saved#"$dest"}
+    case "$rel" in
+      *..*|/root|/root/*) log "ignored saved file $rel"; continue ;;
+      /etc/apt/*|/usr/share/keyrings/*) ;;
+      /*)
+        if ! printf '%s\n' "$allowed" | grep -Fxq -- "$rel"; then
+          log "ignored saved file $rel (not an apt path or a key a saved source names)"
+          continue
+        fi
+        ;;
+      *) continue ;;
+    esac
+    [ -e "$FS_ROOT$rel" ] && continue
+    if mkdir -p "$(dirname "$FS_ROOT$rel")" && cp -p "$saved" "$FS_ROOT$rel"; then
+      log "restored $rel"
+    else
+      log "could not restore $rel"
+    fi
+  done
+}
+
+last_line() { awk NF "$1" | tail -n 1; }
+
+# Run the real apt-get; output goes to the file in $1.
+run_apt() {
+  local outfile=$1
+  shift
+  LC_ALL=C DEBIAN_FRONTEND=noninteractive "$REAL_APT" -o DPkg::Lock::Timeout=120 "$@" > "$outfile" 2>&1
+}
+
+# True when apt says the exact version is not available (and not for another reason
+# such as a lock or the network).
+version_unavailable() { # name version outfile
+  local m
+  grep -q "Version '.*' for '.*' was not found" "$3" && return 0
+  [ -x "$APT_CACHE" ] || return 1
+  m=$("$APT_CACHE" madison "$1" 2>/dev/null)
+  [ -n "$m" ] || return 1
+  printf '%s\n' "$m" | awk -F'|' -v v="$2" '{ gsub(/ /, "", $2); if ($2 == v) f = 1 } END { exit f ? 1 : 0 }'
+}
+
+# The child: does the work and records its progress under the work directory $1.
+run_body() {
+  local W=$1 missing out update_ok=1 line name ver err aborted=0 iv installed
+  restore_files
+  # A previous run that timed out mid-install can leave packages half-configured.
+  if [ -n "$("$DPKG" --audit 2>/dev/null)" ]; then
+    log "dpkg --configure -a (packages were left half-configured)"
+    if command -v timeout >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive timeout -k 10 300 "$DPKG" --configure -a --force-confold >"$W/dpkg.out" 2>&1
+    else
+      DEBIAN_FRONTEND=noninteractive "$DPKG" --configure -a --force-confold >"$W/dpkg.out" 2>&1
+    fi
+    log "dpkg --configure -a finished with code $?: $(last_line "$W/dpkg.out")"
+  fi
+  missing=$(plan)
+  printf '%s\n' "$missing" | awk NF > "$W/plan"
+  [ -n "$missing" ] || return 0
+  log "missing packages: $(printf '%s' "$missing" | tr '\n' ' ')"
+
+  out="$W/apt.out"
+  log "apt-get update"
+  if ! run_apt "$out" update; then
+    update_ok=0
+    log "apt-get update failed: $(last_line "$out")"
+  fi
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name=${line%%=*}
+    ver=${line#*=}
+    if [ $aborted -eq 1 ]; then
+      printf '%s\t%s\n' "$name" "apt-get update failed and an earlier install failed; skipped" >> "$W/failed"
+      continue
+    fi
+    log "installing $name=$ver"
+    installed=0
+    if run_apt "$out" install -y "$name=$ver"; then
+      installed=1
+    else
+      log "$name=$ver not installed: $(last_line "$out")"
+      # Fall back to the bare name only when that exact version is gone from the
+      # repository; a lock or a network error is a failure.
+      if version_unavailable "$name" "$ver" "$out"; then
+        log "installing $name (version $ver is not available)"
+        if run_apt "$out" install -y "$name"; then installed=1; fi
+      fi
+    fi
+    if [ $installed -eq 1 ]; then
+      echo "$name" >> "$W/restored"
+      iv=$(installed_version "$name")
+      if [ -n "$iv" ] && [ "$iv" != "$ver" ]; then
+        echo "$name" >> "$W/changed"
+        log "$name came back as $iv instead of $ver"
+      fi
+    else
+      err=$(last_line "$out")
+      log "$name failed: $err"
+      printf '%s\t%s\n' "$name" "$err" >> "$W/failed"
+      [ $update_ok -eq 1 ] || aborted=1
+    fi
+  done <<EOT
+$missing
+EOT
+  return 0
+}
+
+if [ "${1:-}" = "--plan" ]; then plan; exit 0; fi
+if [ "${1:-}" = "--run" ]; then run_body "$2"; exit 0; fi
+
+# JSON string from a raw string: truncate the raw text first, then escape, so the cut
+# can never leave half an escape sequence.
+json_str() {
+  local s
+  # Cut on characters, whatever the caller's locale; drop a byte sequence a cut left half.
+  s=$(LC_ALL=C.UTF-8 bash -c 'printf %s "${1:0:300}"' _ "$1" 2>/dev/null)
+  s=$(printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || printf '%s' "$s")
+  s=$(printf '%s' "$s" | tr '\n\r\t' '   ' | tr -d '\000-\010\013\014\016-\037\177' | sed 's/\\/\\\\/g; s/"/\\"/g')
+  printf '"%s"' "$s"
+}
+
+json_names() {
+  local out="" sep="" n
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    out="$out$sep$(json_str "$n")"; sep=", "
+  done <<EOT
+$1
+EOT
+  printf '[%s]' "$out"
+}
+
+json_failed() {
+  local out="" sep="" n e
+  while IFS=$'\t' read -r n e; do
+    [ -n "$n" ] || continue
+    out="$out$sep{\"name\": $(json_str "$n"), \"error\": $(json_str "$e")}"; sep=", "
+  done <<EOT
+$1
+EOT
+  printf '[%s]' "$out"
+}
+
+write_status() { # state restored changed failed
+  local tmp
+  tmp=$(mktemp "$STATE_DIR/.packages-status.XXXXXX" 2>/dev/null) || return 0
+  printf '{"at": %s000, "state": "%s", "restored": %s, "versionChanged": %s, "failed": %s}\n' \
+    "$(date +%s)" "$1" "$(json_names "$2")" "$(json_names "$3")" "$(json_failed "$4")" > "$tmp" \
+    && chmod 644 "$tmp" && mv -f "$tmp" "$STATUS" || rm -f "$tmp"
+}
+
+main() {
+  local W rc=0 restored changed failed state name
+  mkdir -p "$STATE_DIR" 2>/dev/null || { log "cannot create $STATE_DIR"; return 0; }
+  W=$(mktemp -d "$STATE_DIR/.packages-run.XXXXXX" 2>/dev/null) || { log "cannot create a work directory in $STATE_DIR"; return 0; }
+  # The previous run's outcome must not be read as this one's while it works.
+  write_status running "" "" ""
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 10 "$TIMEOUT" "$SELF" --run "$W"; rc=$?
+  else
+    "$SELF" --run "$W"; rc=$?
+  fi
+
+  restored=$(cat "$W/restored" 2>/dev/null)
+  changed=$(cat "$W/changed" 2>/dev/null)
+  failed=$(cat "$W/failed" 2>/dev/null)
+  case $rc in
+    0) ;;
+    124|137|143)
+      log "timed out after ${TIMEOUT}s"
+      if [ -s "$W/plan" ]; then
+        while IFS= read -r name; do
+          name=${name%%=*}
+          printf '%s\n' "$restored" | grep -Fxq -- "$name" && continue
+          printf '%s\n' "$failed" | cut -f1 | grep -Fxq -- "$name" && continue
+          failed="$failed"$'\n'"$name"$'\t'"timed out after ${TIMEOUT}s"
+        done < "$W/plan"
+      else
+        failed="$failed"$'\n'"*"$'\t'"timed out after ${TIMEOUT}s"
+      fi
+      ;;
+    *) failed="$failed"$'\n'"*"$'\t'"restore exited with code $rc" ;;
+  esac
+  failed=$(printf '%s\n' "$failed" | awk NF)
+  rm -rf "$W"
+
+  if [ -n "$failed" ]; then
+    if [ -n "$restored" ]; then state=partial; else state=failed; fi
+  elif [ -n "$restored" ]; then
+    state=ok
+  else
+    state=nothing-to-do
+  fi
+  log "done: $state"
+  write_status "$state" "$restored" "$changed" "$failed"
+  return 0
+}
+
+main
+exit 0

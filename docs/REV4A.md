@@ -427,6 +427,8 @@ Built from `node:24-bookworm-slim`, includes:
 - Plugins under `/opt/openclaw-plugins`, outside the agent volume and pinned to the same
   OpenClaw release: DuckDuckGo web search
 - `openssl` (for local token generation)
+- Durable apt installs: `rev4a-apt` (as `/usr/local/sbin/apt-get` and `apt`) and `rev4a-packages-restore`, see below
+- `/root/.local/bin` on `PATH`, after the system directories
 - Custom entrypoint `/agent-entrypoint.sh`
 
 See also [agent-templates/README.md](../agent-templates/README.md).
@@ -460,6 +462,26 @@ See also [agent-templates/README.md](../agent-templates/README.md).
   The config is read with one node process and written through `openclaw config patch`,
   which validates; if `openclaw.json` cannot be read as JSON, the defaults are skipped and
   the log says so.
+- **Durable apt restore limits**: the restore writes back only saved paths under `/etc/apt/` and `/usr/share/keyrings/` plus key files named by a saved source (`signed-by` / `Signed-By:`, including deb822 continuation lines); anything else on the volume is ignored with a log line. It runs `dpkg --configure -a` first when dpkg was left half-configured. The recorder's list lock is stale after 60 s whatever its pid.
+- **Durable apt installs**, in the background just before the gateway (it never waits for
+  apt): `rev4a-packages-restore` puts back the apt sources and keyrings saved under
+  `/root/.rev4a/apt/`, finds the packages of `/root/.rev4a/packages.txt` that dpkg no longer
+  has (a recreate, an OpenClaw update or a restore starts from a fresh container layer; a
+  plain restart keeps it and ends at once), runs `apt-get update` and installs each as
+  `name=version`, or as `name` when that version left the repository, with the real
+  `apt-get`; the whole run is bounded to 15 minutes, and the bare-name fallback happens only when apt says the exact version is not available (a lock or network error is a failure). The list is written by `rev4a-apt`, which stands in for
+  `apt-get` and `apt`: after a successful `install` it records the packages named on the
+  command line (not dependencies; not simulations or local `.deb` files) with their installed
+  version, and saves the apt sources and keyrings that are not part of the image, plus the key files they name with `signed-by` / `Signed-By:` (absolute files outside `/root`; restored never overwriting); a
+  successful `remove` or `purge` drops the entry. A recording failure is one stderr line and
+  never changes the exit code. The result is `/root/.rev4a/packages-status.json`
+  (`state`: `running` while it works, then `ok`, `partial`, `failed` or `nothing-to-do`; `restored`, `versionChanged`,
+  `failed`). Upgrade: an agent recreated onto this image has no list yet, so nothing happens
+  and what it installs from then on is recorded; packages installed before this image are
+  lost at that recreate, as before; offline, the packages are reported `failed` and the next
+  boot tries again; rolling back to an older image leaves the list on the volume, unused.
+  Tools installed other than with apt (`npm -g`, `pip`, a binary) must live under `/root`
+  (`/root/.local/bin` is on `PATH`); the agent rules say so.
 - Starts OpenClaw gateway with `--allow-unconfigured`: `openclaw gateway --bind lan --port 3000 --auth token --token "<token>" --allow-unconfigured`
 - Everything else (controlUi, model refs, providers) is handled by the create route and the Gateway sync module
 

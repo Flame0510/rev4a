@@ -95,5 +95,14 @@ elif [ -n "$DEFAULTS" ]; then
   done <<< "$DEFAULTS"
 fi
 
+# Reinstall what the agent installed with apt before its container was recreated
+# (see rev4a-apt). In the background: the gateway never waits for apt, and the script
+# never fails or blocks the boot. A plain restart finds nothing missing and ends at once.
+if [ -x /usr/local/sbin/rev4a-packages-restore ]; then
+  # Detached (double fork): its parent becomes PID 1 (docker-init with --init), which reaps it.
+  # As a plain child it would end as a zombie under the gateway, which never reaps.
+  ( /usr/local/sbin/rev4a-packages-restore </dev/null & )
+fi
+
 echo "[entrypoint] Starting gateway with auth token"
 exec openclaw gateway --bind lan --port 3000 --auth token --token "${AGENT_TOKEN}" --allow-unconfigured

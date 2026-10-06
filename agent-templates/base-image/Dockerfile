@@ -92,6 +92,26 @@ RUN mkdir -p /opt/openclaw-plugins \
     && npm install --no-save --ignore-scripts "@openclaw/duckduckgo-plugin@${OPENCLAW_VERSION}" \
     && test -f node_modules/@openclaw/duckduckgo-plugin/openclaw.plugin.json
 
+# Durable apt installs. Only /root (the agent volume) survives a recreate, an OpenClaw
+# update or a restore; what an agent installs with apt lives in the container layer and
+# would be lost. rev4a-apt stands in for apt-get and apt (/usr/local/sbin comes before
+# /usr/bin on PATH), records what is installed in /root/.rev4a/packages.txt and saves
+# the apt sources and keyrings that are not part of the image; the entrypoint starts
+# rev4a-packages-restore, which installs again what is missing. The baseline lists the
+# apt files this image ships, so they are not copied to the volume. It is written last,
+# after every apt step above, and the symlinks come after it so no build step is recorded.
+COPY rev4a-apt /usr/local/sbin/rev4a-apt
+COPY rev4a-packages-restore /usr/local/sbin/rev4a-packages-restore
+RUN chmod 0755 /usr/local/sbin/rev4a-apt /usr/local/sbin/rev4a-packages-restore \
+    && mkdir -p /usr/local/share/rev4a \
+    && /usr/local/sbin/rev4a-apt --list-config > /usr/local/share/rev4a/apt-baseline \
+    && ln -s rev4a-apt /usr/local/sbin/apt-get \
+    && ln -s rev4a-apt /usr/local/sbin/apt
+
+# Tools an agent installs under /root/.local survive a recreate; this puts its bin
+# directory on PATH (after the system directories, so it never shadows them).
+ENV PATH="${PATH}:/root/.local/bin"
+
 # Standard entrypoint
 COPY entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh

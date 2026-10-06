@@ -1,0 +1,321 @@
+#!/bin/bash
+# rev4a-apt — records what an agent installs with apt so it survives a recreate.
+#
+# Installed as /usr/local/sbin/apt-get and /usr/local/sbin/apt (ahead of /usr/bin on
+# PATH). It runs the real command with the same arguments, output and exit code. After
+# a successful `install` it records the packages named on the command line in
+# /root/.rev4a/packages.txt (name=version, one per line) and copies the apt sources and
+# keyrings that are not part of the image to /root/.rev4a/apt/, together with every key
+# file those sources name with `signed-by=` (one-line format) or `Signed-By:` (deb822).
+# After a successful `remove` or `purge` it drops the entry. rev4a-packages-restore
+# replays both at boot.
+#
+# Recording never changes the result of the user's command: a recording problem is one
+# `[rev4a-apt] ...` line on stderr and the real exit code is kept.
+#
+# Called as `rev4a-apt --list-config`, it prints the apt configuration files that are
+# tracked (the Dockerfile uses it to write the baseline of the image).
+#
+# Bash 3.2 compatible (no mapfile, no associative arrays).
+#
+# Environment overrides, used by scripts/test-rev4a-apt.sh:
+#   REV4A_APT_REAL      the real apt-get / apt binary
+#   REV4A_DPKG_QUERY    dpkg-query
+#   REV4A_STATE_DIR     /root/.rev4a
+#   REV4A_APT_BASELINE  /usr/local/share/rev4a/apt-baseline
+#   REV4A_FS_ROOT       prefix for the /etc/apt, /usr/share/keyrings and key paths
+
+SELF=$(basename "$0")
+STATE_DIR=${REV4A_STATE_DIR:-/root/.rev4a}
+BASELINE=${REV4A_APT_BASELINE:-/usr/local/share/rev4a/apt-baseline}
+DPKG_QUERY=${REV4A_DPKG_QUERY:-dpkg-query}
+FS_ROOT=${REV4A_FS_ROOT:-}
+LIST="$STATE_DIR/packages.txt"
+LOCK="$STATE_DIR/.packages.lock"
+
+warn() { echo "[rev4a-apt] $*" >&2; }
+
+# Absolute paths of the tracked apt configuration files, sorted.
+config_files() {
+  local p
+  for p in /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/trusted.gpg.d \
+           /etc/apt/keyrings /etc/apt/preferences.d /usr/share/keyrings; do
+    [ -e "$FS_ROOT$p" ] || continue
+    find "$FS_ROOT$p" \( -type f -o -type l \) 2>/dev/null
+  done | while IFS= read -r f; do
+    [ -f "$f" ] && printf '%s\n' "${f#"$FS_ROOT"}"
+  done | sort
+}
+
+# Key files a source file names: `signed-by=` in the one-line format, and `Signed-By:`
+# in deb822, whose value may sit on the same line, after an empty field, or on the
+# indented lines that follow; an inline armored key (BEGIN/END block) names no path.
+source_keys() {
+  grep -io 'signed-by=[^] ]*' "$1" 2>/dev/null | sed 's/^[^=]*=//' | tr ',' '\n'
+  awk '
+    {
+      if ($0 ~ /^[Ss][Ii][Gg][Nn][Ee][Dd]-[Bb][Yy]:/) { inf = 1; arm = 0; line = $0; sub(/^[^:]*:/, "", line) }
+      else if (inf && $0 ~ /^[ \t]/) { line = $0 }
+      else { inf = 0; next }
+      if (line ~ /-----BEGIN/) arm = 1
+      if (arm) { if (line ~ /-----END/) arm = 0; next }
+      gsub(/[,\t]/, " ", line)
+      n = split(line, t, " ")
+      for (i = 1; i <= n; i++) if (substr(t[i], 1, 1) == "/") print t[i]
+    }' "$1" 2>/dev/null
+}
+
+# Key files named by the given source files (absolute paths, one per line): absolute
+# regular files, not in the image, not under /root (already on the volume).
+key_paths() {
+  local p f k
+  while IFS= read -r p; do
+    case "$p" in
+      *.list|*.sources|*/sources.list) ;;
+      *) continue ;;
+    esac
+    f="$FS_ROOT$p"
+    source_keys "$f" | while IFS= read -r k; do
+      case "$k" in
+        /root|/root/*) continue ;;
+        /*) ;;
+        *) continue ;;
+      esac
+      case "$k" in *..*) continue ;; esac
+      [ -f "$FS_ROOT$k" ] || continue
+      grep -Fxq -- "$k" "$BASELINE" 2>/dev/null && continue
+      printf '%s\n' "$k"
+    done
+  done <<EOT
+$1
+EOT
+}
+
+# Copy the tracked files that are not in the image, and the keys they name, to the
+# volume keeping their paths; drop saved copies that are no longer wanted.
+sync_config() {
+  local dest="$STATE_DIR/apt" scan p saved rel newfiles="" keys wanted
+  [ -f "$BASELINE" ] || return 0
+  scan=$(config_files)
+  mkdir -p "$dest" 2>/dev/null || return 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    grep -Fxq -- "$p" "$BASELINE" && continue
+    newfiles="$newfiles$p"$'\n'
+  done <<EOT
+$scan
+EOT
+  keys=$(key_paths "$newfiles" | sort -u)
+  wanted=$(printf '%s\n%s\n' "$newfiles" "$keys" | awk NF)
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    mkdir -p "$dest$(dirname "$p")" 2>/dev/null && cp -p "$FS_ROOT$p" "$dest$p" 2>/dev/null || return 1
+  done <<EOT
+$wanted
+EOT
+  find "$dest" -type f 2>/dev/null | while IFS= read -r saved; do
+    rel=${saved#"$dest"}
+    printf '%s\n' "$wanted" | grep -Fxq -- "$rel" || rm -f "$saved"
+  done
+  return 0
+}
+
+# Version of an installed package, empty when it is not installed.
+installed_version() {
+  local out status
+  out=$("$DPKG_QUERY" -W -f='${db:Status-Abbrev}|${Version}\n' "$1" 2>/dev/null | head -n 1)
+  status=${out%%|*}
+  case "$status" in ii*) printf '%s' "${out#*|}" ;; esac
+}
+
+# The valid name=version lines of packages.txt; other lines are ignored with one note.
+read_list() {
+  [ -f "$1" ] || return 0
+  tr -d '\r' < "$1" | awk -v p="[rev4a-apt]" '
+    { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "") }
+    $0 == "" || substr($0, 1, 1) == "#" { next }
+    {
+      i = index($0, "="); n = substr($0, 1, i - 1); v = substr($0, i + 1)
+      if (i > 0 && n ~ /^[a-z0-9][a-z0-9+.-]+(:[a-z0-9-]+)?$/ && v ~ /^[A-Za-z0-9.+~:_-]+$/) print n "=" v
+      else bad++
+    }
+    END { if (bad) print p " note: ignored " bad " invalid line(s) in packages.txt" > "/dev/stderr" }'
+}
+
+valid_name() {
+  printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9+.-]+(:[a-z0-9-]+)?$'
+}
+
+# True when the value of an -o option turns on a simulation or a download-only run.
+opt_simulates() {
+  local v key val
+  v=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  case "$v" in *=*) ;; *) return 1 ;; esac
+  key=${v%%=*}
+  val=${v#*=}
+  case "$key" in
+    apt::get::simulate|apt::get::just-print|apt::get::recon|apt::get::no-act|apt::get::download-only) ;;
+    *) return 1 ;;
+  esac
+  case "$val" in true|yes|1|on|with|enable) return 0 ;; esac
+  return 1
+}
+
+# 0 = taken, 1 = busy, 2 = the state directory is not writable. A lock older than a
+# minute is stale whatever its pid says (pids restart low after a recreate); one with
+# no pid file is taken over after about 2 seconds.
+acquire_lock() {
+  local i=0 pid
+  while ! mkdir "$LOCK" 2>/dev/null; do
+    [ -d "$LOCK" ] || return 2
+    i=$((i + 1))
+    if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      rm -rf "$LOCK" 2>/dev/null
+      continue
+    fi
+    pid=$(cat "$LOCK/pid" 2>/dev/null)
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$LOCK" 2>/dev/null; continue; fi
+    if [ -z "$pid" ] && [ $i -gt 20 ]; then rm -rf "$LOCK" 2>/dev/null; continue; fi
+    [ $i -le 50 ] || return 1
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+  echo $$ > "$LOCK/pid" 2>/dev/null
+  trap 'rm -rf "$LOCK" 2>/dev/null' EXIT
+  return 0
+}
+
+record() {
+  local sub="" nosave=0 expect=0 names="" a s c i len rest
+  for a in "$@"; do
+    if [ $expect -ne 0 ]; then
+      if [ $expect -eq 2 ] && opt_simulates "$a"; then nosave=1; fi
+      expect=0
+      continue
+    fi
+    case "$a" in
+      --simulate|--just-print|--dry-run|--recon|--no-act|--download-only|--print-uris) nosave=1 ;;
+      --option) expect=2 ;;
+      --option=*) if opt_simulates "${a#*=}"; then nosave=1; fi ;;
+      --config-file|--target-release) expect=1 ;;
+      --*) ;;
+      -?*)
+        s=${a#-}
+        len=${#s}
+        i=0
+        while [ $i -lt $len ]; do
+          c=${s:$i:1}
+          case "$c" in
+            s|d) nosave=1 ;;
+            o|c|t)
+              rest=${s:$((i + 1))}
+              if [ -n "$rest" ]; then
+                if [ "$c" = o ] && opt_simulates "${rest#=}"; then nosave=1; fi
+              elif [ "$c" = o ]; then
+                expect=2
+              else
+                expect=1
+              fi
+              break
+              ;;
+          esac
+          i=$((i + 1))
+        done
+        ;;
+      *)
+        if [ -z "$sub" ]; then sub=$a; else names="$names$a"$'\n'; fi
+        ;;
+    esac
+  done
+  [ $nosave -eq 0 ] || return 0
+  case "$sub" in
+    install|reinstall|remove|purge) ;;
+    *) return 0 ;;
+  esac
+
+  local content before n n2 ver action
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+  acquire_lock
+  case $? in
+    0) ;;
+    2) warn "the state directory $STATE_DIR is not writable"; return 1 ;;
+    *) warn "note: another install is recording, so this one was not recorded"; return 0 ;;
+  esac
+  content=$(read_list "$LIST")
+  before=$content
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    case "$a" in
+      *.deb|/*|./*|../*)
+        warn "note: local package file $a is not recorded"
+        continue ;;
+    esac
+    action=$sub
+    n=${a%%=*}
+    n=${n%%/*}
+    case "$n" in
+      *-) action=remove; n=${n%-} ;;
+    esac
+    case "$n" in
+      ''|*[\*\?\[\^\$\|\(]*)
+        warn "note: $a is a pattern, not recorded"
+        continue ;;
+    esac
+    case "$action" in
+      remove|purge)
+        content=$(printf '%s\n' "$content" | awk -F= -v n="$n" 'NF && $1 != n')
+        ;;
+      *)
+        ver=$(installed_version "$n")
+        if [ -z "$ver" ]; then
+          # "pkg+" installs pkg, unless the name itself (g++) is an installed package.
+          case "$n" in
+            *+)
+              n2=${n%+}
+              ver=$(installed_version "$n2")
+              [ -z "$ver" ] || n=$n2
+              ;;
+          esac
+        fi
+        if [ -z "$ver" ] || ! valid_name "$n"; then
+          warn "note: $n is not an installed package name, not recorded"
+          continue
+        fi
+        content=$(printf '%s\n' "$content" | awk -F= -v n="$n" 'NF && $1 != n')
+        content=$(printf '%s\n%s=%s\n' "$content" "$n" "$ver")
+        ;;
+    esac
+  done <<EOT
+$names
+EOT
+  if [ "$content" != "$before" ]; then
+    local tmp
+    tmp=$(mktemp "$STATE_DIR/.packages.XXXXXX" 2>/dev/null) || return 1
+    if ! { printf '%s\n' "$content" | awk NF | sort -u > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$LIST"; } 2>/dev/null; then
+      rm -f "$tmp" 2>/dev/null
+      return 1
+    fi
+  fi
+  case "$sub" in
+    install|reinstall) sync_config || return 1 ;;
+  esac
+  return 0
+}
+
+if [ "$SELF" = "rev4a-apt" ]; then
+  if [ "${1:-}" = "--list-config" ]; then config_files; exit 0; fi
+  echo "usage: rev4a-apt --list-config (install it as apt-get / apt to record installs)" >&2
+  exit 2
+fi
+
+case "$SELF" in
+  apt) DEFAULT_REAL=/usr/bin/apt ;;
+  *) DEFAULT_REAL=/usr/bin/apt-get ;;
+esac
+REAL=${REV4A_APT_REAL:-$DEFAULT_REAL}
+
+"$REAL" "$@"
+RC=$?
+if [ $RC -eq 0 ]; then
+  record "$@" || warn "could not record this install; it will not be reinstalled after a recreate"
+fi
+exit $RC
