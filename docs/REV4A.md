@@ -400,8 +400,8 @@ keeps the agent's version, and moves it to the build this release pins for that 
 version is read from the image label even when the image lost every tag, so a recreate of a
 stopped agent on an untagged image still lands on `openclaw-agent-base:<version>`. An agent card shows **UPDATE AVAILABLE** when a newer supported
 version is downloaded, else **NEW BUILD** when the pinned build of the agent's version is downloaded
-and the agent runs another image; the agent panel's OPENCLAW VERSION section then offers **Recreate Container**
-(same flow as the RECREATE section, a cold backup first). At every start Rev4a gives each agent image
+and the agent runs another image; the agent panel's RECREATE section then shows a yellow note above its
+**Recreate Container** button (a cold backup first). At every start Rev4a gives each agent image
 that has no `openclaw-agent-base:` tag but a version label the identity tag
 `openclaw-agent-base:<version>-rev.<12 hex of the image id>` (best effort, idempotent, nothing is removed), so
 the image is listed and retention can remove it once unused.

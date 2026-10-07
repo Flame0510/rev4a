@@ -1101,9 +1101,7 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
   /** Bumped when an edit starts here, so the banner refetches at once. */
   const [editPing, setEditPing] = useState(0);
   /** Bumped by the NEW BUILD note's button: the Recreate section below opens its confirm. */
-  const [recreateRequest, setRecreateRequest] = useState(0);
   /** The Recreate section is starting or running a job (its button shows the loading state). */
-  const [recreateBusy, setRecreateBusy] = useState(false);
 
   // Safe to resolve during render: this panel only mounts once the agent list has
   // been fetched client-side, so it never runs in a server render. The helper
@@ -1260,19 +1258,9 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
         <SectionHeader icon={<RotateIcon size={12} />} label="OPENCLAW VERSION" />
         <div style={{ padding: '12px 14px' }}>
           <UpdateSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
-          {agent.newBuildAvailable && agent.openclawVersion && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-                A newer build of OpenClaw {agent.openclawVersion} is downloaded. Recreate this agent to use it (a cold backup is taken first).
-              </div>
-              <Button variant="secondary" size="sm" loading={recreateBusy} disabled={recreateBusy || busy} onClick={() => setRecreateRequest((n) => n + 1)}>
-                {recreateBusy ? 'Recreating…' : 'Recreate Container'}
-              </Button>
-            </div>
-          )}
         </div>
       </div>
-      <RecreateSection agentName={agent.name} agentBusy={busy} confirmRequest={recreateRequest} onBusyChange={setRecreateBusy} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
+      <RecreateSection agentName={agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1770,12 +1758,10 @@ interface RecreateJob {
   error: string | null;
 }
 
-function RecreateSection({ agentName, agentBusy, confirmRequest = 0, onBusyChange, onRecreated, onStarted }: {
+function RecreateSection({ agentName, agentBusy, newBuildVersion = null, onRecreated, onStarted }: {
   agentName: string;
-  /** Opens the confirm when it changes (the NEW BUILD note above reuses this flow). */
-  confirmRequest?: number;
-  /** Starting or running, for a button elsewhere that shares this flow. */
-  onBusyChange?: (busy: boolean) => void;
+  /** The OpenClaw version of this agent when a newer build of it is downloaded (the NEW BUILD badge): the section says so. */
+  newBuildVersion?: string | null;
   /** A long operation is running on this agent. */
   agentBusy?: boolean;
   /** The container was rebuilt — the parent refetches (new id, fresh image). */
@@ -1876,12 +1862,15 @@ function RecreateSection({ agentName, agentBusy, confirmRequest = 0, onBusyChang
 
   const running = job !== null;
 
-  useEffect(() => { onBusyChange?.(running || starting); }, [running, starting, onBusyChange]);
-  useEffect(() => { if (confirmRequest > 0) setShowConfirm(true); }, [confirmRequest]);
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <SectionHeader icon={<PackageIcon size={12} />} label="RECREATE" />
+      {newBuildVersion && (
+        <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--yellow)', borderBottom: '1px solid var(--border)' }}>
+          ⚠ A newer build of OpenClaw {newBuildVersion} is downloaded. Recreate this agent to use it (a cold backup is taken first).
+        </div>
+      )}
       <div style={{ padding: '12px 14px' }}>
         {running && (
           <div style={{
