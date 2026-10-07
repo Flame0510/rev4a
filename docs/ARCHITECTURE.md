@@ -212,7 +212,7 @@ The central container, running the Next.js dashboard + orchestration API.
   the range is refused, instead of letting the server refuse it on submit.
 - **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
   (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
-  applied by rebuilding the container on the image it already runs — **no backup**, the
+  applied by rebuilding the container on the current build of its OpenClaw version (a newer build if one was downloaded) — **no backup**, the
   volume is never touched. Same 202-and-background shape as a restore; the parameters
   live in the row, so recovery can tell what was being applied. The panel shows a banner
   and the agent card an `EDITING` chip.

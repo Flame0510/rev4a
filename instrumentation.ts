@@ -93,7 +93,7 @@ export async function register() {
       .then((tagged) => {
         if (tagged.length) console.log(`[rev4a] Tagged ${tagged.length} untagged agent image(s): ${tagged.join(', ')}`);
       })
-      .catch(() => console.warn('[rev4a] Could not check agent images on startup'));
+      .catch((e) => console.warn(`[rev4a] Could not check agent images on startup: ${(e as Error)?.message ?? e}`));
     // Retention for the lifecycle job tables: the panel reads the latest row of each
     // agent, so the history is trimmed to the newest rows per agent. Best-effort.
     try {

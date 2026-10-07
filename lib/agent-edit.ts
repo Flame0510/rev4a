@@ -1,7 +1,7 @@
 /**
  * Editing an agent's display name and/or port range.
  *
- * The container is rebuilt on the image it already runs, with the new environment value
+ * The container is rebuilt on the current build of its OpenClaw version (a newer build if one was downloaded), with the new environment value
  * (`AGENT_NAME`) and/or port bindings — no cold backup, because the persistent volume is
  * never touched. The job is recorded in `agent_edits` and runs in the background, so a
  * page reload or a Rev4a restart never loses track of it and a second edit (or a backup)

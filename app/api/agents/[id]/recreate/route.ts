@@ -1,5 +1,5 @@
 /**
- * Recreate one agent's container on the image it already runs (lib/agent-recreate.ts).
+ * Recreate one agent's container on the current build of its OpenClaw version (lib/agent-recreate.ts).
  *
  *   POST    start: a cold backup is taken (the agent stops for it), then the container
  *           is rebuilt and the gateway waited for. 202 once the job has started; the

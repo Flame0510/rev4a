@@ -793,11 +793,10 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 ```
 
 **Notes:**
-- `openclawVersion` comes from the image's `org.opencontainers.image.version` label or
-  version tag, else from `openclaw --version` inside the running container (cached per
-  image id); `null` for a stopped agent whose image carries neither.
-- `openclawVersion` also reads the label of an image that lost every tag, by inspecting it by id,
-  so a stopped agent on such an image still has a version.
+- `openclawVersion` comes from the image's `org.opencontainers.image.version` label (read by
+  image id, so also for an image that lost every tag) or version tag, else from
+  `openclaw --version` inside the running container (cached per image id); `null` for a
+  stopped agent whose image carries neither.
 - `updateAvailable` is `true` when a newer supported OpenClaw version is downloaded.
 - `newBuildAvailable` is `true` when the image this release pins for the agent's version is
   downloaded and the agent's container runs a different image id (a recreate moves it).
@@ -997,7 +996,7 @@ docker command.
 ### `PATCH /api/agents/[id]`
 Edit an agent's display name, its port range, or both. The job runs in the background
 (`lib/agent-edit.ts`); this answers `202` once it has started. The container is rebuilt
-on the image it already runs — **without a backup**: the persistent volume is never
+on the current build of its OpenClaw version (a newer build if one was downloaded) — **without a backup**: the persistent volume is never
 touched (`recreateAgentContainer()` in `lib/agent-recreate.ts`), then the gateway is
 waited for (up to 5 minutes) and the runtime config re-applied.
 
@@ -1215,7 +1214,7 @@ Flow (each step recorded in `agent_recreates`):
 1. **Cold backup** `agent-<id>-prerecreate-<ts>.tar.gz` — the agent stops for it, so
    the archive cannot catch its SQLite files mid-write. **If the backup fails, the
    recreate aborts and the agent is started again.**
-2. The container is rebuilt (`lib/agent-recreate.ts`): same image tag, environment
+2. The container is rebuilt (`lib/agent-recreate.ts`) on the current build of its OpenClaw version (`openclaw-agent-base:<version>`, the pinned build when downloaded), environment
    variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`), labels, port mappings and network,
    reattaching the same volume. The network comes from the attached networks, or from
    the container's `NetworkMode` when its endpoint was lost.

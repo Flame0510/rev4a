@@ -185,7 +185,7 @@ const running = new Set<string>();
 
 /**
  * Start a recreate: a cold backup (the agent stops for it), then the container is
- * rebuilt on the image it already runs, and the gateway is waited for. Returns once
+ * rebuilt on the current build of its OpenClaw version, and the gateway is waited for. Returns once
  * the job has started; the steps continue in the background and land in
  * `agent_recreates`, so a reload or a Rev4a restart never loses track of it.
  */
