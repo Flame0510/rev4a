@@ -1100,8 +1100,6 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
   const [showEdit, setShowEdit] = useState(false);
   /** Bumped when an edit starts here, so the banner refetches at once. */
   const [editPing, setEditPing] = useState(0);
-  /** Bumped by the NEW BUILD note's button: the Recreate section below opens its confirm. */
-  /** The Recreate section is starting or running a job (its button shows the loading state). */
 
   // Safe to resolve during render: this panel only mounts once the agent list has
   // been fetched client-side, so it never runs in a server render. The helper
@@ -1908,7 +1906,7 @@ function RecreateSection({ agentName, agentBusy, newBuildVersion = null, onRecre
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Takes an automatic cold backup — the agent stops for it — then rebuilds the container on the same OpenClaw version, keeping workspace, config, credentials and state. To move to a newer OpenClaw version, use Update above.
         </div>
-        <Button variant="secondary" size="sm" disabled={running || starting || !!agentBusy} onClick={() => setShowConfirm(true)}>
+        <Button variant="secondary" size="sm" loading={running || starting} disabled={running || starting || !!agentBusy} onClick={() => setShowConfirm(true)}>
           {starting ? 'Starting…' : running ? 'Recreating…' : 'Recreate Container'}
         </Button>
         {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
