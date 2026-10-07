@@ -146,6 +146,55 @@ test('identity revision: 12 hex chars of the image id, accepted as a rev tag', (
   assert.equal(imageRevisionStatus('2026.9.3', images, '3513098'), 'outdated');
 });
 
+// ── Identity tag for an agent image that lost every tag ──
+const tagFor = (image) => rev.identityTagFor(R, image);
+const ID = 'sha256:0123456789abcdef0123456789abcdef';
+
+test('identity tag: an untagged image with a version label gets <version>-rev.<12 hex>', () => {
+  assert.equal(tagFor({ id: ID, tags: [], version: '2026.9.3' }), `${R}:2026.9.3-rev.0123456789ab`);
+  assert.equal(isRevisionTag('2026.9.3-rev.0123456789ab'), true);
+});
+
+test('identity tag: an image that already has an openclaw-agent-base tag is never retagged', () => {
+  assert.equal(tagFor({ id: ID, tags: [`${R}:2026.9.3`], version: '2026.9.3' }), null);
+  assert.equal(tagFor({ id: ID, tags: [`${R}:2026.9.3-rev.abcdef1`], version: '2026.9.3' }), null);
+  assert.equal(tagFor({ id: ID, tags: [`${R}:latest`], version: '2026.9.3' }), null);
+});
+
+test('identity tag: other repositories do not count, no version label means no tag', () => {
+  assert.equal(tagFor({ id: ID, tags: ['ghcr.io/x/y:1'], version: '2026.9.3' }), `${R}:2026.9.3-rev.0123456789ab`);
+  assert.equal(tagFor({ id: ID, tags: [], version: null }), null);
+  assert.equal(tagFor({ id: '', tags: [], version: '2026.9.3' }), null);
+});
+
+test('identity tag: applying it twice is a no-op (idempotent)', () => {
+  const first = tagFor({ id: ID, tags: [], version: '2026.9.3' });
+  assert.equal(tagFor({ id: ID, tags: [first], version: '2026.9.3' }), null);
+});
+
+// ── NEW BUILD per agent ──
+const nb = (images, containerImageId, pin = '3513098') => rev.newBuildAvailable(R, '2026.9.3', images, pin, containerImageId);
+
+test('new build: the pinned build is downloaded and the agent runs another image', () => {
+  const images = [img('new', '2026.9.3', '2026.9.3-rev.3513098')];
+  assert.equal(nb(images, 'old-untagged'), true);
+});
+
+test('new build: the agent already runs the pinned build', () => {
+  assert.equal(nb([img('new', '2026.9.3', '2026.9.3-rev.3513098')], 'new'), false);
+});
+
+test('new build: the pin is not downloaded yet (missing or outdated)', () => {
+  assert.equal(nb([], 'old'), false);
+  assert.equal(nb([img('a', '2026.9.3')], 'old'), false);
+  assert.equal(nb([img('a', '2026.9.3', '2026.9.3-rev.abcdef1')], 'old'), false);
+});
+
+test('new build: no pin, or no container image, is never a new build', () => {
+  assert.equal(nb([img('a', '2026.9.3')], 'old', null), false);
+  assert.equal(nb([img('a', '2026.9.3', '2026.9.3-rev.3513098')], ''), false);
+});
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);

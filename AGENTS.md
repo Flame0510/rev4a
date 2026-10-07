@@ -138,6 +138,12 @@ For every change, before it is called done, answer in the PR or the report:
 
 Reviewers and checkers check these five points like any other defect. A missing answer is a finding.
 
+**A fix must also repair installs already hit.** Operators update from the banner and cannot fix
+their hosts by hand, and nobody can do it for them. When a released defect left a host in a bad
+state (wrong tags, stale files, a missed migration), the fix ships with an idempotent repair that
+runs on its own after the update — at startup or in the daemon — and is logged. Example: 1.13.1
+re-tags agent images that lost their tags in 1.13.0, so the next recreate picks the right build.
+
 ### 2.3 Documentation-First Workflow
 
 **Before every commit, complete this checklist:**

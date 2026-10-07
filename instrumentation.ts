@@ -85,6 +85,15 @@ export async function register() {
     } catch {
       console.warn('[rev4a] Could not reconcile cold backups on startup');
     }
+    // Agents on an image that lost every tag: tag it by identity so its version is known
+    // (a recreate then moves the agent to the pinned build) and retention can remove it later.
+    // Not awaited: with many images it must not delay the server start.
+    import('./lib/agent-images')
+      .then(({ repairUntaggedAgentImages }) => repairUntaggedAgentImages())
+      .then((tagged) => {
+        if (tagged.length) console.log(`[rev4a] Tagged ${tagged.length} untagged agent image(s): ${tagged.join(', ')}`);
+      })
+      .catch(() => console.warn('[rev4a] Could not check agent images on startup'));
     // Retention for the lifecycle job tables: the panel reads the latest row of each
     // agent, so the history is trimmed to the newest rows per agent. Best-effort.
     try {

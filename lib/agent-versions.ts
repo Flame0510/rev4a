@@ -17,7 +17,9 @@
 import table from './agent-versions.json';
 import {
   identityRevision,
+  identityTagFor as identityTag,
   isRevisionTag,
+  newBuildAvailable as newBuild,
   localImageRevision as localRevision,
   pinnedRevision,
   registryTag,
@@ -137,3 +139,15 @@ export const imageRevisionStatus = (
   images: RevisionImage[],
   pin: string | null = pinnedImageRevision(version),
 ): ImageRevisionStatus => revisionStatus(LOCAL_IMAGE_REPOSITORY, version, images, pin);
+
+/** The identity tag an image needs (see lib/image-revision.js), or null when it has a repository tag or no version. */
+export const identityTagForImage = (image: { id: string; tags: string[]; version: string | null }): string | null =>
+  identityTag(LOCAL_IMAGE_REPOSITORY, image);
+
+/** Whether the pinned build of `version` is downloaded and the container's image id is a different one. */
+export const newBuildAvailableFor = (
+  version: string,
+  images: RevisionImage[],
+  containerImageId: string,
+  pin: string | null = pinnedImageRevision(version),
+): boolean => newBuild(LOCAL_IMAGE_REPOSITORY, version, images, pin, containerImageId);

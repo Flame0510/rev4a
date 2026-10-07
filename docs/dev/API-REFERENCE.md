@@ -786,7 +786,8 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
     "controlPort": "3033",
     "openclawVersion": "2026.9.3",
-    "updateAvailable": false
+    "updateAvailable": false,
+    "newBuildAvailable": false
   }
 ]
 ```
@@ -795,7 +796,11 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 - `openclawVersion` comes from the image's `org.opencontainers.image.version` label or
   version tag, else from `openclaw --version` inside the running container (cached per
   image id); `null` for a stopped agent whose image carries neither.
+- `openclawVersion` also reads the label of an image that lost every tag, by inspecting it by id,
+  so a stopped agent on such an image still has a version.
 - `updateAvailable` is `true` when a newer supported OpenClaw version is downloaded.
+- `newBuildAvailable` is `true` when the image this release pins for the agent's version is
+  downloaded and the agent's container runs a different image id (a recreate moves it).
 - `controlPort` is the host port published for the Control UI. No link or token is
   returned: the Open buttons go through `GET /api/agents/[id]/open-control-ui`
 - Containers are discovered via Docker API with label filter `AGENT_ID`

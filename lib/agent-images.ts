@@ -15,6 +15,7 @@ import {
   compareVersions,
   isSupportedVersion,
   identityRevision,
+  identityTagForImage,
   isRevisionTag,
   localImageRef,
   localRevisionRef,
@@ -119,6 +120,24 @@ async function imageExists(reference: string): Promise<boolean> {
   }
 }
 
+/** An image inspected by id: its repository tags and the version its label names. Null when it is gone. */
+async function inspectImageById(id: string): Promise<{ id: string; tags: string[]; version: string | null } | null> {
+  try {
+    const info = await dockerFetch<{ Id?: unknown; RepoTags?: string[] | null; Config?: { Labels?: Record<string, string> | null } | null }>(
+      'GET',
+      `/images/${encodeURIComponent(id)}/json`,
+    );
+    if (typeof info?.Id !== 'string') return null;
+    return {
+      id: info.Id,
+      tags: (info.RepoTags ?? []).filter((t) => t !== '<none>:<none>'),
+      version: parseOpenClawVersion(info.Config?.Labels?.[VERSION_LABEL]),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Whether `openclaw-agent-base:<version>` exists locally. */
 export const localVersionExists = (version: string): Promise<boolean> => imageExists(localImageRef(version));
 
@@ -144,6 +163,13 @@ export async function containerOpenClawVersion(
   if (fromImage) return fromImage;
   const cached = versionByImageId.get(container.imageId);
   if (cached && (cached.version || Date.now() - cached.at < UNKNOWN_VERSION_TTL_MS)) return cached.version;
+  // An image that lost every tag is not in the listed set, but still carries its label:
+  // inspecting it by id works for a stopped container too, which the exec below cannot.
+  const fromLabel = container.imageId ? (await inspectImageById(container.imageId))?.version ?? null : null;
+  if (fromLabel) {
+    versionByImageId.set(container.imageId, { version: fromLabel, at: Date.now() });
+    return fromLabel;
+  }
   if (!container.running) return null;
   const version = parseOpenClawVersion(
     await dockerExecNoFail(container.name, ['openclaw', '--version'], { timeoutMs: 30_000 }),
@@ -359,6 +385,38 @@ export async function pullAgentImage(
     // is a full image under a name neither the listing nor retention looks at.
     await runDocker(['rmi', remote], { timeoutMs: 30_000 }).catch(() => {});
   }
+}
+
+/**
+ * Startup repair: an agent container can run an image that lost every tag (a rebuild took
+ * its `<version>` tag and nothing recorded the old one). Such an image is invisible to the
+ * image list, so its version was unknown once the agent stopped. Give each one the identity
+ * tag `openclaw-agent-base:<version>-rev.<12 hex of its id>` — the tag `keepPreviousImage`
+ * uses — so it is listed, its version is known, and retention can remove it once unused.
+ * Idempotent: an image with any `openclaw-agent-base:` tag, or without a version label, is
+ * left alone. Nothing is removed. Returns the tags added.
+ */
+export async function repairUntaggedAgentImages(): Promise<string[]> {
+  const agentFilter = encodeURIComponent(JSON.stringify({ label: ['AGENT_ID'] }));
+  const containers = await dockerFetch<DockerContainer[]>('GET', `/containers/json?all=true&filters=${agentFilter}`);
+  const ids = new Set<string>();
+  for (const c of Array.isArray(containers) ? containers : []) {
+    if (c.ImageID && c.Labels?.AGENT_ID) ids.add(c.ImageID);
+  }
+  const added: string[] = [];
+  for (const id of ids) {
+    try {
+      const image = await inspectImageById(id);
+      const tag = image ? identityTagForImage(image) : null;
+      if (!tag) continue;
+      await runDocker(['tag', image!.id, tag], { timeoutMs: 30_000 });
+      added.push(tag);
+    } catch (e) {
+      // Best effort: the next start tries again. Said once per image, so a lasting failure is visible.
+      console.warn(`[rev4a] Could not tag agent image ${id.slice(7, 19)}: ${(e as Error).message}`);
+    }
+  }
+  return added;
 }
 
 /**

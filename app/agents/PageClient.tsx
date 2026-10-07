@@ -53,6 +53,8 @@ interface Agent {
   openclawVersion?: string | null;
   /** A newer supported OpenClaw version is downloaded. */
   updateAvailable?: boolean;
+  /** The build this release pins for the agent's version is downloaded and the agent runs another image. */
+  newBuildAvailable?: boolean;
 }
 
 type FilterState = 'all' | 'running' | 'exited';
@@ -258,9 +260,9 @@ function AgentListItem({
           </Badge>
         </div>
       )}
-      {agent.updateAvailable && (
+      {(agent.updateAvailable || agent.newBuildAvailable) && (
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>UPDATE AVAILABLE</span></Badge>
+          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>{agent.updateAvailable ? 'UPDATE AVAILABLE' : 'NEW BUILD'}</span></Badge>
         </div>
       )}
       {(() => {
@@ -1098,6 +1100,10 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
   const [showEdit, setShowEdit] = useState(false);
   /** Bumped when an edit starts here, so the banner refetches at once. */
   const [editPing, setEditPing] = useState(0);
+  /** Bumped by the NEW BUILD note's button: the Recreate section below opens its confirm. */
+  const [recreateRequest, setRecreateRequest] = useState(0);
+  /** The Recreate section is starting or running a job (its button shows the loading state). */
+  const [recreateBusy, setRecreateBusy] = useState(false);
 
   // Safe to resolve during render: this panel only mounts once the agent list has
   // been fetched client-side, so it never runs in a server render. The helper
@@ -1254,9 +1260,19 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
         <SectionHeader icon={<RotateIcon size={12} />} label="OPENCLAW VERSION" />
         <div style={{ padding: '12px 14px' }}>
           <UpdateSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
+          {agent.newBuildAvailable && agent.openclawVersion && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                A newer build of OpenClaw {agent.openclawVersion} is downloaded. Recreate this agent to use it (a cold backup is taken first).
+              </div>
+              <Button variant="secondary" size="sm" loading={recreateBusy} disabled={recreateBusy || busy} onClick={() => setRecreateRequest((n) => n + 1)}>
+                {recreateBusy ? 'Recreating…' : 'Recreate Container'}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
-      <RecreateSection agentName={agent.name} agentBusy={busy} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
+      <RecreateSection agentName={agent.name} agentBusy={busy} confirmRequest={recreateRequest} onBusyChange={setRecreateBusy} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1744,7 +1760,7 @@ function RestartSection({ agentName, agentBusy }: { agentName: string; agentBusy
   );
 }
 
-/* ─── Recreate section - rebuild container from same image while keeping volume ─── */
+/* ─── Recreate section - rebuild container on the current build of its version, keeping the volume ─── */
 
 interface RecreateJob {
   status: 'backing_up' | 'recreating' | 'done' | 'failed' | 'interrupted';
@@ -1754,8 +1770,12 @@ interface RecreateJob {
   error: string | null;
 }
 
-function RecreateSection({ agentName, agentBusy, onRecreated, onStarted }: {
+function RecreateSection({ agentName, agentBusy, confirmRequest = 0, onBusyChange, onRecreated, onStarted }: {
   agentName: string;
+  /** Opens the confirm when it changes (the NEW BUILD note above reuses this flow). */
+  confirmRequest?: number;
+  /** Starting or running, for a button elsewhere that shares this flow. */
+  onBusyChange?: (busy: boolean) => void;
   /** A long operation is running on this agent. */
   agentBusy?: boolean;
   /** The container was rebuilt — the parent refetches (new id, fresh image). */
@@ -1856,6 +1876,9 @@ function RecreateSection({ agentName, agentBusy, onRecreated, onStarted }: {
 
   const running = job !== null;
 
+  useEffect(() => { onBusyChange?.(running || starting); }, [running, starting, onBusyChange]);
+  useEffect(() => { if (confirmRequest > 0) setShowConfirm(true); }, [confirmRequest]);
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <SectionHeader icon={<PackageIcon size={12} />} label="RECREATE" />
@@ -1911,7 +1934,7 @@ function RecreateSection({ agentName, agentBusy, onRecreated, onStarted }: {
         onClose={() => setShowConfirm(false)}
         onConfirm={handleRecreate}
         title="Recreate Container"
-        message={`Recreate container "${agentName}"?\n\nAn automatic cold backup is taken first — the agent stops for it — then the container is rebuilt on the same image. Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted and the agent is started again.`}
+        message={`Recreate container "${agentName}"?\n\nAn automatic cold backup is taken first — the agent stops for it — then the container is rebuilt on the current build of its OpenClaw version (a newer build if one was downloaded). Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted and the agent is started again.`}
         confirmLabel="Recreate"
         cancelLabel="Cancel"
         tone="warning"

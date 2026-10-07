@@ -51,7 +51,8 @@ build than the one this Rev4a release expects it says "A newer build of the agen
 current image until they are recreated (a new build of the same version reaches an agent only by a recreate; an update to a newer OpenClaw version moves it too).
 Downloading changes no agent: new agents are created on the newest version downloaded,
 existing agents keep their version (a recreate never changes it), and their card shows
-**UPDATE AVAILABLE**.
+**UPDATE AVAILABLE**. A card badge **NEW BUILD** means a newer build of the agent's own OpenClaw
+version is downloaded: recreate the agent (a cold backup is taken first) to use it.
 
 **Programs agents install.** Only an agent's `/root` volume survives a recreate or an
 OpenClaw update. On agent images built since 2026-10-06, what an agent installs with

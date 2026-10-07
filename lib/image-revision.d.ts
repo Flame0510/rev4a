@@ -14,3 +14,5 @@ export function isRevisionTag(tag: string): boolean;
 export function localImageRevision(repository: string, version: string, images: RevisionImage[], pin?: string | null): string | null;
 export function identityRevision(imageId: string): string;
 export function revisionStatus(repository: string, version: string, images: RevisionImage[], pin: string | null): RevisionStatus;
+export function identityTagFor(repository: string, image: { id: string; tags: string[]; version: string | null }): string | null;
+export function newBuildAvailable(repository: string, version: string, images: RevisionImage[], pin: string | null, containerImageId: string): boolean;
