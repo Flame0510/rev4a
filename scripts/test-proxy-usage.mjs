@@ -4,15 +4,17 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  parseAgentHeader, extractUsage, usageFromBody, createSseUsageParser, costAt, hourBucket, buildEntry, createAgentResolver,
+  parseAgentHeader, extractUsage, usageFromBody, createSseUsageParser, costAt, hourBucket, buildEntry, createAgentResolver, UNKNOWN_AGENT, ASSISTANT_AGENT,
 } = require('../lib/proxy-usage.js');
 
 // lib/agent-costs.ts imports './costs-db' without an extension, which Node's type stripping
 // cannot resolve: transpile it here and point that import at a stub (buildProxyUsage is pure).
+// './proxy-usage' gets the real constants, in the same way.
 const ts = require('typescript');
 const src = fs.readFileSync(new URL('../lib/agent-costs.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
-  .replace(/from ['"]\.\/costs-db['"]/, `from 'data:text/javascript,export const openCostsDb = () => null;'`);
+  .replace(/from ['"]\.\/costs-db['"]/, `from 'data:text/javascript,export const openCostsDb = () => null;'`)
+  .replace(/from ['"]\.\/proxy-usage['"]/, `from 'data:text/javascript,${encodeURIComponent(`export const UNKNOWN_AGENT = ${JSON.stringify(UNKNOWN_AGENT)}; export const ASSISTANT_AGENT = ${JSON.stringify(ASSISTANT_AGENT)};`)}'`);
 const { buildProxyUsage } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 
 let failed = 0;
@@ -239,6 +241,17 @@ test('buildProxyUsage: unknown and assistant are listed but never flagged', () =
   assert.equal(by.atlas.flagged, true);
 });
 
+test('buildProxyUsage: unknown keeps its figures but adds nothing to Spent; assistant is added', () => {
+  const s = buildProxyUsage([agentRow({ cost: 1, tokens: 1 })], [proxyRow('unknown', 50), proxyRow('assistant', 7), proxyRow('atlas', 3)]);
+  const by = Object.fromEntries(s.byAgent.map((l) => [l.metered.agent, l]));
+  assert.equal(by.unknown.metered.cost, 50);
+  assert.equal(by.unknown.combined, 0);
+  assert.equal(by.assistant.combined, 7);
+  assert.equal(by.atlas.combined, 3);
+  assert.equal(s.combinedCost, 10);
+  assert.equal(s.meteredCost, 60);
+});
+
 test('buildProxyUsage: duplicate rows for one caller are summed, not replaced', () => {
   const s = buildProxyUsage([], [proxyRow('a', 5), proxyRow('a', 7, 2)]);
   assert.equal(s.byAgent.length, 1);
@@ -265,6 +278,11 @@ test('buildProxyUsage: an idle agent the proxy saw is named and flagged, not a b
   assert.equal(s.byAgent[0].name, 'Bob');
   assert.equal(s.byAgent[0].flagged, true);
   assert.equal(buildProxyUsage([], [], idle).byAgent.length, 0);
+});
+
+test('buildProxyUsage: an agent literally named unknown keeps its recorded spend', () => {
+  const s = buildProxyUsage([agentRow({ container: 'unknown', agentId: 'unknown', name: 'U', cost: 20, tokens: 1 })], [proxyRow('unknown', 3)]);
+  assert.equal(s.combinedCost, 20);
 });
 
 if (failed) {

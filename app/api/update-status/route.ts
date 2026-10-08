@@ -6,8 +6,8 @@ import { REV4A_DATA } from '@/lib/rev4a-paths';
 import { isInProgress, readUpdate, redact } from '@/lib/update-state';
 
 const LOG_LINES = 20;
-/** Enough for the last twenty lines of npm and build output, never the whole log. */
-const LOG_BYTES = 16 * 1024;
+/** How far back the run's marker line is searched for; the last twenty lines after it are returned. */
+const MARKER_BYTES = 256 * 1024;
 
 /**
  * The version this server is running: server.js records it once at process start.
@@ -29,20 +29,34 @@ function runningVersion(): string | null {
   return null;
 }
 
-/** The last lines of `update.log` (npm and build output), without terminal control codes. */
-function logTail(): string[] {
+/**
+ * The last lines of `update.log` (npm and build output) written by this run, without
+ * terminal control codes: only what follows the marker line the dashboard wrote for the
+ * run that started at `startedAt`. None when there is no marker (an update started from a
+ * shell writes to its terminal, not to the log), so an older run's output is never shown.
+ */
+function logTail(startedAt: number | null): string[] {
+  if (startedAt === null) return [];
   let fd: number | null = null;
   try {
     fd = openSync(join(REV4A_DATA, 'data', 'update.log'), 'r');
     const size = fstatSync(fd).size;
-    const length = Math.min(size, LOG_BYTES);
+    const length = Math.min(size, MARKER_BYTES);
     const buf = Buffer.alloc(length);
     readSync(fd, buf, 0, length, size - length);
-    return buf
+    const lines = buf
       .toString('utf-8')
       // eslint-disable-next-line no-control-regex
       .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-      .split(/\r\n|\r|\n/)
+      .split(/\r\n|\r|\n/);
+    const marker = `] rev4a update ${startedAt}, started from the dashboard`;
+    let at = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].startsWith('[') && lines[i].trimEnd().endsWith(marker)) { at = i; break; }
+    }
+    if (at < 0) return [];
+    return lines
+      .slice(at + 1)
       .map((l) => redact(l.trimEnd()))
       .filter(Boolean)
       .slice(-LOG_LINES);
@@ -81,7 +95,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       error: state?.phase === 'failed' && state.error ? redact(state.error) : null,
       version: runningVersion(),
       // The log is only the update's own output; skip reading it when nothing happened.
-      logTail: state ? logTail() : [],
+      logTail: state ? logTail(state.startedAt) : [],
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );

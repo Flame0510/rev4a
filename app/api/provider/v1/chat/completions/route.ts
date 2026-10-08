@@ -133,7 +133,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Non-streaming: parse upstream JSON
-    const responseText = await upstreamResp.text();
+    let responseText: string;
+    try {
+      responseText = await upstreamResp.text();
+    } catch (e) {
+      // The body broke off after the status: still a call the proxy saw, and a failed one.
+      recordProxyCall(meter, 0, null);
+      throw e;
+    }
     meterBody(meter, upstreamResp.status, responseText);
     let responseJson: Record<string, unknown> = {};
     try {

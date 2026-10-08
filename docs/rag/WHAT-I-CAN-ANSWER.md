@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -94,6 +94,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 
 - "Why is my agent not showing up?"
 - "Why are costs missing for some sessions?" — On the Costs page, calls to a model without a price are listed under "Calls without a price": the model left the catalogue or has no price yet.
+- "Why is the Costs total higher than Home's Spent today? / What are Unidentified callers?" — Home and the agent panel show each agent's own figures. The Costs page counts, per agent, the larger of that and what the Rev4a proxy metered (it sees every call, including ones an agent never recorded, such as a failed context compaction). "Unidentified callers" are calls that reached the proxy without an agent header (an agent not yet synced, or another client); they are listed but not counted in Spent. "Rev4a assistant" is PULSE's own spend and is counted.
 - "Why can't I connect to the container terminal?"
 - "Why is the gateway sync not working?"
 - "How do I check if the daemon is running?"
@@ -103,7 +104,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I fix 'image is outdated'?"
 - "How do agent image updates work?" — The banner on the Agents page runs a `docker pull` and shows the percent of layers finished and docker's latest output line, with a Cancel button once the download is running; there is no modal or live log. The banner also offers a **newer build** of a version you already have ("A newer build of the agent image X is available"); agents keep their current image until recreated (a new build of the same version reaches an agent only by a recreate; an update to a newer OpenClaw version moves it too). The outcome is reported even if it happened while you were away, as long as it is less than 30 seconds old.
 - "How big is model X / how many parameters does it have?" — Open the **Details** modal from the model row on the Gateway page: parameter counts, architecture and benchmark numbers come from the model's card on Hugging Face, with the vendor's own claim where it makes one. Models whose weights are not published (OpenAI, Anthropic, Google, Qwen's Plus/Max line) show no parameter count: the size is not public and Rev4a does not estimate it.
-- "How do I update Rev4a itself?" — The "Update available" banner starts `rev4a update` in the background (the same command as from a shell). It installs the new version and Rev4a restarts itself, so the dashboard drops for a short while; every open tab shows a full-screen "Updating Rev4a" screen with the current phase (installing, building, restarting) and reloads when the new version answers; if the update fails the screen shows the error and the log with Retry, Reload and Dismiss. While it runs, changes made in the dashboard are refused with "Rev4a is updating". The update's output is written to `update.log` in the Rev4a data directory (`~/.config/rev4a/data/update.log`) — the only place that says why an update failed.
+- "How do I update Rev4a itself?" — The "Update available" banner starts `rev4a update` in the background (the same command as from a shell). It installs the new version and Rev4a restarts itself, so the dashboard drops for a short while; every open tab shows a full-screen "Updating Rev4a" screen with the current phase (installing, restarting; on an npm install the build runs inside "installing", and "building" shows for a git checkout or a fallback build) and reloads when the new version answers; if the update fails the screen shows the error and the log with Retry, Reload and Dismiss. While it runs, changes made in the dashboard are refused with "Rev4a is updating". The update's output is written to `update.log` in the Rev4a data directory (`~/.config/rev4a/data/update.log`) — with the terminal of an update started from a shell, the place that says why an update failed.
 - "Why is my Telegram bot not connecting?"
 - "Why can't I approve a pairing code?"
 - "Why is the TG badge missing from my agent?"

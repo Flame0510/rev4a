@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -71,6 +71,9 @@ An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) tha
 
 ## Provider Gateway
 Rev4a's built-in proxy that gives all agents unified access to configured LLM providers. Agents point to `http://host.docker.internal:3740/api/provider/v1` and Rev4a routes requests to the correct upstream using the stored API keys.
+
+## Proxy Metering
+The count the Rev4a provider proxy keeps of every call it carries, per agent (from the `x-rev4a-agent` header), hour and model: calls, tokens as the provider reported them, and the price in force at the time. Shown on the Costs page next to what each agent recorded; Spent there is the larger of the two per agent. Calls without an agent header are "Unidentified callers": listed, not counted in Spent.
 
 ## Pulse
 The AI concierge embedded in Rev4a. Click the floating chat button (bottom-right) on any page to ask questions about the dashboard features and navigation.

@@ -97,7 +97,7 @@ export async function proxy(request: NextRequest) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Matcher — only run on page routes, skip Next.js internals         */
+/*  Matcher — page routes and /api/* (the update guard needs the API), skip Next.js internals */
 /* ------------------------------------------------------------------ */
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],

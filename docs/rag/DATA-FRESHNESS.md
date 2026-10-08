@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -92,9 +92,18 @@ call is priced at the rate it ran at.
 
 ## Cost totals (dashboard)
 
-The dashboard's "Spent today" card and "Spent by model" list show the same figures as the
-Costs page, for today (UTC day): up to 5 minutes behind the agents. The vendor readings
-behind *Against the bill* on the Costs page are taken once an hour.
+The dashboard's "Spent today" card and "Spent by model" list, and the COSTS section of an
+agent's panel, show the agents' own figures for today (UTC day): up to 5 minutes behind the
+agents. The Costs page's Spent can be higher: it counts, per agent, the larger of the agent's
+figure and what the Rev4a proxy metered, and the proxy's figure is written as each call ends,
+not every 5 minutes. The vendor readings behind *Against the bill* on the Costs page are taken
+once an hour.
+
+## Update screen
+
+While Rev4a updates itself, the "Updating Rev4a" screen polls `GET /api/update-status` every
+3 seconds. Outside an update every open tab polls it every 30 seconds, which is how a tab
+learns that an update started in another tab or from a terminal.
 
 ---
 

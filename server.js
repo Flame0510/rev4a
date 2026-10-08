@@ -41,6 +41,9 @@ try {
   process.env.REV4A_RUNNING_VERSION = '';
 }
 process.env.REV4A_STARTED_AT = String(Date.now());
+// Only this process resolves a `restarting` update (lib/update-state.js). Children inherit
+// the variable but have another pid, so they never mark an update done.
+process.env.REV4A_SERVER_PID = String(process.pid);
 
 /** Docker container names and ids: what `docker exec` accepts, nothing a shell could read. */
 const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;

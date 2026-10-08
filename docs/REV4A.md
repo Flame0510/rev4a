@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-10-07
+> **Last updated:** 2026-10-08
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -99,10 +99,10 @@ When environment variables are saved via the Config page (Save & Restart):
 
 | Route | Description |
 |---|---|
-| `/` | System overview — health, sessions, the machine's CPU / RAM / disk (links to `/system`), what the agents spent today (as on `/costs`), live feed |
+| `/` | System overview — health, sessions, the machine's CPU / RAM / disk (links to `/system`), what the agents spent today (the agents' own figures; `/costs` can show more, see below), live feed |
 | `/agents` | Running agents (Docker containers with `AGENT_ID`), gateway token management, agent creation wizard, channel manager (Telegram pairing) |
 | `/containers` | All Docker containers on the host, each running one with its CPU, memory and processes now (from the daemon's container samples) and a link to its charts |
-| `/costs` | What each agent spent, as its own OpenClaw priced it with the rates Rev4a syncs: today / 7 / 30 UTC days, by day, by agent, by model, the most expensive sessions, the calls that could not be priced, the DeepSeek band now, **metered at the proxy** next to **recorded by the agent**, per agent (the proxy counts every call it carries, the agent only what it recorded; the page counts the larger and marks an agent the proxy saw clearly more of), and a check against what DeepSeek and OpenRouter actually billed (read by the daemon every 5 min into `costs.db`; each agent's own figures are also in its panel, COSTS) |
+| `/costs` | What each agent spent, as its own OpenClaw priced it with the rates Rev4a syncs: today / 7 / 30 UTC days, by day, by agent, by model, the most expensive sessions, the calls that could not be priced, the DeepSeek band now, **metered at the proxy** next to **recorded by the agent**, per agent (the proxy counts every call it carries, the agent only what it recorded; the page counts the larger and marks an agent the proxy saw clearly more of), and a check against what DeepSeek and OpenRouter actually billed (read by the daemon every 5 min into `costs.db`; each agent's own figures, the ones Home's "Spent today" shows, are also in its panel, COSTS). Spent on this page is the larger of the two figures per agent, so it can be higher than Home's; calls without an agent header ("Unidentified callers") are listed but not counted in Spent |
 | `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s); **Agents and containers**: what Docker holds on disk, and one row per container — CPU, memory, storage, processes — that opens to its own CPU / Memory / Storage charts (sampled every 60 s; a recently seen row without current statistics says "no data", and stale current figures are hidden; each agent's numbers are also in its panel, RESOURCES); and the recent alerts: the machine's CPU, memory and disks, plus a container with 1000 or more processes on two samples in a row or 90 % of Docker's memory on five (at most one alert per container and rule per hour) |
 | `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
 | `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
@@ -201,8 +201,11 @@ that too; run Sync All Agents once Docker is up.
 "Updating Rev4a" screen: the current phase (installing, building, restarting), from → to,
 elapsed time and the tail of `update.log`. It reloads on its own when the new version
 answers. If the update fails it shows the error and the log with Retry, Reload and
-Dismiss. While it runs the server refuses writes (`503 Rev4a is updating`); reads and the
-agents' provider proxy keep working. `rev4a update` records its phases in
+Dismiss. On an npm install the build runs inside the "installing" phase (npm's postinstall);
+"building" shows for a git checkout or a fallback build. While it runs the server refuses
+every mutating API call (`503 Rev4a is updating`, the PULSE chat included); reads and the
+agents' provider proxy keep working. A `rev4a update` from a shell with nothing to install
+checks the registry, prints that it is up to date and does not show the screen. `rev4a update` records its phases in
 `update-state.json` next to `update.log`; a state older than 30 minutes no longer counts, and
 an updater that died (or a restart that has not happened after 5 minutes) turns into the
 failure screen, which Dismiss closes — writes are no longer refused then. Only one update runs at a time: a second `rev4a update`

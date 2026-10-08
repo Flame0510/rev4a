@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -599,11 +599,14 @@ computes no cost: every figure is the one OpenClaw recorded with the prices Rev4
   the proxy's (`null` when nothing went through the proxy), `combined` the larger of the two, `gap` the
   proxy's excess (0 if none), `flagged` true when the proxy saw more than 20 % and more than 0.10 USD above
   the agent (never true for `unknown` and `assistant`, which have no recorded figure). Proxy rows
-  under both an agent's AGENT_ID and its container name are merged into that agent before `combined` is computed. Agents left out of `byAgent` (stopped, nothing recorded in the range) are still paired by name, with a recorded figure of 0. Callers no known agent claims are listed on their own with `container`/`name` null:
+  under both an agent's AGENT_ID and its container name are merged into that agent before `combined` is computed. Agents left out of `byAgent` (stopped, nothing recorded in the range) are still paired by AGENT_ID or container name, with a recorded figure of 0. Callers no known agent claims are listed on their own with `container`/`name` null:
   `agent: "unknown"` (a request without the header, e.g. an agent not yet synced or another client) and
   `agent: "assistant"` (PULSE). `recordedCost`, `meteredCost` and `combinedCost` are sums over those
-  lines; `combinedCost` is the spend the page counts. `available: false` (no lines) when `costs.db`
-  has no `proxy_usage_hourly` yet; `totals`, `daily` and the other lists are unchanged and stay the
+  lines; `combinedCost` is the spend the page counts. The `unknown` line keeps its metered figures but its
+  `combined` is 0: calls without the header may be an agent's own spend that the agent already
+  recorded (an agent not yet synced), so adding them would count it twice; `assistant` is added (PULSE
+  is recorded nowhere else). `available: false` (no lines) when `costs.db`
+  has no `proxy_usage_hourly` yet, or when reading it failed; `totals`, `daily` and the other lists are unchanged and stay the
   agents' own figures.
 - `available: false` (zeros, empty lists) until the daemon has created `costs.db`.
 
@@ -2908,9 +2911,10 @@ where the update's output is written.
 
 ### `POST /api/update-check`
 Run `rev4a update` as a detached background process. Nothing here restarts anything:
-the update kills this process on its way in (`fuser -k <port>/tcp`) and `rev4a serve`
-brings the child back on the new binary via its `.restart-flag`, so the connection
-drops and the page has to wait for the server to answer again.
+this server stays up through the install and the build, and only `rev4a restart` at the
+end of the update stops it (`fuser -k <port>/tcp`); `rev4a serve` then brings the child
+back on the new binary via its `.restart-flag`, so the connection drops and the page has
+to wait for the server to answer again.
 
 The child's output goes to `update.log` under `<REV4A_DATA_DIR>/data` (or
 `~/.config/rev4a/data` by default) — the update restarts the process that spawned
@@ -2933,7 +2937,7 @@ state on disk still carries the same claim. A spawn error marks the claimed run 
 `rev4a update` then writes the rest (see `GET /api/update-status`).
 
 The banner records what it asked for, polls `/api/update-status` until the version the
-server runs moves (or two minutes pass), reloads, and on the next mount either confirms
+server runs moves (or two and a half minutes pass), reloads, and on the next mount either confirms
 "Updated to vX" or reports that the update did not complete and points at the log.
 
 ### `GET /api/update-status`
@@ -2954,19 +2958,26 @@ local: one small file and the tail of `update.log`, no network.
   and `failed`. `error` is set when `phase` is `failed`.
 - The state is `update-state.json` in the Rev4a data directory (`<REV4A_DATA_DIR>/data`),
   written by `rev4a update` (lib/update-state.js). A state older than 30 minutes, or
-  written more than 5 minutes in the future (a clock that stepped back), counts as no update. A state whose updater process is gone while it was installing or building
-  reads as `failed` (a crash or a kill). `restarting` is done once a server that started
+  written more than 5 minutes in the future (a clock that stepped back), counts as no update. A state whose updater process is gone while it was starting, installing or building
+  reads as `failed` (a crash or a kill). `restarting` is resolved only by the server process itself
+  (`server.js` sets `REV4A_SERVER_PID`; a `rev4a update` started later from a shell never
+  resolves it): done once a server that started
   after it answers *and runs the target version*; a server that started on another version
   turns it into `failed` ("Rev4a restarted on X, not Y"). The updater has exited by then on
   purpose, so its pid is not checked in that phase; a `restarting` no server has picked up
-  after 5 minutes turns `failed` ("Rev4a did not restart within 5 minutes…").
+  after 5 minutes turns `failed` ("Rev4a did not restart within 5 minutes…"), whoever reads it.
 - `version` is the version this server process runs, recorded once by `server.js` when it
   started (`REV4A_RUNNING_VERSION`, with `REV4A_STARTED_AT`). It is not `package.json` on
   disk: npm replaces that before the build and the restart, while the old server still
   answers. The screen and the banner treat "the new version answers" as this value being
   readable and different from the version the update started from.
-- `logTail` is the update's own npm and build output (terminal control codes removed),
-  with secrets redacted (each line cut at 500 characters first): the value after a
+- `logTail` is the output of this run only (terminal control codes removed): the lines after
+  the marker the dashboard writes to `update.log` when it starts the run
+  (`[<iso>] rev4a update <startedAt>, started from the dashboard`, with the state's
+  `startedAt`), at most 20. It is `[]` when there is no such marker: an update started from a
+  shell writes to its terminal, not to `update.log`. The "update process stopped" error
+  points at `update.log` or the terminal the update was started from. Output has
+  secrets redacted (each line cut at 500 characters first): the value after a
   secret-looking name (`NAME=value`, `NAME: rest of line`, quoted JSON keys; names with a
   token / secret / password / credential / cookie / authorization part, or ending in key /
   auth / pass — `author` or `keyv` are left alone), `--…password|token|secret|key` flags,

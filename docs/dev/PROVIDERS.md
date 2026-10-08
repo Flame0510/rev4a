@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-10-08
 
 This document covers the Rev4a Provider Gateway (proxy), the provider key
 endpoints, and how agent containers authenticate against the Rev4a proxy.
@@ -133,8 +133,8 @@ arrive and are read on the fly, never collected. A client that disconnects mid-s
 was seen (a call with no usage report counts in `no_usage`, and so does a stream cut by an upstream error after
 a 200). Metering is best effort and runs after the response is handed over: a failure to write is logged and never
 fails the proxied call. It is bounded, not free: `costs.db` is opened with a 200 ms busy timeout, so the worst case
-of a locked database is about 200 ms on the first call (and on the agent lookup), after which metering is skipped
-(calls dropped, one log line) for 60 s instead of trying on every call. See
+of a locked database is about 200 ms once per minute while it stays locked (the wait is synchronous, so it blocks the
+whole event loop), after which metering is skipped (calls dropped, one log line) for 60 s instead of trying on every call. See
 `lib/proxy-usage.js` and `app/api/provider/upstream.ts`.
 
 **Provider API paths:** Most providers use the standard `/v1/chat/completions` endpoint.

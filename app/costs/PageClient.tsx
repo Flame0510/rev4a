@@ -355,6 +355,11 @@ export default function CostsPageClient() {
                           ].filter(Boolean).join(' · ')
                         : 'nothing went through the proxy (the agent may use another provider)'}
                     </div>
+                    {m?.agent === 'unknown' && (
+                      <div className="ui-muted" style={{ fontSize: 11, marginTop: 2 }}>
+                        Not counted in Spent: these calls may be an agent&apos;s own spend that it already recorded.
+                      </div>
+                    )}
                   </div>
                 );
               })}

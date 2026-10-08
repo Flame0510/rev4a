@@ -20,7 +20,7 @@ function test(name, fn) {
 }
 
 // The reading server started long before the update unless a test says otherwise.
-const opts = (over = {}) => ({ now: T0 + MIN, isAlive: alive, startedAt: T0 - 60 * MIN, ...over });
+const opts = (over = {}) => ({ now: T0 + MIN, isAlive: alive, startedAt: T0 - 60 * MIN, isServer: true, ...over });
 
 test('no file: no update', (dir) => {
   assert.equal(S.readUpdate(dir, opts()), null);
@@ -156,6 +156,15 @@ test('claim: an inherited claim is not a competitor, a different inherited one i
   assert.equal(S.claimUpdate(dir, { from: '1.0.0', claim: 'B', inherited: true, pid: 333, opts: opts({ now: T0 + 2000 }) }).ok, false);
 });
 
+test('claim: the updater taking over the dashboard claim keeps its startedAt (the log marker carries it)', (dir) => {
+  const a = S.claimUpdate(dir, { from: '1.0.0', claim: 'A', pid: 111, opts: opts({ now: T0 }) });
+  const b = S.claimUpdate(dir, { from: '1.0.0', claim: 'A', inherited: true, pid: 222, opts: opts({ now: T0 + 5000 }) });
+  assert.equal(b.state.startedAt, a.state.startedAt);
+  assert.equal(b.state.pid, 222);
+  const c = S.claimUpdate(dir, { from: '1.0.0', claim: 'C', pid: 333, opts: opts({ now: T0 + 40 * MIN }) });
+  assert.equal(c.state.startedAt, T0 + 40 * MIN, 'a new run starts its own clock');
+});
+
 test('claim: a finished, failed, stale or dead run does not block a new one', (dir) => {
   S.writeUpdate(dir, 'done', {}, T0);
   assert.equal(S.claimUpdate(dir, { claim: 'A', pid: 1, opts: opts() }).ok, true);
@@ -224,6 +233,23 @@ test('restarting with the target unknown keeps the plain rule: done', (dir) => {
 test('restarting while the old server still runs stays restarting, whatever its version', (dir) => {
   S.writeUpdate(dir, 'restarting', { from: '1.0.0', to: '1.1.0' }, T0);
   assert.equal(S.readUpdate(dir, opts({ startedAt: T0 - 60 * MIN, runningVersion: '1.0.0' })).phase, 'restarting');
+});
+
+test('a reader that is not the server never resolves restarting, on disk too', (dir) => {
+  S.writeUpdate(dir, 'restarting', { from: '1.0.0', to: '1.1.0' }, T0);
+  for (const runningVersion of ['1.1.0', '1.0.0', null]) {
+    const s = S.readUpdate(dir, opts({ isServer: false, startedAt: T0 + 30_000, runningVersion }));
+    assert.equal(s.phase, 'restarting');
+  }
+  assert.equal(JSON.parse(readFileSync(S.stateFile(dir), 'utf-8')).phase, 'restarting');
+  assert.equal(S.currentUpdate(dir, opts({ isServer: false, startedAt: T0 + 30_000 })).phase, 'restarting');
+});
+
+test('a reader that is not the server still fails restarting after 5 minutes', (dir) => {
+  S.writeUpdate(dir, 'restarting', { from: '1.0.0', to: '1.1.0' }, T0);
+  const s = S.readUpdate(dir, opts({ isServer: false, now: T0 + 5 * MIN + 1, startedAt: T0 + 30_000 }));
+  assert.equal(s.phase, 'failed');
+  assert.match(s.error, /did not restart/);
 });
 
 test('a state written more than 5 minutes in the future is stale (clock step)', (dir) => {

@@ -208,16 +208,19 @@ function pauseMetering(what: string, e: unknown): void {
 function openUsageStore(): UsageStore | null {
   if (Date.now() < usageStoreRetryAt) return null;
   if (usageStore) return usageStore;
+  let db: Database.Database | null = null;
   try {
     // The daemon writes costs.db too. `timeout` is the busy timeout from the first statement
     // on (the pragmas and the CREATE included): a held lock costs at most about 200 ms.
-    const db = new Database(COSTS_DB_PATH, { timeout: 200 });
+    db = new Database(COSTS_DB_PATH, { timeout: 200 });
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
     db.exec(CREATE_TABLE_SQL);
     usageStore = { db, insert: db.prepare(UPSERT_SQL) };
     return usageStore;
   } catch (e) {
+    // A pragma, the CREATE or the prepare threw: close the handle, or each retry leaks a descriptor.
+    try { db?.close(); } catch { /* already closed */ }
     pauseMetering('metering store unavailable', e);
     return null;
   }

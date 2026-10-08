@@ -95,9 +95,10 @@ export async function GET(request: Request): Promise<NextResponse> {
  *
  * Spawns `rev4a update` as a detached background process: it installs the latest
  * version, writes `.restart-flag` and lets `rev4a serve` restart the child (`rev4a
- * _run`) with the new binary. Nothing here has to restart anything — the update kills
- * this very process on its way in (`fuser -k <port>/tcp`), so any callback meant to run
- * after it is dead code; the CLI's own flag is the only mechanism that has to work.
+ * _run`) with the new binary. Nothing here has to restart anything — this server stays
+ * up through install and build, and only `rev4a restart` at the end of the update stops
+ * it (`fuser -k <port>/tcp`), so any callback meant to run after that is dead code; the
+ * CLI's own flag is the only mechanism that has to work.
  *
  * The child's output goes to `update.log` in the data directory: since the update
  * restarts this process mid-run, that file is the only record of what happened.
@@ -129,7 +130,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let log: number | null = null;
   try {
     log = openSync(logPath, 'a');
-    appendFileSync(logPath, `\n[${new Date().toISOString()}] rev4a update, started from the dashboard\n`);
+    appendFileSync(logPath, `\n[${new Date().toISOString()}] rev4a update ${claimed.state?.startedAt}, started from the dashboard\n`);
   } catch {
     // Unwritable log: run the update anyway, we just lose the record.
   }

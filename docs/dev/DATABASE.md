@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (sessions and events, below), `metrics.db` (machine and container metrics, see
@@ -386,7 +386,7 @@ every call with it, and the daemon copies the figures here, so a stopped or dele
 keeps its history.
 
 **Location:** `data/costs.db`, next to `events.db`, resolved like `metrics.db`.
-**Created by** the daemon when it starts, its only writer; the queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts` — for
+**Created by** the daemon when it starts. It has two writers: the daemon (its own tables) and the dashboard's provider proxy, which writes `proxy_usage_hourly` and may create that table before the daemon has run. The queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts` — for
 `GET /api/costs/usage`, `GET /api/costs`, `GET /api/costs/agent`, the SSE stream and
 system-health. No file yet → the API answers `available: false`. If the daemon
 cannot open it, it logs `[COSTS] disabled` and the rest of the daemon keeps running.

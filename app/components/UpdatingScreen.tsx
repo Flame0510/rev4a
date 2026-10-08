@@ -344,7 +344,7 @@ export default function UpdatingScreen() {
         {!failed && (
           <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
             {long
-              ? 'This is taking longer than expected. The update may still be running — see update.log in the Rev4a data directory.'
+              ? 'This is taking longer than expected. The update may still be running — see update.log in the Rev4a data directory, or the terminal it was started from.'
               : 'Rev4a is not usable until the update ends. This page reloads on its own when the new version answers.'}
           </div>
         )}

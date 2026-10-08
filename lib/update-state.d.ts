@@ -21,6 +21,8 @@ export interface ReadOptions {
   startedAt?: number;
   /** The version the reading server runs (read once at its start); null/unknown skips the check. */
   runningVersion?: string | null;
+  /** True for the server process: only it resolves `restarting`. Defaults to REV4A_SERVER_PID === this pid. */
+  isServer?: boolean;
 }
 
 export const STATE_FILE: string;
@@ -34,7 +36,7 @@ export function pidAlive(pid: unknown): boolean;
 export function writeUpdate(
   dataDir: string,
   phase: UpdatePhase,
-  patch?: { from?: string | null; to?: string | null; error?: string; pid?: number; claim?: string },
+  patch?: { from?: string | null; to?: string | null; error?: string; pid?: number; claim?: string; startedAt?: number },
   now?: number,
 ): UpdateState | null;
 export function clearUpdate(dataDir: string): void;

@@ -756,10 +756,42 @@ if (cmd === 'restart') {
 }
 
 if (cmd === 'update') {
+  const inheritedClaim = process.env[UPDATE_STATE.CLAIM_ENV] || '';
+  // The version npm announces. It is the one installed below (not @latest), so a release
+  // published in between cannot make a correct update read as "restarted on X+1, not X".
+  const fetchLatest = () => {
+    const out = execSync(
+      `npm view ${PKG_NAME} version --registry https://registry.npmjs.org 2>/dev/null`,
+      { stdio: 'pipe', timeout: 10_000 },
+    ).toString().trim();
+    if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(out)) {
+      throw new Error(`npm returned an unexpected version: "${out.slice(0, 40)}"`);
+    }
+    return out;
+  };
+  // The server that answers right now, when the dashboard started this update. If the
+  // installed version differs, an earlier update installed it but the restart never happened.
+  const runningVersion = process.env.REV4A_RUNNING_VERSION || '';
+  const installedNotRunning = Boolean(runningVersion) && runningVersion !== pkg.version;
+  let latest = '';
+  if (!inheritedClaim) {
+    // From a shell: look first and claim only when there is something to do, so a no-op
+    // update (or an unreachable registry) never shows the updating screen on the dashboard.
+    console.log('Checking for updates…');
+    try {
+      latest = fetchLatest();
+    } catch (err) {
+      console.error('Could not check for updates:', err.message);
+      process.exit(1);
+    }
+    if (latest === pkg.version) {
+      console.log(`Already up to date (v${pkg.version}).`);
+      process.exit(0);
+    }
+  }
   // One update at a time. The dashboard hands us its claim, so its own run is not a
   // competitor; anything else in progress (another terminal, the dashboard) is refused.
   // Written for the dashboard too; a state that cannot be written never stops the update.
-  const inheritedClaim = process.env[UPDATE_STATE.CLAIM_ENV] || '';
   const claimed = UPDATE_STATE.claimUpdate(DATA_DIR, {
     from: pkg.version,
     claim: inheritedClaim || `cli-${process.pid}-${Date.now()}`,
@@ -769,13 +801,27 @@ if (cmd === 'update') {
     console.error('Another update is already in progress. Wait for it to finish, then run rev4a update again.');
     process.exit(1);
   }
-  console.log(`Checking for updates…`);
+  const requestRestart = (target, from) => {
+    // Written before the restart is requested: the server that starts after this write is
+    // the new one, and marks the update done when it answers.
+    UPDATE_STATE.writeUpdate(DATA_DIR, 'restarting', from ? { from, to: target } : { to: target });
+    try {
+      execSync('rev4a restart', { stdio: 'inherit', timeout: 10_000 });
+    } catch {
+      // rev4a serve not running — restart flag written, harmless
+    }
+  };
+  if (inheritedClaim) console.log('Checking for updates…');
   try {
-    const latest = execSync(
-      `npm view ${PKG_NAME} version --registry https://registry.npmjs.org 2>/dev/null`,
-      { stdio: 'pipe', timeout: 10_000 },
-    ).toString().trim();
+    if (!latest) latest = fetchLatest();
     if (latest === pkg.version) {
+      if (installedNotRunning) {
+        // An earlier update installed this version but the restart never happened.
+        console.log(`v${pkg.version} is installed but Rev4a still runs v${runningVersion}. Restarting…`);
+        // from = the running version: the screen reloads only when the version moves.
+        requestRestart(pkg.version, runningVersion);
+        process.exit(0);
+      }
       console.log(`Already up to date (v${pkg.version}).`);
       UPDATE_STATE.clearUpdate(DATA_DIR);
       process.exit(0);
@@ -798,7 +844,7 @@ if (cmd === 'update') {
       try { target = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || latest; } catch { /* keep latest */ }
     } else {
       console.log('Using npm global install…');
-      execSync(`npm install -g ${PKG_NAME}@latest`, {
+      execSync(`npm install -g ${PKG_NAME}@${latest}`, {
         stdio: 'inherit',
         timeout: 20 * 60_000,
       });
@@ -810,14 +856,7 @@ if (cmd === 'update') {
       }
     }
     console.log('Update complete. Restarting…');
-    // Written before the restart is requested: the server that starts after this write is
-    // the new one, and marks the update done when it answers.
-    UPDATE_STATE.writeUpdate(DATA_DIR, 'restarting', { to: target });
-    try {
-      execSync('rev4a restart', { stdio: 'inherit', timeout: 10_000 });
-    } catch {
-      // rev4a serve not running — restart flag written, harmless
-    }
+    requestRestart(target);
   } catch (err) {
     console.error('Update failed:', err.message);
     UPDATE_STATE.writeUpdate(DATA_DIR, 'failed', { error: err.message });

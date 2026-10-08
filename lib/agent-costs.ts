@@ -9,6 +9,7 @@
  */
 import type Database from 'better-sqlite3';
 import { openCostsDb } from './costs-db';
+import { ASSISTANT_AGENT, UNKNOWN_AGENT } from './proxy-usage';
 
 /** How often daemon.js reads the agents; a figure older than 3× this is not current. */
 export const COLLECT_INTERVAL_S = 300;
@@ -195,7 +196,7 @@ export interface AgentMetering {
   container: string | null; agentId: string | null; name: string | null;
   recorded: number; recordedTokens: number;
   metered: ProxyAgentRow | null;
-  /** The larger of the two: the spend the page counts. */
+  /** The larger of the two: the spend the page counts. 0 for `unknown`, which is never added. */
   combined: number;
   /** metered − recorded, when positive; 0 otherwise. */
   gap: number;
@@ -266,7 +267,7 @@ export function buildProxyUsage(
   }
   const lines: AgentMetering[] = [];
   // 'unknown' and 'assistant' have no recorded figure to compare with: never flagged.
-  const RESERVED = new Set(['unknown', 'assistant']);
+  const RESERVED = new Set([UNKNOWN_AGENT, ASSISTANT_AGENT]);
   const line = (
     key: string, row: AgentCostRow | null, metered: ProxyAgentRow | null,
   ): AgentMetering => {
@@ -275,7 +276,10 @@ export function buildProxyUsage(
     return {
       key, container: row?.container ?? null, agentId: row?.agentId ?? null, name: row?.name ?? null,
       recorded, recordedTokens: row?.tokens ?? 0, metered,
-      combined: Math.max(recorded, meteredCost),
+      // Calls without the header may be an agent's own spend that the agent already recorded
+      // (an agent not yet synced): adding them would count it twice. They keep their figures
+      // but add nothing to Spent. The assistant is recorded nowhere else, so it is added.
+      combined: !row && metered?.agent === UNKNOWN_AGENT ? 0 : Math.max(recorded, meteredCost),
       gap: Math.max(0, meteredCost - recorded),
       flagged: !!row && !RESERVED.has(metered?.agent ?? '') && meteredCost > recorded * FLAG_RATIO && meteredCost - recorded > FLAG_MIN_USD,
     };

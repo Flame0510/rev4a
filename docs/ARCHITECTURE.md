@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-08
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -406,6 +406,13 @@ Agent Container          Rev4a Gateway              Provider API
   never inside agent containers
 - The Gateway page (`/gateway`) provides a UI to manage provider keys and
   sync them to agent containers via `PUT /api/gateway/provider`
+- The proxy meters every call per agent. Each agent sends its AGENT_ID in an
+  `x-rev4a-agent` header (written into its `models.providers.rev4a.headers` by the sync); a call
+  without a valid one is metered as `unknown`. Each finished call (status, the provider's own
+  token counts, the price in force at that moment) is added to `proxy_usage_hourly` in `costs.db`,
+  one row per hour, agent, provider and model. Metering is best effort and off the response path,
+  and bounded: a locked `costs.db` costs at most about 200 ms, then metering is skipped for 60 s.
+  Agent ids the daemon does not know yet are accepted up to 200 distinct ones per process per hour.
 
 See [GATEWAY.md](dev/GATEWAY.md) and [PROVIDERS.md](dev/PROVIDERS.md) for
 detailed documentation.
@@ -604,7 +611,8 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
    into `metrics.db` (see [Container Consumption](#container-consumption))
 6. Detect anomalies (CPU > 85%, RAM > 90%, a disk at 90%) and record them as events
 7. Read what each running agent spent, as its own OpenClaw priced it, every 5 min into
-   `costs.db`, and each vendor's balance or usage every hour (see [Agent Costs](#agent-costs))
+   `costs.db`, and each vendor's balance or usage every hour (see [Agent Costs](#agent-costs));
+   prune `proxy_usage_hourly` (the proxy's per-agent meter) of rows older than 400 days
 8. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
 
 ### Poll Interval
@@ -709,6 +717,12 @@ it next to the agents' cumulative priced total for that vendor's models, in the 
 (`vendor_balance`). Between two rows, what the vendor billed and what the agents priced
 cover the same interval: the Costs page's *Against the bill* (`lib/cost-reconciliation.ts`).
 `costs.db` is opened in a try: if it cannot be, collection is off (`[COSTS] disabled`).
+
+`costs.db` has a second writer: the dashboard's provider proxy, which adds each call it carries to
+`proxy_usage_hourly` (see [AI Provider Gateway](#33-ai-provider-gateway-implemented)) and may create
+that table before the daemon has run; the readers keep their read-only handle. `GET /api/costs/usage`
+answers a `proxy` block with each agent's recorded figure next to the proxy's (`unknown` callers listed
+but not added to Spent); the Costs page's Spent is the larger of the two per agent.
 
 ### Anomaly Detection
 

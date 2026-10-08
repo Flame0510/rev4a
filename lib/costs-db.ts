@@ -1,4 +1,6 @@
-// Read access to the agent costs database (daemon.js writes it).
+// Read access to the agent costs database. costs.db has two writers: daemon.js (its agent_cost_*
+// and vendor tables) and the dashboard's provider proxy (`proxy_usage_hourly`, which it may
+// create before the daemon exists). Readers here always use a read-only handle.
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
@@ -12,7 +14,7 @@ const TABLES = ['agent_cost_daily', 'agent_cost_model_daily', 'agent_cost_sessio
 /**
  * Open the costs database read-only, or null when there is nothing to read yet: no file
  * (first start, or a daemon that never ran) or one without the daemon's tables. The
- * daemon owns the schema.
+ * daemon owns its schema; the proxy owns `proxy_usage_hourly`.
  */
 export function openCostsDb(): Database.Database | null {
   if (!fs.existsSync(COSTS_DB_PATH)) return null;
