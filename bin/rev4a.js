@@ -45,6 +45,8 @@ const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
 const AGENT_VERSIONS = require(join(ROOT, 'lib', 'agent-versions.json'));
 // The pinned-revision rule, shared with the server (lib/agent-versions.ts).
 const IMAGE_REVISION = require(join(ROOT, 'lib', 'image-revision.js'));
+// The phases of `rev4a update`, shown by the dashboard on every tab (lib/update-state.js).
+const UPDATE_STATE = require(join(ROOT, 'lib', 'update-state.js'));
 const DOCKER_NETWORK = 'rev4a-network';
 // How long `serve` waits for the Docker daemon before starting without it. Like
 // REV4A_DATA_DIR it is read from the real process environment (a systemd
@@ -754,6 +756,19 @@ if (cmd === 'restart') {
 }
 
 if (cmd === 'update') {
+  // One update at a time. The dashboard hands us its claim, so its own run is not a
+  // competitor; anything else in progress (another terminal, the dashboard) is refused.
+  // Written for the dashboard too; a state that cannot be written never stops the update.
+  const inheritedClaim = process.env[UPDATE_STATE.CLAIM_ENV] || '';
+  const claimed = UPDATE_STATE.claimUpdate(DATA_DIR, {
+    from: pkg.version,
+    claim: inheritedClaim || `cli-${process.pid}-${Date.now()}`,
+    inherited: Boolean(inheritedClaim),
+  });
+  if (!claimed.ok) {
+    console.error('Another update is already in progress. Wait for it to finish, then run rev4a update again.');
+    process.exit(1);
+  }
   console.log(`Checking for updates…`);
   try {
     const latest = execSync(
@@ -762,18 +777,25 @@ if (cmd === 'update') {
     ).toString().trim();
     if (latest === pkg.version) {
       console.log(`Already up to date (v${pkg.version}).`);
+      UPDATE_STATE.clearUpdate(DATA_DIR);
       process.exit(0);
     }
     console.log(`Updating from v${pkg.version} to v${latest}…`);
+    UPDATE_STATE.writeUpdate(DATA_DIR, 'installing', { from: pkg.version, to: latest });
     const root = process.env.REV4A_ROOT || ROOT;
     const isGitRepo = existsSync(join(root, '.git'));
+    // The version the restarted server must run. A git checkout may pull something other
+    // than npm's latest, so it is read back from the pulled package.json below.
+    let target = latest;
     if (isGitRepo) {
       console.log('Detected git repo — pulling and building…');
+      UPDATE_STATE.writeUpdate(DATA_DIR, 'building');
       execSync(`cd ${root} && git pull && npm install && npm run build`, {
         stdio: 'inherit',
         // npm install + a full build: minutes, not two.
         timeout: 30 * 60_000,
       });
+      try { target = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || latest; } catch { /* keep latest */ }
     } else {
       console.log('Using npm global install…');
       execSync(`npm install -g ${PKG_NAME}@latest`, {
@@ -782,9 +804,15 @@ if (cmd === 'update') {
       });
       // postinstall builds the freshly installed package and fails the install if it
       // cannot; keep that build for the restart. The fallback covers a skipped build.
-      if (!existsSync(join(ROOT, '.next', 'BUILD_ID'))) build();
+      if (!existsSync(join(ROOT, '.next', 'BUILD_ID'))) {
+        UPDATE_STATE.writeUpdate(DATA_DIR, 'building');
+        build();
+      }
     }
     console.log('Update complete. Restarting…');
+    // Written before the restart is requested: the server that starts after this write is
+    // the new one, and marks the update done when it answers.
+    UPDATE_STATE.writeUpdate(DATA_DIR, 'restarting', { to: target });
     try {
       execSync('rev4a restart', { stdio: 'inherit', timeout: 10_000 });
     } catch {
@@ -792,6 +820,7 @@ if (cmd === 'update') {
     }
   } catch (err) {
     console.error('Update failed:', err.message);
+    UPDATE_STATE.writeUpdate(DATA_DIR, 'failed', { error: err.message });
     process.exit(1);
   }
   process.exit(0);

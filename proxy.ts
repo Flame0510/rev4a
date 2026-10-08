@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { join } from 'path';
 import { getJwtSecret } from '@/lib/rev4a-auth';
+import { REV4A_DATA } from '@/lib/rev4a-paths';
+import { currentUpdate } from '@/lib/update-state';
 
 /* ------------------------------------------------------------------ */
 /*  Public routes — no auth required                                  */
@@ -25,6 +28,36 @@ function isStaticOrApi(pathname: string): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Update guard — one place every API request passes                  */
+/*                                                                    */
+/*  While `rev4a update` replaces files, rebuilds .next and restarts,  */
+/*  the old server keeps answering. A write accepted in that window   */
+/*  can be lost with the restart or run against half-replaced code,   */
+/*  so mutating API calls answer 503 until the update ends. Done here */
+/*  (not per route) because the proxy sees every request: a new route */
+/*  is guarded without anyone remembering to. Page navigations and    */
+/*  reads are untouched.                                              */
+/* ------------------------------------------------------------------ */
+const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/** Always allowed: sign-in/out, the update's own endpoints, and the agents' provider proxy. */
+const UPDATE_EXEMPT_PREFIXES = ['/api/auth', '/api/update-check', '/api/update-status', '/api/provider'];
+const UPDATE_STATE_DIR = join(REV4A_DATA, 'data');
+
+function updateGuard(request: NextRequest): NextResponse | null {
+  const { pathname } = request.nextUrl;
+  if (!(pathname === '/api' || pathname.startsWith('/api/')) || !MUTATING.has(request.method)) return null;
+  if (UPDATE_EXEMPT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return null;
+  let update;
+  try {
+    update = currentUpdate(UPDATE_STATE_DIR);
+  } catch {
+    return null; // an unreadable state must never lock the dashboard
+  }
+  if (!update) return null;
+  return NextResponse.json({ error: 'Rev4a is updating', phase: update.phase }, { status: 503, headers: { 'Retry-After': '10' } });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Proxy (formerly middleware — Next.js 16 renamed the convention;   */
 /*  runs on Node.js runtime by default now, so it shares the same     */
 /*  env+file secret resolution as every API route instead of its own */
@@ -32,6 +65,9 @@ function isStaticOrApi(pathname: string): boolean {
 /* ------------------------------------------------------------------ */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  const blocked = updateGuard(request);
+  if (blocked) return blocked;
 
   // Public routes
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {

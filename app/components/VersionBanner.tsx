@@ -21,6 +21,9 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../components/ui';
+import {
+  PENDING_TTL_MS, WAIT_MS, readPending, serverVersionMoved, fetchRunningVersion, usableVersion, writePending, clearPending,
+} from './UpdatingScreen';
 
 interface VersionInfo {
   installed: string | null;
@@ -30,32 +33,6 @@ interface VersionInfo {
 }
 
 const DISMISS_KEY = 'rev4a-update-dismissed';
-/** What we asked for and from which version, so a reload can resume the wait. */
-const PENDING_KEY = 'rev4a-update-pending';
-
-/** How long to wait for the restart before saying the update has not finished. */
-const WAIT_MS = 150_000;
-/** How long a recorded request stays believable across reloads. */
-const PENDING_TTL_MS = 15 * 60 * 1000;
-
-interface Pending { target: string; from: string; at: number }
-
-function readPending(): Pending | null {
-  try {
-    const raw = sessionStorage.getItem(PENDING_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Pending;
-    if (!parsed || typeof parsed.target !== 'string' || typeof parsed.from !== 'string') return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-/** A version we can believe: present and not a placeholder. */
-function usableVersion(v: string | null | undefined): v is string {
-  return typeof v === 'string' && v.length > 0 && v !== '0.0.0';
-}
 
 export default function VersionBanner() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
@@ -72,15 +49,12 @@ export default function VersionBanner() {
   const followRestart = useCallback((from: string) => {
     const deadline = Date.now() + WAIT_MS;
     const poll = async () => {
-      try {
-        const res = await fetch('/api/update-check', { cache: 'no-store' });
-        const d = (await res.json()) as VersionInfo;
-        if (usableVersion(d.installed) && d.installed !== from) {
-          sessionStorage.removeItem(PENDING_KEY);
-          window.location.reload();
-          return;
-        }
-      } catch { /* the server is down for the restart: expected */ }
+      // The wait rule lives in UpdatingScreen, shared with it: readable and different.
+      if (await serverVersionMoved(from)) {
+        clearPending();
+        window.location.reload();
+        return;
+      }
       if (Date.now() > deadline) {
         setUpdating(false);
         setUpdateError('The update has not finished after a couple of minutes. It may still be running — see update.log, then reload.');
@@ -95,13 +69,16 @@ export default function VersionBanner() {
     let active = true;
     fetch('/api/update-check?check=1')
       .then((r) => r.json())
-      .then((d: VersionInfo) => {
-        if (!active) return;
+      .then(async (d: VersionInfo) => {
+        // Judged on the version the server *runs*, not package.json on disk: npm
+        // replaces that before the restart, and the old server may still be answering.
         const pending = readPending();
+        const running = pending ? await fetchRunningVersion() : null;
+        if (!active) return;
         // Back from an update: did a *readable* version actually replace the old one?
-        if (pending && usableVersion(d.installed) && d.installed !== pending.from) {
-          sessionStorage.removeItem(PENDING_KEY);
-          setUpdateOk(`Updated to v${d.installed}`);
+        if (pending && usableVersion(running) && running !== pending.from) {
+          clearPending();
+          setUpdateOk(`Updated to v${running}`);
           setTimeout(() => { if (active) window.location.reload(); }, 2500);
           return;
         }
@@ -115,11 +92,11 @@ export default function VersionBanner() {
           return;
         }
         if (pending) {
-          sessionStorage.removeItem(PENDING_KEY);
+          clearPending();
           setInfo(d);
           setDismissed(false);
           setUpdateError(
-            `The update to v${pending.target} has not finished: ${usableVersion(d.installed) ? `Rev4a is still on v${d.installed}` : 'Rev4a is not answering with a version'}.`
+            `The update to v${pending.target} has not finished: ${usableVersion(running) ? `Rev4a is still on v${running}` : 'Rev4a is not answering with a version'}.`
             + ` See ${d.log ?? 'update.log'} in the Rev4a data directory, then reload.`,
           );
           return;
@@ -158,7 +135,7 @@ export default function VersionBanner() {
         setUpdating(false);
         return;
       }
-      sessionStorage.setItem(PENDING_KEY, JSON.stringify({ target: info.latest ?? '', from: info.installed, at: Date.now() }));
+      writePending({ target: info.latest ?? '', from: info.installed, at: Date.now() });
       localStorage.removeItem(DISMISS_KEY);
       followRestart(info.installed);
     } catch (err) {
@@ -194,17 +171,17 @@ export default function VersionBanner() {
           <div className="update-banner__actions">
             {updating ? (
               // No action while the restart runs: the only honest one is to wait.
-              <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>Reload</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => window.location.reload()}>Reload</Button>
             ) : updateError ? (
               <>
-                <Button variant="primary" size="sm" onClick={handleUpdate}>Retry</Button>
-                <Button variant="secondary" size="sm" onClick={() => window.location.reload()}>Reload</Button>
-                <Button variant="ghost" size="sm" onClick={handleDismiss}>Dismiss</Button>
+                <Button type="button" variant="primary" size="sm" onClick={handleUpdate}>Retry</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => window.location.reload()}>Reload</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={handleDismiss}>Dismiss</Button>
               </>
             ) : (
               <>
-                <Button variant="primary" size="sm" onClick={handleUpdate}>Update now</Button>
-                <Button variant="ghost" size="sm" onClick={handleDismiss}>Dismiss</Button>
+                <Button type="button" variant="primary" size="sm" onClick={handleUpdate}>Update now</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={handleDismiss}>Dismiss</Button>
               </>
             )}
           </div>

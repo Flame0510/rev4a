@@ -32,6 +32,16 @@ const PORT = parseInt(process.env.PORT || '3740', 10);
 const TERMINAL_WS_PORT = parseInt(process.env.TERMINAL_WS_PORT || '3741', 10);
 const TERMINAL_SECRET = process.env.REV4A_TERMINAL_SECRET || '';
 const TERMINAL_PATH = '/api/terminal-ws';
+// The version this process runs and when it started, fixed once here. npm replaces
+// package.json on disk before the build and the restart, so the file cannot say which
+// version is answering; /api/update-status and the update state read these instead.
+try {
+  process.env.REV4A_RUNNING_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || '';
+} catch {
+  process.env.REV4A_RUNNING_VERSION = '';
+}
+process.env.REV4A_STARTED_AT = String(Date.now());
+
 /** Docker container names and ids: what `docker exec` accepts, nothing a shell could read. */
 const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 

@@ -2919,11 +2919,70 @@ directory if needed and reports a failure if it cannot start the updater.
 
 **Auth:** browser cookie or bearer token
 
-**Response:** `{ "success": true, "message": "...", "log": "update.log" }`
+**Response:** `{ "success": true, "message": "...", "log": "update.log" }`, or `409`
+`{ "success": false, "error": "An update is already running." }` when an update is in
+progress (another tab, or one started from a terminal).
 
-The banner records what it asked for, polls `/api/update-check` until the installed version
-moves (or two minutes pass), reloads, and on the next mount either confirms
+The route claims the update before it spawns anything: it checks for a running update and
+writes `starting` (this server's pid, a unique `claim` token) in one synchronous step with
+no await in between, so two simultaneous requests cannot both start an updater (the loser
+gets the `409`). The child gets the claim in `REV4A_UPDATE_CLAIM`, so `rev4a update` does
+not refuse its own run; once the child exists its pid replaces the server's, but only if the
+state on disk still carries the same claim. A spawn error marks the claimed run `failed`.
+`rev4a update` started from a terminal refuses while another update is in progress.
+`rev4a update` then writes the rest (see `GET /api/update-status`).
+
+The banner records what it asked for, polls `/api/update-status` until the version the
+server runs moves (or two minutes pass), reloads, and on the next mount either confirms
 "Updated to vX" or reports that the update did not complete and points at the log.
+
+### `GET /api/update-status`
+Where the running update is, for the "Updating Rev4a" screen that every tab shows. Cheap and
+local: one small file and the tail of `update.log`, no network.
+
+**Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+{ "running": true, "phase": "installing", "from": "1.13.2", "to": "1.14.0",
+  "startedAt": 1790000000000, "updatedAt": 1790000004000, "error": null,
+  "version": "1.13.2", "logTail": ["…last 20 lines of update.log…"] }
+```
+
+- `phase` is `starting`, `installing`, `building`, `restarting`, `done` or `failed`
+  (`null` when there is no recent update). `running` is true in every phase but `done`
+  and `failed`. `error` is set when `phase` is `failed`.
+- The state is `update-state.json` in the Rev4a data directory (`<REV4A_DATA_DIR>/data`),
+  written by `rev4a update` (lib/update-state.js). A state older than 30 minutes, or
+  written more than 5 minutes in the future (a clock that stepped back), counts as no update. A state whose updater process is gone while it was installing or building
+  reads as `failed` (a crash or a kill). `restarting` is done once a server that started
+  after it answers *and runs the target version*; a server that started on another version
+  turns it into `failed` ("Rev4a restarted on X, not Y"). The updater has exited by then on
+  purpose, so its pid is not checked in that phase; a `restarting` no server has picked up
+  after 5 minutes turns `failed` ("Rev4a did not restart within 5 minutes…").
+- `version` is the version this server process runs, recorded once by `server.js` when it
+  started (`REV4A_RUNNING_VERSION`, with `REV4A_STARTED_AT`). It is not `package.json` on
+  disk: npm replaces that before the build and the restart, while the old server still
+  answers. The screen and the banner treat "the new version answers" as this value being
+  readable and different from the version the update started from.
+- `logTail` is the update's own npm and build output (terminal control codes removed),
+  with secrets redacted (each line cut at 500 characters first): the value after a
+  secret-looking name (`NAME=value`, `NAME: rest of line`, quoted JSON keys; names with a
+  token / secret / password / credential / cookie / authorization part, or ending in key /
+  auth / pass — `author` or `keyv` are left alone), `--…password|token|secret|key` flags,
+  `Bearer` / `Basic` values, `token` followed by a long value, `npm_…`, `sk-…`, GitHub
+  (`ghp_…`, `github_pat_…`), GitLab (`glpat-`), Slack (`xox…-`), AWS (`AKIA…`) and Google
+  (`AIza…`) keys, JWTs, and URL credentials (`user:pass@`, `:pass@` or a token alone before
+  `@`) become `[redacted]`.
+  `error` is redacted the same way.
+
+#### Updates block writes
+While an update is in progress, every mutating API request (`POST`, `PUT`, `PATCH`,
+`DELETE`) answers `503` `{ "error": "Rev4a is updating", "phase": "installing" }` with a
+`Retry-After` header. The guard is in `proxy.ts`, the one place every request passes, so a
+new route is covered without anyone remembering to. Exempt: `/api/auth/*` (sign in and out),
+`/api/update-check`, `/api/update-status` and `/api/provider/*` (the agents' provider
+proxy keeps working during the update). Reads and page loads are not blocked.
 
 ### `GET /api/alerts/smoke`
 Send a test alert, to verify the Telegram alerting path end to end.
@@ -2947,4 +3006,4 @@ All errors return JSON:
 { "error": "description of what went wrong" }
 ```
 
-Common status codes: `400` bad request, `401` unauthorized, `404` not found, `500` server error.
+Common status codes: `400` bad request, `401` unauthorized, `404` not found, `500` server error, `503` Rev4a is updating (mutating requests only, see `GET /api/update-status`).

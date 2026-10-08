@@ -311,8 +311,30 @@ is never written, and the command hangs with no error to point at.
   /api/update-check`): it must not try to restart anything itself, because the update
   stops the very process that spawned it, and the CLI's own flag is the mechanism that
   matters. Its output goes to `update.log` in the data directory, since nothing else can
-  report the outcome: the banner records what it asked for, waits for the installed
+  report the outcome: the banner records what it asked for, waits for the running
   version to change and only then reloads (see `VersionBanner`).
+- **Update state and screen.** `lib/update-state.js` (CommonJS, shared by the CLI and the
+  server) keeps `update-state.json` next to `update.log` in the data directory:
+  `{ phase, from, to, startedAt, updatedAt, pid, claim?, error? }`, written atomically.
+  Phases: `starting` → `installing` → `building` → `restarting` → `done`, or `failed` at
+  any point. It is a hint for the UI, never a lock on the install itself. Read rules: older
+  than 30 minutes, or more than 5 minutes in the future, is no update; a dead updater pid in
+  a running phase reads as `failed` (`restarting` is exempt: the updater exits on purpose);
+  `restarting` becomes `done` when a server that started after the write answers *and runs
+  the target version* — another version is `failed` ("Rev4a restarted on X, not Y"), and a
+  restart nobody picked up within 5 minutes is `failed` too, so the guard lets go.
+  The running version is what `server.js` read from `package.json` once at process start
+  (`REV4A_RUNNING_VERSION`, `REV4A_STARTED_AT`); the file on disk is not used, because npm
+  replaces it before the build and the restart while the old server still answers.
+  **Guard:** one update at a time. `POST /api/update-check` and `rev4a update` both go
+  through `claimUpdate`, which checks and writes `starting` synchronously with a unique
+  claim token before anything is spawned; the route hands its claim to the child in
+  `REV4A_UPDATE_CLAIM` and the child's pid replaces the route's only while the state still
+  carries that claim. `proxy.ts` answers 503 to mutating API calls while an update is in
+  progress (exempt: auth, update-check, update-status, the agents' provider proxy).
+  `GET /api/update-status` reports the state, the running version and a redacted log tail;
+  `UpdatingScreen` (every tab) and `VersionBanner` judge "the new version answers" from that
+  running version through one shared function.
 
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
 

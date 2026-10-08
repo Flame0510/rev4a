@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { execSync, spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
+import { adoptPid, claimUpdate, CLAIM_ENV, failClaimed } from '@/lib/update-state';
 
 // Fallback used only when package.json cannot be read — the published npm
 // package name is the single source of truth, so never hardcode it elsewhere.
@@ -105,12 +107,23 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (denied) return denied;
 
   const dataDir = join(REV4A_DATA, 'data');
+
   const logPath = join(dataDir, 'update.log');
 
   try {
     mkdirSync(dataDir, { recursive: true });
   } catch {
     return NextResponse.json({ success: false, error: 'Could not prepare the update directory.' }, { status: 500 });
+  }
+
+  // One update at a time (two tabs, or a terminal update already running). The check and
+  // the write of `starting` are one synchronous step with no await between them and
+  // before anything is spawned, so two simultaneous requests cannot both pass. The pid is
+  // this server's for the moment; the child's replaces it once it exists.
+  const claim = randomBytes(12).toString('hex');
+  const claimed = claimUpdate(dataDir, { from: getPackageInfo().version, claim, pid: process.pid });
+  if (!claimed.ok) {
+    return NextResponse.json({ success: false, error: 'An update is already running.' }, { status: 409 });
   }
 
   let log: number | null = null;
@@ -121,14 +134,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Unwritable log: run the update anyway, we just lose the record.
   }
 
-  const child = spawn('rev4a', ['update'], {
-    stdio: log === null ? 'ignore' : ['ignore', log, log],
-    detached: true,
-    cwd: dataDir,
-  });
-  if (log !== null) closeSync(log);
-
+  let child: ReturnType<typeof spawn>;
   try {
+    child = spawn('rev4a', ['update'], {
+      stdio: log === null ? 'ignore' : ['ignore', log, log],
+      detached: true,
+      cwd: dataDir,
+      // The updater recognises its own claim and does not refuse to start because of it.
+      env: { ...process.env, [CLAIM_ENV]: claim },
+    });
+    if (log !== null) closeSync(log);
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
       child.once('error', reject);
@@ -136,9 +151,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     try { appendFileSync(logPath, `[dashboard] could not start the update: ${message}\n`); } catch {}
+    failClaimed(dataDir, claim, `Could not start the update: ${message}`);
     return NextResponse.json({ success: false, error: 'Could not start the update.' }, { status: 500 });
   }
   child.unref();
+
+  // The updater exists: its pid replaces ours, but only if the state still carries this
+  // claim. A fast updater may already have moved on, failed or cleared it; then it stays.
+  if (child.pid) adoptPid(dataDir, claim, child.pid);
 
   return NextResponse.json({
     success: true,

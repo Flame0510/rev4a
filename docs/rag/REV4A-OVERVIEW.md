@@ -40,7 +40,10 @@ Rev4a itself has an **"Update available"** banner: it starts `rev4a update` and 
 restarts itself, so the dashboard drops briefly. The banner is only shown when a newer
 version is published; it waits for the restart and then confirms the new version, or
 reports that the update did not complete and points at `update.log` in the Rev4a data
-directory, where the update's output is written.
+directory, where the update's output is written. While it runs, every open tab shows a
+full-screen "Updating Rev4a" screen with the current phase and reloads when the new
+version answers; if the update fails it shows the error and the log with Retry, Reload and
+Dismiss.
 
 The Agents page includes a banner for the **agent base image**, which is kept per
 OpenClaw version. It is hidden when a supported version is downloaded and nothing newer

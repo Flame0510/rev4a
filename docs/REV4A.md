@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-10-06
+> **Last updated:** 2026-10-07
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -194,6 +194,22 @@ read from the process environment, not from the `.env` file.
 If the daemon never answers, `serve` starts anyway, skips the network and image
 checks, and says so in the log. The startup sync then reaches no agent, and logs
 that too; run Sync All Agents once Docker is up.
+
+### Updating Rev4a itself
+
+**Update now** (or `rev4a update` from a shell) covers every open tab with a full-screen
+"Updating Rev4a" screen: the current phase (installing, building, restarting), from → to,
+elapsed time and the tail of `update.log`. It reloads on its own when the new version
+answers. If the update fails it shows the error and the log with Retry, Reload and
+Dismiss. While it runs the server refuses writes (`503 Rev4a is updating`); reads and the
+agents' provider proxy keep working. `rev4a update` records its phases in
+`update-state.json` next to `update.log`; a state older than 30 minutes no longer counts, and
+an updater that died (or a restart that has not happened after 5 minutes) turns into the
+failure screen, which Dismiss closes — writes are no longer refused then. Only one update runs at a time: a second `rev4a update`
+(or a second click) is refused while one is in progress. "The new version answers" means
+the version the server process runs, not the `package.json` npm has already replaced. There is no automatic rollback: a failed update leaves the
+previous version running when the failure came before the restart, and the error and
+`update.log` say what to do. See `docs/dev/API-REFERENCE.md` (`GET /api/update-status`).
 
 ### Memory (a host that runs several agents)
 

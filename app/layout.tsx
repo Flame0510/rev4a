@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Instrument_Serif, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import AppShell from './components/AppShell';
+import UpdatingScreen from './components/UpdatingScreen';
 import { ModelsProvider } from './lib/models-context';
 import { ToastContainer } from './components/ui';
 
@@ -38,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${jetBrainsMono.variable} ${instrumentSerif.variable}`}>
-        <ModelsProvider><AppShell>{children}<ToastContainer /></AppShell></ModelsProvider>
+        <ModelsProvider><AppShell>{children}<ToastContainer /></AppShell><UpdatingScreen /></ModelsProvider>
       </body>
     </html>
   );
