@@ -19,6 +19,7 @@ const { dockerRequestJson } = require('./lib/docker-socket-path.js');
 const dockerStats = require('./lib/docker-stats.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
+const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
 // dir is REV4A_DATA_DIR or ~/.config/rev4a — the API reads the files the daemon writes.
@@ -689,6 +690,10 @@ CREATE TABLE IF NOT EXISTS agent_cost_sources (
   missing_by_model TEXT
 );
 `);
+    // What the Rev4a provider proxy metered, per hour, agent and model. The proxy (the Next.js
+    // process) is the writer, and creates the table itself too if it gets there first; the daemon
+    // only guarantees it exists and prunes it. See lib/proxy-usage.js.
+    cdb.exec(PROXY_USAGE_TABLE_SQL);
     return {
       db: cdb,
       clearDaily: cdb.prepare('DELETE FROM agent_cost_daily WHERE container = ? AND date >= ?'),
@@ -719,6 +724,7 @@ CREATE TABLE IF NOT EXISTS agent_cost_sources (
       `),
       lastBalanceTs: cdb.prepare('SELECT MAX(ts) AS ts FROM vendor_balance WHERE vendor = ?'),
       pruneBalances: cdb.prepare('DELETE FROM vendor_balance WHERE ts < ?'),
+      pruneProxyUsage: cdb.prepare('DELETE FROM proxy_usage_hourly WHERE hour < ?'),
       agentsCostFor: cdb.prepare(`SELECT COALESCE(SUM(cost), 0) AS cost FROM agent_cost_model_daily WHERE model LIKE ? || '/%'`),
       upsertSource: cdb.prepare(`
         INSERT INTO agent_cost_sources (container, agent_id, name, collected_at, attempted_at, error, missing_by_model)
@@ -998,6 +1004,12 @@ async function collectCosts() {
   if (!costs || costsRunning) return;
   costsRunning = true;
   try {
+    // Before anything that can return early (Docker down): retention must not depend on it.
+    try {
+      costs.pruneProxyUsage.run(Math.floor((Date.now() - PROXY_USAGE_RETENTION_MS) / 1000));
+    } catch (e) {
+      log(`[COSTS] proxy usage retention: ${e.message}`);
+    }
     let agents;
     try {
       agents = await listRunningAgents();

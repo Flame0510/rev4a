@@ -5,6 +5,19 @@
  * Used by both /api/provider/v1/chat/completions and /api/assistant
  * to avoid HTTP loopback (calling localhost from inside Next.js).
  */
+import Database from 'better-sqlite3';
+import { COSTS_DB_PATH } from '@/lib/costs-db';
+import { priceAt } from '@/lib/model-pricing';
+import {
+  CREATE_TABLE_SQL,
+  UPSERT_SQL,
+  buildEntry,
+  createAgentResolver,
+  createSseUsageParser,
+  usageFromBody,
+  type ProxyUsage,
+} from '@/lib/proxy-usage';
+
 export const dynamic = 'force-dynamic';
 
 export interface ProviderEnvConfig {
@@ -122,6 +135,14 @@ export async function callUpstream(
   delete upstreamBody.route;
   delete upstreamBody.preset;
 
+  // A stream carries its usage only in a final chunk the client has to ask for. The proxy
+  // asks for it itself so every streamed call can be metered (see meterStream); the chunk is
+  // a standard OpenAI one with an empty `choices`, and is forwarded to the client with the rest.
+  if (upstreamBody.stream === true) {
+    const so = upstreamBody.stream_options;
+    upstreamBody.stream_options = { ...(so && typeof so === 'object' ? so : {}), include_usage: true };
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (envConfig.authHeader === 'x-api-key') {
@@ -154,5 +175,150 @@ export async function callUpstream(
     method: 'POST',
     headers,
     body: JSON.stringify(upstreamBody),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Metering — what the proxy saw, per agent, hour and model           */
+/* ------------------------------------------------------------------ */
+
+/** Who made a call and what it asked for; the metering key. */
+export interface MeterContext {
+  agent: string;
+  provider: string;
+  model: string;
+  /** Start of the call: the hour it is counted in and the moment its price is taken at. */
+  startMs: number;
+}
+
+interface UsageStore {
+  db: Database.Database;
+  insert: Database.Statement;
+}
+let usageStore: UsageStore | null = null;
+/** After a failure (open or insert) metering is skipped until this moment. */
+let usageStoreRetryAt = 0;
+
+function pauseMetering(what: string, e: unknown): void {
+  // Logged once per pause, not once per dropped call.
+  if (Date.now() >= usageStoreRetryAt) console.error(`[provider/v1] ${what}:`, (e as Error).message);
+  usageStoreRetryAt = Date.now() + 60_000;
+}
+
+function openUsageStore(): UsageStore | null {
+  if (Date.now() < usageStoreRetryAt) return null;
+  if (usageStore) return usageStore;
+  try {
+    // The daemon writes costs.db too. `timeout` is the busy timeout from the first statement
+    // on (the pragmas and the CREATE included): a held lock costs at most about 200 ms.
+    const db = new Database(COSTS_DB_PATH, { timeout: 200 });
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.exec(CREATE_TABLE_SQL);
+    usageStore = { db, insert: db.prepare(UPSERT_SQL) };
+    return usageStore;
+  } catch (e) {
+    pauseMetering('metering store unavailable', e);
+    return null;
+  }
+}
+
+/**
+ * agent_id and container values of the agents Rev4a knows (the daemon fills agent_cost_sources).
+ * Prepared on each read (at most once a minute): before the daemon's first pass the table does
+ * not exist, which must not stop the metering — the resolver treats the throw as "none known".
+ */
+function loadKnownAgents(): string[] {
+  const store = openUsageStore();
+  if (!store) return [];
+  const ids: string[] = [];
+  const rows = store.db.prepare('SELECT agent_id, container FROM agent_cost_sources').all();
+  for (const r of rows as { agent_id: string | null; container: string | null }[]) {
+    if (r.agent_id) ids.push(r.agent_id);
+    if (r.container) ids.push(r.container);
+  }
+  return ids;
+}
+
+const agentResolver = createAgentResolver({ loadKnown: loadKnownAgents });
+
+/**
+ * The agent a request is metered under, from its `x-rev4a-agent` header: a known agent, or
+ * 'unknown' (see createAgentResolver). Reads the known set at most once a minute and never
+ * touches Docker.
+ */
+export function resolveMeterAgent(headerValue: string | null): string {
+  return agentResolver(headerValue);
+}
+
+/**
+ * Add one finished call to proxy_usage_hourly. Best effort and off the response path: a
+ * metering failure is logged and never reaches the caller of the proxy.
+ */
+export function recordProxyCall(ctx: MeterContext, status: number, usage: ProxyUsage | null): void {
+  setImmediate(() => {
+    try {
+      const store = openUsageStore();
+      if (!store) return;
+      let rates = null;
+      try {
+        rates = priceAt(`${ctx.provider}/${ctx.model}`, new Date(ctx.startMs));
+      } catch { /* unpriced: counted, cost 0 */ }
+      store.insert.run(buildEntry({ atMs: ctx.startMs, agent: ctx.agent, provider: ctx.provider, model: ctx.model, status, usage, rates }));
+    } catch (e) {
+      pauseMetering('metering write failed, pausing for 60 s', e);
+    }
+  });
+}
+
+/** Meter a complete (non-streaming) response body. */
+export function meterBody(ctx: MeterContext, status: number, text: string): void {
+  recordProxyCall(ctx, status, usageFromBody(text));
+}
+
+/**
+ * Pass an SSE body through untouched and read its usage on the way: chunks are forwarded as
+ * they arrive, never collected. The call is recorded once, when the stream ends, fails, or
+ * the client goes away (what was seen until then is kept).
+ */
+export function meterStream(body: ReadableStream<Uint8Array>, ctx: MeterContext, status: number): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const parser = createSseUsageParser();
+  let recorded = false;
+  const finish = () => {
+    if (recorded) return;
+    recorded = true;
+    let usage: ProxyUsage | null = null;
+    try {
+      parser.push(decoder.decode());
+      usage = parser.end();
+    } catch { /* keep what we have */ }
+    recordProxyCall(ctx, status, usage);
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finish();
+          controller.close();
+          return;
+        }
+        try {
+          parser.push(decoder.decode(value, { stream: true }));
+        } catch { /* metering never breaks the stream */ }
+        controller.enqueue(value);
+      } catch (e) {
+        finish();
+        controller.error(e);
+      }
+    },
+    async cancel(reason) {
+      finish();
+      try {
+        await reader.cancel(reason);
+      } catch { /* already closed */ }
+    },
   });
 }

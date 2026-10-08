@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
-import { extractProviderAndModel, getApiKey, callUpstream } from '@/app/api/provider/upstream';
+import { extractProviderAndModel, getApiKey, callUpstream, meterStream, recordProxyCall } from '@/app/api/provider/upstream';
+import { ASSISTANT_AGENT, usageFromBody } from '@/lib/proxy-usage';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { isModelOffered, loadOfferedModels } from '@/lib/model-catalogue';
 
@@ -231,14 +232,24 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  const upstreamResp = await callUpstream(provider, upstreamModel, { model: upstreamModel, messages, stream: true, max_tokens: 512 }, apiKey);
+  // The assistant shares the vendor key with the agents: metered as its own caller, so the
+  // Costs page can tell its spend from theirs.
+  const meter = { agent: ASSISTANT_AGENT, provider, model: upstreamModel, startMs: Date.now() };
+  let upstreamResp: Response;
+  try {
+    upstreamResp = await callUpstream(provider, upstreamModel, { model: upstreamModel, messages, stream: true, max_tokens: 512 }, apiKey);
+  } catch (e) {
+    recordProxyCall(meter, 0, null);
+    throw e;
+  }
 
   if (!upstreamResp.ok) {
     const err = await upstreamResp.text().catch(() => `HTTP ${upstreamResp.status}`);
+    recordProxyCall(meter, upstreamResp.status, usageFromBody(err));
     return NextResponse.json({ error: err }, { status: upstreamResp.status });
   }
 
-  return new Response(upstreamResp.body, {
+  return new Response(upstreamResp.body ? meterStream(upstreamResp.body, meter, upstreamResp.status) : null, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

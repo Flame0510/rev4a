@@ -93,6 +93,15 @@ the Gateway:
    the file's original mode, and apply it when started or resumed
 7. **Does NOT restart** the gateway
 
+### Agent identity header (proxy metering)
+
+The `rev4a` block also carries `headers: { "x-rev4a-agent": "<AGENT_ID of that container>" }`
+(`buildRev4aProviderConfig(version, agentId)`; one value per container, from the AGENT_ID label, the
+container name when it has none; `patchRev4aProvider` reads the same label, so every path writes the same id). OpenClaw sends it with every request to the proxy, and the proxy meters the call
+under that agent (`docs/dev/PROVIDERS.md`, Metering). The startup sync, `Sync all` and the per-agent patch
+(create, update, edit, recreate) all write it; an agent not yet synced sends no header and is metered as
+`unknown`.
+
 ### Costs: OpenClaw prices every call
 
 Every model in the `rev4a` block carries a `cost` — `{ input, output, cacheRead,

@@ -452,7 +452,32 @@ CREATE TABLE agent_cost_sources (
   error TEXT,                 -- why the last attempt stored nothing; NULL after a good one
   missing_by_model TEXT       -- JSON {"rev4a/<model>": calls} over the 30-day window
 );
+-- What the Rev4a provider proxy metered: one row per UTC hour, caller and model. The proxy
+-- (the Next.js process, app/api/provider/upstream.ts) adds to it after every upstream answer,
+-- streaming or not, errors included; the daemon creates the table (CREATE IF NOT EXISTS, the
+-- proxy does too) and deletes rows older than 400 days. Columns are increments: the writer
+-- upserts and adds. See lib/proxy-usage.js.
+CREATE TABLE proxy_usage_hourly (
+  hour INTEGER NOT NULL,      -- start of the UTC hour, Unix seconds
+  agent TEXT NOT NULL,        -- AGENT_ID from the x-rev4a-agent header (bounded: see PROVIDERS.md); 'unknown' otherwise; 'assistant' for PULSE
+  provider TEXT NOT NULL,     -- upstream provider ('deepseek', 'openrouter', ...)
+  model TEXT NOT NULL,        -- upstream model id, without the provider
+  calls INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,      -- includes cached_tokens
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,      -- prompt tokens served from the provider's cache, when it reports them
+  errors INTEGER NOT NULL DEFAULT 0,             -- non-2xx answers and calls that failed before any answer
+  no_usage INTEGER NOT NULL DEFAULT 0,           -- 2xx answers without a usage report (a stream cut before its last chunk, or by an upstream error after a 200)
+  cost REAL NOT NULL DEFAULT 0,                  -- USD, priceAt() of the model at the time of the call; 0 when it has no price
+  PRIMARY KEY (hour, agent, provider, model)
+);
 ```
+
+`proxy_usage_hourly` is the proxy's own meter, next to what each agent's OpenClaw recorded
+(`agent_cost_daily`): it counts every call the proxy carried, including those an agent never
+records (a failed context compaction is not in OpenClaw's usage). The Costs page shows both and counts the larger.
+It is additive: a release without it ignores the table, and an install without it (before the first update) has
+none until the daemon or the first proxied call creates it.
 
 ## Credentials Database (`credentials.db`)
 

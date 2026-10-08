@@ -85,4 +85,4 @@ export function CostsRangeSkeleton() {
   );
 }
 
-export const COSTS_DESCRIPTION = 'What each agent spent, as its own OpenClaw priced it with the rates Rev4a syncs. Days are UTC.';
+export const COSTS_DESCRIPTION = 'What each agent spent: as its own OpenClaw priced it with the rates Rev4a syncs, and as the Rev4a proxy metered every call it carried. The larger of the two is counted. Days are UTC.';

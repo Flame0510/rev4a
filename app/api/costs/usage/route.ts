@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openCostsDb } from '@/lib/costs-db';
-import { COLLECT_INTERVAL_S, EMPTY_TOTALS, lastDays, readCostSummary } from '@/lib/agent-costs';
+import {
+  COLLECT_INTERVAL_S, EMPTY_PROXY_USAGE, EMPTY_TOTALS, buildProxyUsage, lastDays, readIdleAgents, readCostSummary, readProxyUsage,
+} from '@/lib/agent-costs';
 import { readReconciliation } from '@/lib/cost-reconciliation';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import { nextPriceChange, priceBandAt, priceScheduleFor } from '@/lib/model-pricing';
@@ -15,7 +17,8 @@ type Range = keyof typeof RANGES;
 /**
  * GET /api/costs/usage?range=today|7d|30d — what the agents spent, as each agent's own
  * OpenClaw priced it (collected by daemon.js into costs.db), and how that compares with
- * what the vendors billed. Nothing here computes a cost.
+ * what the vendors billed. `proxy` adds what the Rev4a provider proxy metered for the same days, per caller,
+ * next to each agent's own figure. Nothing here computes a cost.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
@@ -47,15 +50,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       available: false, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing,
       totals: EMPTY_TOTALS, daily: dates.map((date) => ({ date, cost: 0, tokens: 0, missing: 0 })),
-      byAgent: [], byModel: [], sessions: [], unpriced: [], reconciliation: [],
+      byAgent: [], byModel: [], sessions: [], unpriced: [], reconciliation: [], proxy: EMPTY_PROXY_USAGE,
     });
   }
 
   try {
     const summary = readCostSummary(db, dates);
     const reconciliation = readReconciliation(db, startDate, endDate);
+    // What the proxy metered over the same UTC days, next to each agent's own figure. The proxy
+    // table is optional (an install that has not routed a call since the update has none), so a
+    // failure here costs the comparison and nothing else.
+    let proxy = EMPTY_PROXY_USAGE;
+    try {
+      const metered = readProxyUsage(db, Date.parse(`${startDate}T00:00:00Z`), Date.parse(`${endDate}T00:00:00Z`) + 86_400_000);
+      proxy = buildProxyUsage(summary.byAgent, metered, metered ? readIdleAgents(db, summary.byAgent) : []);
+    } catch { /* keep the agents' figures */ }
     return NextResponse.json({
-      available: true, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing, ...summary, reconciliation,
+      available: true, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing, ...summary, reconciliation, proxy,
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

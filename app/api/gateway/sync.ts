@@ -25,6 +25,7 @@ import { activeRecreateAgentIds } from '@/lib/agent-recreate-state';
 import { activeRestoreAgentIds } from '@/lib/agent-restore-state';
 import { activeEditAgentIds } from '@/lib/agent-edit-state';
 import { priceAt, type ModelCost } from '@/lib/model-pricing';
+import { AGENT_HEADER } from '@/lib/proxy-usage';
 
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
@@ -258,7 +259,20 @@ function writeContainerJson(container: AgentContainer, remotePath: string, data:
  * Shared between the create route and syncAllAgents — single source of truth
  * for the provider block injected into every agent container.
  */
-export function buildRev4aProviderConfig(version?: string | null): { baseUrl: string; apiKey: string; api: string; models: Rev4aModelEntry[] } {
+export interface Rev4aProviderConfig {
+  baseUrl: string;
+  apiKey: string;
+  api: string;
+  /** Sent with every request to the proxy; names the agent so the proxy can meter per agent. */
+  headers: Record<string, string>;
+  models: Rev4aModelEntry[];
+}
+
+/**
+ * `agentId` is the container's AGENT_ID (the proxy's metering key). Without one the block
+ * carries no header and the agent's calls are metered as 'unknown'.
+ */
+export function buildRev4aProviderConfig(version?: string | null, agentId?: string | null): Rev4aProviderConfig {
   const providerKeys = readProviderKeys();
   const rev4aApiKey = providerKeys['rev4a'] || '';
   const activeModels = getActiveRev4aModels(version);
@@ -266,8 +280,23 @@ export function buildRev4aProviderConfig(version?: string | null): { baseUrl: st
     baseUrl: PROVIDER_GATEWAY_BASE_URL,
     apiKey: rev4aApiKey,
     api: 'openai-completions',
+    headers: agentId ? { [AGENT_HEADER]: agentId } : {},
     models: activeModels,
   };
+}
+
+/**
+ * The AGENT_ID label of a container, which is what syncAllAgents writes as the metering
+ * header; the container name only when there is no label (or Docker cannot say).
+ */
+function containerAgentIdSync(name: string): string {
+  try {
+    const label = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "AGENT_ID"}}', name], {
+      timeout: 5000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (label && label !== '<no value>') return label;
+  } catch { /* fall back to the name */ }
+  return name;
 }
 
 /**
@@ -286,7 +315,7 @@ export function patchRev4aProvider(container: string): void {
     throw new Error('models.config.json could not be read; models.providers.rev4a left unchanged');
   }
   // The agent's own version: an older release rejects `input` values it does not know.
-  const input = JSON.stringify({ models: { providers: { rev4a: buildRev4aProviderConfig(containerVersionSync(container)) } } });
+  const input = JSON.stringify({ models: { providers: { rev4a: buildRev4aProviderConfig(containerVersionSync(container), containerAgentIdSync(container)) } } });
   execFileSync('docker', ['exec', '-i', container, 'sh', '-c', 'openclaw config patch --stdin'], {
     timeout: 15000,
     stdio: 'pipe',
@@ -393,7 +422,7 @@ export function syncAllAgents(): SyncOutcome {
     try {
       // Per agent: the `input` list follows the version that agent runs, so an agent on
       // an older supported release never receives a modality value it would reject.
-      syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name)));
+      syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name), container.agentId || container.name));
       outcome.synced.push(container.name);
       if (!container.running) outcome.stopped.push(container.name);
     } catch (e: unknown) {
@@ -418,7 +447,7 @@ export function syncAllAgents(): SyncOutcome {
  */
 function syncContainer(
   container: AgentContainer,
-  rev4aProviderConfig: { baseUrl: string; apiKey: string; api: string; models: Rev4aModelEntry[] },
+  rev4aProviderConfig: Rev4aProviderConfig,
 ): string {
   const remotePath = '/root/.openclaw/openclaw.json';
   // Read first. If this throws, the container is reported as failed and nothing

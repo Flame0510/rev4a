@@ -556,7 +556,15 @@ computes no cost: every figure is the one OpenClaw recorded with the prices Rev4
                   "agentId": "main", "model": "deepseek/deepseek-flash", "cost": 0.004, "tokens": 18681, "missing": 0, "lastActivity": 1790322536609 } ],
   "unpriced": [ { "model": "rev4a/deepseek/deepseek-v4-flash", "calls": 84, "agents": ["test", "test 2"] } ],
   "reconciliation": [ { "vendor": "deepseek", "currency": "USD", "from": 1790529518869, "to": 1790536317000,
-                        "billed": 0.02, "priced": 0.0171, "topUps": 0, "readings": 3, "comparable": true } ]
+                        "billed": 0.02, "priced": 0.0171, "topUps": 0, "readings": 3, "comparable": true } ],
+  "proxy": {
+    "available": true,
+    "recordedCost": 0.62, "meteredCost": 6.81, "combinedCost": 6.81,
+    "byAgent": [ { "key": "agent_9253eee3", "container": "agent_9253eee3", "agentId": "agent_9253eee3", "name": "test",
+                   "recorded": 0.62, "recordedTokens": 4100000, "combined": 6.81, "gap": 6.19, "flagged": true,
+                   "metered": { "agent": "agent_9253eee3", "calls": 1417, "promptTokens": 91000000, "completionTokens": 310000,
+                                "cachedTokens": 80000000, "errors": 12, "noUsage": 0, "cost": 6.81 } } ]
+  }
 }
 ```
 
@@ -584,6 +592,19 @@ computes no cost: every figure is the one OpenClaw recorded with the prices Rev4
   assistant or clients outside Rev4a; a top-up and spend in the same hour net out; an
   agent missed by a pass joins the agents' total one pass later; calls never priced are
   priced by OpenClaw when read, so the agents' total can grow for calls made earlier.
+- `proxy`: what the Rev4a provider proxy metered over the same UTC days (`proxy_usage_hourly`, written
+  by the proxy for every call it carries, with the provider's own token counts and `priceAt()` at the time
+  of the call), next to each agent's recorded figure. `byAgent` pairs them by AGENT_ID (the
+  `x-rev4a-agent` header the startup sync writes into each agent): `recorded` is OpenClaw's, `metered`
+  the proxy's (`null` when nothing went through the proxy), `combined` the larger of the two, `gap` the
+  proxy's excess (0 if none), `flagged` true when the proxy saw more than 20 % and more than 0.10 USD above
+  the agent (never true for `unknown` and `assistant`, which have no recorded figure). Proxy rows
+  under both an agent's AGENT_ID and its container name are merged into that agent before `combined` is computed. Agents left out of `byAgent` (stopped, nothing recorded in the range) are still paired by name, with a recorded figure of 0. Callers no known agent claims are listed on their own with `container`/`name` null:
+  `agent: "unknown"` (a request without the header, e.g. an agent not yet synced or another client) and
+  `agent: "assistant"` (PULSE). `recordedCost`, `meteredCost` and `combinedCost` are sums over those
+  lines; `combinedCost` is the spend the page counts. `available: false` (no lines) when `costs.db`
+  has no `proxy_usage_hourly` yet; `totals`, `daily` and the other lists are unchanged and stay the
+  agents' own figures.
 - `available: false` (zeros, empty lists) until the daemon has created `costs.db`.
 
 **Errors:** `400` for another `range`; `500` when `costs.db` cannot be read.

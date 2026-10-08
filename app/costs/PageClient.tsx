@@ -44,11 +44,30 @@ interface CostsPayload {
   sessions: SessionRow[];
   unpriced: { model: string; calls: number; agents: string[] }[];
   reconciliation: Reconciliation[];
+  proxy: ProxyUsage;
+}
+interface ProxyAgentRow {
+  agent: string; calls: number; promptTokens: number; completionTokens: number; cachedTokens: number;
+  errors: number; noUsage: number; cost: number;
+}
+interface AgentMetering {
+  key: string; container: string | null; agentId: string | null; name: string | null;
+  recorded: number; recordedTokens: number; metered: ProxyAgentRow | null;
+  combined: number; gap: number; flagged: boolean;
+}
+interface ProxyUsage {
+  available: boolean; byAgent: AgentMetering[]; recordedCost: number; meteredCost: number; combinedCost: number;
 }
 interface Reconciliation {
   vendor: string; currency: string | null; from: number | null; to: number | null;
   billed: number | null; priced: number | null; topUps: number; readings: number; comparable: boolean;
 }
+
+/** What the proxy calls callers that are not agents. */
+const PROXY_CALLER_LABEL: Record<string, string> = {
+  unknown: 'Unidentified callers',
+  assistant: 'Rev4a assistant',
+};
 
 const VENDOR_LABEL: Record<string, string> = { deepseek: 'DeepSeek', openrouter: 'OpenRouter' };
 
@@ -139,6 +158,11 @@ export default function CostsPageClient() {
     (a) => a.attemptedAt !== null && now - a.attemptedAt <= interval * 3
       && (a.error !== null || !a.collectedAt || now - a.collectedAt > interval * 3),
   );
+  // The proxy sees every call, the agent only what it recorded: the page counts the larger of the two.
+  const proxy = data?.proxy;
+  const proxyLines = (proxy?.available ? proxy.byAgent : []).filter((l) => l.metered || l.recorded > 0);
+  const spent = proxy?.available ? Math.max(proxy.combinedCost, 0) : (t?.cost ?? 0);
+  const extraAtProxy = proxy?.available ? Math.max(0, proxy.combinedCost - proxy.recordedCost) : 0;
   const maxDaily = Math.max(0, ...(data?.daily ?? []).map((d) => d.cost));
   // OpenClaw names an unpriced model `provider/model`, like the rows below.
   const unpricedModels = new Set((data?.unpriced ?? []).map((u) => u.model));
@@ -205,7 +229,12 @@ export default function CostsPageClient() {
         <div className="costs-cards" style={{ opacity: stale ? 0.5 : 1 }}>
           <Surface as="article">
             <div className="ui-kicker">Spent</div>
-            <div className="ui-metric-value">{formatCost(t?.cost ?? 0)}</div>
+            <div className="ui-metric-value">{formatCost(spent)}</div>
+            {proxy?.available && (
+              <div className="ui-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                The larger of what the proxy metered and what the agents recorded, per agent{extraAtProxy > 0.005 ? ` · ${formatCost(extraAtProxy)} more than the agents recorded` : ''}.
+              </div>
+            )}
             <div className="ui-key-values" style={{ marginTop: 12 }}>
               <div className="ui-key-value"><span className="ui-muted">Tokens</span><span>{formatTokens(t?.tokens ?? 0)}</span></div>
               <div className="ui-key-value">
@@ -289,6 +318,48 @@ export default function CostsPageClient() {
               ))}
             </Surface>
           </div>
+
+          {proxyLines.length > 0 && (
+            <Surface as="section">
+              <div className="ui-kicker">Metered at the proxy · against what the agents recorded</div>
+              <p className="ui-muted" style={{ fontSize: 12, marginTop: 8 }}>
+                Every call to a model through Rev4a is metered by the proxy, with the provider&apos;s own token counts and the price in force at that moment.
+                An agent records only the calls that finished: a failed context compaction, or a call that looped and was cut, can be in the proxy&apos;s figure and not in the agent&apos;s.
+                A gap is marked when the proxy saw more than 20% and more than {formatCost(0.1)} above the agent.
+              </p>
+              {proxyLines.map((l) => {
+                const m = l.metered;
+                const name = l.name ?? l.container ?? PROXY_CALLER_LABEL[m?.agent ?? ''] ?? m?.agent ?? l.key;
+                return (
+                  <div key={l.key} style={{ marginTop: 14 }}>
+                    <div className="ui-key-value" style={{ fontSize: 12 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {name} {l.flagged && <Pill tone="warning">proxy saw +{formatCost(l.gap)}</Pill>}
+                      </span>
+                      <span>metered {m ? formatCost(m.cost) : '—'} · recorded {formatCost(l.recorded)}</span>
+                    </div>
+                    <Meter
+                      percent={share(l.combined, proxy?.combinedCost ?? 0)}
+                      level={l.flagged ? 'warning' : 'ok'}
+                      label={`Share of the spend for ${name}`}
+                    />
+                    <div className="ui-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                      {m
+                        ? [
+                            `${m.calls} call${m.calls === 1 ? '' : 's'} at the proxy`,
+                            m.errors ? `${m.errors} failed` : null,
+                            m.noUsage ? `${m.noUsage} without a usage report` : null,
+                            `${formatTokens(m.promptTokens + m.completionTokens)} tokens`,
+                            m.cachedTokens ? `${formatTokens(m.cachedTokens)} from cache` : null,
+                            l.recordedTokens ? `agent recorded ${formatTokens(l.recordedTokens)} tokens` : 'agent recorded nothing',
+                          ].filter(Boolean).join(' · ')
+                        : 'nothing went through the proxy (the agent may use another provider)'}
+                    </div>
+                  </div>
+                );
+              })}
+            </Surface>
+          )}
 
           {data.reconciliation.length > 0 && (
             <Surface as="section">

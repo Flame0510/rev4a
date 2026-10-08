@@ -111,6 +111,32 @@ model string.
 3. Parse `provider/model` from the model string (e.g. `rev4a/kimi/kimi-k3` → provider `kimi`, model `kimi-k3`)
 4. Fall back to `deepseek`
 
+**Metering.** The proxy is also the meter: after every upstream answer (2xx and errors, streaming
+and not) it adds one call to `proxy_usage_hourly` in `costs.db` — hour, caller, provider, model, calls,
+prompt / completion / cached tokens as the provider reports them, errors, and the cost at `priceAt()` for
+the moment the call started (so DeepSeek's peak and off-peak bands are right). All agents share one gateway
+key, so the caller is named by the `x-rev4a-agent` header: the startup sync writes
+`models.providers.rev4a.headers` = `{ "x-rev4a-agent": "<AGENT_ID>" }` into each agent (OpenClaw sends
+these headers with every request to that provider). A request without a valid header is metered as
+`unknown`; PULSE (`/api/assistant`) is metered as `assistant`. The header is not forwarded upstream.
+The header is bounded, because anyone holding the gateway key can send any value: `assistant` and `unknown` in
+it are not accepted (reserved, metered as `unknown`), and a valid id is always accepted when it is a known agent
+(the `agent_id` or `container` values in `agent_cost_sources`, read at most every 60 s and never from Docker).
+Any other valid id (an agent created since the daemon's last cost pass, at most five minutes ago, or every id when
+that set cannot be read) is accepted up to 200 distinct ones per process per hour; beyond that the call is metered
+as `unknown`.
+A streamed call carries its usage only in a last chunk that the client has to ask for, so for `stream: true`
+the proxy sets `stream_options.include_usage` on the upstream request itself, to every upstream (a
+provider that rejected the field would answer 400; DeepSeek and OpenAI accept it), and forwards that chunk (a
+standard OpenAI chunk with an empty `choices`) with the rest of the stream: chunks pass through as they
+arrive and are read on the fly, never collected. A client that disconnects mid-stream still records what
+was seen (a call with no usage report counts in `no_usage`, and so does a stream cut by an upstream error after
+a 200). Metering is best effort and runs after the response is handed over: a failure to write is logged and never
+fails the proxied call. It is bounded, not free: `costs.db` is opened with a 200 ms busy timeout, so the worst case
+of a locked database is about 200 ms on the first call (and on the agent lookup), after which metering is skipped
+(calls dropped, one log line) for 60 s instead of trying on every call. See
+`lib/proxy-usage.js` and `app/api/provider/upstream.ts`.
+
 **Provider API paths:** Most providers use the standard `/v1/chat/completions` endpoint.
 GLM uses `/api/paas/v4/chat/completions` and Qwen uses `/compatible-mode/v1/chat/completions`.
 The upstream module (`app/api/provider/upstream.ts`) handles this via a per-provider `basePath` field.

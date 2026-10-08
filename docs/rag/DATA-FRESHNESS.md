@@ -78,7 +78,13 @@ what it spent and keeps the figures in their own database (`costs.db`); the page
 refreshes every minute. An agent whose figures could not be read recently is listed
 under **Not current** with the reason.
 
-The costs are computed by each agent's own OpenClaw, with the prices Rev4a writes
+Next to them the page shows what the Rev4a proxy metered per agent: it is written
+as each call finishes (a streamed call when its stream ends), so it is current to the
+minute; the page counts the larger of the proxy's and the agent's figure. Agents
+send their id with each call after the startup sync; calls without it are listed as
+"Unidentified callers".
+
+The agent figures are computed by each agent's own OpenClaw, with the prices Rev4a writes
 into the agent for every model. A call to a model without a price is counted but not
 priced: the page lists those under **Calls without a price**. Days are UTC. DeepSeek
 bills half price off-peak; Rev4a switches the agents' prices at each change, so each

@@ -17,7 +17,13 @@ import {
   extractProviderAndModel,
   getApiKey,
   callUpstream,
+  meterBody,
+  meterStream,
+  recordProxyCall,
+  resolveMeterAgent,
+  type MeterContext,
 } from '@/app/api/provider/upstream';
+import { AGENT_HEADER } from '@/lib/proxy-usage';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -88,7 +94,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const upstreamResp = await callUpstream(provider, model, body, apiKey);
+    // Which agent is calling: every agent shares one key, so the proxy tells them apart by
+    // the header the startup sync writes into each one. No header, metered as 'unknown'.
+    const meter: MeterContext = {
+      agent: resolveMeterAgent(request.headers.get(AGENT_HEADER)),
+      provider,
+      model,
+      startMs: start,
+    };
+
+    let upstreamResp: Response;
+    try {
+      upstreamResp = await callUpstream(provider, model, body, apiKey);
+    } catch (e) {
+      // The call was made and failed before any answer: it is still a call the proxy saw.
+      recordProxyCall(meter, 0, null);
+      throw e;
+    }
     const latency = Date.now() - start;
 
     // Streaming passthrough
@@ -103,7 +125,7 @@ export async function POST(request: NextRequest) {
       responseHeaders.set('x-rev4a-gateway', 'true');
       responseHeaders.set('x-rev4a-provider', provider);
       responseHeaders.set('x-rev4a-latency-ms', String(latency));
-      return new Response(upstreamResp.body, {
+      return new Response(upstreamResp.body ? meterStream(upstreamResp.body, meter, upstreamResp.status) : null, {
         status: upstreamResp.status,
         statusText: upstreamResp.statusText,
         headers: responseHeaders,
@@ -112,6 +134,7 @@ export async function POST(request: NextRequest) {
 
     // Non-streaming: parse upstream JSON
     const responseText = await upstreamResp.text();
+    meterBody(meter, upstreamResp.status, responseText);
     let responseJson: Record<string, unknown> = {};
     try {
       responseJson = JSON.parse(responseText);
