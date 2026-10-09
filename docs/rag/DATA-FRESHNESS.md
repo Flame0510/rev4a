@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-10-08
+> **Last updated:** 2026-10-09
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -127,6 +127,10 @@ The agents list, Telegram accounts, and bindings are read directly from
 `GET /api/agents-config` serves this, but no page calls it — there is no "Agents
 Config page". Per-agent settings are reached from the agent's detail panel on the
 Agents page.
+
+## Subscriptions (ChatGPT / Codex)
+
+**Update frequency:** the status of each agent is read live (about 0.5 s, on every request); the model list is cached 10 minutes; the usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s.
 
 ## Agent base image
 

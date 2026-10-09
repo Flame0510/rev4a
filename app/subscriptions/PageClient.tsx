@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Accordion, Button, Modal, Page, PageHeader, Pill, showToast } from '@/app/components/ui';
+import { Accordion, Button, ConfirmModal, Modal, Page, PageHeader, Pill, showToast } from '@/app/components/ui';
 import { Skeleton } from '@/app/components/Skeleton';
 import UsageBlock from './UsageBlock';
 import {
@@ -66,6 +66,11 @@ async function readJson<T>(res: Response): Promise<T> {
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 const formatContext = (n: number | null) => (n ? `${Math.round(n / 1000).toLocaleString()}k context` : '');
 const bare = (id: string) => id.replace(/^rev4a\//, '');
+/** The model an agent goes back to when it is disconnected: its first own fallback, or its own primary. */
+const ownModelName = (a: { primary: string | null; fallbacks: string[] }): string => {
+  const own = a.fallbacks.find((f) => !f.startsWith('openai/')) ?? (a.primary && !a.primary.startsWith('openai/') ? a.primary : null);
+  return own ? bare(own) : 'its own model';
+};
 const modelName = (id: string) => (id.startsWith('rev4a/') ? id.slice('rev4a/'.length) : id.replace(/^openai\//, ''));
 const JOB_PATH = '/api/subscriptions/openai/logout';
 
@@ -76,6 +81,8 @@ export default function SubscriptionsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({ [PROVIDER_ID]: true });
   const [connectAgent, setConnectAgent] = useState<string | null>(null);
+  /** The agent whose disconnect awaits the operator's confirmation. */
+  const [confirmDisconnect, setConfirmDisconnect] = useState<SubAgent | null>(null);
 
   // One AbortController per row for its status read, one per row for its job poll: a newer
   // request cancels the one still in flight (AGENTS.md §2.2b rule 9).
@@ -324,7 +331,7 @@ export default function SubscriptionsPageClient() {
                   row={rows[a.agentId] ?? EMPTY_ROW}
                   onConnect={() => setConnectAgent(a.agentId)}
                   onRetry={() => { void api.current.loadRow(a.agentId); }}
-                  onDisconnect={(s) => { void disconnect(s); }}
+                  onDisconnect={(s) => setConfirmDisconnect(s)}
                 />
               ))}
             </div>
@@ -337,6 +344,21 @@ export default function SubscriptionsPageClient() {
           </div>
         </Accordion>
       </div>
+
+      <ConfirmModal
+        open={!!confirmDisconnect}
+        onClose={() => setConfirmDisconnect(null)}
+        onConfirm={() => {
+          const target = confirmDisconnect;
+          setConfirmDisconnect(null);
+          if (target) void disconnect(target);
+        }}
+        title="Disconnect agent"
+        message={confirmDisconnect
+          ? `Disconnect ${confirmDisconnect.name}? It goes back to ${ownModelName(confirmDisconnect)} and signs out of ChatGPT. Connecting again needs a new code.`
+          : ''}
+        confirmLabel="Disconnect"
+      />
 
       {connectAgent && (
         <ConnectModal

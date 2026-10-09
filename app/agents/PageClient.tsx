@@ -18,6 +18,16 @@ import {
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
 } from '../components/Icons';
 
+/**
+ * The model as the agent card shows it. A ChatGPT subscription model (bare `openai/<id>`) reads
+ * "<id> · ChatGPT": some ids also exist as paid proxy models (`rev4a/openai/gpt-5.6-sol`), and the
+ * two would otherwise look identical. A proxy model loses its `rev4a/` prefix, as before.
+ */
+function modelLabel(ref: string): string {
+  if (ref.startsWith('openai/')) return `${ref.slice('openai/'.length)} · ChatGPT`;
+  return ref.replace(/^rev4a\//, '');
+}
+
 /** Section header with an identifying icon. `danger` switches to the red palette. */
 function SectionHeader({ icon, label, danger = false }: { icon: React.ReactNode; label: string; danger?: boolean }) {
   return (
@@ -230,17 +240,20 @@ function AgentListItem({
                    : m.health === 'disabled' ? 'NOT ENABLED'
                    : m.health === 'out-of-sync' ? 'OUT OF SYNC'
                    : m.health === 'deprecated' ? 'DEPRECATED'
-                   : m.health === 'subscription' ? 'CHATGPT SUBSCRIPTION'
+                   // Mirrors subscriptionChip() in lib/subscriptions-parse.js (tested there; that module
+                   // evaluates code at load and stays out of the browser bundle): a subscription primary
+                   // with no fallback goes silent at the usage limit, so it keeps the warning.
+                   : m.health === 'subscription' ? (m.fallbackCount === 0 ? 'NO FALLBACK' : null)
                    : m.fallbackCount === 0 ? 'NO FALLBACK' : null;
         return (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>
-              {m.primary.replace(/^rev4a\//, '')}
+              {modelLabel(m.primary)}
               {/* Only the first fallback: a list here would drown the row, and the
                   full set is editable in the detail panel anyway. */}
               {m.firstFallback && (
                 <span style={{ color: '#666' }}>
-                  {' ↳ '}{m.firstFallback.replace(/^rev4a\//, '')}
+                  {' ↳ '}{modelLabel(m.firstFallback)}
                   {m.fallbackCount > 1 && ` +${m.fallbackCount - 1}`}
                 </span>
               )}

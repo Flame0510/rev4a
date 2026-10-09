@@ -5,8 +5,11 @@
  * GET    ?agentId=         the job: state, link, code, expiry, email or error
  * DELETE ?agentId=         cancel it
  *
- * The job lives in memory (lib/subscription-login.ts). POST answers 409 when the agent is
- * busy, stopped, already connected or already has a login running.
+ * The job lives in memory (lib/subscription-login.ts). POST returns the running job with 200
+ * when the agent already has a login running (or one that just connected and is finishing), and
+ * 409 when the agent is busy, stopped, already connected or on an OpenClaw too old for
+ * subscriptions; 503 when its subscription status cannot be read. Every answer carries
+ * `Cache-Control: no-store`: the body holds the device code.
  */
 import { NextResponse } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
@@ -17,9 +20,15 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const NO_STORE = { 'Cache-Control': 'no-store' };
+
+function json(body: unknown, status = 200): NextResponse {
+  return NextResponse.json(body, { status, headers: NO_STORE });
+}
+
 function fail(e: unknown): NextResponse {
-  if (e instanceof SubscriptionError) return NextResponse.json({ error: e.message }, { status: e.status });
-  return NextResponse.json({ error: 'Subscription login failed' }, { status: 500 });
+  if (e instanceof SubscriptionError) return json({ error: e.message }, e.status);
+  return json({ error: 'Subscription login failed' }, 500);
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -27,7 +36,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (denied) return denied as any;
   try {
     const body = await request.json().catch(() => ({})) as { agentId?: unknown };
-    return NextResponse.json({ login: await startLogin(body.agentId) });
+    return json({ login: await startLogin(body.agentId) });
   } catch (e) {
     return fail(e);
   }
@@ -37,17 +46,17 @@ export async function GET(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied as any;
   const agentId = new URL(request.url).searchParams.get('agentId');
-  if (!agentId) return NextResponse.json({ error: 'agentId is required' }, { status: 400 });
-  return NextResponse.json({ login: getLogin(agentId) });
+  if (!agentId) return json({ error: 'agentId is required' }, 400);
+  return json({ login: getLogin(agentId) });
 }
 
 export async function DELETE(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied as any;
   const agentId = new URL(request.url).searchParams.get('agentId');
-  if (!agentId) return NextResponse.json({ error: 'agentId is required' }, { status: 400 });
+  if (!agentId) return json({ error: 'agentId is required' }, 400);
   try {
-    return NextResponse.json({ login: await cancelLogin(agentId) });
+    return json({ login: await cancelLogin(agentId) });
   } catch (e) {
     return fail(e);
   }

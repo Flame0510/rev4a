@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const {
   parseDeviceLogin, parseAuthList, parseModelList, stopSubscriptionModel,
   parseStatusJson, parseUsageStatus, formatPlan, mapStoreProfile, STATUS_SCRIPT_SRC,
+  loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef,
 } = require('../lib/subscriptions-parse.js');
 const { execFileSync } = require('node:child_process');
 const fsx = require('node:fs');
@@ -313,6 +314,45 @@ test('usage: clamps numbers, nulls bad dates, tolerates junk', () => {
   assert.deepEqual(parseUsageStatus('not json'), { accounts: [] });
   assert.deepEqual(parseUsageStatus(''), { accounts: [] });
   assert.deepEqual(parseUsageStatus(null), { accounts: [] });
+});
+
+// ---- review fixes ---------------------------------------------------------------------
+
+test('login deadline: 900 s login + 60 s readiness + 60 s tail', () => {
+  assert.equal(LOGIN_DEADLINE_S, 1020);
+  assert.equal(loginDeadlineAt(1000), 1000 + 1020 * 1000);
+});
+
+test('usage cache: a fresh result or failure is used, refresh and stale entries read', () => {
+  const ttl = 180_000;
+  assert.equal(usageCacheAction(undefined, 1000, false, ttl), 'read');
+  assert.equal(usageCacheAction({ at: 1000 }, 1000 + ttl - 1, false, ttl), 'use');
+  assert.equal(usageCacheAction({ at: 1000 }, 1000 + ttl, false, ttl), 'read');
+  assert.equal(usageCacheAction({ at: 1000 }, 1001, true, ttl), 'read');
+});
+
+test('chip: subscription primary without fallback warns, with fallbacks is neutral', () => {
+  assert.equal(subscriptionChip('openai/gpt-5.6-sol', 0), 'NO FALLBACK');
+  assert.equal(subscriptionChip('openai/gpt-5.6-sol', 2), null);
+  assert.equal(subscriptionChip('rev4a/openai/gpt-5.6-sol', 0), null);
+  assert.equal(subscriptionChip(null, 0), null);
+});
+
+test('revert: primary goes back to the first own fallback, subscription fallbacks dropped', () => {
+  const r = revertSubscriptionModel({ primary: 'openai/a', fallbacks: ['openai/b', 'rev4a/x', 'rev4a/y'] });
+  assert.deepEqual([r.stuck, r.changed, r.primary, r.fallbacks], [false, true, 'rev4a/x', ['rev4a/y']]);
+  assert.equal(revertSubscriptionModel({ primary: 'openai/a', fallbacks: [] }).stuck, true);
+  const home = revertSubscriptionModel({ primary: 'openai/a', fallbacks: ['openai/b'] }, 'rev4a/h');
+  assert.deepEqual([home.stuck, home.primary, home.fallbacks], [false, 'rev4a/h', []]);
+  const keep = revertSubscriptionModel({ primary: 'rev4a/x', fallbacks: ['rev4a/y'] });
+  assert.equal(keep.changed, false);
+  assert.equal(revertSubscriptionModel({ primary: 'rev4a/x', fallbacks: ['openai/a'] }).changed, true);
+});
+
+test('stored refs: bare openai/ and rev4a/ pass unchanged, others get the prefix', () => {
+  assert.equal(keepStoredRef('openai/gpt-5.6-sol'), 'openai/gpt-5.6-sol');
+  assert.equal(keepStoredRef('rev4a/openai/gpt-5.6-sol'), 'rev4a/openai/gpt-5.6-sol');
+  assert.equal(keepStoredRef('deepseek-flash'), 'rev4a/deepseek-flash');
 });
 
 console.log(`\n${n} tests passed`);

@@ -4,7 +4,7 @@
  * The usage limits of the connected ChatGPT accounts, at the top of the accordion body: one
  * block per account with a Meter for the 5-hour and the weekly window. The quota is the
  * account's (shared by every agent signed in with it and by the owner's own Codex use). It
- * loads apart from the agent rows (an OpenClaw CLI call, about 7 s, cached 3 minutes).
+ * loads apart from the agent rows (an OpenClaw CLI call, 11 to 50 s on a slow host, cached 3 minutes).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -24,39 +24,51 @@ export default function UsageBlock({ emails, fallbackName }: {
 }) {
   const [data, setData] = useState<UsageResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  /** The email of the account whose Refresh is running (one key, not one shared flag). */
+  const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
+  const refreshingRef = useRef<string | null>(null);
   const [failed, setFailed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const key = emails.join('\n');
 
   // `background`: the periodic refresh — no skeleton, no spinner, and a failure keeps what is shown.
-  const load = useCallback(async (refresh: boolean, background = false) => {
+  // `refreshEmail`: the Refresh of one account — it bypasses the server cache for that account only.
+  const load = useCallback(async (refreshEmail: string | null, background = false) => {
+    if (background && refreshingRef.current) return; // never abort a running Refresh
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     if (!background) {
-      if (refresh) setRefreshing(true); else setLoading(true);
+      if (refreshEmail) { refreshingRef.current = refreshEmail; setRefreshingKey(refreshEmail); } else setLoading(true);
       setFailed(false);
     }
     try {
-      const res = await fetch(`/api/subscriptions/usage${refresh ? '?refresh=1' : ''}`, { signal: controller.signal });
+      const url = refreshEmail ? `/api/subscriptions/usage?refresh=1&email=${encodeURIComponent(refreshEmail)}` : '/api/subscriptions/usage';
+      const res = await fetch(url, { signal: controller.signal });
       const json = (await res.json().catch(() => ({}))) as Partial<UsageResponse>;
       if (!res.ok) throw new Error('unavailable');
-      setData({ accounts: json.accounts ?? [], errors: json.errors ?? [] });
+      const next: UsageResponse = { accounts: json.accounts ?? [], errors: json.errors ?? [] };
+      // A one-account refresh replaces only that account's entry and error.
+      setData((prev) => (refreshEmail && prev
+        ? {
+            accounts: [...prev.accounts.filter((x) => x.email !== refreshEmail), ...next.accounts].sort((x, y) => (x.email ?? '').localeCompare(y.email ?? '')),
+            errors: [...prev.errors.filter((x) => x.email !== refreshEmail), ...next.errors],
+          }
+        : next));
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') return;
       if (!background) setFailed(true);
     }
-    if (abortRef.current === controller) { setLoading(false); setRefreshing(false); }
+    if (abortRef.current === controller) { setLoading(false); refreshingRef.current = null; setRefreshingKey(null); }
   }, []);
 
   useEffect(() => {
     if (!key) { setData(null); return; }
-    void load(false);
+    void load(null);
     // Every minute while the page is visible, and at once when the tab comes back. The server
-    // reads OpenClaw at most every 3 minutes (its cache), so this costs the agents nothing.
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(false, true); }, AUTO_REFRESH_MS);
-    const onVisible = () => { if (document.visibilityState === 'visible') void load(false, true); };
+    // reads OpenClaw at most every 3 minutes per account (its cache, failures too), so this costs the agents nothing.
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(null, true); }, AUTO_REFRESH_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') void load(null, true); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       clearInterval(timer);
@@ -83,13 +95,13 @@ export default function UsageBlock({ emails, fallbackName }: {
       {failed && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, color: 'var(--red)' }}>
           Could not read the usage limits.
-          <Button variant="secondary" size="sm" loading={loading} onClick={() => { void load(false); }}>
+          <Button variant="secondary" size="sm" loading={loading} onClick={() => { void load(null); }}>
             {loading ? 'Retrying…' : 'Retry'}
           </Button>
         </div>
       )}
       {shown.map((a) => (
-        <AccountUsage key={a.email} account={a} fallbackName={fallbackName} refreshing={refreshing} onRefresh={() => { void load(true); }} />
+        <AccountUsage key={a.email} account={a} fallbackName={fallbackName} refreshing={refreshingKey === a.email} disabled={refreshingKey !== null} onRefresh={() => { void load(a.email); }} />
       ))}
       {errors.map((e) => (
         <div key={e.email ?? e.message} style={{ fontSize: 12, color: 'var(--red)' }}>
@@ -100,10 +112,12 @@ export default function UsageBlock({ emails, fallbackName }: {
   );
 }
 
-function AccountUsage({ account, fallbackName, refreshing, onRefresh }: {
+function AccountUsage({ account, fallbackName, refreshing, disabled, onRefresh }: {
   account: UsageAccount;
   fallbackName: string | null;
   refreshing: boolean;
+  /** Another account's Refresh is running. */
+  disabled: boolean;
   onRefresh: () => void;
 }) {
   const reached = reachedWindow(account);
@@ -113,7 +127,7 @@ function AccountUsage({ account, fallbackName, refreshing, onRefresh }: {
         <div style={{ fontSize: 12, fontWeight: 600 }}>{account.email}{account.plan ? ` · ${account.plan}` : ''}</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: DIM }}>{agoText(account.updatedAt)}</span>
-          <Button variant="secondary" size="sm" loading={refreshing} onClick={onRefresh}>
+          <Button variant="secondary" size="sm" loading={refreshing} disabled={disabled} onClick={onRefresh}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>

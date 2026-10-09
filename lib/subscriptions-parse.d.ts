@@ -77,3 +77,14 @@ export interface UsageAccount {
 }
 
 export function parseUsageStatus(text: unknown): { accounts: UsageAccount[] };
+
+/** Seconds after its start a login job that has not finished counts as expired. */
+export const LOGIN_DEADLINE_S: number;
+export function loginDeadlineAt(startedAt: number): number;
+export function usageCacheAction(entry: { at: number } | null | undefined, now: number, refresh: boolean, ttlMs: number): 'use' | 'read';
+export function subscriptionChip(primary: string | null | undefined, fallbackCount: number): 'NO FALLBACK' | null;
+export function revertSubscriptionModel(
+  model: AgentModelRef,
+  homePrimary?: string | null,
+): { stuck: boolean; changed: boolean; primary: string | null; fallbacks: string[] };
+export function keepStoredRef(id: string): string;

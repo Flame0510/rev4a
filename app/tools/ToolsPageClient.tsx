@@ -213,7 +213,7 @@ export default function ToolsPageClient({ initialAudio = {}, initialTimezone = '
                   <div style={formGridStyle}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <label style={fieldLabelStyle}>Time zone</label>
-                      <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, background: undefined, backgroundColor: 'var(--input)', cursor: 'pointer' }} className="ui-select">
+                      <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, padding: '7px 36px 7px 10px', background: undefined, backgroundColor: 'var(--input)', cursor: 'pointer' }} className="ui-select">
                         {TIMEZONE_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                       </select>
                     </div>

@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-08
+> **Last updated:** 2026-10-09
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -212,6 +212,10 @@ Update the primary model and fallbacks of a single agent container.
 ```
 `fallbacks` omitted and `fallbacks: []` are different requests. Omitted leaves the
 container's existing fallbacks untouched; `[]` clears them.
+
+A model id sent as `subscription:openai/<id>` is a ChatGPT subscription model, stored as a bare
+`openai/<id>`; see [`PUT /api/gateway/agent` and subscription models](#put-apigatewayagent-and-subscription-models)
+for the mark, its checks (409 when the agent has no ChatGPT sign-in) and what happens to stored fallbacks.
 
 `containerName` is used verbatim as the `docker exec` target, not resolved from the
 `AGENT_ID` label. Every container's name currently equals its label, so an agent id
@@ -2849,7 +2853,7 @@ valid session, has the secrets in the clear.
 
 ChatGPT (Codex) accounts per agent. The OAuth profile lives in the agent's volume; Rev4a stores nothing. All routes need auth; mutating routes answer **409** when the agent is busy (update, recreate, restore, edit, backup, a subscription login or a subscription disconnect running), stopped, or already doing a subscription change. A login that is starting or waiting keeps the agent busy for up to the 15-minute code lifetime: stop, start, restart, recreate, update, edit, model save and token rotation answer 409 (or skip the agent) until the login ends or is cancelled.
 
-Status is read with **one `docker exec <container> node -e <script>`** inside the agent (about 0.5 s): the script opens `~/.openclaw/state/openclaw.sqlite` read-only, reads the `authProfiles.store` row and `agents.defaults.model` from `openclaw.json`, and prints one JSON line with only `id, type, provider, email, expiresAt, plan` per profile and the model. `access`, `refresh` and `accountId` are never copied: the tokens do not leave the container. An agent whose layout it does not know (no `node:sqlite`, no state database, no profile table) falls back to the `openclaw` CLI for that agent (about 7 s: every CLI call boots all plugins). The page therefore loads in steps: the agent list, then one status per row in parallel, then the models.
+Status is read with **one `docker exec <container> node -e <script>`** inside the agent (about 0.5 s): the script opens `~/.openclaw/state/openclaw.sqlite` read-only, reads the `authProfiles.store` row and `agents.defaults.model` from `openclaw.json`, and prints one JSON line with only `id, type, provider, email, expiresAt, plan` per profile and the model. `access`, `refresh` and `accountId` are never copied: the tokens do not leave the container. An agent whose layout it does not know (no `node:sqlite`, no state database, no profile table) falls back to the `openclaw` CLI for that agent (about 7 s: every CLI call boots all plugins). The page therefore loads in steps: the agent list, then one status per row in parallel, then the models. The container list behind these routes is cached 5 s, and the email-to-agent lookup used by the models and usage reads 60 s (dropped by a connect or disconnect).
 
 ### `GET /api/subscriptions`
 The agent list, at once, from docker ps and inspect only (no exec into any agent). **Response:** `{ providers: [{ id: "openai", name: "ChatGPT (Codex)", agents: [{ agentId, name, container, running }] }] }`. `name` is the agent's display name (its `AGENT_NAME`); `container` is the container name.
@@ -2858,28 +2862,28 @@ The agent list, at once, from docker ps and inspect only (no exec into any agent
 One agent's status, read live with the fast read. **Response:** `{ agent: { agentId, name, container, running, connected, email, plan, expiresAt, usesSubscription, primary, fallbacks, error }, action }`. `plan` is the ChatGPT plan, capitalised ("Plus", "Pro"), null when unknown. `action` is the agent's running or last disconnect job (or null), so a reloaded page resumes a running one. A stopped agent has `running: false` and unknown status.
 
 ### `GET /api/subscriptions/models`
-**Response:** `{ models: [{ key, name, contextWindow }], error }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a disconnect; finding a connected agent uses the fast status read.
+**Response:** `{ models: [{ key, name, contextWindow }], error }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached fast status read only (an agent on the old layout cannot be a source).
 
 ### `GET /api/subscriptions/usage`
-**Query:** `email=<account>` for one account, `refresh=1` to bypass the cache. **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is "5h" or "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json`, about 7 s) and cached 3 minutes per account (dropped by a connect or disconnect). One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
+**Query:** `email=<account>` for one account, `refresh=1` to bypass the cache. **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is OpenClaw's own label, seen as "5h" and "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json` under an in-container `timeout 120`; 11 to 50 s on a slow host) and cached 3 minutes per account, failures included, so the next refresh does not start another CLI. A connect or disconnect does not drop this cache; `refresh=1` is the only way to force a read. One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
 
 ### `POST /api/subscriptions/openai/login`
-**Body:** `{ "agentId": "atlas" }`. Starts the device-code login (waits for the agent's Gateway to be ready, then runs `openclaw models auth login --provider openai --device-code` inside the container). **Response:** `{ login }` with `state` `starting`. 409 when the agent is stopped, busy or already connected. When a login is already running for the agent, the same `{ login }` is returned with 200 (a second tab or a reopened dialog resumes it).
+**Body:** `{ "agentId": "atlas" }`. Starts the device-code login (waits for the agent's Gateway to be ready, then runs `openclaw models auth login --provider openai --device-code` inside the container). **Response:** `{ login }` with `state` `starting`. 409 when the agent is stopped, busy, already connected, or on an OpenClaw too old for subscriptions; 503 when its subscription status cannot be read. Every login answer carries `Cache-Control: no-store` (the body holds the device code). When a login is already running for the agent, the same `{ login }` is returned with 200 (a second tab or a reopened dialog resumes it), also for a login that has just connected and whose CLI is still finishing. `expiresAt` in the login is epoch milliseconds. A busy login lasts at most 60 s readiness + 900 s + 60 s tail; after 1020 s the job counts as expired.
 
 ### `GET /api/subscriptions/openai/login?agentId=<id>`
 **Response:** `{ login }`, or `{ login: null }` when there is none: `{ agentId, state, url, code, expiresAt, email, error }`, `state` one of `starting`, `waiting`, `connected`, `failed`, `expired`, `cancelled`. The job is in memory; a dashboard restart loses it.
 
 ### `DELETE /api/subscriptions/openai/login?agentId=<id>`
-Cancels the login, including the process inside the container.
+Cancels the login, including the process inside the container. **Response:** `{ login }` with the job as it stands (`cancelled`, or its final state if it had already ended), `{ login: null }` when there is none.
 
 ### `POST /api/subscriptions/openai/logout`
-**Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202** `{ job }` at once. The job puts the agent back on its own model if it uses the subscription, drops the remaining `openai/*` fallbacks, then runs `openclaw models auth logout <profile> --yes` for every ChatGPT (OAuth) profile; an API-key `openai:` profile is left alone. It fails (`failed` with an `error`) when the agent uses the subscription model and has no model of its own to go back to. 409 when the agent is stopped, busy or already has a subscription change running.
+**Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202** `{ job }` at once. The job puts the agent back on its own model if it uses the subscription, drops the remaining `openai/*` fallbacks, also reverts a subscription model in the `main` entry of `agents.list`, then runs `timeout 60 openclaw models auth logout <profile> --yes` for every ChatGPT (OAuth) profile and reads the profiles back (the job fails with "The sign-out did not complete. Try again." if one remains); an API-key `openai:` profile is left alone. It fails (`failed` with an `error`) when the agent uses the subscription model and has no model of its own to go back to. 409 when the agent is stopped, busy or already has a subscription change running.
 
 ### `GET /api/subscriptions/openai/logout?agentId=<id>`
 **Response:** `{ job }`, `{ job: null }` when there is none: `{ agentId, kind: "logout", state, error }`, `state` `running` then `done` or `failed`. In memory, one per agent, kept 30 minutes after it ends; while it runs the agent counts as busy.
 
 ### `PUT /api/gateway/agent` and subscription models
-A model id sent as `subscription:openai/<id>` is stored as the bare `openai/<id>` (a subscription model); without the prefix every id still gets `rev4a/`, so a Rev4a catalogue model named `openai/…` stays `rev4a/openai/…`. A marked id must match `subscription:openai/[A-Za-z0-9._-]+`, otherwise `400`.
+A model id sent as `subscription:openai/<id>` is stored as the bare `openai/<id>` (a subscription model); without the prefix every id still gets `rev4a/`, so a Rev4a catalogue model named `openai/…` stays `rev4a/openai/…`. A marked id must match `subscription:openai/[A-Za-z0-9._-]+`, otherwise `400`. When the body carries any marked id the route reads the agent's ChatGPT sign-in first: `409` "This agent is not connected to a ChatGPT subscription." if there is none, `503` if the status cannot be read. When `fallbacks` is omitted the stored ones are kept as they are (a stored bare `openai/<id>` is not re-prefixed). A primary or fallback can therefore be a bare `openai/<id>` subscription model; the agent list shows it as "<id> · ChatGPT", with the `NO FALLBACK` warning when it has no fallback.
 
 There is no route that chooses a subscription model: the agent's model (primary and fallbacks) is chosen in one place, the MODEL section of the agent panel, which sends `PUT /api/gateway/agent` with `{ containerName, model, fallbacks }`. Each of `model` and the entries of `fallbacks` is either a Rev4a catalogue id (stored as `rev4a/<id>`) or a `subscription:openai/<id>` mark (stored as the bare `openai/<id>`), in any combination. The MODEL section reads the agent's connection from `GET /api/subscriptions?agentId=` and the models from `GET /api/subscriptions/models`, and offers the second group only when the agent is connected.
 

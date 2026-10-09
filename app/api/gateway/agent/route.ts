@@ -6,11 +6,16 @@
  *
  * Body:
  *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
+ *
+ * A reference marked `subscription:openai/<id>` is a ChatGPT subscription model, stored as the
+ * bare `openai/<id>`; the route answers 409 when the agent has no ChatGPT sign-in.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { execSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { readFastStatus } from '@/lib/subscriptions';
+import { keepStoredRef } from '@/lib/subscriptions-parse';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -78,7 +83,8 @@ function readFileFromContainer(container: string, remotePath: string): string {
 function existingFallbacks(model: unknown): string[] {
   if (model && typeof model === 'object') {
     const f = (model as { fallbacks?: unknown }).fallbacks;
-    if (Array.isArray(f)) return f.filter((x): x is string => typeof x === 'string');
+    // Stored refs: a bare `openai/<id>` is a subscription model and must not gain the `rev4a/` prefix.
+    if (Array.isArray(f)) return f.filter((x): x is string => typeof x === 'string').map(keepStoredRef);
   }
   return [];
 }
@@ -119,6 +125,17 @@ export async function PUT(request: NextRequest) {
       }
     } catch { /* no container or no label: the rest of the route reports it */ }
 
+    // A subscription model needs a ChatGPT sign-in on this agent: without one the next turn fails.
+    if (refs.some((r) => typeof r === 'string' && r.startsWith(SUBSCRIPTION_MARK))) {
+      const read = await readFastStatus(safeContainer);
+      if (read.status === 'failed') {
+        return NextResponse.json({ status: 'error', error: "Could not read this agent's subscription status. Try again." }, { status: 503 });
+      }
+      if (read.status === 'legacy' || read.state.profiles.length === 0) {
+        return NextResponse.json({ status: 'error', error: 'This agent is not connected to a ChatGPT subscription.' }, { status: 409 });
+      }
+    }
+
     // Read current config
     const raw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
     if (!raw) {
@@ -143,7 +160,7 @@ export async function PUT(request: NextRequest) {
     const mainAgent = list.find((a) => a.id === 'main');
     if (mainAgent) {
       const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks ?? existingFallbacks(mainAgent.model)));
+      let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(mainAgent.model));
       // The primary never doubles as its own fallback.
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       mainAgent.model = {
@@ -155,7 +172,7 @@ export async function PUT(request: NextRequest) {
     const defaults = (agents.defaults || {}) as Record<string, unknown>;
     {
       const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(ensureRev4aPrefixes(body.fallbacks ?? existingFallbacks(defaults.model)));
+      let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(defaults.model));
       fallbacks = fallbacks.filter((fb) => fb !== primary);
       defaults.model = {
         primary,

@@ -7,16 +7,19 @@
  * line; lib/subscriptions-parse.js turns it into a link, a code and an outcome.
  *
  * One job per agent. A dashboard restart loses the job (the operator starts again); the
- * in-container `timeout` bounds the orphaned process. The OpenAI link and code are shown
+ * in-container `timeout` bounds the orphaned process. A job that has not finished
+ * `LOGIN_DEADLINE_S` seconds after it started (readiness wait + the login's own limit + a
+ * tail) counts as expired, so a paused container or a hung `docker exec` cannot keep the agent
+ * busy forever. The OpenAI link and code are shown
  * to the operator and never logged.
  */
 import { spawn, type ChildProcess } from 'child_process';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { dockerExecNoFail } from '@/lib/docker-exec';
 import { resolveDockerSocket } from '@/lib/docker-socket';
-import { parseDeviceLogin } from '@/lib/subscriptions-parse';
+import { loginDeadlineAt, parseDeviceLogin } from '@/lib/subscriptions-parse';
 import { isValidAgentId } from '@/lib/container';
-import { SubscriptionError, findAgentContainer, invalidateSubscriptions, readProfiles, withAgentLock } from '@/lib/subscriptions';
+import { SubscriptionError, findAgentContainer, invalidateSubscriptions, readFastStatus, readProfiles, withAgentLock } from '@/lib/subscriptions';
 
 export type LoginState = 'starting' | 'waiting' | 'connected' | 'failed' | 'expired' | 'cancelled';
 
@@ -70,7 +73,16 @@ const ACTIVE: readonly LoginState[] = ['starting', 'waiting'];
 /** Whether a login for this agent is in progress (read by lib/agent-busy.ts). */
 export function isLoginActive(agentId: string): boolean {
   const j = jobs().get(agentId);
-  return !!j && (ACTIVE.includes(j.state) || loginFinishing(j));
+  if (!j) return false;
+  if (expireIfOverdue(j)) return false;
+  return ACTIVE.includes(j.state) || loginFinishing(j);
+}
+
+/** A job past its deadline is finished as expired (and its process killed, best effort). True when it was. */
+function expireIfOverdue(j: Job): boolean {
+  if (!ACTIVE.includes(j.state) || Date.now() <= loginDeadlineAt(j.startedAt)) return false;
+  void cancelLogin(j.agentId, 'expired').catch(() => { /* best effort */ });
+  return true;
 }
 
 /** Connected early, but the CLI is still writing the agent's config before it exits (bounded). */
@@ -222,7 +234,11 @@ async function settle(j: Job, code: number | null): Promise<void> {
 export async function startLogin(agentId: unknown): Promise<LoginView> {
   if (typeof agentId !== 'string' || !isValidAgentId(agentId)) throw new SubscriptionError(400, 'Invalid agent id');
   const running = jobs().get(agentId);
+  if (running) expireIfOverdue(running);
   if (running && ACTIVE.includes(running.state)) return view(running);
+  // Connected, but the CLI is still finishing: that job is the answer, not a new login.
+  // Only the bounded tail (loginFinishing): a CLI that never exits must not hide a new login forever.
+  if (running && loginFinishing(running)) return view(running);
 
   prune();
   const j: Job = {
@@ -232,9 +248,10 @@ export async function startLogin(agentId: unknown): Promise<LoginView> {
   jobs().set(agentId, j);
   let started = false;
   try {
-    // The same lock as a model change and a disconnect: a login cannot overlap them.
+    // The per-agent lock of a disconnect, held only while the login starts (the checks and the spawn), not
+    // for its whole run: while it runs, agent-busy keeps a disconnect, a recreate or an update out.
     await withAgentLock(agentId, async () => {
-      const a = await findAgentContainer(agentId);
+      const a = await findAgentContainer(agentId, { fresh: true });
       if (!a.running) throw new SubscriptionError(409, 'The agent is stopped. Start it first.');
 
       // Lazy: lib/agent-busy.ts imports this module for isLoginActive.
@@ -243,8 +260,12 @@ export async function startLogin(agentId: unknown): Promise<LoginView> {
       const busy = await agentBusyReason(a.agentId, { ignoreLogin: true });
       if (busy) throw new SubscriptionError(409, busy);
 
-      const profiles = await readProfiles(a.container).catch(() => []);
-      if (profiles.length > 0) throw new SubscriptionError(409, 'This agent is already connected. Disconnect it first to use another account.');
+      // The fast read only: a failed read is never "not connected", and the old layout has no
+      // profile table (the startup sync removes its `auth-profiles.json`), so it cannot connect.
+      const read = await readFastStatus(a.container);
+      if (read.status === 'failed') throw new SubscriptionError(503, "Could not read this agent's subscription status. Try again.");
+      if (read.status === 'legacy') throw new SubscriptionError(409, "This agent's OpenClaw is too old for subscriptions. Update the agent first.");
+      if (read.state.profiles.length > 0) throw new SubscriptionError(409, 'This agent is already connected. Disconnect it first to use another account.');
 
       if (j.cancelled || !ACTIVE.includes(j.state)) return;
       j.container = a.container;
@@ -261,6 +282,7 @@ export async function startLogin(agentId: unknown): Promise<LoginView> {
 export function getLogin(agentId: string): LoginView | null {
   const j = jobs().get(agentId);
   if (!j) return null;
+  expireIfOverdue(j);
   // A code that ran out while the process is still waiting.
   if (j.state === 'waiting' && j.expiresAt && Date.now() > j.expiresAt + 30_000) {
     void cancelLogin(agentId, 'expired');

@@ -13,7 +13,9 @@
  *   config patch --stdin                     `agents.defaults.model` only
  *
  * The model is read first (fast read), written, and read back; a config that cannot be read
- * is never written over. Status is not cached: every row of the page reads its own agent.
+ * is never written over. Per-agent status is not cached: every row of the page reads its own agent.
+ * The container list is cached 5 s (N parallel row reads share one `docker ps`) and the
+ * email -> container map used to find a source agent per account 60 s.
  */
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -24,7 +26,7 @@ import {
   parseModelList,
   parseStatusJson,
   STATUS_SCRIPT_SRC,
-  stopSubscriptionModel,
+  revertSubscriptionModel,
   isSubscriptionModel,
   normalizeModel,
   type AuthProfile,
@@ -41,6 +43,9 @@ const CONFIG_PATH = '/root/.openclaw/openclaw.json';
 const MODELS_TTL_MS = 10 * 60_000;
 const CLI_TIMEOUT_MS = 25_000;
 const CONCURRENCY = 4;
+const CONTAINERS_TTL_MS = 5_000;
+const SOURCES_TTL_MS = 60_000;
+const LOGOUT_TIMEOUT_S = 60;
 
 /** An error that carries the HTTP status a route should answer with. */
 export class SubscriptionError extends Error {
@@ -83,8 +88,36 @@ export interface ProviderListView {
   agents: { agentId: string; name: string; container: string; running: boolean }[];
 }
 
-/** Every agent container, through one `docker ps`. A running container wins over a stopped twin. */
-export async function listAgentContainers(): Promise<AgentContainer[]> {
+interface ContainersCache {
+  at: number;
+  rows: AgentContainer[];
+}
+const cg = globalThis as unknown as {
+  __rev4aSubContainers?: ContainersCache;
+  __rev4aSubContainersInflight?: Promise<AgentContainer[]>;
+};
+
+/**
+ * Every agent container, through one `docker ps` and one `docker inspect`. A running container
+ * wins over a stopped twin. Cached for 5 s, and concurrent callers share one read, so the N
+ * parallel row reads of the page do not run N pairs. `fresh` skips the cache (a mutation about
+ * to act on the container).
+ */
+export async function listAgentContainers(opts: { fresh?: boolean } = {}): Promise<AgentContainer[]> {
+  const hit = cg.__rev4aSubContainers;
+  if (!opts.fresh && hit && Date.now() - hit.at < CONTAINERS_TTL_MS) return hit.rows;
+  if (!opts.fresh && cg.__rev4aSubContainersInflight) return cg.__rev4aSubContainersInflight;
+  const p = readAgentContainers()
+    .then((rows) => {
+      cg.__rev4aSubContainers = { at: Date.now(), rows };
+      return rows;
+    })
+    .finally(() => { if (cg.__rev4aSubContainersInflight === p) cg.__rev4aSubContainersInflight = undefined; });
+  if (!opts.fresh) cg.__rev4aSubContainersInflight = p;
+  return p;
+}
+
+async function readAgentContainers(): Promise<AgentContainer[]> {
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync(
@@ -128,9 +161,9 @@ export async function listAgentContainers(): Promise<AgentContainer[]> {
   return rows.sort((a, b) => (a.displayName || a.agentId).localeCompare(b.displayName || b.agentId));
 }
 
-export async function findAgentContainer(agentId: unknown): Promise<AgentContainer> {
+export async function findAgentContainer(agentId: unknown, opts: { fresh?: boolean } = {}): Promise<AgentContainer> {
   if (typeof agentId !== 'string' || !isValidAgentId(agentId)) throw new SubscriptionError(400, 'Invalid agent id');
-  const found = (await listAgentContainers()).find((a) => a.agentId === agentId);
+  const found = (await listAgentContainers(opts)).find((a) => a.agentId === agentId);
   if (!found) throw new SubscriptionError(404, `No container found with AGENT_ID '${agentId}'`);
   return found;
 }
@@ -170,16 +203,26 @@ export interface AgentState {
 
 const isChatgptProfile = (p: { id: string; type: string | null }): boolean => p.id.startsWith(`${PROVIDER_ID}:`) && p.type === 'oauth';
 
-async function readStateFast(container: string): Promise<AgentState | null> {
+/** The fast read's answer: the state, "this agent has the old layout", or "could not read". */
+export type FastRead = { status: 'ok'; state: AgentState } | { status: 'legacy' } | { status: 'failed' };
+
+/** The fast status read alone (about 0.5 s), with no CLI fallback. */
+export async function readFastStatus(container: string): Promise<FastRead> {
   let out: string;
   try {
     out = await dockerExec(container, ['node', '-e', STATUS_SCRIPT], { timeoutMs: 12_000 });
   } catch {
-    return null;
+    return { status: 'failed' };
   }
   const s = parseStatusJson(out);
-  if (!s || s.legacy) return null;
-  return { profiles: s.profiles.filter(isChatgptProfile), model: s.error ? null : s.model };
+  if (!s) return { status: 'failed' };
+  if (s.legacy) return { status: 'legacy' };
+  return { status: 'ok', state: { profiles: s.profiles.filter(isChatgptProfile), model: s.error ? null : s.model } };
+}
+
+async function readStateFast(container: string): Promise<AgentState | null> {
+  const r = await readFastStatus(container);
+  return r.status === 'ok' ? r.state : null;
 }
 
 /** The slow path for an agent whose layout the fast read does not know: two OpenClaw CLI calls. */
@@ -253,6 +296,16 @@ async function writeDefaultModel(container: string, model: { primary: string | n
 
 // ---- per-agent status and models --------------------------------------------------------
 
+export interface SourceAgent {
+  container: string;
+  name: string;
+}
+interface SourcesCache {
+  at: number;
+  gen: number;
+  sources: Map<string, SourceAgent>;
+}
+
 interface ModelsCache {
   at: number;
   models: SubscriptionModel[];
@@ -261,18 +314,25 @@ const g = globalThis as unknown as {
   __rev4aSubGen?: number;
   __rev4aSubModels?: Map<string, ModelsCache>;
   __rev4aSubMutating?: Set<string>;
+  __rev4aSubSources?: SourcesCache;
+  __rev4aSubSourcesInflight?: Promise<Map<string, SourceAgent>>;
 };
 const generation = (): number => (g.__rev4aSubGen ??= 0);
 const modelsCache = (): Map<string, ModelsCache> => (g.__rev4aSubModels ??= new Map());
 
 /**
- * Drop the cached model lists: called after a connect or disconnect (a different account may
- * now be signed in). The generation counter keeps a read that started before this call from
- * writing its stale result back. Status itself is not cached: the fast read is cheap.
+ * Drop the cached model lists and the email -> container map: called after a connect or
+ * disconnect (a different account may now be signed in). The generation counter keeps a read
+ * that started before this call from writing its stale result back. Status itself is not
+ * cached: the fast read is cheap. The usage cache (lib/subscription-usage.ts) is NOT dropped:
+ * the quota belongs to the account, which a connect or disconnect does not change; a result
+ * read before this call is merely not stored (it uses the same counter).
  */
 export function invalidateSubscriptions(): void {
   g.__rev4aSubGen = generation() + 1;
   modelsCache().clear();
+  g.__rev4aSubSources = undefined;
+  g.__rev4aSubSourcesInflight = undefined;
 }
 
 function emptyStatus(a: AgentContainer): AgentSubscription {
@@ -349,28 +409,51 @@ async function readAccountModels(container: string, email: string | null): Promi
   return models;
 }
 
+async function discoverSources(): Promise<Map<string, SourceAgent>> {
+  const gen = generation();
+  const running = (await listAgentContainers()).filter((a) => a.running);
+  // The fast read only: an agent whose fast read is legacy cannot be a source (no CLI fallback here).
+  const found = await mapWithConcurrency(running, CONCURRENCY, async (a) => {
+    const r = await readFastStatus(a.container);
+    if (r.status !== 'ok') return [];
+    return r.state.profiles.map((p) => ({ email: p.email ?? '', container: a.container, name: a.displayName || a.agentId }));
+  });
+  const sources = new Map<string, SourceAgent>();
+  for (const list of found) {
+    for (const s of list) if (!sources.has(s.email)) sources.set(s.email, { container: s.container, name: s.name });
+  }
+  if (generation() === gen) {
+    g.__rev4aSubSources = { at: Date.now(), gen, sources };
+  }
+  return sources;
+}
+
+/**
+ * One running connected agent per account email ('' for a profile without an email), from the
+ * fast status read. Cached 60 s; a connect or disconnect drops it, and a read that started
+ * before that is not stored. Concurrent callers share one discovery.
+ */
+export async function findAccountSources(): Promise<Map<string, SourceAgent>> {
+  const hit = g.__rev4aSubSources;
+  if (hit && hit.gen === generation() && Date.now() - hit.at < SOURCES_TTL_MS) return hit.sources;
+  const pending = g.__rev4aSubSourcesInflight;
+  if (pending) return pending;
+  const p = discoverSources().finally(() => { if (g.__rev4aSubSourcesInflight === p) g.__rev4aSubSourcesInflight = undefined; });
+  g.__rev4aSubSourcesInflight = p;
+  return p;
+}
+
 /**
  * The models the connected accounts offer (one CLI read per distinct account, cached 10 min),
- * merged by model id. Finding a connected agent per account uses the fast status read.
+ * merged by model id. Finding a connected agent per account uses the cached fast discovery.
  */
 export async function getSubscriptionModels(): Promise<{ models: SubscriptionModel[]; error: string | null }> {
-  const running = (await listAgentContainers()).filter((a) => a.running);
-  const states = await mapWithConcurrency(running, CONCURRENCY, async (a) => {
-    try {
-      const s = await readAgentState(a.container);
-      const best = [...s.profiles].sort((x, y) => (y.expiresAt ?? '').localeCompare(x.expiresAt ?? ''))[0];
-      return best ? { container: a.container, email: best.email } : null;
-    } catch {
-      return null;
-    }
-  });
-  const sources = new Map<string, string>();
-  for (const s of states) if (s && !sources.has(s.email ?? '')) sources.set(s.email ?? '', s.container);
+  const sources = await findAccountSources();
   if (sources.size === 0) return { models: [], error: null };
   let failed = false;
-  const lists = await Promise.all([...sources].map(async ([email, container]) => {
+  const lists = await Promise.all([...sources].map(async ([email, src]) => {
     try {
-      return await readAccountModels(container, email || null);
+      return await readAccountModels(src.container, email || null);
     } catch {
       failed = true;
       return [] as SubscriptionModel[];
@@ -399,30 +482,69 @@ export async function withAgentLock<T>(agentId: string, fn: () => Promise<T>): P
 }
 
 async function requireRunning(agentId: unknown): Promise<AgentContainer> {
-  const a = await findAgentContainer(agentId);
+  const a = await findAgentContainer(agentId, { fresh: true });
   if (!a.running) throw new SubscriptionError(409, 'The agent is stopped. Start it first.');
   return a;
 }
 
+/** The `agents.list` of the agent's configuration, or null when it cannot be read or has none. */
+async function readAgentList(container: string): Promise<Record<string, unknown>[] | null> {
+  const raw = await dockerExecNoFail(container, ['cat', CONFIG_PATH], { timeoutMs: 8000 });
+  if (!raw.trim()) return null;
+  try {
+    const list = (JSON.parse(raw) as { agents?: { list?: unknown } }).agents?.list;
+    return Array.isArray(list) ? (list as Record<string, unknown>[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Stop using the subscription model, drop the `openai/*` fallbacks that remain, then sign the
- * agent out of every ChatGPT (OAuth) profile. An API-key `openai:` profile is left alone.
+ * Put `model` on the `id: main` entry of `agents.list`. The patch carries the whole list (an
+ * array is replaced as a whole), read just before, with only that entry's model changed.
+ */
+async function writeMainModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
+  const list = await readAgentList(container);
+  const main = list?.find((e) => e && e.id === 'main');
+  if (!list || !main) throw new SubscriptionError(502, 'Could not read the agent configuration.');
+  // Like writeDefaultModel: a null primary is left out (an entry with only fallbacks keeps that
+  // shape) instead of being written as an explicit null.
+  const entryModel = model.primary === null ? { fallbacks: model.fallbacks } : { primary: model.primary, fallbacks: model.fallbacks };
+  const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
+  try {
+    await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: 30_000 });
+  } catch {
+    throw new SubscriptionError(502, 'The agent refused the model change.');
+  }
+  const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
+  if (!after || !sameModel(after.model as AgentModelRef, model)) {
+    throw new SubscriptionError(502, 'The model change did not apply as expected. Check the agent panel.');
+  }
+}
+
+/**
+ * Stop using the subscription model (in `agents.defaults.model` and in the `main` entry of
+ * `agents.list`, which the model panel writes too), drop the `openai/*` fallbacks that remain,
+ * then sign the agent out of every ChatGPT (OAuth) profile and check the profiles are gone.
+ * An API-key `openai:` profile is left alone.
  */
 export async function disconnectAgent(agentId: unknown): Promise<{ removed: number }> {
   const a = await requireRunning(agentId);
   return withAgentLock(a.agentId, async () => {
     const current = await readDefaultModel(a.container);
-    let next: AgentModelRef = current;
-    if (isSubscriptionModel(normalizeModel(current).primary)) {
-      next = stopSubscriptionModel(current);
-      if (next === current) {
-        throw new SubscriptionError(409, 'This agent uses the subscription model and has no model of its own to go back to. Choose one in the agent panel first.');
-      }
+    const stuck = 'This agent uses the subscription model and has no model of its own to go back to. Choose one in the agent panel first.';
+    const plan = revertSubscriptionModel(current, null);
+    if (plan.stuck) throw new SubscriptionError(409, stuck);
+    // The main entry goes back to the same place when it has no own model of its own.
+    const list = await readAgentList(a.container);
+    const main = list?.find((e) => e && e.id === 'main');
+    const mainPlan = main && main.model !== undefined ? revertSubscriptionModel(main.model as AgentModelRef, plan.primary) : null;
+    if (mainPlan?.stuck) throw new SubscriptionError(409, stuck);
+    if (plan.changed) {
+      await writeDefaultModel(a.container, { primary: plan.primary, fallbacks: plan.fallbacks });
     }
-    const n = normalizeModel(next);
-    const kept = n.fallbacks.filter((f) => !isSubscriptionModel(f));
-    if (next !== current || kept.length !== n.fallbacks.length) {
-      await writeDefaultModel(a.container, { primary: n.primary, fallbacks: kept });
+    if (mainPlan?.changed) {
+      await writeMainModel(a.container, { primary: mainPlan.primary, fallbacks: mainPlan.fallbacks });
     }
     const profiles = await readProfiles(a.container).catch(() => null);
     if (!profiles) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
@@ -430,7 +552,8 @@ export async function disconnectAgent(agentId: unknown): Promise<{ removed: numb
     for (const p of profiles) {
       if (!/^openai:\S+$/.test(p.id)) continue;
       try {
-        await dockerExec(a.container, ['openclaw', 'models', 'auth', 'logout', p.id, '--yes'], { timeoutMs: CLI_TIMEOUT_MS });
+        // `timeout` inside the container: a host-side deadline leaves the process running there.
+        await dockerExec(a.container, ['timeout', String(LOGOUT_TIMEOUT_S), 'openclaw', 'models', 'auth', 'logout', p.id, '--yes'], { timeoutMs: (LOGOUT_TIMEOUT_S + 10) * 1000 });
         removed++;
       } catch {
         invalidateSubscriptions();
@@ -438,6 +561,10 @@ export async function disconnectAgent(agentId: unknown): Promise<{ removed: numb
       }
     }
     invalidateSubscriptions();
+    // A sign-out that timed out answers with no error: read the profiles back.
+    const after = await readAgentState(a.container).catch(() => null);
+    if (!after) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
+    if (after.profiles.length > 0) throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');
     return { removed };
   });
 }
