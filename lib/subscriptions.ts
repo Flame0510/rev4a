@@ -26,6 +26,7 @@ import {
   parseModelList,
   parseStatusJson,
   STATUS_SCRIPT_SRC,
+  STOP_CODEX_SCRIPT,
   revertSubscriptionModel,
   isSubscriptionModel,
   normalizeModel,
@@ -565,6 +566,11 @@ export async function disconnectAgent(agentId: unknown): Promise<{ removed: numb
     const after = await readAgentState(a.container).catch(() => null);
     if (!after) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
     if (after.profiles.length > 0) throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');
+    // The gateway keeps the Codex runtime (one app-server per session that used the subscription)
+    // running after the sign-out: stop it. Best effort: a failure here leaves a signed-out agent.
+    if (removed > 0) {
+      await dockerExec(a.container, ['sh', '-c', STOP_CODEX_SCRIPT], { timeoutMs: 10_000 }).catch(() => undefined);
+    }
     return { removed };
   });
 }

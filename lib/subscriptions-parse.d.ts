@@ -61,6 +61,8 @@ export function mapStoreProfile(id: string, x: unknown): StatusProfile;
 export const MAP_STORE_PROFILE_SRC: string;
 /** The in-container status read script (fixed text). */
 export const STATUS_SCRIPT_SRC: string;
+/** Stops the agent's Codex app-server processes (fixed text). */
+export const STOP_CODEX_SCRIPT: string;
 
 export interface UsageWindow {
   label: string;

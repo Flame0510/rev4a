@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const {
   parseDeviceLogin, parseAuthList, parseModelList, stopSubscriptionModel,
   parseStatusJson, parseUsageStatus, formatPlan, mapStoreProfile, STATUS_SCRIPT_SRC,
-  loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef,
+  loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef, STOP_CODEX_SCRIPT,
 } = require('../lib/subscriptions-parse.js');
 const { execFileSync } = require('node:child_process');
 const fsx = require('node:fs');
@@ -353,6 +353,18 @@ test('stored refs: bare openai/ and rev4a/ pass unchanged, others get the prefix
   assert.equal(keepStoredRef('openai/gpt-5.6-sol'), 'openai/gpt-5.6-sol');
   assert.equal(keepStoredRef('rev4a/openai/gpt-5.6-sol'), 'rev4a/openai/gpt-5.6-sol');
   assert.equal(keepStoredRef('deepseek-flash'), 'rev4a/deepseek-flash');
+});
+
+test('stop codex script: valid sh, kills only the Codex runtime, never its own shell', () => {
+  execFileSync('sh', ['-n', '-c', STOP_CODEX_SCRIPT]);
+  // The case pattern on real command lines seen in an agent (2026-10-09).
+  const match = (cmd) => execFileSync('sh', ['-c', 'case "$1" in */openclaw-codex-*/node_modules/@openai/codex*) echo y;; *) echo n;; esac', 'x', cmd], { encoding: 'utf8' }).trim();
+  assert.ok(STOP_CODEX_SCRIPT.includes('*/openclaw-codex-*/node_modules/@openai/codex*'));
+  assert.equal(match('node --no-opt -r /proc/.reset /root/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openai/codex/bin/codex.js app-server'), 'y');
+  assert.equal(match('/root/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex app-server'), 'y');
+  assert.equal(match('node /usr/local/bin/openclaw gateway --bind lan --port 3000'), 'n');
+  assert.equal(match('openclaw models auth login --provider openai --device-code'), 'n');
+  assert.ok(STOP_CODEX_SCRIPT.includes('"$$"'), 'skips its own shell');
 });
 
 console.log(`\n${n} tests passed`);
