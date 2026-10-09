@@ -37,6 +37,12 @@ export interface ModelCostRow { provider: string; model: string; cost: number; t
 export interface SessionCostRow {
   container: string; agentName: string | null; sessionId: string; sessionKey: string | null; label: string | null;
   agentId: string | null; model: string | null; cost: number; tokens: number; missing: number; lastActivity: number | null;
+  /**
+   * The session's current provider is a ChatGPT subscription. Its cost is OpenClaw's total for the
+   * whole session, so it can include subscription calls at list price as well as paid proxy calls:
+   * the session is kept in the list and labelled, not dropped.
+   */
+  usesSubscription: number;
 }
 export interface CostSummary {
   totals: CostTotals;
@@ -58,18 +64,153 @@ export const EMPTY_TOTALS: CostTotals = {
   inputCost: 0, outputCost: 0, cacheReadCost: 0, cacheWriteCost: 0, missing: 0,
 };
 
-const TOTALS_SQL = `
-  SELECT COALESCE(SUM(cost), 0) AS cost, COALESCE(SUM(total_tokens), 0) AS tokens,
-    COALESCE(SUM(input), 0) AS input, COALESCE(SUM(output), 0) AS output,
-    COALESCE(SUM(cache_read), 0) AS cacheRead, COALESCE(SUM(cache_write), 0) AS cacheWrite,
-    COALESCE(SUM(input_cost), 0) AS inputCost, COALESCE(SUM(output_cost), 0) AS outputCost,
-    COALESCE(SUM(cache_read_cost), 0) AS cacheReadCost, COALESCE(SUM(cache_write_cost), 0) AS cacheWriteCost,
-    COALESCE(SUM(missing), 0) AS missing
-  FROM agent_cost_daily`;
+/**
+ * Providers whose calls a ChatGPT (Codex) subscription covers: OpenClaw's native ChatGPT route
+ * (`openai`) and the legacy `openai-codex`. Rev4a never gives an agent an OpenAI API key, so every
+ * `openai` row is taken for a subscription call; an operator who adds their own OpenAI key by hand
+ * would see those calls here too. THE one place that rule lives: every figure of "Spent" leaves
+ * these calls out, and the Costs page shows them apart (their API value, not a spend).
+ */
+export const SUBSCRIPTION_PROVIDERS = ['openai', 'openai-codex'] as const;
+export const isSubscriptionProvider = (provider: string | null | undefined): boolean =>
+  !!provider && (SUBSCRIPTION_PROVIDERS as readonly string[]).includes(provider);
+
+const SUB_LIST_SQL = SUBSCRIPTION_PROVIDERS.map((p) => `'${p}'`).join(', ');
+
+/** What the subscription calls of one container on one day recorded (agent_cost_model_daily). */
+interface SubDay { tokens: number; cost: number; unpricedCalls: number }
+interface DailyRow {
+  container: string; date: string; input: number; output: number; cache_read: number; cache_write: number;
+  total_tokens: number; cost: number; input_cost: number; output_cost: number; cache_read_cost: number;
+  cache_write_cost: number; missing: number;
+}
+
+/**
+ * agent_cost_daily rows with the subscription calls taken out. The table has no provider, so the
+ * per container/day sums of the subscription rows in agent_cost_model_daily are subtracted (never
+ * below 0). The split by kind (input, output, cache) is not kept per provider: it is scaled by the
+ * share of tokens (counts) or cost (prices) that remains. An unpriced subscription call (tokens
+ * without a cost) was counted in `missing`: it leaves that count too.
+ */
+function readSpendDaily(db: Database.Database, where: string, params: Record<string, unknown>): DailyRow[] {
+  const rows = db.prepare(`SELECT * FROM agent_cost_daily WHERE ${where}`).all(params) as DailyRow[];
+  const sub = new Map<string, SubDay>();
+  for (const r of db.prepare(`
+    SELECT container, date, SUM(tokens) AS tokens, SUM(cost) AS cost,
+      SUM(CASE WHEN cost = 0 AND tokens > 0 THEN calls ELSE 0 END) AS unpricedCalls
+    FROM agent_cost_model_daily WHERE ${where} AND provider IN (${SUB_LIST_SQL}) GROUP BY container, date`).all(params) as
+    (SubDay & { container: string; date: string })[]) {
+    sub.set(`${r.container}|${r.date}`, r);
+  }
+  if (!sub.size) return rows;
+  return rows.map((r) => {
+    const s = sub.get(`${r.container}|${r.date}`);
+    if (!s) return r;
+    // A day that was all subscription leaves a float residue (3e-18): snap it to 0, or it reads "$0.0000".
+    const diff = r.cost - s.cost;
+    const cost = diff > 1e-9 ? diff : 0;
+    const tokens = Math.max(0, r.total_tokens - s.tokens);
+    const c = r.cost > 0 ? cost / r.cost : 1;
+    const t = r.total_tokens > 0 ? tokens / r.total_tokens : 1;
+    return {
+      ...r, cost, total_tokens: tokens,
+      input: Math.round(r.input * t), output: Math.round(r.output * t),
+      cache_read: Math.round(r.cache_read * t), cache_write: Math.round(r.cache_write * t),
+      input_cost: r.input_cost * c, output_cost: r.output_cost * c,
+      cache_read_cost: r.cache_read_cost * c, cache_write_cost: r.cache_write_cost * c,
+      missing: Math.max(0, r.missing - s.unpricedCalls),
+    };
+  });
+}
+
+function sumTotals(rows: DailyRow[]): CostTotals {
+  const t = { ...EMPTY_TOTALS };
+  for (const r of rows) {
+    t.cost += r.cost; t.tokens += r.total_tokens; t.input += r.input; t.output += r.output;
+    t.cacheRead += r.cache_read; t.cacheWrite += r.cache_write;
+    t.inputCost += r.input_cost; t.outputCost += r.output_cost;
+    t.cacheReadCost += r.cache_read_cost; t.cacheWriteCost += r.cache_write_cost; t.missing += r.missing;
+  }
+  return t;
+}
+
+/** The spend model rows of a range: every provider but the subscription's. */
+const SPEND_MODELS_SQL = `
+  SELECT provider, model, SUM(cost) AS cost, SUM(tokens) AS tokens, SUM(calls) AS calls
+  FROM agent_cost_model_daily WHERE %WHERE% AND provider NOT IN (${SUB_LIST_SQL})
+  GROUP BY provider, model HAVING SUM(tokens) > 0 OR SUM(cost) > 0 ORDER BY cost DESC, tokens DESC`;
+
+/* ------------------------------------------------------------------ */
+/*  ChatGPT subscription usage: not a spend                            */
+/* ------------------------------------------------------------------ */
+
+export interface SubscriptionModelRow {
+  provider: string; model: string; tokens: number; calls: number;
+  /** What the calls would have cost at OpenAI API prices (OpenClaw's catalogue). */
+  apiValue: number;
+  /** Calls of this model OpenClaw recorded with tokens and no cost: it has no price. */
+  unpricedCalls: number;
+}
+export interface SubscriptionAgentRow {
+  container: string; name: string | null; tokens: number; calls: number; apiValue: number; unpricedCalls: number;
+}
+export interface SubscriptionUsage {
+  totals: { tokens: number; calls: number; apiValue: number; unpricedCalls: number };
+  byAgent: SubscriptionAgentRow[];
+  byModel: SubscriptionModelRow[];
+  /** Models with calls and no price, over the range. */
+  unpriced: { model: string; calls: number }[];
+}
+
+export const EMPTY_SUBSCRIPTION: SubscriptionUsage = {
+  totals: { tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 }, byAgent: [], byModel: [], unpriced: [],
+};
+
+/**
+ * What the subscription calls of a range would have cost at API prices — the saving the plan gives.
+ * Empty when there are none. `container` narrows it to one agent.
+ */
+export function readSubscriptionUsage(
+  db: Database.Database, dates: string[], opts: { container?: string } = {},
+): SubscriptionUsage {
+  const where = `date BETWEEN @startDate AND @endDate${opts.container ? ' AND container = @container' : ''}`;
+  const params = { startDate: dates[0], endDate: dates[dates.length - 1], container: opts.container ?? null };
+  const rows = db.prepare(`
+    SELECT container, provider, model, SUM(tokens) AS tokens, SUM(cost) AS cost, SUM(calls) AS calls,
+      SUM(CASE WHEN cost = 0 AND tokens > 0 THEN calls ELSE 0 END) AS unpricedCalls
+    FROM agent_cost_model_daily WHERE ${where} AND provider IN (${SUB_LIST_SQL})
+    GROUP BY container, provider, model HAVING SUM(tokens) > 0 OR SUM(cost) > 0 OR SUM(calls) > 0`).all(params) as
+    { container: string; provider: string; model: string; tokens: number; cost: number; calls: number; unpricedCalls: number }[];
+  if (!rows.length) return EMPTY_SUBSCRIPTION;
+
+  const names = new Map((db.prepare('SELECT container, name FROM agent_cost_sources').all() as
+    { container: string; name: string | null }[]).map((r) => [r.container, r.name]));
+  const agents = new Map<string, SubscriptionAgentRow>();
+  const models = new Map<string, SubscriptionModelRow>();
+  const totals = { tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
+  for (const r of rows) {
+    totals.tokens += r.tokens; totals.calls += r.calls; totals.apiValue += r.cost; totals.unpricedCalls += r.unpricedCalls;
+    const a = agents.get(r.container) ?? { container: r.container, name: names.get(r.container) ?? null, tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
+    a.tokens += r.tokens; a.calls += r.calls; a.apiValue += r.cost; a.unpricedCalls += r.unpricedCalls;
+    agents.set(r.container, a);
+    // One model reached through both subscription providers is one line.
+    const m = models.get(r.model) ?? { provider: r.provider, model: r.model, tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
+    m.tokens += r.tokens; m.calls += r.calls; m.apiValue += r.cost; m.unpricedCalls += r.unpricedCalls;
+    models.set(r.model, m);
+  }
+  const byValue = <T extends { apiValue: number; tokens: number }>(a: T, b: T) => b.apiValue - a.apiValue || b.tokens - a.tokens;
+  const byModel = [...models.values()].sort(byValue);
+  return {
+    totals,
+    byAgent: [...agents.values()].sort(byValue),
+    byModel,
+    unpriced: byModel.filter((m) => m.unpricedCalls > 0).map((m) => ({ model: m.model, calls: m.unpricedCalls })),
+  };
+}
 
 /**
  * Everything the Costs page shows for a range of UTC dates. `container` narrows it to
- * one agent (the agent panel).
+ * one agent (the agent panel). Subscription calls are not in it (see SUBSCRIPTION_PROVIDERS).
  */
 export function readCostSummary(
   db: Database.Database,
@@ -82,22 +223,25 @@ export function readCostSummary(
   const params = { startDate, endDate, container: opts.container ?? null };
   const now = Date.now();
 
-  const totals = db.prepare(`${TOTALS_SQL} WHERE ${where}`).get(params) as CostTotals;
+  const rows = readSpendDaily(db, where, params);
+  const totals = sumTotals(rows);
 
-  const dailyRows = db.prepare(`
-    SELECT date, SUM(cost) AS cost, SUM(total_tokens) AS tokens, SUM(missing) AS missing
-    FROM agent_cost_daily WHERE ${where} GROUP BY date`).all(params) as CostSummary['daily'];
-  const byDate = new Map(dailyRows.map((r) => [r.date, r]));
+  const byDate = new Map<string, CostSummary['daily'][number]>();
+  for (const r of rows) {
+    const d = byDate.get(r.date) ?? { date: r.date, cost: 0, tokens: 0, missing: 0 };
+    d.cost += r.cost; d.tokens += r.total_tokens; d.missing += r.missing;
+    byDate.set(r.date, d);
+  }
   const daily = dates.map((date) => byDate.get(date) ?? { date, cost: 0, tokens: 0, missing: 0 });
 
   const sources = (db.prepare('SELECT * FROM agent_cost_sources').all() as SourceRow[])
     .filter((s) => !opts.container || s.container === opts.container);
-  const spend = new Map(
-    (db.prepare(`
-      SELECT container, SUM(cost) AS cost, SUM(total_tokens) AS tokens, SUM(missing) AS missing
-      FROM agent_cost_daily WHERE ${where} GROUP BY container`).all(params) as
-      { container: string; cost: number; tokens: number; missing: number }[]).map((r) => [r.container, r]),
-  );
+  const spend = new Map<string, { cost: number; tokens: number; missing: number }>();
+  for (const r of rows) {
+    const e = spend.get(r.container) ?? { cost: 0, tokens: 0, missing: 0 };
+    e.cost += r.cost; e.tokens += r.total_tokens; e.missing += r.missing;
+    spend.set(r.container, e);
+  }
   const byAgent = sources
     .map((s) => ({
       container: s.container,
@@ -113,16 +257,14 @@ export function readCostSummary(
     .filter((a) => a.tokens > 0 || a.missing > 0 || a.error || (a.attemptedAt ?? 0) > now - 3 * COLLECT_INTERVAL_S * 1000)
     .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
 
-  const byModel = db.prepare(`
-    SELECT provider, model, SUM(cost) AS cost, SUM(tokens) AS tokens, SUM(calls) AS calls
-    FROM agent_cost_model_daily WHERE ${where}
-    GROUP BY provider, model HAVING SUM(tokens) > 0 OR SUM(cost) > 0 ORDER BY cost DESC, tokens DESC`).all(params) as ModelCostRow[];
+  const byModel = db.prepare(SPEND_MODELS_SQL.replace('%WHERE%', where)).all(params) as ModelCostRow[];
 
   const names = new Map(sources.map((s) => [s.container, s.name]));
   const since = Date.parse(`${startDate}T00:00:00Z`);
   const sessions = (db.prepare(`
     SELECT container, session_id AS sessionId, session_key AS sessionKey, label, agent_id AS agentId, model,
-      cost, tokens, missing, last_activity AS lastActivity
+      cost, tokens, missing, last_activity AS lastActivity,
+      CASE WHEN COALESCE(provider, '') IN (${SUB_LIST_SQL}) THEN 1 ELSE 0 END AS usesSubscription
     FROM agent_cost_sessions WHERE last_activity >= @since${opts.container ? ' AND container = @container' : ''}
     ORDER BY cost DESC, tokens DESC LIMIT @limit`).all({ since, container: opts.container ?? null, limit: opts.topSessions ?? 20 }) as
     Omit<SessionCostRow, 'agentName'>[])
@@ -133,7 +275,8 @@ export function readCostSummary(
     let parsed: Record<string, number> = {};
     try { parsed = JSON.parse(s.missing_by_model || '{}'); } catch { /* keep empty */ }
     for (const [model, calls] of Object.entries(parsed)) {
-      if (!calls) continue;
+      // OpenClaw names an unpriced model `provider/model`; the subscription's are reported apart.
+      if (!calls || isSubscriptionProvider(model.split('/')[0])) continue;
       const entry = unpricedMap.get(model) ?? { model, calls: 0, agents: [] };
       entry.calls += calls;
       entry.agents.push(s.name ?? s.container);
@@ -146,7 +289,8 @@ export function readCostSummary(
 }
 
 /**
- * Today's spend (UTC day) and all-time spend, by model today — for the dashboard. Null
+ * Today's spend (UTC day) and all-time spend, by model today — for the dashboard (subscription
+ * calls left out, like everywhere). Null
  * when there is nothing to read yet; never throws, so a broken costs.db cannot fail a
  * page about something else (the reason is in `error`).
  */
@@ -159,11 +303,9 @@ export function dashboardCosts(): {
     db = openCostsDb();
     if (!db) return null;
     const today = utcDate(Date.now());
-    const t = db.prepare(`${TOTALS_SQL} WHERE date = ?`).get(today) as CostTotals;
-    const all = db.prepare(`${TOTALS_SQL}`).get() as CostTotals;
-    const byModelToday = db.prepare(`
-      SELECT provider, model, SUM(cost) AS cost, SUM(tokens) AS tokens, SUM(calls) AS calls
-      FROM agent_cost_model_daily WHERE date = ? GROUP BY provider, model HAVING SUM(tokens) > 0 OR SUM(cost) > 0 ORDER BY cost DESC, tokens DESC`).all(today) as ModelCostRow[];
+    const t = sumTotals(readSpendDaily(db, 'date = @today', { today }));
+    const all = sumTotals(readSpendDaily(db, '1 = 1', {}));
+    const byModelToday = db.prepare(SPEND_MODELS_SQL.replace('%WHERE%', 'date = @today')).all({ today }) as ModelCostRow[];
     return { today: t.cost, allTime: all.cost, missingToday: t.missing, byModelToday };
   } catch (e) {
     return { today: 0, allTime: 0, missingToday: 0, byModelToday: [], error: (e as Error).message };

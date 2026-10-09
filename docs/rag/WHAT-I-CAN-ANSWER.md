@@ -96,6 +96,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 ## Troubleshooting Questions
 
 - "Why is my agent not showing up?"
+- "How much did my ChatGPT subscription save?" — Open the Costs page (`/costs`) and read the "ChatGPT subscription" section for the range you pick (Today, 7 or 30 days): its API value is what the calls made with the subscription would have cost at OpenAI API prices (OpenClaw's price catalog, refreshed every 6 hours). Those calls are covered by the plan, so they are not in Spent. A model without a price shows "no price" and the value is then "at least". The plan's usage limits are on the Subscriptions page (`/subscriptions`).
 - "Why are costs missing for some sessions?" — On the Costs page, calls to a model without a price are listed under "Calls without a price": the model left the catalogue or has no price yet.
 - "Why is the Costs total higher than Home's Spent today? / What are Unidentified callers?" — Home and the agent panel show each agent's own figures. The Costs page counts, per agent, the larger of that and what the Rev4a proxy metered (it sees every call, including ones an agent never recorded, such as a failed context compaction). "Unidentified callers" are calls that reached the proxy without an agent header (an agent not yet synced, or another client); they are listed but not counted in Spent. "Rev4a assistant" is PULSE's own spend and is counted.
 - "Why can't I connect to the container terminal?"

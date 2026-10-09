@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiFetch';
 import { formatCost } from '@/lib/utils/format';
@@ -29,6 +30,8 @@ interface ModelRow { provider: string; model: string; cost: number; tokens: numb
 interface SessionRow {
   container: string; sessionId: string; sessionKey: string | null; label: string | null; agentName: string | null;
   model: string | null; cost: number; tokens: number; missing: number; lastActivity: number | null;
+  /** 1 when the session's current provider is a ChatGPT subscription (its cost can include plan calls). */
+  usesSubscription?: number;
 }
 interface CostsPayload {
   available: boolean;
@@ -45,6 +48,14 @@ interface CostsPayload {
   unpriced: { model: string; calls: number; agents: string[] }[];
   reconciliation: Reconciliation[];
   proxy: ProxyUsage;
+  subscription?: SubscriptionUsage;
+}
+/** Calls made with a ChatGPT subscription: covered by the plan, so not in any figure above. */
+interface SubscriptionUsage {
+  totals: { tokens: number; calls: number; apiValue: number; unpricedCalls: number };
+  byAgent: { container: string; name: string | null; tokens: number; calls: number; apiValue: number; unpricedCalls: number }[];
+  byModel: { provider: string; model: string; tokens: number; calls: number; apiValue: number; unpricedCalls: number }[];
+  unpriced: { model: string; calls: number }[];
 }
 interface ProxyAgentRow {
   agent: string; calls: number; promptTokens: number; completionTokens: number; cachedTokens: number;
@@ -68,6 +79,12 @@ const PROXY_CALLER_LABEL: Record<string, string> = {
   unknown: 'Unidentified callers',
   assistant: 'Rev4a assistant',
 };
+
+/** "$0.12", or "no price" for calls OpenClaw could not price (never $0). */
+function apiValueText(apiValue: number, unpricedCalls: number, calls: number): string {
+  if (apiValue <= 0 && unpricedCalls > 0) return 'no price';
+  return unpricedCalls > 0 && unpricedCalls < calls ? `at least ${formatCost(apiValue)}` : formatCost(apiValue);
+}
 
 const VENDOR_LABEL: Record<string, string> = { deepseek: 'DeepSeek', openrouter: 'OpenRouter' };
 
@@ -166,6 +183,9 @@ export default function CostsPageClient() {
   const maxDaily = Math.max(0, ...(data?.daily ?? []).map((d) => d.cost));
   // OpenClaw names an unpriced model `provider/model`, like the rows below.
   const unpricedModels = new Set((data?.unpriced ?? []).map((u) => u.model));
+
+  const sub = data?.subscription;
+  const hasSub = !!sub && (sub.totals.calls > 0 || sub.totals.tokens > 0);
 
   const band = data?.pricing;
   const bandPill = band?.band ? (
@@ -319,6 +339,60 @@ export default function CostsPageClient() {
             </Surface>
           </div>
 
+          {sub && hasSub && (
+            <Surface as="section">
+              <div className="ui-kicker">ChatGPT subscription</div>
+              <div className="ui-metric-value" style={{ marginTop: 8 }}>
+                API value {apiValueText(sub.totals.apiValue, sub.totals.unpricedCalls, sub.totals.calls)}
+              </div>
+              <p className="ui-muted" style={{ fontSize: 12, marginTop: 4 }}>
+                What these calls would have cost at OpenAI API prices (OpenClaw&apos;s price catalog, refreshed every 6 hours). Covered by your ChatGPT plan.
+                They are not in Spent.
+              </p>
+              <div className="ui-key-values" style={{ marginTop: 12 }}>
+                <div className="ui-key-value"><span className="ui-muted">Tokens</span><span>{formatTokens(sub.totals.tokens)}</span></div>
+                <div className="ui-key-value"><span className="ui-muted">Calls</span><span>{sub.totals.calls}</span></div>
+                {sub.totals.unpricedCalls > 0 && (
+                  <div className="ui-key-value">
+                    <span className="ui-muted">Calls without a price</span>
+                    <span>{sub.totals.unpricedCalls}{sub.unpriced.length ? ` · ${sub.unpriced.map((u) => u.model).join(', ')}` : ''}</span>
+                  </div>
+                )}
+              </div>
+              <div className="costs-lists">
+                <div>
+                  <div className="ui-kicker" style={{ marginTop: 16 }}>By agent</div>
+                  {sub.byAgent.map((a) => (
+                    <BreakdownRow
+                      key={a.container}
+                      name={a.name ?? a.container}
+                      figure={apiValueText(a.apiValue, a.unpricedCalls, a.calls)}
+                      percent={share(a.tokens, sub.totals.tokens)}
+                      label={`Share of the subscription tokens for ${a.name ?? a.container}`}
+                      detail={`${a.container} · ${a.calls} call${a.calls === 1 ? '' : 's'} · ${formatTokens(a.tokens)} tokens`}
+                    />
+                  ))}
+                </div>
+                <div>
+                  <div className="ui-kicker" style={{ marginTop: 16 }}>By model</div>
+                  {sub.byModel.map((m) => (
+                    <BreakdownRow
+                      key={m.model}
+                      name={m.model}
+                      figure={apiValueText(m.apiValue, m.unpricedCalls, m.calls)}
+                      percent={share(m.tokens, sub.totals.tokens)}
+                      label={`Share of the subscription tokens for ${m.model}`}
+                      detail={`${m.calls} call${m.calls === 1 ? '' : 's'} · ${formatTokens(m.tokens)} tokens${m.unpricedCalls > 0 ? ` · ${m.unpricedCalls} without a price` : ''}`}
+                    />
+                  ))}
+                </div>
+              </div>
+              <p className="ui-muted" style={{ fontSize: 11, marginTop: 14 }}>
+                The plan&apos;s own limits (5 hours and weekly) are on the <Link href="/subscriptions" className="ui-link">Subscriptions page</Link>.
+              </p>
+            </Surface>
+          )}
+
           {proxyLines.length > 0 && (
             <Surface as="section">
               <div className="ui-kicker">Metered at the proxy · against what the agents recorded</div>
@@ -425,6 +499,7 @@ export default function CostsPageClient() {
                   s.model,
                   `${formatTokens(s.tokens)} tokens`,
                   s.missing ? `${s.missing} unpriced` : null,
+                  s.usesSubscription ? 'includes ChatGPT subscription calls at API value' : null,
                   s.lastActivity ? `last active ${sessionTime.format(new Date(s.lastActivity))}` : null,
                 ].filter(Boolean).join(' · ')}
               />

@@ -417,7 +417,9 @@ CREATE TABLE agent_cost_daily (
   missing INTEGER,                                      -- calls OpenClaw could not price
   PRIMARY KEY (container, date)
 );
--- Per model per day: sessions.usage aggregates.modelDaily.
+-- Per model per day: sessions.usage aggregates.modelDaily. Rows with provider `openai` (or the
+-- legacy `openai-codex`) are ChatGPT subscription calls: no schema change for them, the readers subtract
+-- them from agent_cost_daily (which has no provider) and show them apart, see lib/agent-costs.ts.
 CREATE TABLE agent_cost_model_daily (
   container TEXT NOT NULL, date TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
   tokens INTEGER, cost REAL, calls INTEGER,

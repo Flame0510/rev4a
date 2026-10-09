@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openCostsDb } from '@/lib/costs-db';
 import {
-  COLLECT_INTERVAL_S, EMPTY_PROXY_USAGE, EMPTY_TOTALS, buildProxyUsage, lastDays, readIdleAgents, readCostSummary, readProxyUsage,
+  COLLECT_INTERVAL_S, EMPTY_PROXY_USAGE, EMPTY_SUBSCRIPTION, EMPTY_TOTALS, buildProxyUsage, lastDays, readIdleAgents, readCostSummary,
+  readProxyUsage, readSubscriptionUsage,
 } from '@/lib/agent-costs';
 import { readReconciliation } from '@/lib/cost-reconciliation';
 import { loadOfferedModels } from '@/lib/model-catalogue';
@@ -18,7 +19,8 @@ type Range = keyof typeof RANGES;
  * GET /api/costs/usage?range=today|7d|30d — what the agents spent, as each agent's own
  * OpenClaw priced it (collected by daemon.js into costs.db), and how that compares with
  * what the vendors billed. `proxy` adds what the Rev4a provider proxy metered for the same days, per caller,
- * next to each agent's own figure. Nothing here computes a cost.
+ * next to each agent's own figure. Nothing here computes a cost. Calls made with a ChatGPT subscription are not
+ * in any of those figures: `subscription` holds them apart (tokens, calls and their API value).
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
@@ -50,12 +52,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       available: false, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing,
       totals: EMPTY_TOTALS, daily: dates.map((date) => ({ date, cost: 0, tokens: 0, missing: 0 })),
-      byAgent: [], byModel: [], sessions: [], unpriced: [], reconciliation: [], proxy: EMPTY_PROXY_USAGE,
+      byAgent: [], byModel: [], sessions: [], unpriced: [], reconciliation: [], proxy: EMPTY_PROXY_USAGE, subscription: EMPTY_SUBSCRIPTION,
     });
   }
 
   try {
     const summary = readCostSummary(db, dates);
+    const subscription = readSubscriptionUsage(db, dates);
     const reconciliation = readReconciliation(db, startDate, endDate);
     // What the proxy metered over the same UTC days, next to each agent's own figure. The proxy
     // table is optional (an install that has not routed a call since the update has none), so a
@@ -66,7 +69,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       proxy = buildProxyUsage(summary.byAgent, metered, metered ? readIdleAgents(db, summary.byAgent) : []);
     } catch { /* keep the agents' figures */ }
     return NextResponse.json({
-      available: true, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing, ...summary, reconciliation, proxy,
+      available: true, range, startDate, endDate, intervalS: COLLECT_INTERVAL_S, pricing, ...summary, reconciliation, proxy, subscription,
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

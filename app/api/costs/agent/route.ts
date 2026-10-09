@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openCostsDb } from '@/lib/costs-db';
-import { COLLECT_INTERVAL_S, lastDays, readCostSummary } from '@/lib/agent-costs';
+import { COLLECT_INTERVAL_S, lastDays, readCostSummary, readSubscriptionUsage } from '@/lib/agent-costs';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import { nextPriceChange, priceBandAt, priceScheduleFor } from '@/lib/model-pricing';
 import { CONTAINER_NAME_RE } from '@/lib/docker-stats';
@@ -23,7 +23,7 @@ function currentPricing() {
 
 /**
  * GET /api/costs/agent?container=<name> — one agent's spend for its panel: today, the
- * last 7 and 30 UTC days, its top model and unpriced calls over 30 days, and when it
+ * last 7 and 30 UTC days (without ChatGPT subscription calls, reported in `subscription`), its top model and unpriced calls over 30 days, and when it
  * was last read. From costs.db, like the Costs page.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -50,6 +50,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Straight from the sources table: an agent with no use in 30 days is still read.
     const source = db.prepare('SELECT collected_at AS collectedAt, error FROM agent_cost_sources WHERE container = ?')
       .get(container) as { collectedAt: number | null; error: string | null } | undefined;
+    const sub = readSubscriptionUsage(db, dates, { container }).totals;
     const top = s.byModel[0] ?? null;
     const unpriced = s.unpriced.reduce((acc, u) => acc + u.calls, 0);
     return NextResponse.json({
@@ -62,6 +63,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       tokensMonth: s.totals.tokens,
       topModel: top && top.cost > 0 ? { model: top.model, cost: top.cost } : null,
       unpricedMonth: unpriced,
+      // Calls made with a ChatGPT subscription over 30 days: covered by the plan, not in the figures above.
+      subscription: sub.calls > 0 || sub.tokens > 0
+        ? { tokens: sub.tokens, calls: sub.calls, apiValue: sub.apiValue, unpricedCalls: sub.unpricedCalls }
+        : null,
       collectedAt: source?.collectedAt ?? null,
       error: source?.error ?? null,
     });

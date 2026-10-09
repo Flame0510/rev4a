@@ -538,6 +538,9 @@ whose `cost_usd` is no longer estimated (always 0).
 What the agents spent in a range of UTC days, today included (default `7d`), read from
 `costs.db` (written by the daemon every 5 minutes, see `docs/dev/DATABASE.md`). Rev4a
 computes no cost: every figure is the one OpenClaw recorded with the prices Rev4a syncs.
+Calls made with a ChatGPT subscription (provider `openai` or `openai-codex`) are left out of `totals`,
+`daily`, `byAgent`, `byModel`, `sessions`, `unpriced` and `proxy` (they are covered by the plan) and
+reported in `subscription`.
 
 **Auth:** browser cookie or Bearer
 
@@ -568,9 +571,21 @@ computes no cost: every figure is the one OpenClaw recorded with the prices Rev4
                    "recorded": 0.62, "recordedTokens": 4100000, "combined": 6.81, "gap": 6.19, "flagged": true,
                    "metered": { "agent": "agent_9253eee3", "calls": 1417, "promptTokens": 91000000, "completionTokens": 310000,
                                 "cachedTokens": 80000000, "errors": 12, "noUsage": 0, "cost": 6.81 } } ]
+  },
+  "subscription": {
+    "totals": { "tokens": 52000, "calls": 14, "apiValue": 0.41, "unpricedCalls": 0 },
+    "byAgent": [ { "container": "agent_9253eee3", "name": "test", "tokens": 52000, "calls": 14, "apiValue": 0.41, "unpricedCalls": 0 } ],
+    "byModel": [ { "provider": "openai", "model": "gpt-5.4", "tokens": 52000, "calls": 14, "apiValue": 0.41, "unpricedCalls": 0 } ],
+    "unpriced": []
   }
 }
 ```
+
+- `subscription` (additive): the calls made with a ChatGPT subscription over the range, kept out of every
+  figure above. `apiValue` is what the calls would have cost at OpenAI API prices (OpenClaw's price
+  catalog, refreshed every 6 hours): the saving the plan gives, not a spend. A model OpenClaw has no price
+  for records tokens with cost 0: its calls are counted in `unpricedCalls` / `unpriced` (the page shows
+  "no price", and "at least" on the total). Empty (`calls` and `tokens` 0) when there are none.
 
 - `daily` has one entry per day of the range, zeros included.
 - `missing` counts calls OpenClaw could not price (no price for their model): they are in
@@ -658,7 +673,7 @@ Sum of `sessions.cost_usd` since a given timestamp — 0 for sessions polled sin
 ---
 
 ### `GET /api/costs`
-The dashboard's figures: today's spend (UTC day), all-time spend, today's calls without a
+The dashboard's figures (without ChatGPT subscription calls): today's spend (UTC day), all-time spend, today's calls without a
 price, and today's spend by model — from `costs.db`. The SSE stream (`GET /api/stream`)
 sends the same `today`.
 
@@ -689,9 +704,10 @@ One agent's spend for its panel, from `costs.db`.
 
 **Response:** `{ "available": true, "intervalS": 300, "pricing": { "vendor": "DeepSeek", "band": "off-peak", "nextChange": 1790532000000, "source": "https://api-docs.deepseek.com/quick_start/pricing" }, "today": 0.011, "week": 0.019,
 "month": 0.022, "tokensMonth": 2409574, "topModel": { "model": "deepseek/deepseek-flash",
-"cost": 0.022 }, "unpricedMonth": 81, "collectedAt": 1790529516737, "error": null }` —
+"cost": 0.022 }, "unpricedMonth": 81, "subscription": null, "collectedAt": 1790529516737, "error": null }` —
 UTC days (today, last 7, last 30); `pricing` is the band billed right now, the same object
 the Costs page header shows (`null` when no scheduled model is on offer); `collectedAt`/`error`
+`subscription` is `{ tokens, calls, apiValue, unpricedCalls }` over the 30 days when the agent made calls with a ChatGPT subscription (covered by the plan, not in the figures above), `null` otherwise;
 from the agent's last read. Before `costs.db` exists, the response is
 `{ "available": false, "intervalS": 300, "pricing": null }` (or the current pricing
 object when a scheduled model is on offer).
