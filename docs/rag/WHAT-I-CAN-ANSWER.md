@@ -25,6 +25,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I open the file explorer?"
 - "Which page shows costs?" — The Costs page (`/costs`): what each agent spent, by day, agent, model and session.
 - "Where do I manage credentials (GitHub, Trello, etc.)?"
+- "Where do I connect a ChatGPT account to an agent?" — The Subscriptions page (`/subscriptions`).
 - "How do I connect an agent to Telegram?"
 - "How do I approve a Telegram pairing?"
 - "What does the TG badge mean?"
@@ -62,7 +63,9 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I give someone else access to an agent's Control UI?"
 - "How do I update an agent to a newer OpenClaw version, and how do I go back?"
 - "How do I register a new provider via OAuth?" — The endpoint exists but no page uses it. Providers are added by pasting an API key on the Gateway page.
+- "How much of my ChatGPT quota is left?" — Open the Subscriptions page (`/subscriptions`): at the top of "ChatGPT (Codex)" each connected account shows its 5-hour and weekly usage with the reset times (Refresh re-reads it; it is cached for 3 minutes). The agent panel's MODEL section shows the same as "5h 86% left · week 98% left". The quota is the account's, shared by all agents signed in with it and your own Codex use.
 - "How do I manage agent model fallbacks?"
+- "How do I use my ChatGPT subscription in an agent?" — Open the Subscriptions page (`/subscriptions`), open "ChatGPT (Codex)", press Connect on the agent, open the link, enter the code with your ChatGPT account, then open the agent's panel on the Agents page and pick the subscription model in its MODEL section (primary or fallback, next to the Rev4a proxy models). If no fallback is set, the previous model is pre-filled as the first fallback and is used when the subscription reaches its usage limit. Disconnect on the Subscriptions page returns the agent to its own model and signs the account out.
 - "How do I connect an agent to Telegram?"
 - "How do I approve a pairing code?"
 

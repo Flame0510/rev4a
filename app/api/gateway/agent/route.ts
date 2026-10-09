@@ -27,7 +27,18 @@ function execInContainer(container: string, cmd: string, timeout = 15000): strin
   }
 }
 
+/**
+ * A ChatGPT subscription model is stored as a bare `openai/<id>` (lib/subscriptions.ts), while the
+ * Rev4a catalogue also has ids that start with `openai/` and are stored as `rev4a/openai/<id>`. The
+ * model panel marks a subscription reference with this prefix so the two cannot be confused.
+ */
+const SUBSCRIPTION_MARK = 'subscription:';
+
+/** A marked subscription reference is accepted only in the exact shape of a ChatGPT model id. */
+const SUBSCRIPTION_REF = /^subscription:openai\/[A-Za-z0-9._-]+$/;
+
 function ensureRev4aPrefix(id: string): string {
+  if (id.startsWith(SUBSCRIPTION_MARK)) return id.slice(SUBSCRIPTION_MARK.length);
   return id.startsWith('rev4a/') ? id : `rev4a/${id}`;
 }
 
@@ -89,6 +100,10 @@ export async function PUT(request: NextRequest) {
 
     if (!body.model) {
       return NextResponse.json({ status: 'error', error: 'model is required' }, { status: 400 });
+    }
+    const refs = [body.model, ...(Array.isArray(body.fallbacks) ? body.fallbacks : [])];
+    if (refs.some((r) => typeof r === 'string' && r.startsWith(SUBSCRIPTION_MARK) && !SUBSCRIPTION_REF.test(r))) {
+      return NextResponse.json({ status: 'error', error: 'Invalid subscription model reference' }, { status: 400 });
     }
 
     // Refuse while a long operation is running on this agent: the write would race the

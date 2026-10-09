@@ -212,8 +212,14 @@ function AgentListItem({
         {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
       </div>
       {(() => {
-        const m = modelSummary[agent.agentId];
-        if (!m || !m.primary) return null;
+        const row = modelSummary[agent.agentId];
+        if (!row || !row.primary) return null;
+        // A bare `openai/<id>` is a ChatGPT subscription model: it is not in the Rev4a catalogue on
+        // purpose, so the catalogue health the summary computes does not apply to it. Whether the
+        // agent is signed in is shown in its panel (Subscription line), so the card shows a neutral
+        // state, neither green nor red.
+        const primary: string = row.primary;
+        const m = { ...row, primary, health: primary.startsWith('openai/') ? 'subscription' : row.health };
         // Tone follows what the operator has to do about it: red means the agent
         // will fail on its next turn, amber means it still works on a retired name.
         // The red states differ in remedy — pick another model for the first two,
@@ -224,6 +230,7 @@ function AgentListItem({
                    : m.health === 'disabled' ? 'NOT ENABLED'
                    : m.health === 'out-of-sync' ? 'OUT OF SYNC'
                    : m.health === 'deprecated' ? 'DEPRECATED'
+                   : m.health === 'subscription' ? 'CHATGPT SUBSCRIPTION'
                    : m.fallbackCount === 0 ? 'NO FALLBACK' : null;
         return (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
@@ -566,6 +573,21 @@ export default function AgentsPageClient() {
       setShowList(true);
     }
   }, [agents, selectedId]);
+
+  // Deep link `/agents?agent=<id>` (the Subscriptions page uses it): select that agent once the
+  // list has loaded, one time only, so the operator's own later choice is never overridden.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || agents.length === 0) return;
+    deepLinked.current = true;
+    let wanted: string | null = null;
+    try { wanted = new URLSearchParams(window.location.search).get('agent'); } catch { /* no window */ }
+    const hit = wanted ? agents.find((a) => a.agentId === wanted) : null;
+    if (hit) {
+      setSelectedId(hit.agentId);
+      if (isMobile) setShowList(false);
+    }
+  }, [agents, isMobile]);
 
   /** An agent was deleted: drop it optimistically, then reconcile with the server. */
   const handleAgentDeleted = useCallback((agentId: string) => {

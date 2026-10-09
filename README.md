@@ -20,6 +20,7 @@
 - **Provider proxy** — OpenAI-compatible chat completions proxy that routes through a shared key vault
 - **System health** — runtime sessions, daemon heartbeat and failed runs, cron jobs and what the agents spent today, with recommendations
 - **System** — the host machine's CPU, memory, swap and storage, now and over 1h / 24h / 7d / 30d (sampled every 30 s, kept 30 days); what each agent and container consumes (CPU, memory, storage, processes — charts per container) and what Docker holds on disk; recent alerts for the machine and its containers
+- **Subscriptions** — connect a ChatGPT Plus or Pro (Codex) account to an agent with a device code, then pick the subscription model next to the Rev4a proxy models in the agent's MODEL section, with the previous model pre-filled as the fallback; the sign-in stays inside the agent
 - **Costs** — what each agent spent, priced by its own OpenClaw with the prices Rev4a syncs (cache rates included, DeepSeek off-peak applied): by day, agent, model and session, with the calls that could not be priced
 - **Per-agent metering at the proxy** — every call through the Rev4a provider proxy is counted per agent with the provider's own token counts and the price in force at that moment; the Costs page sets it next to what each agent recorded and marks an agent the proxy saw clearly more of
 - **Update screen** — while Rev4a updates itself, every open tab shows the phase and the log, and the server refuses changes (reads and the agents' proxy keep working) until the new version answers

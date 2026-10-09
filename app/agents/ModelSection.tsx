@@ -20,6 +20,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, RemoveButton, Select } from '../components/ui';
+import SubscriptionLine, { type SubscriptionStatus } from './SubscriptionLine';
 
 interface ModelOption {
   id: string;
@@ -29,6 +30,8 @@ interface ModelOption {
   /** Upstream retired the name. It still answers, so this warns rather than blocks. */
   deprecated: boolean;
 }
+
+interface SubModel { key: string; name: string; contextWindow: number | null }
 
 interface ProviderGroup {
   provider: string;
@@ -46,8 +49,24 @@ interface AgentModel {
   primaryStatus?: 'offered' | 'disabled' | 'missing' | null;
 }
 
-/** Strip the `rev4a/` prefix the container config stores, for comparison with catalogue ids. */
-const bare = (id: string) => id.replace(/^rev4a\//, '');
+/**
+ * The form of a stored model reference used in this panel: the `rev4a/` prefix is stripped for
+ * comparison with catalogue ids. A bare `openai/<id>` is a ChatGPT subscription model (see
+ * lib/subscriptions.ts), not the Rev4a catalogue entry of the same name (stored as
+ * `rev4a/openai/<id>`), so it carries the `subscription:` mark, which PUT /api/gateway/agent
+ * understands and strips.
+ */
+const SUB_MARK = 'subscription:';
+/** The character set PUT /api/gateway/agent accepts for a marked subscription reference. */
+const SUB_MODEL_ID = /^[A-Za-z0-9._-]+$/;
+const bare = (id: string) =>
+  id.startsWith('rev4a/')
+    ? id.slice('rev4a/'.length)
+    : id.startsWith('openai/') && SUB_MODEL_ID.test(id.slice('openai/'.length))
+      ? SUB_MARK + id
+      : id;
+const isSub = (id: string) => id.startsWith(SUB_MARK);
+const shown = (id: string) => (isSub(id) ? id.slice(SUB_MARK.length) : id);
 
 function priceLabel(m: ModelOption): string {
   if (m.input === null && m.output === null) return '';
@@ -83,8 +102,59 @@ export default function ModelSection({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [sub, setSub] = useState<SubscriptionStatus | null>(null);
+  const [subLoading, setSubLoading] = useState(true);
+  const [subModels, setSubModels] = useState<SubModel[] | null>(null);
+  const [subKey, setSubKey] = useState(0);
+  /** The previous primary, pre-filled as the first fallback when a subscription model was just chosen. */
+  const [autoFallback, setAutoFallback] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const subAbortRef = useRef<AbortController | null>(null);
+  const modelsAbortRef = useRef<AbortController | null>(null);
+
+  // The agent's connection state (re-read after every save), then, only when it is connected,
+  // the models its account offers. Both load apart from the catalogue: the pickers show the
+  // Rev4a proxy group at once and the subscription group when it arrives.
+  useEffect(() => {
+    subAbortRef.current?.abort();
+    const controller = new AbortController();
+    subAbortRef.current = controller;
+    setSubLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/subscriptions?agentId=${encodeURIComponent(agentId)}`, { signal: controller.signal });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.agent) throw new Error('unavailable');
+        setSub(json.agent as SubscriptionStatus);
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        setSub(null);
+      }
+      if (subAbortRef.current === controller) setSubLoading(false);
+    })();
+    return () => controller.abort();
+  }, [agentId, subKey]);
+
+  const subConnected = !!sub?.connected && !sub.error;
+  useEffect(() => {
+    if (!subConnected) { setSubModels(null); return; }
+    modelsAbortRef.current?.abort();
+    const controller = new AbortController();
+    modelsAbortRef.current = controller;
+    (async () => {
+      try {
+        const res = await fetch('/api/subscriptions/models', { signal: controller.signal });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error('unavailable');
+        setSubModels((json.models ?? []) as SubModel[]);
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        setSubModels([]);
+      }
+    })();
+    return () => controller.abort();
+  }, [agentId, subConnected]);
 
   const load = useCallback(async () => {
     // Cancel any in-flight load: this fires on mount and after every save, and
@@ -139,7 +209,27 @@ export default function ModelSection({
   const reset = () => {
     setPrimary(current?.primary ? bare(current.primary) : '');
     setFallbacks((current?.fallbacks ?? []).map(bare));
+    setAutoFallback(null);
     setMsg(null);
+  };
+
+  /**
+   * Picking a subscription model while no fallback is set pre-fills the previous primary as the
+   * first fallback, visibly and before saving: when the subscription reaches its usage limit
+   * the agent would otherwise have nothing to fall back to. The operator can remove it.
+   */
+  const choosePrimary = (value: string) => {
+    const oldPrimaryOffered = !!primary && !isSub(primary) && byId.has(primary);
+    if (isSub(value) && !isSub(primary) && oldPrimaryOffered && fallbacks.length === 0 && value !== primary) {
+      setFallbacks([primary]);
+      setAutoFallback(primary);
+    } else if (!isSub(value) && autoFallback !== null) {
+      // Switched away from the subscription model: the pre-filled fallback, if still the untouched
+      // auto entry, goes with it (no model as its own fallback, no dirty no-op).
+      if (fallbacks.length === 1 && fallbacks[0] === autoFallback) setFallbacks([]);
+      setAutoFallback(null);
+    }
+    setPrimary(value);
   };
 
   const save = async () => {
@@ -154,7 +244,9 @@ export default function ModelSection({
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success !== false) {
         setMsg({ text: 'Model saved. It applies immediately, no restart needed.', ok: true });
+        setAutoFallback(null);
         await load();
+        setSubKey((k) => k + 1);
         // The card in the list reads a separate summary endpoint; without this it
         // keeps showing the previous model until the next poll.
         onSaved?.();
@@ -172,24 +264,41 @@ export default function ModelSection({
   // renders as though nothing were chosen, contradicting the warning above it.
   // Show the real value, disabled so it cannot be picked again. Guarded on a
   // loaded catalogue so a failed fetch does not flag every model.
-  const primaryUnavailable = !!primary && groups.length > 0 && !byId.has(primary);
+  const primarySub = isSub(primary);
+  const primaryUnavailable = !!primary && !primarySub && groups.length > 0 && !byId.has(primary);
   const options = [
     { value: '', label: '— select a model —' },
+    ...(primarySub && !(subConnected && subModels?.some((m) => SUB_MARK + m.key === primary)) ? [{ value: primary, label: `${shown(primary)} (ChatGPT subscription)`, disabled: true }] : []),
     ...(primaryUnavailable ? [{ value: primary, label: `${primary} (${current?.primaryStatus === 'missing' ? 'no longer in catalogue' : 'not enabled'})`, disabled: true }] : []),
-    ...groups.flatMap((g) =>
-      g.models.map((m) => ({ value: m.id, label: `${g.provider} · ${optionLabel(m)}` })),
-    ),
+  ];
+  const subOptions = (exclude: string[]) =>
+    subConnected && subModels
+      ? subModels.filter((m) => !exclude.includes(SUB_MARK + m.key)).map((m) => ({ value: SUB_MARK + m.key, label: m.name || m.key }))
+      : [];
+  const primaryGroups = [
+    { label: 'Rev4a proxy', options: groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: `${g.provider} · ${optionLabel(m)}` }))) },
+    { label: 'ChatGPT subscription', options: subOptions([]) },
+  ];
+  const fallbackGroups = [
+    {
+      label: 'Rev4a proxy',
+      options: allModels.filter((m) => m.id !== primary && !fallbacks.includes(m.id)).map((m) => ({ value: m.id, label: optionLabel(m) })),
+    },
+    { label: 'ChatGPT subscription', options: subOptions([primary, ...fallbacks]) },
   ];
 
   // Two different failures, two different remedies. The panel used to show one
   // message for both and guess "disabled on the Gateway page" — wrong when the
   // model is enabled and a sync simply never reached this container, which is
   // exactly what a toggle made while Docker was stopped produces.
-  const containerLacksIt = !!current?.reachable && current.resolvable === false;
+  // A subscription primary is not in the Rev4a catalogue on purpose: none of these apply to it.
+  const containerLacksIt = !!current?.reachable && current.resolvable === false && !primarySub;
   // The server states the cause; the offered list is only a fallback for when it
   // did not, so the panel and the card chip cannot disagree about why.
-  const status = current?.primaryStatus;
+  const status = primarySub ? null : current?.primaryStatus;
   const warnRemoved = status === 'missing';
+  // A subscription primary on an agent that is not signed in fails on its next turn.
+  const warnSubNotConnected = primarySub && !!sub && !sub.connected && !sub.error;
   const warnNotEnabled = status === 'disabled' || (status == null && primaryUnavailable);
   const warnNotSynced = containerLacksIt && (status === 'offered' || (status == null && groups.length > 0 && !primaryUnavailable));
   const warnUnknown = containerLacksIt && status == null && groups.length === 0;
@@ -206,11 +315,19 @@ export default function ModelSection({
 
       {!loading && current?.reachable && (
         <>
-          {(warnRemoved || warnNotEnabled || warnNotSynced || warnUnknown) && (
+          {(warnRemoved || warnNotEnabled || warnNotSynced || warnUnknown || warnSubNotConnected) && (
             <div style={{
               border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)',
               padding: '8px 10px', fontSize: 11, color: '#ef4444', lineHeight: 1.5,
             }}>
+              {warnSubNotConnected && (
+                <>
+                  <strong>This agent uses a subscription model but is not connected.</strong> It is set to{' '}
+                  <code>{shown(primary)}</code>, which needs a signed-in ChatGPT account. Connect it on the{' '}
+                  <a href="/subscriptions" style={{ color: 'inherit' }}>Subscriptions</a> page, or pick another model
+                  below.
+                </>
+              )}
               {warnRemoved && (
                 <>
                   <strong>This agent&rsquo;s model is no longer in the catalogue.</strong> It is
@@ -250,8 +367,9 @@ export default function ModelSection({
           <Select
             label="Primary model"
             options={options}
+            groups={primaryGroups}
             value={primary}
-            onChange={(e) => setPrimary(e.target.value)}
+            onChange={(e) => choosePrimary(e.target.value)}
           />
 
           <div>
@@ -268,32 +386,36 @@ export default function ModelSection({
               <div key={`${f}-${i}`} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: '#666', minWidth: 12 }}>{i + 1}.</span>
                 <span style={{ fontSize: 11, flex: 1, wordBreak: 'break-all' }}>
-                  {f}
+                  {shown(f)}
+                  {isSub(f) && <span style={{ color: '#888' }}> (ChatGPT subscription)</span>}
                   {byId.get(f)?.deprecated && (
                     <span style={{ color: '#eab308' }}> (deprecated)</span>
                   )}
-                  {groups.length > 0 && !byId.has(f) && (
+                  {groups.length > 0 && !isSub(f) && !byId.has(f) && (
                     <span style={{ color: '#ef4444' }}> (not enabled)</span>
                   )}
                 </span>
                 <RemoveButton
-                  label={`fallback ${f}`}
+                  label={`fallback ${shown(f)}`}
                   title="Remove from the list — applied when you save"
                   onClick={() => setFallbacks(fallbacks.filter((_, j) => j !== i))}
                 />
               </div>
             ))}
             <Select
-              options={[
-                { value: '', label: '— add a fallback —' },
-                ...allModels
-                  .filter((m) => m.id !== primary && !fallbacks.includes(m.id))
-                  .map((m) => ({ value: m.id, label: optionLabel(m) })),
-              ]}
+              options={[{ value: '', label: '— add a fallback —' }]}
+              groups={fallbackGroups}
               value=""
               onChange={(e) => { if (e.target.value) setFallbacks([...fallbacks, e.target.value]); }}
             />
+            {autoFallback && fallbacks.includes(autoFallback) && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                Used when the ChatGPT subscription reaches its usage limit.
+              </div>
+            )}
           </div>
+
+          <SubscriptionLine status={sub} loading={subLoading} modelsLoading={subConnected && subModels === null} />
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Button variant="primary" size="sm" loading={saving} disabled={!dirty || !primary || primaryUnavailable || !!agentBusy} onClick={save}>

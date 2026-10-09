@@ -41,6 +41,12 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Add, change or remove a provider API key', 'Toggle individual models on or off to control what the fleet is offered', 'Push the resulting catalogue to every agent container with Sync All Agents'],
     hints: 'Unchecking a model here removes it everywhere, including for requests that name it directly. To change which model one agent runs, open that agent on the Agents page and use the Model section.',
   },
+  '/subscriptions': {
+    title: 'Subscriptions',
+    description: 'Connect a ChatGPT Plus or Pro (Codex) account to an agent. This page manages the accounts only. At the top it shows the usage limits of each connected account (5 hours and weekly, with reset times; the quota is shared by every agent on the account and the owner\'s own Codex use). It shows, per agent, whether it is connected and until when, and the model it uses (read-only; the model is chosen in the agent panel). The sign-in tokens stay inside the agent; Rev4a never stores them.',
+    actions: ['Connect an agent: Rev4a shows a link and a code, enter the code on OpenAI with your ChatGPT account', 'Change the model in the agent panel (/agents), MODEL section: subscription models appear in the primary and fallback pickers next to the Rev4a proxy models', 'Disconnect an agent, which also returns it to its own model'],
+    hints: 'When the subscription reaches its usage limit the agent falls back automatically to its first fallback; picking a subscription primary with no fallbacks pre-fills the previous model there (served through the Rev4a proxy). The usage limit is shared with your own use of Codex on the same account. The code expires after 15 minutes; Retry gives a new one. An agent must be running to be connected, and a recreate or update of the agent keeps the connection.',
+  },
   '/crons': {
     title: 'Crons',
     description: 'Scheduled cron jobs that run agents on a recurring schedule. Shows schedule expression (cron syntax), last run time, next run time, and status for each job.',
@@ -127,6 +133,7 @@ Navigation links inside Rev4a:
 - Agents → /agents
 - Create Agent → /agents/create
 - Credentials → /credentials
+- Subscriptions (ChatGPT account in an agent) → /subscriptions
 - Gateway → /gateway
 - Cron Jobs → /crons
 - Containers → /containers

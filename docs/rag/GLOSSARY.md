@@ -118,6 +118,9 @@ The unit of text processed by an AI model. Input tokens (your prompt) and output
 ## Tool
 A capability available to agents: running shell commands, reading files, searching the web, etc. Tools can be built-in, from plugins, or from MCP servers.
 
+## Subscription
+A ChatGPT Plus or Pro (Codex) account connected to one agent from the Subscriptions page by a device-code login. The sign-in is kept inside the agent, not in Rev4a. The agent can use a subscription model as its primary or as a fallback, chosen in the MODEL section of the agent panel; the previous model is pre-filled as a fallback for when the account's usage limit is reached.
+
 ## Traefik
 Optional reverse proxy an operator can put in front of the Rev4a dashboard or of an agent's port. Rev4a does not configure it and sets no routing labels on agents: an agent's Control UI is reached on its published port. Rev4a itself runs on port 3740 and does not require Traefik.
 
