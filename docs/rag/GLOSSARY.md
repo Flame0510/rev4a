@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-10
 
 Terms you'll encounter while using the Rev4a dashboard.
 

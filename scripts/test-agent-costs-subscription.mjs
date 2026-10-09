@@ -122,10 +122,11 @@ test('spend: the cost split is scaled to what remains', () => {
   near(s.totals.inputCost + s.totals.outputCost + s.totals.cacheReadCost + s.totals.cacheWriteCost, s.totals.cost, 'split adds up');
 });
 
-test('spend: unpriced subscription calls leave the unpriced counts', () => {
+test('spend: the unpriced count is OpenClaw\'s, never reduced (a paid unpriced model is never hidden)', () => {
   const s = readCostSummary(makeDb(), days);
-  assert.equal(s.totals.missing, 0, 'atlas day 1 missing 2 were the subscription ones');
-  assert.deepEqual(s.unpriced.map((u) => u.model), ['rev4a/ghost'], 'openai/gpt-9-mini is reported by the subscription section');
+  assert.equal(s.totals.missing, 2, 'kept as OpenClaw recorded it');
+  assert.ok(s.unpriced.some((u) => u.model === 'rev4a/ghost'), 'the paid unpriced model is listed');
+  assert.ok(s.totals.missing > 0, 'the warning cannot disappear while a paid model is unpriced');
 });
 
 test('sessions: a subscription session stays listed and is labelled (it can mix paid and plan calls)', () => {

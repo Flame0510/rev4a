@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-10
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -538,9 +538,11 @@ whose `cost_usd` is no longer estimated (always 0).
 What the agents spent in a range of UTC days, today included (default `7d`), read from
 `costs.db` (written by the daemon every 5 minutes, see `docs/dev/DATABASE.md`). Rev4a
 computes no cost: every figure is the one OpenClaw recorded with the prices Rev4a syncs.
-Calls made with a ChatGPT subscription (provider `openai` or `openai-codex`) are left out of `totals`,
-`daily`, `byAgent`, `byModel`, `sessions`, `unpriced` and `proxy` (they are covered by the plan) and
-reported in `subscription`.
+Calls made with a ChatGPT subscription (provider `openai` or `openai-codex`) are left out of the spend in `totals`,
+`daily`, `byAgent`, `byModel` and `proxy` (they are covered by the plan) and reported in `subscription`.
+`sessions` keeps a session whose current provider is a subscription, with `usesSubscription: 1`. The
+unpriced counts (`missing`, `unpriced`) stay as OpenClaw recorded them, subscription models included:
+taking them out could hide an unpriced paid model.
 
 **Auth:** browser cookie or Bearer
 

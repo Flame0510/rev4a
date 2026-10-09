@@ -89,8 +89,10 @@ interface DailyRow {
  * agent_cost_daily rows with the subscription calls taken out. The table has no provider, so the
  * per container/day sums of the subscription rows in agent_cost_model_daily are subtracted (never
  * below 0). The split by kind (input, output, cache) is not kept per provider: it is scaled by the
- * share of tokens (counts) or cost (prices) that remains. An unpriced subscription call (tokens
- * without a cost) was counted in `missing`: it leaves that count too.
+ * share of tokens (counts) or cost (prices) that remains. `missing` (calls OpenClaw could not price)
+ * is kept as it is: OpenClaw counts it in usage entries, the model rows in calls, so taking the
+ * subscription share out could hide an unpriced paid model. An unpriced subscription model is
+ * therefore also in the "calls without a price" warning (fail safe), and in the subscription section.
  */
 function readSpendDaily(db: Database.Database, where: string, params: Record<string, unknown>): DailyRow[] {
   const rows = db.prepare(`SELECT * FROM agent_cost_daily WHERE ${where}`).all(params) as DailyRow[];
@@ -118,7 +120,7 @@ function readSpendDaily(db: Database.Database, where: string, params: Record<str
       cache_read: Math.round(r.cache_read * t), cache_write: Math.round(r.cache_write * t),
       input_cost: r.input_cost * c, output_cost: r.output_cost * c,
       cache_read_cost: r.cache_read_cost * c, cache_write_cost: r.cache_write_cost * c,
-      missing: Math.max(0, r.missing - s.unpricedCalls),
+      missing: r.missing,
     };
   });
 }
@@ -276,7 +278,7 @@ export function readCostSummary(
     try { parsed = JSON.parse(s.missing_by_model || '{}'); } catch { /* keep empty */ }
     for (const [model, calls] of Object.entries(parsed)) {
       // OpenClaw names an unpriced model `provider/model`; the subscription's are reported apart.
-      if (!calls || isSubscriptionProvider(model.split('/')[0])) continue;
+      if (!calls) continue;
       const entry = unpricedMap.get(model) ?? { model, calls: 0, agents: [] };
       entry.calls += calls;
       entry.agents.push(s.name ?? s.container);

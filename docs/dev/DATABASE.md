@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-10-08
+> **Last updated:** 2026-10-10
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (sessions and events, below), `metrics.db` (machine and container metrics, see

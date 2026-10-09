@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-10
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 

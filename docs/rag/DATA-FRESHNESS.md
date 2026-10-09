@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-10
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
