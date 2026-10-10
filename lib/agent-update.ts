@@ -378,10 +378,7 @@ async function runRollbackStart(agentId: string): Promise<number> {
   const row = latestUpdate(agentId);
   if (!row || !ROLLBACK_FROM.includes(row.status)) throw new UpdateRefusedError('There is no update of this agent to roll back');
   if (!row.backup_file || !row.from_version) throw new UpdateRefusedError('This update has no pre-update backup to restore');
-  // Refused up front, not mid-way: this Rev4a supports 9.x only, so a row recorded
-  // before 2026.7.x support was dropped has no image this build can recreate, and the
-  // readiness probe would never see the old Gateway as ready either. Better to say so
-  // than to restore a volume and leave the agent on a version this build cannot run.
+  // Refused up front, not mid-way: a version this build no longer lists has no image it can recreate.
   if (!isSupportedVersion(row.from_version)) {
     throw new UpdateRefusedError(`This Rev4a no longer supports OpenClaw ${row.from_version} (the version this update moved away from), so it cannot roll back to it`);
   }

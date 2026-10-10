@@ -313,9 +313,7 @@ Saving calls `PUT /api/gateway/agent`, which writes the container's
   UI that sets them; the create wizard does not
 - **no restart** — `agents` is in OpenClaw's hot-reload column, so the write
   applies on the agent's next turn. Current OpenClaw reads the configuration per
-  message; the Control UI picks the change up at once. (On 2026.7.1-2 a Telegram
-  channel kept the configuration it had when it started, so Telegram replies stayed on
-  the old model until the container was restarted — that build is no longer supported.)
+  message; the Control UI picks the change up at once.
 
 The agent list shows each agent's current model as a chip, fed by
 `GET /api/agents/models-summary`. The red states are split by remedy, because they

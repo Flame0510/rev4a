@@ -5,8 +5,8 @@
  * The OAuth profile lives in the agent's own volume (`~/.openclaw/state/openclaw.sqlite`).
  * Status is read with ONE `docker exec node -e` inside the agent (STATUS_SCRIPT, about
  * 0.5 s): it prints the profile ids, emails, plan and expiry and the agent's model, never a
- * token. An `openclaw` CLI call boots every plugin (about 7 s), so the CLI is only the
- * fallback for an older layout and the way to list models, disconnect and write the model:
+ * token. An `openclaw` CLI call boots every plugin (about 7 s), so the CLI is only the way to
+ * list models, disconnect and write the model:
  *
  *   models list --provider openai --json     the models the account offers (cached 10 min)
  *   models auth logout <profile> --yes       disconnect
@@ -21,10 +21,14 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
+import { SUPPORTED_VERSIONS, isSupportedVersion } from '@/lib/agent-versions';
+import { containerOpenClawVersion, listLocalAgentImages } from '@/lib/agent-images';
+import { dockerFetch } from '@/lib/docker-socket';
 import {
-  parseAuthList,
   parseModelList,
   parseStatusJson,
+  statusFailureReason,
+  readWithRetry,
   STATUS_SCRIPT_SRC,
   STOP_CODEX_SCRIPT,
   revertSubscriptionModel,
@@ -169,15 +173,14 @@ export async function findAgentContainer(agentId: unknown, opts: { fresh?: boole
   return found;
 }
 
-function cliProblem(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/unknown command|too many arguments|unknown option|not a (known )?command|has no command/i.test(msg)) {
-    return "This agent's OpenClaw version does not support subscriptions. Update the agent first.";
-  }
-  if (/unexpected format/i.test(msg)) return "The agent's OpenClaw answered in an unexpected format.";
-  if (/timed out/i.test(msg)) return 'The agent did not answer in time.';
-  return 'Could not read the subscription status from this agent.';
-}
+/** The supported majors, as "2026.9.x", from lib/agent-versions.json: a version added there updates the message. */
+const supportedMajors = [...new Set(SUPPORTED_VERSIONS.map((v) => v.version.split('.').slice(0, 2).join('.') + '.x'))].join(' or ');
+
+/** The one refusal for an agent whose state is not where a supported version keeps it (HTTP 409 wherever it is raised). */
+export const UNSUPPORTED_AGENT_MESSAGE = `This agent is not on a supported OpenClaw version (${supportedMajors}). Update it first.`;
+
+/** The message a failed fast read carries (HTTP 503 wherever it is raised). */
+export const statusReadFailedMessage = (reason: string): string => `Could not read this agent's subscription status: ${reason}`;
 
 // ---- fast status read -------------------------------------------------------------------
 
@@ -188,9 +191,9 @@ function cliProblem(e: unknown): string {
  * `access`, `refresh` and `accountId` are never copied: the tokens do not leave the container.
  * It takes about 0.5 s; an `openclaw` CLI call boots every plugin and takes about 7 s.
  *
- * `{"legacy":true}` means this agent has another layout (no node:sqlite, no state database,
- * no profile table): the caller then falls back to the CLI. A missing profile row is simply
- * no profiles. A config that cannot be read gives `model: null` and `error`.
+ * `{"unsupported":true}` means this agent does not keep its state where 2026.9.x does (no
+ * node:sqlite, no state database, no profile table). Any other failure exits non-zero. A missing
+ * profile row is simply no profiles. A config that cannot be read gives `model: null` and `error`.
  */
 export const STATUS_SCRIPT = STATUS_SCRIPT_SRC;
 
@@ -204,68 +207,72 @@ export interface AgentState {
 
 const isChatgptProfile = (p: { id: string; type: string | null }): boolean => p.id.startsWith(`${PROVIDER_ID}:`) && p.type === 'oauth';
 
-/** The fast read's answer: the state, "this agent has the old layout", or "could not read". */
-export type FastRead = { status: 'ok'; state: AgentState } | { status: 'legacy' } | { status: 'failed' };
+/** The fast read's answer: the state, "not a supported OpenClaw version", or "could not read" with the reason. */
+export type FastRead = { status: 'ok'; state: AgentState } | { status: 'unsupported' } | { status: 'failed'; reason: string };
 
-/** The fast status read alone (about 0.5 s), with no CLI fallback. */
-export async function readFastStatus(container: string): Promise<FastRead> {
+const READ_TIMEOUT_MS = 12_000;
+/** Pauses before the 2nd and 3rd attempt of a failed read. */
+const RETRY_DELAYS_MS = [1_000, 2_000];
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** True when the container's image is a supported OpenClaw version; false when it is not or cannot be told. */
+async function runsSupportedVersion(container: string): Promise<boolean> {
+  try {
+    const info = await dockerFetch<{ Image?: string; State?: { Running?: boolean } }>('GET', `/containers/${encodeURIComponent(container)}/json`);
+    if (!info?.Image) return false;
+    const version = await containerOpenClawVersion(
+      { name: container, imageId: info.Image, running: info.State?.Running === true },
+      await listLocalAgentImages(),
+    );
+    return isSupportedVersion(version);
+  } catch {
+    return false;
+  }
+}
+
+async function readStatusOnce(container: string): Promise<FastRead> {
   let out: string;
   try {
-    out = await dockerExec(container, ['node', '-e', STATUS_SCRIPT], { timeoutMs: 12_000 });
-  } catch {
-    return { status: 'failed' };
+    out = await dockerExec(container, ['node', '-e', STATUS_SCRIPT], { timeoutMs: READ_TIMEOUT_MS });
+  } catch (e) {
+    return { status: 'failed', reason: statusFailureReason(e instanceof Error ? e.message : String(e)) };
   }
+  // `docker exec` can exit 0 on the SIGTERM sent at the deadline: empty output is a cut-off read.
+  if (!out.trim()) return { status: 'failed', reason: 'the read was cut off (timed out)' };
   const s = parseStatusJson(out);
-  if (!s) return { status: 'failed' };
-  if (s.legacy) return { status: 'legacy' };
+  if (!s) return { status: 'failed', reason: 'the agent answered in an unexpected format' };
+  if (s.unsupported) {
+    // The status script can only see that the state database is not where 2026.9.x keeps it.
+    // A supported agent shows the same thing before its Gateway has created that database
+    // (just created or recreated): the image's version tells the two apart.
+    return (await runsSupportedVersion(container))
+      ? { status: 'failed', reason: 'the agent is still starting' }
+      : { status: 'unsupported' };
+  }
   return { status: 'ok', state: { profiles: s.profiles.filter(isChatgptProfile), model: s.error ? null : s.model } };
 }
 
-async function readStateFast(container: string): Promise<AgentState | null> {
-  const r = await readFastStatus(container);
-  return r.status === 'ok' ? r.state : null;
+/**
+ * The status read (about 0.5 s). A failed read is retried up to twice (after 1 s, then 2 s),
+ * never an 'ok' or 'unsupported' answer; a timeout is retried once at most and a stopped
+ * container not at all. Worst case: two timed-out reads plus a fast failure with both pauses,
+ * about 27 s; a failure that is not a timeout costs at most 3 s of pauses. `retry: false` reads once.
+ */
+export async function readFastStatus(container: string, opts: { retry?: boolean } = {}): Promise<FastRead> {
+  return readWithRetry(() => readStatusOnce(container), opts.retry === false ? [] : RETRY_DELAYS_MS, sleep);
 }
 
-/** The slow path for an agent whose layout the fast read does not know: two OpenClaw CLI calls. */
-async function readStateSlow(container: string): Promise<AgentState> {
-  const [profilesR, modelR] = await Promise.allSettled([readProfilesCli(container), readDefaultModelCat(container)]);
-  if (profilesR.status === 'rejected') throw profilesR.reason;
-  return { profiles: profilesR.value, model: modelR.status === 'fulfilled' ? modelR.value : null };
-}
-
-/** Fast read first; the CLI only when the agent is on an older layout. Throws when both fail. */
-export async function readAgentState(container: string): Promise<AgentState> {
-  return (await readStateFast(container)) ?? (await readStateSlow(container));
-}
-
-async function readProfilesCli(container: string): Promise<AuthProfile[]> {
-  const out = await dockerExec(
-    container,
-    ['openclaw', 'models', 'auth', 'list', '--provider', PROVIDER_ID, '--json'],
-    { timeoutMs: CLI_TIMEOUT_MS },
-  );
-  const profiles = parseAuthList(out);
-  // `docker exec` can exit 0 on the SIGTERM sent at the deadline: an empty body is "no answer in time".
-  if (!profiles) throw new Error(out.trim() ? 'unexpected format' : 'timed out with no output');
-  return profiles.filter(isChatgptProfile);
-}
-
-async function readDefaultModelCat(container: string): Promise<AgentModelRef> {
-  const raw = await dockerExecNoFail(container, ['cat', CONFIG_PATH], { timeoutMs: 8000 });
-  if (!raw.trim()) throw new SubscriptionError(502, 'Could not read the agent configuration.');
-  let config: unknown;
-  try {
-    config = JSON.parse(raw);
-  } catch {
-    throw new SubscriptionError(502, 'The agent configuration is not valid JSON.');
-  }
-  const agents = (config as { agents?: { defaults?: { model?: unknown } } }).agents;
-  return (agents?.defaults?.model ?? null) as AgentModelRef;
+/** The agent's state. Throws a SubscriptionError: 409 when the agent is not on a supported version, 503 when the read failed. */
+export async function readAgentState(container: string, opts: { retry?: boolean } = {}): Promise<AgentState> {
+  const r = await readFastStatus(container, opts);
+  if (r.status === 'ok') return r.state;
+  if (r.status === 'unsupported') throw new SubscriptionError(409, UNSUPPORTED_AGENT_MESSAGE);
+  throw new SubscriptionError(503, statusReadFailedMessage(r.reason));
 }
 
 /** The ChatGPT sign-ins of one running agent. Throws when it cannot be read. */
-export async function readProfiles(container: string): Promise<AuthProfile[]> {
-  return (await readAgentState(container)).profiles;
+export async function readProfiles(container: string, opts: { retry?: boolean } = {}): Promise<AuthProfile[]> {
+  return (await readAgentState(container, opts)).profiles;
 }
 
 /** `agents.defaults.model` of a running agent. Throws when the config cannot be read. */
@@ -360,7 +367,7 @@ async function readAgent(a: AgentContainer): Promise<AgentSubscription> {
   try {
     state = await readAgentState(a.container);
   } catch (e) {
-    out.error = cliProblem(e);
+    out.error = e instanceof SubscriptionError ? e.message : statusReadFailedMessage('unexpected error');
     return out;
   }
   const oauth = state.profiles;
@@ -413,9 +420,9 @@ async function readAccountModels(container: string, email: string | null): Promi
 async function discoverSources(): Promise<Map<string, SourceAgent>> {
   const gen = generation();
   const running = (await listAgentContainers()).filter((a) => a.running);
-  // The fast read only: an agent whose fast read is legacy cannot be a source (no CLI fallback here).
   const found = await mapWithConcurrency(running, CONCURRENCY, async (a) => {
-    const r = await readFastStatus(a.container);
+    // One read per agent: a failing agent is skipped here anyway, and retries would stall the models and usage reads.
+    const r = await readFastStatus(a.container, { retry: false });
     if (r.status !== 'ok') return [];
     return r.state.profiles.map((p) => ({ email: p.email ?? '', container: a.container, name: a.displayName || a.agentId }));
   });

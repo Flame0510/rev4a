@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { execSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { readFastStatus } from '@/lib/subscriptions';
+import { readFastStatus, statusReadFailedMessage, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
 import { keepStoredRef } from '@/lib/subscriptions-parse';
 
 export const dynamic = 'force-dynamic';
@@ -129,9 +129,12 @@ export async function PUT(request: NextRequest) {
     if (refs.some((r) => typeof r === 'string' && r.startsWith(SUBSCRIPTION_MARK))) {
       const read = await readFastStatus(safeContainer);
       if (read.status === 'failed') {
-        return NextResponse.json({ status: 'error', error: "Could not read this agent's subscription status. Try again." }, { status: 503 });
+        return NextResponse.json({ status: 'error', error: statusReadFailedMessage(read.reason) }, { status: 503 });
       }
-      if (read.status === 'legacy' || read.state.profiles.length === 0) {
+      if (read.status === 'unsupported') {
+        return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
+      }
+      if (read.state.profiles.length === 0) {
         return NextResponse.json({ status: 'error', error: 'This agent is not connected to a ChatGPT subscription.' }, { status: 409 });
       }
     }

@@ -130,7 +130,7 @@ Agents page.
 
 ## Subscriptions (ChatGPT / Codex)
 
-**Update frequency:** the status of each agent is read live (about 0.5 s, on every request); the model list is cached 10 minutes; the usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s.
+**Update frequency:** the status of each agent is read live (about 0.5 s, on every request; a read that fails is retried up to twice (1 s, then 2 s; a timeout only once, so at most about 27 s) and then shown as an error with a Retry button, never read through the slower CLI); the model list is cached 10 minutes; the usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s.
 
 ## Agent base image
 

@@ -19,7 +19,7 @@ import { dockerExecNoFail } from '@/lib/docker-exec';
 import { resolveDockerSocket } from '@/lib/docker-socket';
 import { loginDeadlineAt, parseDeviceLogin } from '@/lib/subscriptions-parse';
 import { isValidAgentId } from '@/lib/container';
-import { SubscriptionError, findAgentContainer, invalidateSubscriptions, readFastStatus, readProfiles, withAgentLock } from '@/lib/subscriptions';
+import { SubscriptionError, UNSUPPORTED_AGENT_MESSAGE, findAgentContainer, invalidateSubscriptions, readFastStatus, readProfiles, statusReadFailedMessage, withAgentLock } from '@/lib/subscriptions';
 
 export type LoginState = 'starting' | 'waiting' | 'connected' | 'failed' | 'expired' | 'cancelled';
 
@@ -154,7 +154,8 @@ async function confirmEarly(j: Job): Promise<void> {
   for (let i = 0; i < 6; i++) {
     if (!ACTIVE.includes(j.state) || j.cancelled) return;
     try {
-      const profiles = await readProfiles(j.container);
+      // Best effort, polled again: no retry here (settle() reads with retries if this never lands).
+      const profiles = await readProfiles(j.container, { retry: false });
       if (profiles.length > 0 && ACTIVE.includes(j.state)) {
         j.email = profiles.find((x) => x.email)?.email ?? null;
         invalidateSubscriptions();
@@ -205,16 +206,21 @@ async function settle(j: Job, code: number | null): Promise<void> {
   }
   if (p.done === 'ok' || code === 0) {
     // Confirm with the agent itself: the profile must exist, whatever the output said.
-    try {
-      const profiles = await readProfiles(j.container);
+    // The read retries a transient failure itself; if it still fails, say so instead of "no account".
+    const read = await readFastStatus(j.container);
+    if (read.status === 'ok') {
+      const profiles = read.state.profiles;
       if (profiles.length > 0) {
         j.email = profiles.find((x) => x.email)?.email ?? null;
         invalidateSubscriptions();
         finish(j, 'connected');
         return;
       }
-    } catch { /* falls through to the failure below */ }
-    finish(j, 'failed', 'OpenAI confirmed the login but the agent holds no account. Try again.');
+      finish(j, 'failed', 'OpenAI confirmed the login but the agent holds no account. Try again.');
+      return;
+    }
+    const why = read.status === 'failed' ? read.reason : 'the agent is not on a supported OpenClaw version';
+    finish(j, 'failed', `The login may have succeeded but the agent could not be read: ${why}. Reload to check.`);
     return;
   }
   if (!j.url) {
@@ -260,11 +266,10 @@ export async function startLogin(agentId: unknown): Promise<LoginView> {
       const busy = await agentBusyReason(a.agentId, { ignoreLogin: true });
       if (busy) throw new SubscriptionError(409, busy);
 
-      // The fast read only: a failed read is never "not connected", and the old layout has no
-      // profile table (the startup sync removes its `auth-profiles.json`), so it cannot connect.
+      // A failed read is never "not connected"; an agent without the 2026.9.x profile table cannot connect.
       const read = await readFastStatus(a.container);
-      if (read.status === 'failed') throw new SubscriptionError(503, "Could not read this agent's subscription status. Try again.");
-      if (read.status === 'legacy') throw new SubscriptionError(409, "This agent's OpenClaw is too old for subscriptions. Update the agent first.");
+      if (read.status === 'failed') throw new SubscriptionError(503, statusReadFailedMessage(read.reason));
+      if (read.status === 'unsupported') throw new SubscriptionError(409, UNSUPPORTED_AGENT_MESSAGE);
       if (read.state.profiles.length > 0) throw new SubscriptionError(409, 'This agent is already connected. Disconnect it first to use another account.');
 
       if (j.cancelled || !ACTIVE.includes(j.state)) return;

@@ -437,7 +437,12 @@ function AgentRow({ agent, row, onConnect, onRetry, onDisconnect }: {
             <span style={{ fontSize: 11, color: 'var(--text-dim, #888)' }}>{a.email}{a.plan ? ` · ${a.plan}` : ''}</span>
           )}
         </div>
-        {a.error && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{a.error}</div>}
+        {a.error && (
+          <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--red)' }}>{a.error}</span>
+            <Button type="button" variant="secondary" size="sm" disabled={busy} loading={row.loading} onClick={onRetry}>{row.loading ? 'Retrying…' : 'Retry'}</Button>
+          </div>
+        )}
         {row.error && (
           <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: 'var(--red)' }}>{row.error} The status above may be out of date.</span>

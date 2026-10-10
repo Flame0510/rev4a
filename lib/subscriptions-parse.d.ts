@@ -31,7 +31,6 @@ export interface ModelPair {
 
 export function cleanTerminalText(text: string): string;
 export function parseDeviceLogin(text: string): DeviceLogin;
-export function parseAuthList(input: unknown): AuthProfile[] | null;
 export interface StatusProfile {
   id: string;
   type: string | null;
@@ -42,13 +41,15 @@ export interface StatusProfile {
 }
 
 export interface StatusRead {
-  /** The agent has another layout (no node:sqlite, no table): use the CLI. */
-  legacy: boolean;
+  /** The agent does not keep its state where 2026.9.x does (no node:sqlite, no state database, no profile table). */
+  unsupported: boolean;
   profiles: StatusProfile[];
   model: ModelPair | null;
   error: string | null;
 }
 
+export function statusFailureReason(message: unknown): string;
+export function readWithRetry<T extends { status: string; reason?: string }>(read: () => Promise<T>, delaysMs: number[], sleep: (ms: number) => Promise<void>): Promise<T>;
 export function formatPlan(plan: unknown): string | null;
 export function parseStatusJson(input: unknown): StatusRead | null;
 export function parseModelList(input: unknown): SubscriptionModel[] | null;

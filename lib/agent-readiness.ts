@@ -14,14 +14,13 @@
  * route deletes the container when this probe times out, so a false negative
  * there destroys a healthy agent over an unrelated channel.
  *
- * **The endpoint used.** `/startupz` exists from 9.x: 503 while starting or
+ * **The endpoint used.** `/startupz` is the probe on every supported version (2026.9.x): 503 while starting or
  * draining, 200 with `{"status":"started"}` when done. The probe reads the status
  * code *and* the body: a 503, a non-JSON 200 or no answer means "not yet". A
  * Gateway that refused readiness — for instance one that found a legacy session
  * store and wants `doctor --fix` — answers 200 on `/health` while draining; reading
  * that as ready would let the create route configure an agent that is still
- * migrating (the 2026.7.1-2 fallback that used to do exactly that was removed with
- * 7.x support).
+ * migrating.
  *
  * **Async.** A request path must not hold Node's single thread for up to a
  * minute; see docs/ARCHITECTURE.md §3.1.

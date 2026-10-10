@@ -427,8 +427,7 @@ export async function getPairings(agentId: string, channel: string = 'telegram')
     } catch { /* ignore */ }
   }
 
-  // Approved: OpenClaw's pairing store (2026.9.x keeps it in SQLite; the legacy
-  // credentials files it replaced are gone, so reading those returned nothing).
+  // Approved: OpenClaw's pairing store (2026.9.x keeps it in SQLite).
   const approved: ApprovedPairing[] = [];
   const store = await runPairingStore(container, 'read', channel);
   if (store.status === 'ok') {

@@ -7,8 +7,8 @@
  *
  * The job lives in memory (lib/subscription-login.ts). POST returns the running job with 200
  * when the agent already has a login running (or one that just connected and is finishing), and
- * 409 when the agent is busy, stopped, already connected or on an OpenClaw too old for
- * subscriptions; 503 when its subscription status cannot be read. Every answer carries
+ * 409 when the agent is busy, stopped, already connected or not on a supported OpenClaw
+ * version (2026.9.x); 503 when its subscription status cannot be read. Every answer carries
  * `Cache-Control: no-store`: the body holds the device code.
  */
 import { NextResponse } from 'next/server';

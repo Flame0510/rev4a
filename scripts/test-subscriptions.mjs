@@ -7,9 +7,9 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  parseDeviceLogin, parseAuthList, parseModelList, stopSubscriptionModel,
+  parseDeviceLogin, parseModelList, stopSubscriptionModel,
   parseStatusJson, parseUsageStatus, formatPlan, mapStoreProfile, STATUS_SCRIPT_SRC,
-  loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef, STOP_CODEX_SCRIPT,
+  statusFailureReason, readWithRetry, loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef, STOP_CODEX_SCRIPT,
 } = require('../lib/subscriptions-parse.js');
 const { execFileSync } = require('node:child_process');
 const fsx = require('node:fs');
@@ -18,6 +18,8 @@ const pathx = require('node:path');
 
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log(`ok  ${name}`); };
+
+const atest = async (name, fn) => { await fn(); n++; console.log(`ok  ${name}`); };
 
 const ESC = '\x1b';
 const URL_ = 'https://auth.openai.com/codex/device';
@@ -109,23 +111,7 @@ test('device login: timeout', () => {
   assert.match(p.error, /timed out/);
 });
 
-// ---- parseAuthList / parseModelList --------------------------------------------------
-
-test('auth list: one oauth profile', () => {
-  const out = JSON.stringify({ profiles: [{ id: 'openai:me@example.com', type: 'oauth', email: 'me@example.com', expiresAt: '2026-10-18T10:00:00.000Z' }] });
-  assert.deepEqual(parseAuthList(out), [
-    { id: 'openai:me@example.com', type: 'oauth', email: 'me@example.com', expiresAt: '2026-10-18T10:00:00.000Z' },
-  ]);
-});
-
-test('auth list: empty, warnings around the JSON, and garbage', () => {
-  assert.deepEqual(parseAuthList('{"profiles":[]}'), []);
-  assert.equal(parseAuthList('warning: something\n{"profiles":[{"id":"openai:a","type":"oauth"}]}\n').length, 1);
-  assert.equal(parseAuthList(''), null);
-  assert.equal(parseAuthList('not json'), null);
-  assert.equal(parseAuthList('{"other":1}'), null);
-  assert.equal(parseAuthList('{"profiles":[{"id":"openai:a","expiresAt":"nope"}]}')[0].expiresAt, null);
-});
+// ---- parseModelList ------------------------------------------------------------------
 
 test('model list', () => {
   const out = JSON.stringify({ models: [
@@ -182,7 +168,7 @@ test('status: full line from the in-container script', () => {
     model: { primary: 'openai/gpt-5.6-sol', fallbacks: ['rev4a/a'] },
   });
   const s = parseStatusJson('(node:1) ExperimentalWarning: SQLite\n' + line + '\n');
-  assert.equal(s.legacy, false);
+  assert.equal(s.unsupported, false);
   assert.equal(s.error, null);
   assert.deepEqual(s.profiles, [{ id: 'openai:me@x.com', type: 'oauth', provider: 'openai', email: 'me@x.com', expiresAt: '2026-10-18T10:00:00.000Z', plan: 'Plus' }]);
   assert.deepEqual(s.model, { primary: 'openai/gpt-5.6-sol', fallbacks: ['rev4a/a'] });
@@ -198,8 +184,13 @@ test('status: missing fields become null, a missing profile list is empty', () =
   assert.equal(none.error, 'config');
 });
 
-test('status: legacy marker, garbage and empty output', () => {
-  assert.equal(parseStatusJson('{"legacy":true}').legacy, true);
+test('status: unsupported marker, garbage and empty output', () => {
+  const u = parseStatusJson('{"unsupported":true}');
+  assert.equal(u.unsupported, true);
+  assert.deepEqual(u.profiles, []);
+  assert.equal(u.model, null);
+  // The old marker is not understood any more: it is just a read without profiles.
+  assert.equal(parseStatusJson('{"legacy":true}').unsupported, false);
   assert.equal(parseStatusJson(''), null);
   assert.equal(parseStatusJson('not json'), null);
   assert.equal(parseStatusJson('{"profiles":"x"}').profiles.length, 0);
@@ -270,12 +261,37 @@ test('status script: runs as written and never prints the tokens', () => {
     const out = execFileSync(process.execPath, ['--no-warnings', '-e', script], { encoding: 'utf8' });
     assert.equal(/SECRET_/.test(out), false);
     const st = parseStatusJson(out);
-    assert.equal(st.legacy, false);
+    assert.equal(st.unsupported, false);
     assert.equal(st.profiles[0].email, 'a@b.c');
     assert.equal(st.profiles[0].plan, 'Plus');
     assert.equal(st.model.primary, 'openai/gpt-5.6-sol');
     const missing = execFileSync(process.execPath, ['--no-warnings', '-e', STATUS_SCRIPT_SRC.split('/root/.openclaw/state/openclaw.sqlite').join(pathx.join(dir, 'none.sqlite'))], { encoding: 'utf8' });
-    assert.equal(parseStatusJson(missing).legacy, true);
+    assert.equal(parseStatusJson(missing).unsupported, true);
+    // A state database without the profile table is the same refusal, not a read failure.
+    const noTable = pathx.join(dir, 'empty.sqlite');
+    const e = new DatabaseSync(noTable);
+    e.exec('CREATE TABLE other (x TEXT)');
+    e.close();
+    const unsupported = execFileSync(process.execPath, ['--no-warnings', '-e', STATUS_SCRIPT_SRC.split('/root/.openclaw/state/openclaw.sqlite').join(noTable)], { encoding: 'utf8' });
+    assert.equal(parseStatusJson(unsupported).unsupported, true);
+    // A file that is not a database is a failed read: the script exits non-zero, nothing is printed.
+    const junk = pathx.join(dir, 'junk.sqlite');
+    fsx.writeFileSync(junk, 'this is not a database, '.repeat(200));
+    const junkScript = STATUS_SCRIPT_SRC.split('/root/.openclaw/state/openclaw.sqlite').join(junk);
+    let stderr = '';
+    assert.throws(() => execFileSync(process.execPath, ['--no-warnings', '-e', junkScript], { encoding: 'utf8', stdio: 'pipe' }), (e) => { stderr = String(e.stderr); return e.status === 1; });
+    // Only a fixed category reaches stderr, never the exception text.
+    assert.equal(stderr.trim(), 'state database unreadable');
+    // A profile row that is not JSON: its text must not be echoed either.
+    const badRow = pathx.join(dir, 'badrow.sqlite');
+    const br = new DatabaseSync(badRow);
+    br.exec('CREATE TABLE config_machine_state (state_key TEXT PRIMARY KEY, value_json TEXT, updated_at_ms INTEGER)');
+    br.prepare('INSERT INTO config_machine_state VALUES (?, ?, 0)').run('authProfiles.store', '{"profiles": SECRET-TEXT}');
+    br.close();
+    const badScript = STATUS_SCRIPT_SRC.split('/root/.openclaw/state/openclaw.sqlite').join(badRow);
+    assert.throws(() => execFileSync(process.execPath, ['--no-warnings', '-e', badScript], { encoding: 'utf8', stdio: 'pipe' }), (e) => {
+      return e.status === 1 && String(e.stderr).trim() === 'profile store unreadable' && !String(e.stderr).includes('SECRET');
+    });
   } finally {
     fsx.rmSync(dir, { recursive: true, force: true });
   }
@@ -365,6 +381,71 @@ test('stop codex script: valid sh, kills only the Codex runtime, never its own s
   assert.equal(match('node /usr/local/bin/openclaw gateway --bind lan --port 3000'), 'n');
   assert.equal(match('openclaw models auth login --provider openai --device-code'), 'n');
   assert.ok(STOP_CODEX_SCRIPT.includes('"$$"'), 'skips its own shell');
+});
+
+
+// ---- failure reason and retry policy ---------------------------------------------------
+
+test('failure reason: fixed categories only, never the raw text', () => {
+  assert.equal(statusFailureReason('docker exec c: exit 1 — state database locked'), 'state database locked');
+  assert.equal(statusFailureReason('docker exec c: exit 1 — profile store unreadable'), 'profile store unreadable');
+  assert.equal(statusFailureReason('docker exec c: exit 1 — state database unreadable'), 'state database unreadable');
+  assert.equal(statusFailureReason('docker exec c: timed out'), 'timed out');
+  assert.equal(statusFailureReason('docker exec c: exit 1 — Error response from daemon: container c is not running'), 'the container is not running');
+  const leak = statusFailureReason('docker exec c: exit 1 — SyntaxError: Unexpected token S in JSON at position 12 "SECRET-TEXT"');
+  assert.equal(leak, 'the read failed');
+  assert.equal(statusFailureReason(undefined), 'the read failed');
+});
+
+const noSleep = (log) => async (ms) => { log.push(ms); };
+const seq = (answers) => { let i = 0; return async () => answers[Math.min(i++, answers.length - 1)]; };
+const F = (reason) => ({ status: 'failed', reason });
+
+await atest('retry: ok and unsupported are never retried', async () => {
+  for (const a of [{ status: 'ok' }, { status: 'unsupported' }]) {
+    const pauses = [];
+    let calls = 0;
+    const r = await readWithRetry(async () => { calls++; return a; }, [1000, 2000], noSleep(pauses));
+    assert.equal(r.status, a.status);
+    assert.equal(calls, 1);
+    assert.deepEqual(pauses, []);
+  }
+});
+
+await atest('retry: a transient failure recovers on the second or third read', async () => {
+  const p1 = [];
+  assert.equal((await readWithRetry(seq([F('the read failed'), { status: 'ok' }]), [1000, 2000], noSleep(p1))).status, 'ok');
+  assert.deepEqual(p1, [1000]);
+  const p2 = [];
+  assert.equal((await readWithRetry(seq([F('the read failed'), F('the read failed'), { status: 'ok' }]), [1000, 2000], noSleep(p2))).status, 'ok');
+  assert.deepEqual(p2, [1000, 2000]);
+});
+
+await atest('retry: a persistent failure stops after three reads', async () => {
+  const pauses = [];
+  let calls = 0;
+  const r = await readWithRetry(async () => { calls++; return F('state database locked'); }, [1000, 2000], noSleep(pauses));
+  assert.equal(r.status, 'failed');
+  assert.equal(calls, 3);
+  assert.deepEqual(pauses, [1000, 2000]);
+});
+
+await atest('retry: a timeout is retried once, a stopped container never', async () => {
+  let calls = 0;
+  await readWithRetry(async () => { calls++; return F('timed out'); }, [1000, 2000], noSleep([]));
+  assert.equal(calls, 2);
+  calls = 0;
+  await readWithRetry(async () => { calls++; return F('the read was cut off (timed out)'); }, [1000, 2000], noSleep([]));
+  assert.equal(calls, 2);
+  calls = 0;
+  await readWithRetry(async () => { calls++; return F('the container is not running'); }, [1000, 2000], noSleep([]));
+  assert.equal(calls, 1);
+});
+
+await atest('retry: no delays reads once', async () => {
+  let calls = 0;
+  await readWithRetry(async () => { calls++; return F('x'); }, [], noSleep([]));
+  assert.equal(calls, 1);
 });
 
 console.log(`\n${n} tests passed`);
