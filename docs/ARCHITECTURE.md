@@ -876,6 +876,22 @@ requires; the terminal server is a process of its own so heavy shell output neve
 the dashboard. A shell survives a dropped connection for 2 minutes and is resumed by the
 same session id.
 
+### Login throttle
+
+`POST /api/auth/login` is rate limited per client address (`lib/login-throttle.js`, one instance per server process,
+`app/api/auth/login/route.ts`). 5 failures in a 15-minute window are free; from the 6th the address is locked for 30 s,
+doubling with each failure, capped at 15 minutes. A locked address gets `429` with `Retry-After` and its password is not
+checked. A success clears the address; the map holds at most 10 000 addresses (the least recently active is evicted) and
+drops expired entries lazily, with no timers. The counters are in memory only: a restart of Rev4a resets them.
+
+The address is computed in `server.js` (`lib/client-address.js`) for every HTTP request and handed to the route in the
+internal header `x-rev4a-client-ip`; `server.js` first deletes any such header sent by the client. It is the socket peer
+(`::ffff:1.2.3.4` normalised to `1.2.3.4`). Only when the peer is loopback or private (127.0.0.0/8, ::1, 10/8, 172.16/12,
+192.168/16, fc00::/7, fe80::/10), that is a reverse proxy on the same host or Docker network, the **rightmost**
+`X-Forwarded-For` entry (the one the proxy appended) is used instead; a malformed entry falls back to the socket peer.
+A proxy on a public address is not trusted, so every visitor behind it would share the proxy's address. Under `next dev`
+there is no header and the key is `unknown`. Out of scope: Bearer-token API calls, the terminal WebSocket, persisted counters.
+
 ## 12. Technology Stack
 
 | Layer | Technology | Notes |

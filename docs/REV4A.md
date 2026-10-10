@@ -135,7 +135,7 @@ REV4A_JWT_SECRET=***  # Secret for signing JWTs
 
 **Auth flow:**
 1. User visits `/login`, enters password
-2. POST `/api/auth/login` validates password, returns a `rev4a_token` cookie (JWT, 7-day expiry)
+2. POST `/api/auth/login` validates password, returns a `rev4a_token` cookie (JWT, 7-day expiry). Wrong passwords are throttled per client address: 5 free failures in 15 minutes, then a lock of 30 s that doubles up to 15 minutes (`429` + `Retry-After`; the login page shows the wait and disables the button). A restart of Rev4a resets the counters. Behind a reverse proxy on the same host or Docker network, the proxy must **append or overwrite** `X-Forwarded-For` with the real client address (Traefik and Caddy do by default; nginx needs `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A proxy that passes the client's header through unchanged lets a client pick its own key, and one that sends none puts every visitor under the proxy's address, so one attacker can lock everyone out. A proxy on a public address is not trusted.
 3. All subsequent API calls use the cookie (`credentials: 'same-origin'`)
 4. API-only auth: `Authorization: Bearer <REV4A_TOKEN>` (no query-string token is accepted)
 5. Control UI bootstrap links should use `#token=<token>` so the browser client can import the shared secret before opening the socket

@@ -41,7 +41,9 @@ Login — exchange the static password for a signed JWT cookie.
 ```
 Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; SameSite=Lax`.
 
-**Error:** `401` if password is wrong.
+**Error:** `401` if the password is wrong or the server is not configured; `500` for an unreadable body.
+
+**Throttle:** failed attempts are counted per client address, in memory. The first 5 failures in 15 minutes are free; from the 6th the address is locked for 30 s, doubling with each further failure (60 s, 120 s, ...) up to 15 minutes. While locked the route answers `429` with `{ "error": "Too many failed attempts. Try again in <time>." }` and `Retry-After: <seconds>` (integer, rounded up, at least 1) **without checking the password**, so a correct password during a lock is refused too. A successful login clears the address; failures older than 15 minutes are forgotten. A wrong or empty password and an unreadable body count as failures; "server not configured" does not. Other addresses are not affected, provided a reverse proxy in front of Rev4a appends the real client to `X-Forwarded-For` (see REV4A.md, auth flow): otherwise every visitor shares the proxy's address and one lock covers them all. The address is `x-rev4a-client-ip`, set by `server.js` (see ARCHITECTURE, Login throttle). Counters reset when Rev4a restarts. Bearer-token calls and the terminal WebSocket are not throttled.
 
 ### `GET /api/auth/check`
 Validate the current browser cookie and report whether the user is authenticated.

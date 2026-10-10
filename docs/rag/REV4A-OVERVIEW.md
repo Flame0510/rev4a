@@ -148,7 +148,7 @@ Filter by source, view and edit SKILL.md content, and **promote** agent-local sk
 First-run password setup. Reachable before a password exists; it sets `REV4A_PASSWORD` and the JWT secret, after which every page requires a session.
 
 ### Login (`/login`)
-Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry).
+Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). After 5 wrong passwords in 15 minutes the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock.
 
 ## What about Pulse?
 

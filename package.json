@@ -60,6 +60,7 @@
     "start:all": "rev4a serve",
     "refresh:pricing": "node scripts/refresh-model-pricing.mjs",
     "postinstall": "node bin/postinstall.js",
+    "test:login-throttle": "node scripts/test-login-throttle.mjs",
     "check:language": "node scripts/check-language.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",
     "info:verify": "node scripts/model-info-verify.mjs"

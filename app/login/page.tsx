@@ -13,6 +13,22 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
+  // Epoch ms until which the server refuses logins (429 Retry-After); 0 when not locked.
+  const [lockedUntil, setLockedUntil] = useState(0);
+  const [clock, setClock] = useState(0);
+  const locked = lockedUntil > clock;
+
+  useEffect(() => {
+    if (!lockedUntil) return;
+    setClock(Date.now());
+    const id = setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      // The lock is over: stop ticking instead of re-rendering every second.
+      if (now >= lockedUntil) clearInterval(id);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lockedUntil]);
 
   // Redirect to /setup if no password is configured
   useEffect(() => {
@@ -30,11 +46,12 @@ export default function LoginPage() {
 
   // Enter key handler for the password input
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && password) {
+    // requestSubmit() ignores a disabled submit button: refuse Enter during a lock as well.
+    if (e.key === 'Enter' && password && !locked) {
       const form = (e.target as HTMLInputElement).closest('form');
       if (form) form.requestSubmit();
     }
-  }, [password]);
+  }, [password, locked]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -59,6 +76,10 @@ export default function LoginPage() {
         } catch { /* fallback to dashboard */ }
         router.replace('/');
       } else {
+        if (res.status === 429) {
+          const wait = Number(res.headers.get('Retry-After'));
+          if (Number.isFinite(wait) && wait > 0) setLockedUntil(Date.now() + wait * 1000);
+        }
         const data = (await res.json()) as { error?: string };
         setError(data.error ?? 'Invalid password');
       }
@@ -145,7 +166,7 @@ export default function LoginPage() {
             variant="primary"
             size="md"
             loading={loading}
-            disabled={!password || loading}
+            disabled={!password || loading || locked}
             style={{ width: '100%' }}
           >
             {loading ? 'ACCESSING...' : 'LOGIN'}

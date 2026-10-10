@@ -27,6 +27,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const next = require('next');
+const { CLIENT_IP_HEADER, clientAddress } = require('./lib/client-address.js');
 
 const PORT = parseInt(process.env.PORT || '3740', 10);
 const TERMINAL_WS_PORT = parseInt(process.env.TERMINAL_WS_PORT || '3741', 10);
@@ -173,7 +174,12 @@ async function main() {
   const app = next({ dev: false, dir: __dirname, port: PORT });
   await app.prepare();
   const handle = app.getRequestHandler();
-  const server = http.createServer((req, res) => handle(req, res));
+  const server = http.createServer((req, res) => {
+    // The login throttle keys on this header: a client must never be able to set it itself.
+    delete req.headers[CLIENT_IP_HEADER];
+    req.headers[CLIENT_IP_HEADER] = clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for']);
+    handle(req, res);
+  });
   server.on('upgrade', (req, socket, head) => {
     onUpgrade(req, socket, head).catch(() => socket.destroy());
   });
