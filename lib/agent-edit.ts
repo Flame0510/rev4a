@@ -43,6 +43,8 @@ const running = new Set<string>();
 export interface EditOptions {
   displayName?: string;
   portRange?: string;
+  /** Rebuild the container without its memory limit (`docker update` cannot remove one). */
+  removeMemoryLimit?: boolean;
 }
 
 /** Start an edit. Returns once the job is recorded; the rebuild continues in the background. */
@@ -51,7 +53,7 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
 
   const displayName = opts.displayName === undefined ? undefined : (opts.displayName.trim() || null);
   if (opts.displayName !== undefined && !displayName) throw new EditRefusedError('Display name must not be empty');
-  if (!displayName && !opts.portRange) throw new EditRefusedError('No fields to update');
+  if (!displayName && !opts.portRange && !opts.removeMemoryLimit) throw new EditRefusedError('No fields to update');
   const portRange = opts.portRange?.trim() || null;
 
   if (running.has(agentId) || isEditActive(agentId)) throw new EditRefusedError('An edit of this agent is already running');
@@ -68,8 +70,8 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
     // removed — the only failure mode that could leave the agent without one.
     const portArgs = opts.portRange ? await parsePortArgs(opts.portRange, hostPortsFromBindings(container)) : undefined;
 
-    const id = insertEdit(agentId, displayName ?? null, portRange);
-    void runEdit(id, agentId, container, displayName ?? null, portArgs).finally(() => running.delete(agentId));
+    const id = insertEdit(agentId, displayName ?? null, portRange, !!opts.removeMemoryLimit);
+    void runEdit(id, agentId, container, displayName ?? null, portArgs, !!opts.removeMemoryLimit).finally(() => running.delete(agentId));
     return id;
   } catch (e) {
     running.delete(agentId);
@@ -77,7 +79,7 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
   }
 }
 
-async function runEdit(id: number, agentId: string, container: Awaited<ReturnType<typeof inspectAgentContainer>>, displayName: string | null, portArgs?: string[]): Promise<void> {
+async function runEdit(id: number, agentId: string, container: Awaited<ReturnType<typeof inspectAgentContainer>>, displayName: string | null, portArgs?: string[], removeMemoryLimit = false): Promise<void> {
   try {
     if (!container) throw new Error(`No container found with AGENT_ID '${agentId}'`);
     const image = await resolveRecreateImage(container);
@@ -85,6 +87,8 @@ async function runEdit(id: number, agentId: string, container: Awaited<ReturnTyp
     await recreateAgentContainer(agentId, container, image, {
       env: displayName ? { AGENT_NAME: displayName } : undefined,
       portArgs,
+      // null rebuilds without any memory flag; undefined carries the container's own limit.
+      memoryLimitMb: removeMemoryLimit ? null : undefined,
     });
 
     if (!(await waitForGatewayReady(agentId, EDIT_READY_TIMEOUT_MS))) {
@@ -109,6 +113,7 @@ export interface AgentEditView {
   status: AgentEditRow['status'];
   displayName: string | null;
   portRange: string | null;
+  memoryLimitRemoved: boolean;
   error: string | null;
   startedAtMs: number;
   finishedAtMs: number | null;
@@ -124,6 +129,7 @@ export function agentEditView(agentId: string): AgentEditView | null {
     status: row.status,
     displayName: row.display_name,
     portRange: row.port_range,
+    memoryLimitRemoved: row.memory_limit_removed === 1,
     error: row.error,
     startedAtMs: row.started_at,
     finishedAtMs: row.finished_at,

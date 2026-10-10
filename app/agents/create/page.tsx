@@ -5,6 +5,7 @@ import { DB_FILE, AGENTS_TOKEN_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { REV4A_PORT } from '@/lib/agent-ports';
 import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { loadOfferedModels } from '@/lib/model-catalogue';
+import { readAgentDefaults } from '@/lib/agent-defaults';
 import CreatePageClient from './PageClient';
 
 export const dynamic = 'force-dynamic';
@@ -94,6 +95,7 @@ export default async function CreateAgentPage() {
       models={models}
       usedNames={usedNames}
       usedPorts={usedPorts}
+      defaultMemoryLimitMb={readAgentDefaults().memoryLimitMb}
     />
   );
 }

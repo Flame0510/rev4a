@@ -11,12 +11,12 @@ const LIMIT = 10;
 interface Alert { ts: number; metric: string | null; message: string }
 
 /** A disk at its limit is the one that does not clear by itself. Only its own keys, never the prototype's. */
-const TONE: Record<string, Tone> = { disk: 'danger', cpu: 'warning', ram: 'warning', container_pids: 'warning', container_memory: 'warning' };
+const TONE: Record<string, Tone> = { disk: 'danger', cpu: 'warning', ram: 'warning', container_pids: 'warning', container_memory: 'warning', container_oom: 'danger' };
 const toneOf = (metric: string): Tone => (Object.hasOwn(TONE, metric) ? TONE[metric] : 'neutral');
 
 /**
  * The latest alarms — the machine's CPU or memory over their threshold on two samples in a row,
- * a disk at 90 %, a container with too many processes or holding most of Docker's memory — which the daemon has always recorded and no page showed, so the red bar
+ * a disk at 90 %, a container with too many processes or holding most of Docker's memory, or one with a process killed for lack of memory — which the daemon has always recorded and no page showed, so the red bar
  * on a card never said *what* had crossed or *when*. From `GET /api/metrics/alerts`.
  */
 export function RecentAlerts({ timeZone }: { timeZone: string }) {
@@ -53,7 +53,7 @@ export function RecentAlerts({ timeZone }: { timeZone: string }) {
     <Surface as="section">
       <div className="ui-kicker">Recent alerts</div>
       <p className="ui-muted" style={{ fontSize: 11, marginTop: 6 }}>
-        CPU above 85 % or memory above 90 % on two samples in a row; a disk at 90 %; a container with 1 000 processes on two samples or 90 % of Docker's memory on five. The latest {LIMIT}.
+        CPU above 85 % or memory above 90 % on two samples in a row; a disk at 90 %; a container with 1 000 processes on two samples or 90 % of Docker's memory on five; a process killed for lack of memory in an agent with a memory limit. The latest {LIMIT}.
       </p>
       <div style={{ marginTop: 10 }}>
         {error && <span style={{ color: 'var(--red)', fontSize: 12 }}>{error}</span>}

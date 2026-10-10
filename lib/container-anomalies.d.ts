@@ -7,7 +7,7 @@ export const COOLDOWN_MS: number;
 export interface ContainerAnomaly {
   /** `<metric>:<container>` — the cooldown key. */
   key: string;
-  metric: 'container_pids' | 'container_memory';
+  metric: 'container_pids' | 'container_memory' | 'container_oom';
   container: string;
   values: number[];
   threshold: number;

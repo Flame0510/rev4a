@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { Button, Input, Page, PageHeader, Surface, Pill, Modal } from '../components/ui';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/apiFetch';
+import { Button, Input, MemoryLimitPicker, Page, PageHeader, Surface, Pill, Modal, useDockerTotalMb } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
 interface EnvVars {
@@ -206,6 +207,8 @@ export default function ConfigPageClient() {
             })}
           </section>
 
+          <AgentDefaults />
+
           <div
             style={{
               display: 'flex',
@@ -289,5 +292,99 @@ export default function ConfigPageClient() {
         </>
       )}
     </Page>
+  );
+}
+
+/**
+ * "Agent defaults": the memory limit the create wizard starts with. Empty by default and
+ * only a prefill for new agents: no agent that exists is ever changed from here.
+ * Saved on its own (GET/PUT /api/agent-defaults), not with the environment variables.
+ */
+function AgentDefaults() {
+  // The default in MB (null for none), what is saved, and the picker's error text.
+  const [value, setValue] = useState<number | null>(null);
+  const [saved, setSaved] = useState<number | null>(null);
+  const [pickError, setPickError] = useState('');
+  const dockerTotalMb = useDockerTotalMb();
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const savingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    apiFetch('/api/agent-defaults', { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        return res.json();
+      })
+      .then((body: { memoryLimitMb?: number | null }) => {
+        const v = body?.memoryLimitMb ? body.memoryLimitMb : null;
+        setValue(v);
+        setSaved(v);
+        setLoaded(true);
+        setMessage(null);
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name !== 'AbortError') setMessage({ ok: false, text: 'Could not load the agent defaults' });
+      });
+    return () => controller.abort();
+  }, []);
+
+  const parseError = pickError;
+
+  const save = async () => {
+    if (savingRef.current || parseError) return;
+    savingRef.current = true;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await apiFetch('/api/agent-defaults', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryLimitMb: value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Error ${res.status}`);
+      const v = body.memoryLimitMb ? (body.memoryLimitMb as number) : null;
+      setValue(v);
+      setPickError('');
+      setSaved(v);
+      setMessage({ ok: true, text: 'Saved' });
+    } catch (e: unknown) {
+      setMessage({ ok: false, text: (e as Error).message || 'Could not save' });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Surface variant="panel">
+      <div style={{ padding: '14px 16px', display: 'grid', gap: 8, marginBottom: 20 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, letterSpacing: '0.02em' }}>Agent defaults</div>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.4 }}>
+          No limit by default. This only prefills the memory limit when you create a new agent: it never changes an agent that exists.
+        </div>
+        {loaded && (
+          <MemoryLimitPicker
+            label="Default memory limit for new agents"
+            value={saved}
+            dockerTotalMb={dockerTotalMb}
+            disabled={saving}
+            onChange={(mb, error) => { setValue(mb); setPickError(error); setMessage(null); }}
+          />
+        )}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <Button type="button" variant="primary" size="sm" loading={saving} disabled={!loaded || !!parseError || value === saved} onClick={save}>
+            {saving ? 'Saving…' : 'Save default'}
+          </Button>
+          {message && <span style={{ fontSize: 12, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</span>}
+        </div>
+      </div>
+    </Surface>
   );
 }

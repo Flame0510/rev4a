@@ -1242,7 +1242,12 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
       {/* Resources - what this agent's container consumes (history on the System page) */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="RESOURCES" />
-        <ResourceSection container={agent.name} />
+        <ResourceSection
+          container={agent.name}
+          agentId={agent.agentId}
+          agentBusy={busy}
+          onStarted={() => { setEditPing(Date.now()); onActivity(agent.agentId, 'edit'); }}
+        />
       </div>
 
       {/* Config - View openclaw.json */}

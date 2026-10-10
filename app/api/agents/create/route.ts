@@ -14,6 +14,7 @@ import { findAvailablePortBlock, portMappingArgs, validatePortInput, DEFAULT_BLO
 import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 
 
 
@@ -48,6 +49,8 @@ interface CreateBody {
   portRange?: string;
   model?: string;
   fallbacks?: string[];
+  /** Optional memory limit in MB (256 to 1048576); absent, null or 0 means no limit. */
+  memoryLimitMb?: number | string | null;
 }
 
 function shellQuote(value: string): string {
@@ -85,6 +88,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { success: false, error: 'Agent name is required' },
         { status: 400 },
       );
+    }
+
+    // Optional memory limit: validated before anything is created. The flags below are
+    // built from the validated integer only, never from the request text.
+    let memoryLimitMb: number | null;
+    try {
+      memoryLimitMb = parseLimitMb(body.memoryLimitMb);
+    } catch (e) {
+      return NextResponse.json({ success: false, error: (e as Error).message }, { status: 400 });
     }
 
     // Generate a unique container name (stable, never changes)
@@ -215,6 +227,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
     const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
     const portOpt = portMappingArgs(portStart, portEnd).join(' ');
+    // A limit is the operator's choice: no flag at all unless one was asked for. The swap
+    // equals the limit, so the limit is the total the container can use.
+    const memoryOpt = memoryLimitMb === null
+      ? ''
+      : `--memory ${mbToBytes(memoryLimitMb)} --memory-swap ${mbToBytes(memoryLimitMb)} \\\n      `;
 
     // Template files that will be copied into the container workspace.
     // Files that don't exist in the template dir are silently skipped —
@@ -235,7 +252,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       -v agent-${containerName}-data:/root \
       ${mountFlags.join(' \
       ')} \
-      ${labelOpts} \
+      ${memoryOpt}${labelOpts} \
       ${envOpts} \
       ${portOpt} \
       "${image}"`;

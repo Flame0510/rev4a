@@ -970,6 +970,7 @@ Create a new agent container from a template.
 | `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block, chosen by `findAvailablePortBlock()` |
 | `model` | no | Primary model id. Must be offered by this deployment (in the catalogue, enabled, provider has a key), in any form the proxy accepts; otherwise `400`. Defaults to `rev4a/deepseek/deepseek-flash`, validated the same way |
 | `fallbacks` | no | Array of fallback model IDs |
+| `memoryLimitMb` | no | Memory limit in MB, an integer from 256 to 1048576 (1 TiB); absent, `null`, `0` or `''` mean no limit and the `docker run` command is exactly what it was. Validated before anything is created (`400` on a bad value); when set, adds `--memory <bytes> --memory-swap <bytes>` (swap equal to the limit) built from the validated integer only |
 
 **Every agent is created with a host port mapping:**
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
@@ -1082,6 +1083,8 @@ same guard protects Update and Rollback, whose rows record the same text.
 ```json
 { "started": true, "id": 4 }
 ```
+
+`PATCH` itself does not change the memory limit; removing one is `PUT /api/agents/[id]/memory-limit` with `null`, which starts the same edit job (the container is rebuilt without the memory flags, `memoryLimitRemoved: true` in the edit view).
 
 **Errors:** `400` invalid body, invalid port range or empty display name; `409` an edit,
 recreate, restore, update or backup of this agent is already running.
@@ -2141,10 +2144,30 @@ points for that stretch (a gap). A name that matches the rules but was never sam
 **Errors:** `400` for another `range` or an invalid container name. A `metrics.db` that
 cannot be opened (missing, corrupt) answers `available: false`, not an error.
 
+### `GET /api/agents/[id]/memory-limit`
+The agent's memory limit, read from the container inspect.
+
+**Auth:** browser cookie or Bearer `REV4A_TOKEN`
+
+```json
+{ "limitMb": 2048, "swapMb": 2048, "running": true, "usageMb": 896, "dockerTotalMb": 7940 }
+```
+`limitMb` is `null` when there is no limit; `swapMb` is memory plus swap (`-1` for unlimited swap, `null` for none). `usageMb` is the working-set memory from the Docker stats API (one-shot read when the request arrives; `null` when the container is stopped or the read failed); `dockerTotalMb` is `/info` `MemTotal` (the VM on macOS, the host on Linux). `404` when no container carries the id.
+
+### `PUT /api/agents/[id]/memory-limit`
+`{ "limitMb": 2048 }` sets the limit **live** with `docker update --memory <b> --memory-swap <b>` (both flags together, swap equal; no restart; it also works on a stopped container) and answers `200` with the new GET body.
+
+`{ "limitMb": null }` removes it. `docker update` cannot (0 means "unchanged"), so an edit job (`startAgentEdit` with `removeMemoryLimit`) rebuilds the container without the flags — no backup, the data volume is kept — and the answer is `202 { "started": true, "id": 4 }`, followed through `GET /api/agents/[id]` like any edit. Answers `200` with the current body when there is nothing to remove. The edit is recorded in `agent_edits.memory_limit_removed`.
+
+**Auth:** browser cookie or Bearer `REV4A_TOKEN`. **Errors:** `400` invalid id, missing `limitMb`, or a value outside 256–1048576 MB or not a whole number (`0`, `''` and `"0"` included: only a literal JSON `null` removes the limit); `404` no container; `409` another long operation (update, recreate, restore, edit, backup) is running on the agent.
+
+### `GET /api/agent-defaults` / `PUT /api/agent-defaults`
+`{ "memoryLimitMb": 2048 }`, or `null`: the default memory limit that **prefills** the create wizard. It never applies to an existing agent. `PUT` validates like the create route (`400` on a bad value; `null`, `0` or `''` clear it). Stored in `agent-defaults.json` (see DATABASE.md). **Auth:** browser cookie or Bearer `REV4A_TOKEN`.
+
 ### `GET /api/metrics/alerts?limit=10`
 The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
 samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
-samples in a row; `container_memory`: 90 % of Docker's memory on five), newest first, from `events.db`. `limit` 1–50, default 10.
+samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed at its memory limit), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` ones); unknown params are ignored.
 
 **Auth:** browser cookie or Bearer
 
@@ -2152,7 +2175,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five), newest f
 ```json
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
-`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory` or `null`.
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the limit could not be read).
 
 ---
 

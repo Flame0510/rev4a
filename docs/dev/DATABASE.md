@@ -188,6 +188,7 @@ CREATE TABLE agent_edits (
   status       TEXT NOT NULL,   -- rebuilding, done, failed, interrupted
   display_name TEXT,            -- the name being applied, when it was a rename
   port_range   TEXT,            -- the range being applied, when it was a port change
+  memory_limit_removed INTEGER, -- 1 when the edit removed the memory limit; NULL on older rows
   error        TEXT,
   started_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
@@ -201,6 +202,12 @@ One row per edit attempt (`lib/agent-edit.ts`): the container is rebuilt with th
 name/ports, no backup involved. Persisted for the same reason as the others
 (`GET /api/agents/[id]`); at startup an active row becomes `interrupted` with the
 container started again. Rows are never pruned.
+
+`memory_limit_removed` was added later: `initializeRev4aDb()` adds it to an existing table with a guarded `ALTER TABLE … ADD COLUMN` (safe to run twice), and rows from before read as not removed. A previous Rev4a ignores the column and the file, so the data itself runs on it; but a rebuild by the previous Rev4a does not carry an agent's memory limit, so an agent with a limit loses it when an older version recreates, updates or edits it.
+
+### `agent-defaults.json` — defaults for new agents
+
+An optional file in the Rev4a data directory: `{ "memoryLimitMb": 2048 }` or `null`. It only prefills the create wizard; nothing reads it to change an existing agent. A missing, unreadable or invalid file reads as `null` and never raises. Written with mode `0600` through a temp file and a rename (`lib/agent-defaults.ts`).
 
 ## Useful Queries
 
@@ -317,6 +324,7 @@ has dropped back under, or once after each daemon start: the state is kept in me
 Containers add two metrics, `container_pids` (1000 or more processes on 2 consecutive
 samples) and `container_memory` (90 % of Docker's memory on 5 consecutive samples), each at
 most once per 60 minutes per container; `values` holds the process count or the percentage.
+A third container metric, `container_oom`, is written once per Docker `oom` event (a process was killed at the container's memory limit), with `values: [limit in MB or null]`, no threshold and an extra `container` field in the event data holding the container name. Events written before it have no `container` field.
 
 Installs from before this database may still have a `system_metrics` table in
 `events.db`: nothing reads or writes it any more, and it can be dropped.

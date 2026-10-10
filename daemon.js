@@ -15,10 +15,12 @@ const { spawnSync, execSync, execFile } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 // Shared with the dashboard (lib/docker-socket.ts): one copy of where the Docker socket is.
-const { dockerRequestJson } = require('./lib/docker-socket-path.js');
+const http = require('http');
+const { dockerRequestJson, resolveDockerSocket } = require('./lib/docker-socket-path.js');
 const dockerStats = require('./lib/docker-stats.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
+const { oomEventsToAnomalies, parseEventStream, bytesToMb } = require('./lib/agent-memory-limit.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
@@ -431,8 +433,11 @@ function diskPercent(d) {
   return denom > 0 ? Math.round((d.used_mb / denom) * 100) : 0;
 }
 
-/** Write a system_anomaly event. `cooldownKey` limits it to one per ANOMALY_COOLDOWN_MS; null writes it now. */
-function recordAnomaly(cooldownKey, metric, values, threshold, message) {
+/**
+ * Write a system_anomaly event. `cooldownKey` limits it to one per ANOMALY_COOLDOWN_MS; null writes it now.
+ * `extra` adds fields to the event data (additive: readers ignore what they do not know).
+ */
+function recordAnomaly(cooldownKey, metric, values, threshold, message, extra) {
   const nowMs = Date.now();
   if (cooldownKey) {
     if (nowMs - (lastAnomalyAlert[cooldownKey] || 0) <= ANOMALY_COOLDOWN_MS) return;
@@ -442,7 +447,7 @@ function recordAnomaly(cooldownKey, metric, values, threshold, message) {
     ts: nowMs,
     session_id: 'system',
     type: 'system_anomaly',
-    data: JSON.stringify({ metric, values, threshold, message }),
+    data: JSON.stringify({ metric, values, threshold, message, ...(extra || {}) }),
   });
   log(`[ANOMALY] ${message}`);
 }
@@ -561,8 +566,100 @@ async function collectContainerMetrics() {
     } catch (e) {
       log(`[CONTAINERS] anomaly check failed: ${e.message}`);
     }
+    await collectOomEvents();
   } finally {
     containersRunning = false;
+  }
+}
+
+// ── Out-of-memory kills ──────────────────────────────────────────────────────
+// A container with a memory limit that goes over it has a process killed by the kernel,
+// and with `--restart unless-stopped` it is back within seconds: `State.OOMKilled` is
+// true for about a second and is reset when it starts again. The one durable trace is
+// Docker's `oom` event (one per kill, also when only a child such as Chrome dies and
+// the container survives), read here from the Engine API once per metrics pass.
+
+const OOM_REQUEST_TIMEOUT_MS = 10_000;
+const OOM_LAG_S = 2;
+/** End of the window already read, in seconds; null until the first pass, which only sets it. */
+let oomSince = null;
+/** Keys of the events at the edge of the last window: a window is inclusive at both ends. */
+let oomLastKeys = new Set();
+let oomFailing = false;
+
+/**
+ * GET /events for [since, until]. The answer is one JSON object per line (not one JSON
+ * document, so not dockerRequestJson), and because `until` is given Docker closes the
+ * stream when it is reached instead of following events forever. The timeout is a guard
+ * on top of that: this call never holds the daemon.
+ */
+function fetchOomEvents(since, until) {
+  return new Promise((resolve, reject) => {
+    const socketPath = resolveDockerSocket();
+    if (!socketPath) { reject(new Error('Docker socket not found')); return; }
+    const filters = encodeURIComponent(JSON.stringify({ type: ['container'], event: ['oom'], label: ['AGENT_ID'] }));
+    const req = http.request(
+      { socketPath, method: 'GET', path: `/events?since=${since}&until=${until}&filters=${filters}`, headers: { Host: 'localhost' } },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if ((res.statusCode ?? 500) >= 400) reject(new Error(`Docker error ${res.statusCode}: ${data.slice(0, 200) || '(no body)'}`));
+          else resolve(parseEventStream(data));
+        });
+        res.on('error', reject);
+      },
+    );
+    req.setTimeout(OOM_REQUEST_TIMEOUT_MS, () => req.destroy(new Error('Docker events request timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** The container's current limit in MB, best effort: null when it has none or cannot be read. */
+async function containerLimitMb(id) {
+  try {
+    const info = await dockerRequestJson('GET', `/containers/${encodeURIComponent(id)}/json`, 5_000);
+    return bytesToMb(info && info.HostConfig && info.HostConfig.Memory);
+  } catch {
+    return null;
+  }
+}
+
+/** Never throws: a failure is logged once and the next pass tries the same window again. */
+async function collectOomEvents() {
+  try {
+    // The window ends 2 s in the past: a Docker daemon whose clock is a little behind ours
+    // (Docker Desktop's VM after a sleep) would otherwise keep the stream open to its own
+    // `until` until the timeout. Events of the last 2 s are read by the next pass.
+    const now = Math.floor(Date.now()) / 1000;
+    // First pass after start: nothing is read and nothing is written, the window starts now.
+    if (oomSince === null) { oomSince = now; return; }
+    const until = Math.max(oomSince, now - OOM_LAG_S);
+    if (until <= oomSince) return;
+    const eventKey = (ev) => `${ev.Actor && ev.Actor.Attributes ? ev.Actor.Attributes.name : ''}@${ev.timeNano ?? ev.time}`;
+    const fetched = await fetchOomEvents(oomSince, until);
+    const events = fetched.filter((ev) => !oomLastKeys.has(eventKey(ev)));
+    const limits = {};
+    for (const ev of events) {
+      const attrs = ev && ev.Actor && ev.Actor.Attributes;
+      const name = attrs && attrs.name;
+      if (typeof name === 'string' && ev.Actor.ID && !(name in limits)) limits[name] = await containerLimitMb(ev.Actor.ID);
+    }
+    const anomalies = oomEventsToAnomalies(events, limits);
+    for (const a of anomalies) {
+      try {
+        recordAnomaly(null, 'container_oom', a.values, null, a.message, { container: a.container });
+      } catch (e) {
+        log(`[CONTAINERS] could not record an out-of-memory event for ${a.container}: ${e.message}`);
+      }
+    }
+    oomLastKeys = new Set(fetched.map(eventKey));
+    oomSince = until;
+    oomFailing = false;
+  } catch (e) {
+    if (!oomFailing) log(`[CONTAINERS] could not read Docker's out-of-memory events: ${e.message}`);
+    oomFailing = true;
   }
 }
 

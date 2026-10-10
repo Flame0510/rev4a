@@ -210,6 +210,7 @@ The central container, running the Next.js dashboard + orchestration API.
   wizard through its page prop plus `GET /api/agents/ports`, the Edit panel through the
   endpoint when it opens — so both show the same message and disable their action while
   the range is refused, instead of letting the server refuse it on submit.
+- **Memory limit** (`lib/agent-memory-limit.js`, pure helpers shared with the daemon; `lib/agent-memory-limit-server.ts`): optional and never defaulted. `recreateAgentContainer()` carries `HostConfig.Memory` and `MemorySwap` from the inspect into `docker run` (`--memory`, `--memory-swap`), so no rebuild loses a limit; `opts.memoryLimitMb` overrides it (a number sets it with swap equal, `null` rebuilds without any flag). Setting a limit is `docker update --memory <b> --memory-swap <b>` (live); removal goes through an agent edit with `removeMemoryLimit`, because `docker update` cannot lift a limit. The global default for new agents lives in `agent-defaults.json` (`lib/agent-defaults.ts`).
 - **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
   (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
   applied by rebuilding the container on the current build of its OpenClaw version (a newer build if one was downloaded) — **no backup**, the
@@ -755,11 +756,14 @@ evaluates nothing). Same event shape; the detector keeps its streaks and cooldow
 |---|---|---|
 | `container_pids` | `pids` ≥ 1000 on 2 consecutive samples of the same container | at most once per 60 min per container |
 | `container_memory` | `mem_mb` ≥ 90 % of Docker's memory (`memTotalMb`) on 5 consecutive samples | at most once per 60 min per container; no rule without a known total |
+| `container_oom` | Docker's `oom` event for a container carrying `AGENT_ID` (a process was killed at its memory limit) | once per event; written by `collectOomEvents` in `daemon.js`, not by the detector |
 
 A sample with a missing / non-numeric value resets that streak. A container whose stats
 read failed but that Docker still lists keeps its streaks; a container that is gone is
 forgotten, and a gap of more than 180 s between two samples resets the streaks. After a daemon restart the streaks start over.
 The machine rules keep their 5-minute cooldown.
+
+**Out-of-memory kills.** `State.OOMKilled` is true for about a second and is reset when the restarted container starts, so the only durable trace is Docker's `oom` event (also fired when only a child process such as Chrome is killed). Right after each container sample, `collectOomEvents` reads `GET /events?since=<end of the last window>&until=<now − 2 s>&filters={type:container,event:oom,label:AGENT_ID}` (newline-delimited JSON, parsed by `lib/agent-memory-limit.js`; with `until` set Docker closes the stream, and a 10 s timeout guards it). The 2 s lag keeps `until` out of Docker's future when its clock runs slightly behind the host (a Docker Desktop VM after sleep); events of the last 2 s are read by the next pass, and the edge of each window is de-duplicated. Known limit: Docker replays `since` from a bounded in-memory event buffer, so on a host that emits very many events between two passes an `oom` event can fall out of it and go unrecorded; a failed write of an anomaly is logged and not retried. The first pass after a daemon start only sets the window start: no history is replayed. Each event becomes a `container_oom` anomaly whose data carries an extra `container` field and `values: [limit in MB or null]`. A read failure is logged once and the same window is retried; it never stops the metrics pass.
 
 No feature consumes `system_anomaly` events yet except Recent alerts on the System page;
 otherwise they only pass through the generic event feeds.

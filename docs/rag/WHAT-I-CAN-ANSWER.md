@@ -12,6 +12,8 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I get to the container list?"
 - "Where do I see CPU, RAM or disk usage of the server?" — The System page (`/system`), and the Machine card on the Dashboard.
 - "Which agent is using the most CPU or memory?" — The "Agents and containers" section of the System page: one row per container, sorted by CPU, with memory, storage and processes; open a row for its charts. An agent's own panel has the same numbers under RESOURCES.
+- "Can I limit how much memory an agent uses?" — Yes, optionally. In the agent's panel, RESOURCES section, the *Memory limit* row has an Edit button (applied at once, no restart; removing a limit restarts the agent). The default is no limit: a limit kills a process that goes over it, it does not slow it down. The Configuration page has a default that only prefills new agents.
+- "Why was something killed in my agent for lack of memory?" — The agent's memory limit was reached. RESOURCES shows "Out of memory …" for 24 hours and Recent alerts on the System page lists it as `container_oom`. Raise or remove the limit.
 - "What is filling the disk?" — The "Docker storage" block on the System page: images, volumes (an unused volume is named), writable layers and build cache.
 - "Why is there a red bar or an alert on the System page?" — "Recent alerts" at the bottom of the System page lists what crossed its limit and when.
 - "Where can I see the first-run wizard?"

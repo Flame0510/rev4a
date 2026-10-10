@@ -18,6 +18,8 @@ export interface AgentEditRow {
   status: EditStatus;
   display_name: string | null;
   port_range: string | null;
+  /** 1 when the edit removed the memory limit; rows from before the column read null. */
+  memory_limit_removed: number | null;
   error: string | null;
   started_at: number;
   updated_at: number;
@@ -31,14 +33,14 @@ const state = createJobState({
   initialStatus: 'rebuilding',
   activeStatuses: ACTIVE_EDIT_STATUSES,
   finalStatuses: FINAL,
-  insertColumns: ['display_name', 'port_range'],
+  insertColumns: ['display_name', 'port_range', 'memory_limit_removed'],
   writableColumns: [],
 });
 
 type Writable = Partial<Pick<AgentEditRow, 'status' | 'error'>>;
 
-export function insertEdit(agentId: string, displayName: string | null, portRange: string | null): number {
-  return state.insert(agentId, displayName, portRange);
+export function insertEdit(agentId: string, displayName: string | null, portRange: string | null, memoryLimitRemoved = false): number {
+  return state.insert(agentId, displayName, portRange, memoryLimitRemoved ? 1 : 0);
 }
 
 export function updateEditRow(id: number, fields: Writable): void {

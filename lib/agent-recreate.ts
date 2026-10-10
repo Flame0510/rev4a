@@ -21,6 +21,7 @@ import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { activeRecreateAgentIds, insertRecreate, isRecreateActive, latestRecreate, markInterruptedRecreates, updateRecreateRow, type AgentRecreateRow } from '@/lib/agent-recreate-state';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { rebuildLimitArgs } from '@/lib/agent-memory-limit';
 
 const KEEP_ENV_PREFIXES = ['AGENT_', 'MODEL_', 'OPENCLAW_', 'TZ='];
 const KEEP_LABEL_PREFIXES = ['AGENT_ID', 'traefik.', 'description', 'maintainer'];
@@ -37,7 +38,14 @@ export interface AgentContainerInspect {
   Image?: string;
   Config?: { Image?: string; Env?: string[]; Labels?: Record<string, string> };
   State?: { Running?: boolean; Status?: string };
-  HostConfig?: { NetworkMode?: string; PortBindings?: Record<string, { HostPort?: string }[] | null> };
+  HostConfig?: {
+    NetworkMode?: string;
+    PortBindings?: Record<string, { HostPort?: string }[] | null>;
+    /** Memory limit in bytes; 0 or absent means none. */
+    Memory?: number;
+    /** Memory + swap in bytes; 0 or absent means none, -1 unlimited swap. */
+    MemorySwap?: number;
+  };
   NetworkSettings?: { Networks?: Record<string, unknown>; Ports?: Record<string, unknown> };
 }
 
@@ -81,12 +89,17 @@ function shortDockerError(e: unknown): string {
  * container is named after the agent id, as the create route names it. `opts.env`
  * overrides single environment values (the edit route renames the agent this way),
  * `opts.portArgs` replaces the port bindings carried over from the inspect.
+ * `opts.memoryLimitMb` overrides the memory limit: undefined carries the container's own
+ * (HostConfig.Memory and MemorySwap — without this a limit would be lost at every
+ * update, recreate, edit and restore), a number sets that limit with the swap equal to
+ * it, null rebuilds without any limit (the only way to remove one: `docker update`
+ * cannot).
  */
 export async function recreateAgentContainer(
   agentId: string,
   container: AgentContainerInspect,
   image: string,
-  opts: { env?: Record<string, string>; portArgs?: string[] } = {},
+  opts: { env?: Record<string, string>; portArgs?: string[]; memoryLimitMb?: number | null } = {},
 ): Promise<void> {
   // A running container carries its attached networks; a container whose network
   // endpoint was lost (or one inspected while detached) reports none, so the mode it
@@ -133,6 +146,8 @@ export async function recreateAgentContainer(
     }
   }
 
+  const memoryArgs = rebuildLimitArgs(container.HostConfig, opts.memoryLimitMb);
+
   const oldName = (container.Name ?? '').replace(/^\//, '') || agentId;
   await runDocker(['rm', '-f', oldName], { timeoutMs: 60_000 });
 
@@ -147,6 +162,7 @@ export async function recreateAgentContainer(
     '--add-host', 'host.docker.internal:host-gateway',
     '-v', `agent-${agentId}-data:/root`,
     ...getMountFlags(),
+    ...memoryArgs,
     ...labelArgs,
     ...portArgs,
     img,

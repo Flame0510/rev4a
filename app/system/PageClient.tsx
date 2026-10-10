@@ -6,6 +6,7 @@ import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatMb } from '@/lib/utils/format';
 import { Meter, meterLevel, Page, PageHeader, Pill, Surface, Tabs, TimeSeriesChart } from '../components/ui';
 import { AgentsSection } from './AgentsSection';
+import { MemoryLimitWarning } from './MemoryLimitWarning';
 import { RecentAlerts } from './RecentAlerts';
 import { SystemCardsSkeleton, SystemChartsSkeleton, SystemDescription } from './SystemSkeleton';
 
@@ -256,6 +257,8 @@ export default function SystemPageClient() {
         ))}
       </div>
       )}
+
+      <MemoryLimitWarning />
 
       <AgentsSection range={range} span={span} formatTime={formatTime} />
 

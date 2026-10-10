@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Input, TemplateOption } from '../../components/ui';
+import { Button, Input, MemoryLimitPicker, TemplateOption, useDockerTotalMb } from '../../components/ui';
 import { OpenControlUiButton } from '../BrowserAccessSection';
 import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
 
@@ -22,6 +22,8 @@ interface Props {
   models: ModelInfo[];
   usedNames: string[];
   usedPorts: number[];
+  /** The global default (Configuration page): only prefills the memory limit field. */
+  defaultMemoryLimitMb?: number | null;
 }
 
 type Step = 'template' | 'config' | 'creating' | 'done' | 'error';
@@ -53,13 +55,19 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
   );
 }
 
-export default function CreatePageClient({ templates, models, usedNames, usedPorts: initialUsedPorts }: Props) {
+export default function CreatePageClient({ templates, models, usedNames, usedPorts: initialUsedPorts, defaultMemoryLimitMb = null }: Props) {
   const router = useRouter();
 
   const [step, setStep] = useState<Step>('template');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [agentName, setAgentName] = useState('');
   const [portRange, setPortRange] = useState<string>('');
+  // null means no limit. The picker opens on the global default, which is none unless set.
+  const [memoryLimitMb, setMemoryLimitMb] = useState<number | null>(defaultMemoryLimitMb ?? null);
+  const [memoryError, setMemoryError] = useState('');
+  const dockerTotalMb = useDockerTotalMb();
+  // The picker remounts when the step is revisited and opens on the chosen size (none if it was invalid): drop the stale error.
+  useEffect(() => { if (step !== 'config') setMemoryError(''); }, [step]);
   // The server render seeds this; the same endpoint the Edit panel uses refreshes it, so
   // both flows validate against the same numbers (every container, running or stopped).
   const [usedPorts, setUsedPorts] = useState<number[]>(initialUsedPorts);
@@ -111,7 +119,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
   const canProceed = (): boolean => {
     if (step === 'template') return selectedTemplate !== '';
-    if (step === 'config') return agentName.length > 0 && !nameError && !portError;
+    if (step === 'config') return agentName.length > 0 && !nameError && !portError && !memoryError;
     return false;
   };
 
@@ -127,6 +135,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       };
       if (portRange.trim()) body.portRange = portRange.trim();
       if (selectedModel) body.model = selectedModel;
+      if (memoryLimitMb !== null) body.memoryLimitMb = memoryLimitMb;
       if (fallbacks.length > 0) body.fallbacks = fallbacks;
 
       const res = await fetch('/api/agents/create', {
@@ -307,6 +316,15 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
               Port range (e.g. 3700-3709) or single port (e.g. 3700). Default: 10-port block. Port 3740 is reserved.
             </div>
+          </div>
+
+          {/* Memory limit */}
+          <div style={{ marginBottom: 16 }}>
+            <MemoryLimitPicker
+              value={memoryLimitMb}
+              dockerTotalMb={dockerTotalMb}
+              onChange={(mb, error) => { setMemoryLimitMb(mb); setMemoryError(error); }}
+            />
           </div>
 
           {/* Model */}
