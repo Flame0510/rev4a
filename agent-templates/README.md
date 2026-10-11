@@ -52,6 +52,8 @@ anyone keeping a list:
   package installed again; `versionChanged` is the subset that came back in another
   version.
 
+Rev4a shows the outcome (phase 2): the agent panel's SYSTEM PACKAGES section lists the recorded packages and the last restore, and the daemon records a `packages_failed` alert (System page, Recent alerts) when a restore ends `failed` or `partial`. Both are read-only (`cat` of the two files in `/root/.rev4a/`); the image is unchanged.
+
 Tools installed any other way (`npm -g`, `pip`, a downloaded binary) are not recorded:
 the agent keeps them under `/root/.local`, whose `bin` is on `PATH`. The rules the agent
 reads are in `rev4a-rules/AGENTS.md`. Test: `bash scripts/test-rev4a-apt.sh`.

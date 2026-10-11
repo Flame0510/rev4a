@@ -11,12 +11,12 @@ const LIMIT = 10;
 interface Alert { ts: number; metric: string | null; message: string }
 
 /** A disk at its limit is the one that does not clear by itself. Only its own keys, never the prototype's. */
-const TONE: Record<string, Tone> = { disk: 'danger', cpu: 'warning', ram: 'warning', container_pids: 'warning', container_memory: 'warning', container_oom: 'danger' };
+const TONE: Record<string, Tone> = { disk: 'danger', cpu: 'warning', ram: 'warning', container_pids: 'warning', container_memory: 'warning', container_oom: 'danger', packages_failed: 'danger' };
 const toneOf = (metric: string): Tone => (Object.hasOwn(TONE, metric) ? TONE[metric] : 'neutral');
 
 /**
  * The latest alarms — the machine's CPU or memory over their threshold on two samples in a row,
- * a disk at 90 %, a container with too many processes or holding most of Docker's memory, or one with a process killed for lack of memory (at most one alert per container per 10 minutes, counting the kills in between) — so the red bar
+ * a disk at 90 %, a container with too many processes or holding most of Docker's memory, one with a process killed for lack of memory (at most one alert per container per 10 minutes, counting the kills in between), or one whose system packages could not be reinstalled — so the red bar
  * on a card says *what* had crossed and *when*. From `GET /api/metrics/alerts`.
  */
 export function RecentAlerts({ timeZone }: { timeZone: string }) {
@@ -53,7 +53,7 @@ export function RecentAlerts({ timeZone }: { timeZone: string }) {
     <Surface as="section">
       <div className="ui-kicker">Recent alerts</div>
       <p className="ui-muted" style={{ fontSize: 11, marginTop: 6 }}>
-        CPU above 85 % or memory above 90 % on two samples in a row; a disk at 90 %; a container with 1 000 processes on two samples or 90 % of Docker's memory on five; a process killed for lack of memory (with or without a memory limit; at most one alert per container per 10 minutes). The latest {LIMIT}.
+        CPU above 85 % or memory above 90 % on two samples in a row; a disk at 90 %; a container with 1 000 processes on two samples or 90 % of Docker's memory on five; a process killed for lack of memory (with or without a memory limit; at most one alert per container per 10 minutes); system packages an agent could not reinstall after a start. The latest {LIMIT}.
       </p>
       <div style={{ marginTop: 10 }}>
         {error && <span style={{ color: 'var(--red)', fontSize: 12 }}>{error}</span>}

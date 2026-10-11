@@ -20,6 +20,7 @@ const { dockerRequestJson, resolveDockerSocket } = require('./lib/docker-socket-
 const dockerStats = require('./lib/docker-stats.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
+const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, failureMessage: packagesFailureMessage, splitFailed: splitPackagesFailed } = require('./lib/agent-packages.js');
 const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
@@ -1633,6 +1634,84 @@ function pruneOldEvents() {
 }
 const firstEventsRetention = setTimeout(pruneOldEvents, EVENTS_RETENTION_FIRST_DELAY_MS);
 
+// ── System packages (FEAT-14) ────────────────────────────────────────────────
+// An agent's restore of its apt packages runs in the background after each start and writes
+// /root/.rev4a/packages-status.json. A package that could not come back stays invisible in
+// that file, so every PACKAGES_INTERVAL_MS the daemon reads it for each running agent and
+// records one `packages_failed` anomaly per failed run. Read-only; an agent whose image
+// predates the recorder has no file and is skipped silently.
+const PACKAGES_FIRST_DELAY_MS = 60 * 1000;
+const PACKAGES_INTERVAL_MS = 10 * 60 * 1000;
+const PACKAGES_READ_TIMEOUT_MS = 5000;
+/** A status older than the daemon's start minus this is not alerted: a restart re-alerts an old failure at most once a day. */
+const PACKAGES_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PACKAGES_STARTED_AT = Date.now();
+const packagesAlerted = new Set();
+/** Containers whose status could not be read on the last pass, so each failure is logged once per container. */
+const packagesReadFailing = new Set();
+let packagesListFailing = false;
+let packagesRunning = false;
+const PACKAGES_MAX_BUFFER = 1024 * 1024;
+
+/** Runs `cat` in the container with a small buffer; execFileAsync's 32 MB would let an agent make the daemon hold a huge string. */
+function readPackagesFile(container) {
+  return new Promise((resolve, reject) => {
+    execFile('docker', ['exec', container, 'cat', '/root/.rev4a/packages-status.json'],
+      { timeout: PACKAGES_READ_TIMEOUT_MS, maxBuffer: PACKAGES_MAX_BUFFER, encoding: 'utf-8' }, (err, stdout, stderr) => {
+        if (err) return reject(new Error(failureReason(err, stdout, stderr)));
+        resolve(stdout);
+      });
+  });
+}
+
+async function collectPackagesStatus() {
+  if (packagesRunning) return;
+  packagesRunning = true;
+  try {
+    let agents;
+    try {
+      agents = await listRunningAgents();
+      packagesListFailing = false;
+    } catch (e) {
+      if (!packagesListFailing) log(`[PACKAGES] could not list the running agents: ${e.message}`);
+      packagesListFailing = true;
+      return;
+    }
+    for (const agent of agents) {
+      let status = null;
+      try {
+        status = parsePackagesStatus(await readPackagesFile(agent.container));
+        packagesReadFailing.delete(agent.container);
+      } catch (e) {
+        // "No such file" is what an image without the recorder answers: expected, not logged.
+        if (!/No such file/i.test(e.message) && !packagesReadFailing.has(agent.container)) {
+          log(`[PACKAGES] could not read the status of ${agent.container}: ${e.message}`);
+        }
+        packagesReadFailing.add(agent.container);
+        continue;
+      }
+      if (!status || (status.state !== 'failed' && status.state !== 'partial')) continue;
+      if (status.at < PACKAGES_STARTED_AT - PACKAGES_MAX_AGE_MS) continue;
+      const key = packagesAlertKey(agent.container, status);
+      if (packagesAlerted.has(key)) continue;
+      const names = splitPackagesFailed(status).packages.map((f) => f.name);
+      try {
+        recordAnomaly(null, 'packages_failed', names, null, packagesFailureMessage(agent.container, status), { container: agent.container });
+        packagesAlerted.add(key);
+      } catch (e) {
+        log(`[PACKAGES] could not record the alert for ${agent.container}: ${e.message}`);
+      }
+    }
+  } finally {
+    packagesRunning = false;
+  }
+}
+function samplePackages() {
+  collectPackagesStatus().catch((e) => log(`[PACKAGES ERROR] ${e.message}`));
+}
+let packagesTimer = null;
+const firstPackages = setTimeout(() => { samplePackages(); packagesTimer = setInterval(samplePackages, PACKAGES_INTERVAL_MS); }, PACKAGES_FIRST_DELAY_MS);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
@@ -1647,6 +1726,8 @@ process.on('SIGTERM', () => {
   clearTimeout(firstEventsRetention);
   clearTimeout(eventsRetentionTimer);
   stopOomStream();
+  clearTimeout(firstPackages);
+  clearInterval(packagesTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1666,6 +1747,8 @@ process.on('SIGINT', () => {
   clearTimeout(firstEventsRetention);
   clearTimeout(eventsRetentionTimer);
   stopOomStream();
+  clearTimeout(firstPackages);
+  clearInterval(packagesTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();

@@ -62,6 +62,7 @@
     "postinstall": "node bin/postinstall.js",
     "test:login-throttle": "node scripts/test-login-throttle.mjs",
     "check:language": "node scripts/check-language.mjs",
+    "test:agent-packages": "node scripts/test-agent-packages.mjs",
     "test:memory-limit": "node scripts/test-agent-memory-limit.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",
     "info:verify": "node scripts/model-info-verify.mjs"

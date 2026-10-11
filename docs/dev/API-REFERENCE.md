@@ -2144,6 +2144,18 @@ points for that stretch (a gap). A name that matches the rules but was never sam
 **Errors:** `400` for another `range` or an invalid container name. A `metrics.db` that
 cannot be opened (missing, corrupt) answers `available: false`, not an error.
 
+### `GET /api/agents/[id]/packages`
+The apt packages an agent recorded and the outcome of its last restore, read with argv `docker exec` (`cat`, 5 s timeout each, 1 MB cap) from `/root/.rev4a/packages.txt` and `/root/.rev4a/packages-status.json`. Read-only.
+
+**Auth:** browser cookie or Bearer `REV4A_TOKEN`
+
+```json
+{ "supported": true, "running": true,
+  "status": { "at": 1791648030000, "state": "partial", "restored": ["jq"], "versionChanged": [], "failed": [{ "name": "postgresql-client-17", "error": "E: Unable to locate package" }] },
+  "packages": [{ "name": "jq", "version": "1.7.1-3" }] }
+```
+`supported` is false when the image has no `/usr/local/sbin/rev4a-apt` (an agent that predates the recorder); `running` is false for a stopped container (nothing is read, `status` null, `packages` empty). A paused or restarting container answers `running: true` with `transient: "paused"` or `"restarting"` (nothing is read). `supported` is false only when `test -x` exits 1; any other failure of the read (timeout, Docker error) answers `error: "Could not read the agent's packages"` with the other fields empty. `status` is null when the file is missing or unreadable; a failed entry named `*` is the restore script reporting that the run itself timed out or exited unexpectedly; `state` is one of `running`, `ok`, `partial`, `failed`, `nothing-to-do`. The contents come from inside the container: names and errors are cut at 200 characters, lists at 500 (status) and 2000 (packages). **Errors:** `400` invalid id; `404` no container carries the id.
+
 ### `GET /api/agents/[id]/memory-limit`
 The agent's memory limit, read from the container inspect.
 
@@ -2167,7 +2179,7 @@ The agent's memory limit, read from the container inspect.
 ### `GET /api/metrics/alerts?limit=10`
 The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
 samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
-samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed for lack of memory, at most one alert per container per 10 minutes), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` ones); unknown params are ignored.
+samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed for lack of memory, at most one alert per container per 10 minutes; `packages_failed`: an agent could not reinstall some of its recorded apt packages after a start, `container` field set, `values` the failed package names), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` and `packages_failed` ones); unknown params are ignored.
 
 **Auth:** browser cookie or Bearer
 

@@ -10,6 +10,7 @@ import ChannelManager from './ChannelManager';
 import ModelSection from './ModelSection';
 import CostSection from './CostSection';
 import ResourceSection from './ResourceSection';
+import PackagesSection from './PackagesSection';
 import BrowserAccessSection, { OpenControlUiButton } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
 import { validatePortInput } from '@/lib/agent-ports';
@@ -1248,6 +1249,12 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
           agentBusy={busy}
           onStarted={() => { setEditPing(Date.now()); onActivity(agent.agentId, 'edit'); }}
         />
+      </div>
+
+      {/* System packages - what the agent installed with apt and whether the last restore brought it back */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
+        <SectionHeader icon={<BracesIcon size={12} />} label="SYSTEM PACKAGES" />
+        <PackagesSection agentId={agent.agentId} />
       </div>
 
       {/* Config - View openclaw.json */}
