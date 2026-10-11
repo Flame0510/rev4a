@@ -33,3 +33,14 @@ export interface OomAnomaly {
 }
 export function oomEventsToAnomalies(events: unknown, limitsMb?: Record<string, number | null | undefined>): OomAnomaly[];
 export function parseEventStream(text: unknown): Record<string, unknown>[];
+
+/** NDJSON splitter: push(chunk) returns the objects completed by that chunk, across chunk boundaries. */
+export function createLineSplitter(): { push(chunk: string | Uint8Array): Record<string, unknown>[] };
+export const OOM_COOLDOWN_MS: number;
+export interface OomDue { container: string; kills: number; anomaly: OomAnomaly; message: string }
+/** One out-of-memory alert per container per cooldown; kills inside it are counted into the next alert. */
+export function createOomTracker(cooldownMs?: number): {
+  kill(anomaly: OomAnomaly, nowMs: number): boolean;
+  due(nowMs: number): OomDue[];
+  markRecorded(container: string, nowMs: number): void;
+};

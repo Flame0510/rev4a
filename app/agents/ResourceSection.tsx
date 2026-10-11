@@ -73,6 +73,8 @@ function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
   /** The removal rebuild was started here: follow its edit job until it ends. */
   const [removing, setRemoving] = useState(false);
   const removeJobRef = useRef<number | null>(null);
+  const removingRef = useRef(false);
+  removingRef.current = removing;
   /** Why the last removal did not finish, from the edit job. */
   const [removeError, setRemoveError] = useState('');
   const jobAbortRef = useRef<AbortController | null>(null);
@@ -92,8 +94,9 @@ function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
         }),
       ]);
       const body = await res.json();
-      // The container is gone (a rebuild that failed after removing it): stop waiting for it.
-      if (res.status === 404) setRemoving(false);
+      // The container is briefly absent while the removal rebuild runs: keep following the
+      // edit job, whose own status decides when the wait ends (done, failed or interrupted).
+      if (res.status === 404 && removingRef.current) return;
       if (!res.ok) throw new Error(body?.error || `Error ${res.status}`);
       setInfo(body as LimitInfo);
       setLoadError('');

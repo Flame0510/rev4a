@@ -6,7 +6,7 @@ import { apiFetch } from '@/lib/apiFetch';
 import { Surface } from '../components/ui';
 
 const POLL_MS = 60_000;
-/** Docker's memory use, as a share of its total, from which unlimited agents are called out. */
+/** The running containers' memory, as a share of Docker's total memory, from which agents without a limit are called out. */
 const WARN_PERCENT = 85;
 
 interface Row {
@@ -28,12 +28,14 @@ interface Overview {
 
 interface Warning {
   percent: number;
+  /** Agents with no limit, or whose limit could not be read (counted as unknown). */
   unlimited: { agentId: string; label: string }[];
 }
 
 /**
- * Shown only when Docker's memory is at 85 % or more of its total on the latest sample and
- * at least one running agent has no memory limit: one agent can then starve the others.
+ * Shown only when the running containers' memory is at 85 % or more of Docker's total memory
+ * on the latest sample and at least one running agent has no memory limit or its limit could
+ * not be read: one agent can then starve the others.
  * Renders nothing otherwise (and while the answer is unknown), so a healthy machine never
  * sees it. The limit of each running agent is read only when the memory is high.
  */
@@ -64,15 +66,15 @@ export function MemoryLimitWarning() {
         const limits = await Promise.all(agents.map(async (r) => {
           try {
             const lr = await apiFetch(`/api/agents/${encodeURIComponent(r.agent_id as string)}/memory-limit`, { signal: controller.signal });
-            if (!lr.ok) return null;
+            if (!lr.ok) return { row: r, limitMb: null };
             return { row: r, limitMb: ((await lr.json()) as { limitMb: number | null }).limitMb };
           } catch (e: any) {
             if (e?.name === 'AbortError') throw e;
-            return null;
+            return { row: r, limitMb: null }; // unreadable: counted as "limit unknown"
           }
         }));
         const unlimited = limits
-          .filter((l): l is { row: Row; limitMb: number | null } => l !== null && l.limitMb === null)
+          .filter((l) => l.limitMb === null)
           .map((l) => ({ agentId: l.row.agent_id as string, label: l.row.name || l.row.container }));
         setWarning(unlimited.length > 0 ? { percent, unlimited } : null);
       } catch (e: any) {
@@ -93,7 +95,7 @@ export function MemoryLimitWarning() {
     <Surface as="section" tone="warning">
       <div className="ui-kicker">Memory limit</div>
       <p style={{ fontSize: 12, marginTop: 6 }}>
-        Memory is at {warning.percent} %. {n} running {n === 1 ? 'agent has' : 'agents have'} no memory limit: one agent can starve the others.
+        Running containers use {warning.percent} % of Docker's memory. {n} running {n === 1 ? 'agent has' : 'agents have'} no memory limit or could not be read: one agent can starve the others.
       </p>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: 12 }}>
         {warning.unlimited.map((a) => (

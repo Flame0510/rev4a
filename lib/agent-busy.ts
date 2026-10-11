@@ -3,7 +3,8 @@
  * an edit (lib/agent-edit.ts), a restore (lib/agent-restore.ts), a recreate
  * (lib/agent-recreate.ts), an update (lib/agent-update.ts), a cold backup
  * (lib/cold-backup.ts), a subscription login (lib/subscription-login.ts) or a subscription
- * disconnect (lib/subscription-actions.ts). The routes that
+ * disconnect (lib/subscription-actions.ts), or a live memory limit being applied
+ * (claimMemoryLimit below). The routes that
  * change an agent answer 409 with this reason.
  */
 import { isColdBackupRunning } from '@/lib/cold-backup';
@@ -14,8 +15,25 @@ import { isEditActive } from '@/lib/agent-edit-state';
 import { isLoginActive } from '@/lib/subscription-login';
 import { actionBusyReason } from '@/lib/subscription-actions';
 
+// In-process claim held while `docker update` applies a memory limit. On globalThis so every
+// route bundle sees the same set.
+const g = globalThis as unknown as { __rev4aMemoryLimitClaims?: Set<string> };
+const memoryLimitClaims: Set<string> = (g.__rev4aMemoryLimitClaims ??= new Set<string>());
+
+/** Takes the claim; false when this agent already has one. Synchronous, so check-and-claim cannot interleave. */
+export function claimMemoryLimit(agentId: string): boolean {
+  if (memoryLimitClaims.has(agentId)) return false;
+  memoryLimitClaims.add(agentId);
+  return true;
+}
+
+export function releaseMemoryLimit(agentId: string): void {
+  memoryLimitClaims.delete(agentId);
+}
+
 /** `ignoreLogin`: for the login's own start, whose placeholder job would otherwise count as busy. */
 export async function agentBusyReason(agentId: string, opts?: { ignoreLogin?: boolean }): Promise<string | null> {
+  if (memoryLimitClaims.has(agentId)) return 'A memory limit change for this agent is being applied';
   if (isUpdateActive(agentId)) return 'An update of this agent is running';
   if (isRecreateActive(agentId)) return 'A recreate of this agent is running';
   if (isRestoreActive(agentId)) return 'A restore of this agent is running';

@@ -91,7 +91,7 @@ function shortDockerError(e: unknown): string {
  * `opts.portArgs` replaces the port bindings carried over from the inspect.
  * `opts.memoryLimitMb` overrides the memory limit: undefined carries the container's own
  * (HostConfig.Memory and MemorySwap — without this a limit would be lost at every
- * update, recreate, edit and restore), a number sets that limit with the swap equal to
+ * update, rollback, recreate and edit; a restore keeps the container), a number sets that limit with the swap equal to
  * it, null rebuilds without any limit (the only way to remove one: `docker update`
  * cannot).
  */

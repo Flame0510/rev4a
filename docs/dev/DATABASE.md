@@ -207,7 +207,7 @@ container started again. Rows are never pruned.
 
 ### `agent-defaults.json` — defaults for new agents
 
-An optional file in the Rev4a data directory: `{ "memoryLimitMb": 2048 }` or `null`. It only prefills the create wizard; nothing reads it to change an existing agent. A missing, unreadable or invalid file reads as `null` and never raises. Written with mode `0600` through a temp file and a rename (`lib/agent-defaults.ts`).
+An optional file in the root of the Rev4a data directory, next to `.env`. It is written as `{ "memoryLimitMb": 2048 }`, or `{ "memoryLimitMb": null }` for no default. It only prefills the create wizard; nothing reads it to change an existing agent. A missing, unreadable or invalid file reads as `null` and never raises. Written with mode `0600` through a temp file and a rename (`lib/agent-defaults.ts`).
 
 ## Useful Queries
 
@@ -324,7 +324,7 @@ has dropped back under, or once after each daemon start: the state is kept in me
 Containers add two metrics, `container_pids` (1000 or more processes on 2 consecutive
 samples) and `container_memory` (90 % of Docker's memory on 5 consecutive samples), each at
 most once per 60 minutes per container; `values` holds the process count or the percentage.
-A third container metric, `container_oom`, is written once per Docker `oom` event (a process was killed at the container's memory limit), with `values: [limit in MB or null]`, no threshold and an extra `container` field in the event data holding the container name. Events written before it have no `container` field.
+A third container metric, `container_oom`, is written at most once per container per 10 minutes for Docker's `oom` events (a process was killed for lack of memory, with or without a memory limit; kills inside the cooldown are counted into the next alert, whose data also carries `kills`), with `values: [limit in MB or null]`, no threshold and an extra `container` field in the event data holding the container name. Events written before it have no `container` field.
 
 Installs from before this database may still have a `system_metrics` table in
 `events.db`: nothing reads or writes it any more, and it can be dropped.

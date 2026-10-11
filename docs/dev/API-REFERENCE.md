@@ -1103,6 +1103,7 @@ banner polls to resume after a reload. `status`: `rebuilding` → `done` | `fail
   "edit": {
     "id": 4, "agentId": "agent_2a3c3a07", "status": "rebuilding",
     "displayName": "test 2 async", "portRange": null,
+    "memoryLimitRemoved": false,
     "error": null, "startedAtMs": 1790007512520, "finishedAtMs": null
   }
 }
@@ -2154,7 +2155,7 @@ The agent's memory limit, read from the container inspect.
 `limitMb` is `null` when there is no limit; `swapMb` is memory plus swap (`-1` for unlimited swap, `null` for none). `usageMb` is the working-set memory from the Docker stats API (one-shot read when the request arrives; `null` when the container is stopped or the read failed); `dockerTotalMb` is `/info` `MemTotal` (the VM on macOS, the host on Linux). `404` when no container carries the id.
 
 ### `PUT /api/agents/[id]/memory-limit`
-`{ "limitMb": 2048 }` sets the limit **live** with `docker update --memory <b> --memory-swap <b>` (both flags together, swap equal; no restart; it also works on a stopped container) and answers `200` with the new GET body.
+`{ "limitMb": 2048 }` sets the limit **live** with `docker update --memory <b> --memory-swap <b>` (both flags together, swap equal; no restart; it also works on a stopped container) and answers `200` with the new GET body. If the re-read after the update fails or times out, the answer carries the applied value (`limitMb`, usage and total `null`), never the old one. While the update runs the agent is claimed: an edit, recreate, update or restore that starts meanwhile answers `409`.
 
 `{ "limitMb": null }` removes it. `docker update` cannot (0 means "unchanged"), so an edit job (`startAgentEdit` with `removeMemoryLimit`) rebuilds the container without the flags — no backup, the data volume is kept — and the answer is `202 { "started": true, "id": 4 }`, followed through `GET /api/agents/[id]` like any edit. Answers `200` with the current body when there is nothing to remove. The edit is recorded in `agent_edits.memory_limit_removed`.
 
@@ -2166,7 +2167,7 @@ The agent's memory limit, read from the container inspect.
 ### `GET /api/metrics/alerts?limit=10`
 The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
 samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
-samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed at its memory limit), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` ones); unknown params are ignored.
+samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed for lack of memory, at most one alert per container per 10 minutes), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` ones); unknown params are ignored.
 
 **Auth:** browser cookie or Bearer
 
@@ -2174,7 +2175,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 ```json
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
-`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the limit could not be read).
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
 
 ---
 

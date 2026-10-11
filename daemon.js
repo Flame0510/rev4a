@@ -20,7 +20,7 @@ const { dockerRequestJson, resolveDockerSocket } = require('./lib/docker-socket-
 const dockerStats = require('./lib/docker-stats.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
-const { oomEventsToAnomalies, parseEventStream, bytesToMb } = require('./lib/agent-memory-limit.js');
+const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
@@ -566,7 +566,6 @@ async function collectContainerMetrics() {
     } catch (e) {
       log(`[CONTAINERS] anomaly check failed: ${e.message}`);
     }
-    await collectOomEvents();
   } finally {
     containersRunning = false;
   }
@@ -577,46 +576,35 @@ async function collectContainerMetrics() {
 // and with `--restart unless-stopped` it is back within seconds: `State.OOMKilled` is
 // true for about a second and is reset when it starts again. The one durable trace is
 // Docker's `oom` event (one per kill, also when only a child such as Chrome dies and
-// the container survives), read here from the Engine API once per metrics pass.
+// the container survives; a container without a limit can be killed by the host too).
+// Read from a long-lived GET /events stream: Docker replays only its last 256 events of
+// every type, and Rev4a's own `docker exec` polling fills that buffer, so a replay poll
+// could lose the event. A live stream applies the filters server-side and has no buffer.
 
-const OOM_REQUEST_TIMEOUT_MS = 10_000;
-const OOM_LAG_S = 2;
-/** End of the window already read, in seconds; null until the first pass, which only sets it. */
-let oomSince = null;
-/** Keys of the events at the edge of the last window: a window is inclusive at both ends. */
-let oomLastKeys = new Set();
-let oomFailing = false;
+const OOM_RECONNECT_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
+const OOM_RETRY_MS = 60_000;
+const oomTracker = createOomTracker();
+let oomStreamReq = null;
+let oomStreamStopped = false;
+let oomReconnectTimer = null;
+let oomRetryTimer = null;
+let oomAttempt = 0;
+let oomLastSeenS = null;
+let oomOutage = false;
+let oomStableTimer = null;
+/** A stream counts as back only after it stayed open this long (or delivered an event), so one that opens and closes at once keeps backing off. */
+const OOM_STABLE_MS = 30_000;
 
-/**
- * GET /events for [since, until]. The answer is one JSON object per line (not one JSON
- * document, so not dockerRequestJson), and because `until` is given Docker closes the
- * stream when it is reached instead of following events forever. The timeout is a guard
- * on top of that: this call never holds the daemon.
- */
-function fetchOomEvents(since, until) {
-  return new Promise((resolve, reject) => {
-    const socketPath = resolveDockerSocket();
-    if (!socketPath) { reject(new Error('Docker socket not found')); return; }
-    const filters = encodeURIComponent(JSON.stringify({ type: ['container'], event: ['oom'], label: ['AGENT_ID'] }));
-    const req = http.request(
-      { socketPath, method: 'GET', path: `/events?since=${since}&until=${until}&filters=${filters}`, headers: { Host: 'localhost' } },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          if ((res.statusCode ?? 500) >= 400) reject(new Error(`Docker error ${res.statusCode}: ${data.slice(0, 200) || '(no body)'}`));
-          else resolve(parseEventStream(data));
-        });
-        res.on('error', reject);
-      },
-    );
-    req.setTimeout(OOM_REQUEST_TIMEOUT_MS, () => req.destroy(new Error('Docker events request timed out')));
-    req.on('error', reject);
-    req.end();
-  });
+function markOomStreamStable() {
+  clearTimeout(oomStableTimer);
+  oomStableTimer = null;
+  if (oomOutage) log("[CONTAINERS] Docker's out-of-memory event stream is back");
+  oomOutage = false;
+  oomLastSeenS = null;
+  oomAttempt = 0;
 }
 
-/** The container's current limit in MB, best effort: null when it has none or cannot be read. */
+/** The container's limit in MB read at event time, best effort: null when it has none or cannot be read. */
 async function containerLimitMb(id) {
   try {
     const info = await dockerRequestJson('GET', `/containers/${encodeURIComponent(id)}/json`, 5_000);
@@ -626,41 +614,107 @@ async function containerLimitMb(id) {
   }
 }
 
-/** Never throws: a failure is logged once and the next pass tries the same window again. */
-async function collectOomEvents() {
-  try {
-    // The window ends 2 s in the past: a Docker daemon whose clock is a little behind ours
-    // (Docker Desktop's VM after a sleep) would otherwise keep the stream open to its own
-    // `until` until the timeout. Events of the last 2 s are read by the next pass.
-    const now = Math.floor(Date.now()) / 1000;
-    // First pass after start: nothing is read and nothing is written, the window starts now.
-    if (oomSince === null) { oomSince = now; return; }
-    const until = Math.max(oomSince, now - OOM_LAG_S);
-    if (until <= oomSince) return;
-    const eventKey = (ev) => `${ev.Actor && ev.Actor.Attributes ? ev.Actor.Attributes.name : ''}@${ev.timeNano ?? ev.time}`;
-    const fetched = await fetchOomEvents(oomSince, until);
-    const events = fetched.filter((ev) => !oomLastKeys.has(eventKey(ev)));
-    const limits = {};
-    for (const ev of events) {
-      const attrs = ev && ev.Actor && ev.Actor.Attributes;
-      const name = attrs && attrs.name;
-      if (typeof name === 'string' && ev.Actor.ID && !(name in limits)) limits[name] = await containerLimitMb(ev.Actor.ID);
+/** Writes the alerts that are due. A failed write stays pending and is tried again (next event or within a minute). */
+function flushOomAlerts() {
+  const nowMs = Date.now();
+  for (const d of oomTracker.due(nowMs)) {
+    try {
+      recordAnomaly(null, 'container_oom', d.anomaly.values, null, d.message, { container: d.container, kills: d.kills });
+      oomTracker.markRecorded(d.container, nowMs);
+    } catch (e) {
+      log(`[CONTAINERS] could not record an out-of-memory event for ${d.container}: ${e.message}`);
     }
-    const anomalies = oomEventsToAnomalies(events, limits);
-    for (const a of anomalies) {
-      try {
-        recordAnomaly(null, 'container_oom', a.values, null, a.message, { container: a.container });
-      } catch (e) {
-        log(`[CONTAINERS] could not record an out-of-memory event for ${a.container}: ${e.message}`);
-      }
-    }
-    oomLastKeys = new Set(fetched.map(eventKey));
-    oomSince = until;
-    oomFailing = false;
-  } catch (e) {
-    if (!oomFailing) log(`[CONTAINERS] could not read Docker's out-of-memory events: ${e.message}`);
-    oomFailing = true;
   }
+}
+
+async function handleOomEvent(ev) {
+  try {
+    const t = ev && (typeof ev.timeNano === 'number' ? ev.timeNano / 1e9 : ev.time);
+    if (typeof t === 'number' && Number.isFinite(t)) oomLastSeenS = Math.floor(t);
+    const attrs = ev && ev.Actor && ev.Actor.Attributes;
+    const name = attrs && attrs.name;
+    const limit = typeof name === 'string' && ev.Actor.ID ? await containerLimitMb(ev.Actor.ID) : null;
+    const anomalies = oomEventsToAnomalies([ev], typeof name === 'string' ? { [name]: limit } : {});
+    for (const a of anomalies) oomTracker.kill(a, Date.now());
+    flushOomAlerts();
+  } catch (e) {
+    log(`[CONTAINERS] could not handle an out-of-memory event: ${e.message}`);
+  }
+}
+
+function scheduleOomReconnect() {
+  if (oomStreamStopped || oomReconnectTimer) return;
+  const delay = OOM_RECONNECT_BACKOFF_MS[Math.min(oomAttempt, OOM_RECONNECT_BACKOFF_MS.length - 1)];
+  oomAttempt += 1;
+  oomReconnectTimer = setTimeout(() => { oomReconnectTimer = null; openOomStream(); }, delay);
+  oomReconnectTimer.unref?.();
+}
+
+function oomStreamLost(reason, sinceS) {
+  oomStreamReq = null;
+  clearTimeout(oomStableTimer);
+  oomStableTimer = null;
+  if (oomStreamStopped) return;
+  if (!oomOutage) {
+    oomOutage = true;
+    oomLastSeenS = oomLastSeenS ?? sinceS;
+    log(`[CONTAINERS] Docker's out-of-memory event stream is down: ${reason}; reconnecting`);
+  }
+  scheduleOomReconnect();
+}
+
+/** Opens the live stream; never throws. `since` is set only on a reconnect (best-effort replay of the gap). */
+function openOomStream() {
+  if (oomStreamStopped || oomStreamReq) return;
+  try {
+    const socketPath = resolveDockerSocket();
+    if (!socketPath) { oomStreamLost('Docker socket not found', Math.floor(Date.now() / 1000)); return; }
+    const disconnectS = Math.floor(Date.now() / 1000);
+    const filters = encodeURIComponent(JSON.stringify({ type: ['container'], event: ['oom'], label: ['AGENT_ID'] }));
+    const since = oomOutage ? `since=${oomLastSeenS ?? disconnectS}&` : '';
+    const splitter = createLineSplitter();
+    const req = http.request(
+      { socketPath, method: 'GET', path: `/events?${since}filters=${filters}`, headers: { Host: 'localhost' } },
+      (res) => {
+        if ((res.statusCode ?? 500) >= 400) {
+          res.resume();
+          oomStreamLost(`Docker error ${res.statusCode}`, disconnectS);
+          return;
+        }
+        // Not "back" yet: only once it stays open or delivers an event (see markOomStreamStable).
+        clearTimeout(oomStableTimer);
+        oomStableTimer = setTimeout(markOomStreamStable, OOM_STABLE_MS);
+        oomStableTimer.unref?.();
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          if (oomStableTimer) markOomStreamStable();
+          try { for (const ev of splitter.push(chunk)) void handleOomEvent(ev); } catch (e) { log(`[CONTAINERS] out-of-memory stream parse error: ${e.message}`); }
+        });
+        res.on('end', () => oomStreamLost('the stream ended', Math.floor(Date.now() / 1000)));
+        res.on('error', (e) => oomStreamLost(e.message, Math.floor(Date.now() / 1000)));
+      },
+    );
+    oomStreamReq = req;
+    req.on('error', (e) => oomStreamLost(e.message, disconnectS));
+    req.end();
+  } catch (e) {
+    oomStreamLost(e.message, Math.floor(Date.now() / 1000));
+  }
+}
+
+function startOomStream() {
+  openOomStream();
+  oomRetryTimer = setInterval(flushOomAlerts, OOM_RETRY_MS);
+  oomRetryTimer.unref?.();
+}
+
+function stopOomStream() {
+  oomStreamStopped = true;
+  clearTimeout(oomReconnectTimer);
+  clearTimeout(oomStableTimer);
+  clearInterval(oomRetryTimer);
+  try { oomStreamReq?.destroy(); } catch { /* closing anyway */ }
+  oomStreamReq = null;
 }
 
 let storageRunning = false;
@@ -1539,6 +1593,7 @@ const firstStorage = metrics
   : null;
 if (metrics) {
   scheduleContainers(CONTAINERS_FIRST_DELAY_MS);
+  startOomStream();
   log(`Container consumption every ${CONTAINERS_INTERVAL_MS / 1000}s, Docker storage every ${STORAGE_INTERVAL_MS / 60000} min, into ${METRICS_DB_PATH}`);
 }
 
@@ -1591,6 +1646,7 @@ process.on('SIGTERM', () => {
   clearInterval(costsTimer);
   clearTimeout(firstEventsRetention);
   clearTimeout(eventsRetentionTimer);
+  stopOomStream();
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1609,6 +1665,7 @@ process.on('SIGINT', () => {
   clearInterval(costsTimer);
   clearTimeout(firstEventsRetention);
   clearTimeout(eventsRetentionTimer);
+  stopOomStream();
   db.close();
   metrics?.db.close();
   costs?.db.close();

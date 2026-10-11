@@ -91,3 +91,7 @@ export function revertSubscriptionModel(
   homePrimary?: string | null,
 ): { stuck: boolean; changed: boolean; primary: string | null; fallbacks: string[] };
 export function keepStoredRef(id: string): string;
+/** "2026.9.4" to "2026.9"; null when there are no two leading numbers. */
+export function majorMinor(version: unknown): string | null;
+/** Same major.minor line as one of the supported versions. */
+export function isSupportedLine(version: unknown, supported: readonly string[]): boolean;

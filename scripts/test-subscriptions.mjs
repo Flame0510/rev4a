@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const {
   parseDeviceLogin, parseModelList, stopSubscriptionModel,
   parseStatusJson, parseUsageStatus, formatPlan, mapStoreProfile, STATUS_SCRIPT_SRC,
-  statusFailureReason, readWithRetry, loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef, STOP_CODEX_SCRIPT,
+  statusFailureReason, readWithRetry, loginDeadlineAt, LOGIN_DEADLINE_S, usageCacheAction, subscriptionChip, revertSubscriptionModel, keepStoredRef, STOP_CODEX_SCRIPT, majorMinor, isSupportedLine,
 } = require('../lib/subscriptions-parse.js');
 const { execFileSync } = require('node:child_process');
 const fsx = require('node:fs');
@@ -446,6 +446,21 @@ await atest('retry: no delays reads once', async () => {
   let calls = 0;
   await readWithRetry(async () => { calls++; return F('x'); }, [], noSleep([]));
   assert.equal(calls, 1);
+});
+
+test('majorMinor and isSupportedLine: any build of a supported line', () => {
+  assert.equal(majorMinor('2026.9.3'), '2026.9');
+  assert.equal(majorMinor('v2026.9.10-beta.1'), '2026.9');
+  assert.equal(majorMinor('2026.9'), '2026.9');
+  assert.equal(majorMinor('latest'), null);
+  assert.equal(majorMinor(null), null);
+  const supported = ['2026.9.3', '2026.7.1'];
+  assert.equal(isSupportedLine('2026.9.9', supported), true);
+  assert.equal(isSupportedLine('2026.7.4', supported), true);
+  assert.equal(isSupportedLine('2026.8.1', supported), false);
+  assert.equal(isSupportedLine('2026.10.0', supported), false);
+  assert.equal(isSupportedLine(null, supported), false);
+  assert.equal(isSupportedLine('2026.9.3', []), false);
 });
 
 console.log(`\n${n} tests passed`);

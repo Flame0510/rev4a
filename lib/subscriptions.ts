@@ -21,12 +21,13 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
-import { SUPPORTED_VERSIONS, isSupportedVersion } from '@/lib/agent-versions';
-import { containerOpenClawVersion, listLocalAgentImages } from '@/lib/agent-images';
-import { dockerFetch } from '@/lib/docker-socket';
+import { SUPPORTED_VERSIONS, parseOpenClawVersion } from '@/lib/agent-versions';
+import { listLocalAgentImages } from '@/lib/agent-images';
+import { dockerRequestJson } from '@/lib/docker-socket-path';
 import {
   parseModelList,
   parseStatusJson,
+  isSupportedLine,
   statusFailureReason,
   readWithRetry,
   STATUS_SCRIPT_SRC,
@@ -215,18 +216,37 @@ const READ_TIMEOUT_MS = 12_000;
 const RETRY_DELAYS_MS = [1_000, 2_000];
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** True when the container's image is a supported OpenClaw version; false when it is not or cannot be told. */
-async function runsSupportedVersion(container: string): Promise<boolean> {
+/** Every Docker call of the version check gives up after this: the check must never hold a row. */
+const VERSION_CHECK_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms); });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Whether the container's image is on a supported OpenClaw line (major.minor: any 2026.9.x build
+ * is the 2026.9 line). 'unknown' when the version cannot be told, which includes a Docker that
+ * does not answer in time: the slow `openclaw --version` exec fallback is not used here.
+ */
+async function runsSupportedVersion(container: string): Promise<'supported' | 'unsupported' | 'unknown'> {
   try {
-    const info = await dockerFetch<{ Image?: string; State?: { Running?: boolean } }>('GET', `/containers/${encodeURIComponent(container)}/json`);
-    if (!info?.Image) return false;
-    const version = await containerOpenClawVersion(
-      { name: container, imageId: info.Image, running: info.State?.Running === true },
-      await listLocalAgentImages(),
-    );
-    return isSupportedVersion(version);
+    const info = await dockerRequestJson<{ Image?: string }>('GET', `/containers/${encodeURIComponent(container)}/json`, VERSION_CHECK_TIMEOUT_MS);
+    if (!info?.Image) return 'unknown';
+    const images = await withTimeout(listLocalAgentImages(), VERSION_CHECK_TIMEOUT_MS, 'Docker image list');
+    let version = images.find((img) => img.id === info.Image)?.version ?? null;
+    if (!version) {
+      // An image that lost its tags still carries its version label.
+      const image = await dockerRequestJson<{ Config?: { Labels?: Record<string, string> | null } | null }>(
+        'GET', `/images/${encodeURIComponent(info.Image)}/json`, VERSION_CHECK_TIMEOUT_MS,
+      );
+      version = parseOpenClawVersion(image?.Config?.Labels?.['org.opencontainers.image.version']);
+    }
+    if (!version) return 'unknown';
+    return isSupportedLine(version, SUPPORTED_VERSIONS.map((v) => v.version)) ? 'supported' : 'unsupported';
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 
@@ -245,9 +265,10 @@ async function readStatusOnce(container: string): Promise<FastRead> {
     // The status script can only see that the state database is not where 2026.9.x keeps it.
     // A supported agent shows the same thing before its Gateway has created that database
     // (just created or recreated): the image's version tells the two apart.
-    return (await runsSupportedVersion(container))
-      ? { status: 'failed', reason: 'the agent is still starting' }
-      : { status: 'unsupported' };
+    // A version that cannot be told is also "still starting" (retryable), never "unsupported".
+    return (await runsSupportedVersion(container)) === 'unsupported'
+      ? { status: 'unsupported' }
+      : { status: 'failed', reason: 'the agent is still starting' };
   }
   return { status: 'ok', state: { profiles: s.profiles.filter(isChatgptProfile), model: s.error ? null : s.model } };
 }
@@ -367,7 +388,7 @@ async function readAgent(a: AgentContainer): Promise<AgentSubscription> {
   try {
     state = await readAgentState(a.container);
   } catch (e) {
-    out.error = e instanceof SubscriptionError ? e.message : statusReadFailedMessage('unexpected error');
+    out.error = e instanceof SubscriptionError ? e.message : statusReadFailedMessage('the read failed');
     return out;
   }
   const oauth = state.profiles;

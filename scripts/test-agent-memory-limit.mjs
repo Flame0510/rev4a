@@ -128,7 +128,7 @@ test('oomEventsToAnomalies', () => {
   ], { a: 2048 });
   assert.deepEqual(out.map((o) => [o.container, o.time, o.limitMb]), [['a', 100, 2048], ['a', 101, 2048], ['b', 100, null]]);
   assert.equal(out[0].message, 'Container a: a process was killed, out of memory (limit 2 GB)');
-  assert.equal(out[2].message, 'Container b: a process was killed, out of memory (limit none)');
+  assert.equal(out[2].message, 'Container b: a process was killed, out of memory (no memory limit set)');
   assert.deepEqual(out[2].values, [null]);
   assert.deepEqual(m.oomEventsToAnomalies(undefined), []);
   assert.deepEqual(m.oomEventsToAnomalies('nope'), []);
@@ -140,6 +140,41 @@ test('parseEventStream', () => {
   assert.deepEqual(m.parseEventStream('{"a":1}\n\n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
   assert.deepEqual(m.parseEventStream('{"a":1}\n{"b":'), [{ a: 1 }]);
   assert.deepEqual(m.parseEventStream('[1]\n5\n"x"\n'), []);
+});
+
+test('createLineSplitter: lines across chunk boundaries', () => {
+  const sp = m.createLineSplitter();
+  assert.deepEqual(sp.push('{"a":1}\n{"b"'), [{ a: 1 }]);
+  assert.deepEqual(sp.push(':2}'), []);
+  assert.deepEqual(sp.push('\n\nnot json\n{"c":3}\n[1]\n{"d"'), [{ b: 2 }, { c: 3 }]);
+  assert.deepEqual(sp.push(Buffer.from(':4}\n')), [{ d: 4 }]);
+  assert.deepEqual(sp.push(''), []);
+});
+
+test('createOomTracker: cooldown, counting, retry', () => {
+  const min = 60000;
+  const ev = (t) => m.oomEventsToAnomalies([{ Type: 'container', Action: 'oom', time: t, timeNano: t * 1e9,
+    Actor: { Attributes: { name: 'a', AGENT_ID: 'a' } } }], { a: 2048 })[0];
+  const tr = m.createOomTracker();
+  assert.deepEqual(tr.due(0), []);
+  assert.equal(tr.kill(ev(1), 0), true);
+  assert.equal(tr.kill(ev(1), 0), false); // replayed event
+  let due = tr.due(0);
+  assert.equal(due.length, 1);
+  assert.equal(due[0].message, 'Container a: a process was killed, out of memory (limit 2 GB)');
+  assert.equal(tr.due(30000).length, 1); // write failed: still pending
+  tr.markRecorded('a', 30000);
+  assert.deepEqual(tr.due(31000), []);
+  tr.kill(ev(2), 2 * min);
+  tr.kill(ev(3), 4 * min);
+  assert.deepEqual(tr.due(9 * min), []); // inside the cooldown
+  due = tr.due(10 * min + 30000);
+  assert.equal(due.length, 1);
+  assert.equal(due[0].kills, 2);
+  assert.match(due[0].message, /; 2 kills in the last 9 minutes$/);
+  tr.markRecorded('a', 10 * min + 30000);
+  assert.deepEqual(tr.due(30 * min), []);
+  assert.equal(tr.kill(null, 0), false);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { isValidAgentId } from '@/lib/container';
-import { agentBusyReason } from '@/lib/agent-busy';
+import { agentBusyReason, claimMemoryLimit, releaseMemoryLimit } from '@/lib/agent-busy';
 import { EditRefusedError, startAgentEdit } from '@/lib/agent-edit';
 import { parseLimitMb } from '@/lib/agent-memory-limit';
-import { applyMemoryLimit, readMemoryLimit } from '@/lib/agent-memory-limit-server';
+import { applyMemoryLimit, readMemoryLimit, type MemoryLimitInfo } from '@/lib/agent-memory-limit-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -88,9 +88,25 @@ export async function PUT(
 
     const busy = await agentBusyReason(id);
     if (busy) return NextResponse.json({ error: busy }, { status: 409 });
-    await applyMemoryLimit(id, limitMb);
-    const updated = await readMemoryLimit(id);
-    return NextResponse.json(updated ?? current, { headers: NO_STORE });
+    // Held for the whole `docker update`: an edit, recreate, update or restore that starts
+    // meanwhile is refused with 409 by agentBusyReason.
+    if (!claimMemoryLimit(id)) return NextResponse.json({ error: 'A memory limit change for this agent is being applied' }, { status: 409 });
+    try {
+      await applyMemoryLimit(id, limitMb);
+    } finally {
+      releaseMemoryLimit(id);
+    }
+    // The limit is applied. If the re-read fails or times out, answer with what was applied.
+    let updated: MemoryLimitInfo | null = null;
+    try {
+      updated = await readMemoryLimit(id);
+    } catch {
+      updated = null;
+    }
+    return NextResponse.json(
+      updated ?? { limitMb, swapMb: limitMb, running: current.running, usageMb: null, dockerTotalMb: null },
+      { headers: NO_STORE },
+    );
   } catch (e: unknown) {
     if (e instanceof EditRefusedError) {
       return NextResponse.json({ error: e.message }, { status: /Invalid agent id|No fields to update/.test(e.message) ? 400 : 409 });
