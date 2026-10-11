@@ -340,7 +340,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ).trim();
       const config = JSON.parse(raw);
 
-      // Merge all required sections in one pass (single write, single restart)
+      // Merge all required sections in one pass (one write; the Gateway reloads the file by itself)
 
       // controlUi — keep what the image and OpenClaw wrote, and apply the browser-origin
       // policy so the Control UI opens on whatever host the agent is reached on.
@@ -380,12 +380,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { timeout: 15000, input: JSON.stringify(config, null, 2) },
       );
 
-      // Single restart to pick up the merged config
-      try {
-        execSync(`docker exec ${containerName} openclaw gateway restart`, { timeout: 15000 });
-      } catch {
-        // restart failure is non-fatal; config is on disk, picked up on next boot
-      }
+      // No restart: the Gateway watches openclaw.json and reloads it by itself
+      // (it logs "[reload] ..."), and gateway.controlUi is hot-applied. The
+      // "openclaw gateway restart" command does nothing inside a container (no systemd).
     } catch {
       // post-creation config is non-fatal; can be synced manually
     }
@@ -398,8 +395,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await applyRuntimeConfig(containerName);
 
       // Also guarantee models.providers.rev4a (host-dependent, not in base image).
-      // This patch needs no restart; the earlier one follows a full-file rewrite
-      // that includes gateway.*, the one section that genuinely needs it.
+      // Like the full-file write above, this needs no restart: the Gateway
+      // reloads openclaw.json by itself.
       patchRev4aProvider(containerName);
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create

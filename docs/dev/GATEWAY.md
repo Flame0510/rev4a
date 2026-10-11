@@ -532,7 +532,10 @@ Restart the Rev4a server (via systemd).
 6. **Model ref written after gateway readiness** — When the wizard creates an agent,
    the create route waits for the gateway to finish starting (`waitForGatewayReady`), then writes
    `agents.defaults.model.primary` + fallbacks and the Control UI origin policy (`gateway.controlUi`),
-   then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. The Gateway sync (`PUT /api/gateway/provider`)
+   then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`.
+   Nothing is restarted: the Gateway watches `openclaw.json` and reloads it by itself, and
+   `gateway.controlUi` is hot-applied (`openclaw gateway restart` does nothing inside a
+   container, so the route no longer runs it). The Gateway sync (`PUT /api/gateway/provider`)
    never touches model references — only `models.providers` is synced.
 
 ---

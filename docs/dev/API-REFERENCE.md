@@ -1004,7 +1004,7 @@ Create a new agent container from a template.
 2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 60 s)
 3. Once ready, rewrites `openclaw.json` in one write — `gateway.controlUi`,
    `agents.defaults.model` (primary and fallbacks, always as `rev4a/<provider>/<model>`)
-   and `update` — then runs `openclaw gateway restart`
+   and `update`; the Gateway reloads the file by itself (no restart)
 4. Applies the runtime config (hooks, shared skills) and writes `models.providers.rev4a`
    with `openclaw config patch --stdin`. No restart for this step: `gateway.reload`
    defaults to `hybrid`, which hot-applies changes under `agents`, `models` and
