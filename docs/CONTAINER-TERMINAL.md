@@ -146,6 +146,13 @@ Rev4a needs none, but works behind one that:
   with the upstream address by default: set `proxy_set_header Host $host;` (or
   `X-Forwarded-Host $host`), plus `proxy_http_version 1.1`, `Upgrade $http_upgrade` and
   `Connection "upgrade"`. Otherwise the Origin check answers `403`.
+- sends the real client in `X-Forwarded-For`, and is listed in `REV4A_TRUSTED_PROXIES`. nginx on
+  the same host needs `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
+  `REV4A_TRUSTED_PROXIES=127.0.0.1` (add `,::1` if it connects over IPv6). The dashboard login lock is
+  keyed by client address and trusts `X-Forwarded-For` only from listed peers; without the
+  variable every visitor shares the proxy's address. On Docker Desktop, containers reach the
+  host from 127.0.0.1, so listing it lets agents choose their key: prefer a proxy with its own
+  address there, or accept the risk.
 
 ## Terminal client (browser)
 

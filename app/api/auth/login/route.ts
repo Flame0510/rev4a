@@ -4,7 +4,7 @@ import { getPassword, getJwtSecret, secretEquals } from '@/lib/rev4a-auth';
 import { createLoginThrottle } from '@/lib/login-throttle';
 import { CLIENT_IP_HEADER } from '@/lib/client-address';
 
-// One throttle per server process: 5 free failures per 15 minutes, then growing locks (30 s up to 15 min).
+// One throttle per server process: 5 free failures per hour, then growing locks (30 s up to 15 min).
 const throttle = createLoginThrottle();
 
 function humanWait(seconds: number): string {
@@ -58,8 +58,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Checked again after the await: requests sent in parallel all passed the early check
-    // before any of them failed. Check, compare and fail now run in the same tick, so the
-    // 6th of a burst is refused like the 6th of a sequence.
+    // before any of them failed. Check, compare and fail now run in the same tick, so a
+    // burst is cut off at the same failure as a sequence: the 6th wrong password sets the lock.
     const recheck = throttle.check(key);
     if (!recheck.allowed) return lockedResponse(recheck.retryAfterS);
 

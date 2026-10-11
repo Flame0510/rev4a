@@ -27,7 +27,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const next = require('next');
-const { CLIENT_IP_HEADER, clientAddress } = require('./lib/client-address.js');
+const { CLIENT_IP_HEADER, clientAddress, parseTrustedProxies } = require('./lib/client-address.js');
 
 const PORT = parseInt(process.env.PORT || '3740', 10);
 const TERMINAL_WS_PORT = parseInt(process.env.TERMINAL_WS_PORT || '3741', 10);
@@ -171,13 +171,22 @@ async function onUpgrade(req, socket, head) {
 }
 
 async function main() {
+  // Proxies (none by default, loopback included) whose X-Forwarded-For names the client for the login throttle.
+  // Parsed once; invalid entries are ignored with a single warning.
+  const trustedProxies = parseTrustedProxies(process.env.REV4A_TRUSTED_PROXIES);
+  if (trustedProxies.invalid.length) {
+    console.warn(`[rev4a] REV4A_TRUSTED_PROXIES: ignored invalid entries: ${trustedProxies.invalid.join(', ')}`);
+  }
+  if (trustedProxies.wide.length) {
+    console.warn(`[rev4a] REV4A_TRUSTED_PROXIES trusts a very wide range (${trustedProxies.wide.join(', ')}): any client in it can choose its own login throttle key`);
+  }
   const app = next({ dev: false, dir: __dirname, port: PORT });
   await app.prepare();
   const handle = app.getRequestHandler();
   const server = http.createServer((req, res) => {
     // The login throttle keys on this header: a client must never be able to set it itself.
     delete req.headers[CLIENT_IP_HEADER];
-    req.headers[CLIENT_IP_HEADER] = clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for']);
+    req.headers[CLIENT_IP_HEADER] = clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], trustedProxies);
     handle(req, res);
   });
   server.on('upgrade', (req, socket, head) => {

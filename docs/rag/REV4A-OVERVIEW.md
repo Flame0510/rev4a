@@ -148,7 +148,7 @@ Filter by source, view and edit SKILL.md content, and **promote** agent-local sk
 First-run password setup. Reachable before a password exists; it sets `REV4A_PASSWORD` and the JWT secret, after which every page requires a session.
 
 ### Login (`/login`)
-Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). After 5 wrong passwords in 15 minutes the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock.
+Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.
 
 ## What about Pulse?
 

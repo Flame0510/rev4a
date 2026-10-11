@@ -883,18 +883,38 @@ same session id.
 ### Login throttle
 
 `POST /api/auth/login` is rate limited per client address (`lib/login-throttle.js`, one instance per server process,
-`app/api/auth/login/route.ts`). 5 failures in a 15-minute window are free; from the 6th the address is locked for 30 s,
-doubling with each failure, capped at 15 minutes. A locked address gets `429` with `Retry-After` and its password is not
-checked. A success clears the address; the map holds at most 10 000 addresses (the least recently active is evicted) and
-drops expired entries lazily, with no timers. The counters are in memory only: a restart of Rev4a resets them.
+`app/api/auth/login/route.ts`). 5 failures in a 1-hour window are free; from the 6th the address is locked for 30 s,
+doubling with each failure, capped at 15 minutes. The lock level is the most failures the address has had in a window
+since it last went a whole hour without one, so an attacker retrying at every unlock stays at the 15-minute cap (about 4
+attempts an hour) instead of sliding back as old failures leave the window. A locked address gets `429` with
+`Retry-After` and its password is not checked. A success clears the address. The map holds at most 10 000 addresses;
+when full it evicts the least recently active address **without a running lock**, and only if all are locked the one whose
+lock ends soonest. Expired entries are dropped lazily, with no timers. The counters are in memory only: a restart resets them.
 
-The address is computed in `server.js` (`lib/client-address.js`) for every HTTP request and handed to the route in the
-internal header `x-rev4a-client-ip`; `server.js` first deletes any such header sent by the client. It is the socket peer
-(`::ffff:1.2.3.4` normalised to `1.2.3.4`). Only when the peer is loopback or private (127.0.0.0/8, ::1, 10/8, 172.16/12,
-192.168/16, fc00::/7, fe80::/10), that is a reverse proxy on the same host or Docker network, the **rightmost**
-`X-Forwarded-For` entry (the one the proxy appended) is used instead; a malformed entry falls back to the socket peer.
-A proxy on a public address is not trusted, so every visitor behind it would share the proxy's address. Under `next dev`
-there is no header and the key is `unknown`. Out of scope: Bearer-token API calls, the terminal WebSocket, persisted counters.
+The key is computed in `server.js` (`lib/client-address.js`, `clientAddress()`) for every HTTP request and handed to the
+route in the internal header `x-rev4a-client-ip`; `server.js` first deletes any such header sent by the client. It is the
+socket peer (`::ffff:1.2.3.4` normalised to `1.2.3.4`); an IPv6 key is reduced to its **/64** (`2001:db8:1:2::/64`) by
+`throttleKey()`, which `clientAddress()` applies to its result. The **rightmost** `X-Forwarded-For` entry (the one a
+proxy appended) replaces the peer **only** when the peer is listed in `REV4A_TRUSTED_PROXIES`; a malformed entry falls back
+to the peer. With the variable unset no peer is trusted, loopback included: agent containers and LAN clients (private
+addresses), and on Docker Desktop even containers (they reach `host.docker.internal` from 127.0.0.1), would otherwise
+pick a fresh key with every request.
+
+`REV4A_TRUSTED_PROXIES` is a comma-separated list of IPs or CIDRs (IPv4 and IPv6, e.g. `192.0.2.10`), parsed once at
+start-up by `parseTrustedProxies()`; invalid entries are ignored with one warning, and a very wide entry (`0.0.0.0/0`,
+`::/0`, shorter than /8 or /16) is accepted but logged as a warning. A proxy on the same host is listed as
+`127.0.0.1,::1`; that trusts every local process, and on Docker Desktop (macOS/Windows) also the agent containers, so
+there prefer a proxy with its own distinct address, or accept the risk. When the proxy runs in Docker, list the proxy's
+own address and PIN it (a static `--ip` / `ipv4_address` on a network dedicated to the proxy and Rev4a). Do not put the
+proxy on `rev4a-network` with the agents: Docker assigns container addresses dynamically, so after a restart an agent can
+take the proxy's old address and be trusted. Listing a whole agent network lets any agent pick its own key.
+
+Failure mode: a proxy that is not listed, or a listed proxy that sends no `X-Forwarded-For`, puts every visitor under one
+key (the proxy's address, `127.0.0.1`, or `::/64` for a proxy over `::1`). While an attacker sharing the owner's key
+keeps trying, the owner stays locked out; after the attacker stops, one owner typo within the hour still costs up to 15
+minutes (the peak rule). To recover at once, restart Rev4a (`sudo systemctl restart rev4a` on a systemd install, or
+restart `rev4a serve`). Under `next dev` there is no header and the key is `unknown`. Out of scope: Bearer-token API
+calls, the terminal WebSocket, persisted counters.
 
 ## 12. Technology Stack
 
