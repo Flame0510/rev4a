@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Pill, LoadingSpinner } from '../components/ui';
+import { Button, Pill, LoadingSpinner, Switch } from '../components/ui';
 
 type BadgeColor = 'green' | 'red' | 'gray' | 'violet' | 'blue';
 
@@ -264,15 +264,14 @@ export default function PluginsPage() {
                 )}
 
                 <div style={{ marginTop: 24 }}>
-                  <Button
-                    variant={selected.enabled ? 'danger' : 'success'}
-                    size="sm"
-                    onClick={() => handleToggle(selected)}
-                    disabled={toggling === selected.id}
+                  <Switch
+                    checked={selected.enabled}
                     loading={toggling === selected.id}
-                  >
-                    {selected.enabled ? 'DISABLE' : 'ENABLE'}
-                  </Button>
+                    disabled={toggling !== null}
+                    label={selected.enabled ? 'Enabled' : 'Disabled'}
+                    ariaLabel="Plugin enabled"
+                    onChange={() => handleToggle(selected)}
+                  />
                 </div>
               </div>
             </>

@@ -81,6 +81,7 @@ then use it — a one-off copy of markup is the thing this section exists to pre
 4. **Mono font on buttons and inputs.** All interactive text uses `var(--font-mono-stack)`.
 5. **CSS vars over hardcoded colors.** Never inline `#22c55e`, `#ef4444`, `#888` — use the CSS token.
 6. **Loading feedback.** Use `loading` prop on `Button` (shows inline spinner). Do not render separate loader elements.
+6a. **On/off controls.** Use the shared `Switch` (square track and thumb, violet when on, `loading` shows a spinner in the thumb). No styled buttons or checkboxes for an enabled/disabled state.
 7. **Minimal animation.** Transitions on hover/active (0.1s–0.12s), spin on loading spinner. No bounce, shake, or decorative animations.
 8. **Data display: violet for the data, status colours for levels.** A chart series is `var(--violet)` (2px line, 10% wash), grid and axis text are `var(--border)` / `var(--text-dim)`, never the series colour. A `Meter` fill is violet when fine and `var(--yellow)` / `var(--red)` at its warning / critical level, with the level also written out — status never rests on colour alone. Focus on a chart is a 1px `outline` in `var(--violet-dim)`, not a shadow. A figure that is only a share of a whole (the Costs page's agents and models) uses the same `Meter`, always at its `ok` level: it is a proportion, not a warning. See `TimeSeriesChart` and `Meter` in `docs/FRONTEND-ARCHITECTURE.md`.
 

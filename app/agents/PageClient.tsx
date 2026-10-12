@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, ListItem, Badge, ConfirmModal, Input, type Tone } from '../components/ui';
+import { Button, ListItem, Badge, ConfirmModal, Input, Switch, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
@@ -88,48 +88,6 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
-/** ToggleSwitch - compact on/off toggle for container lifecycle */
-function ToggleSwitch({ checked, disabled, onChange, ariaLabel }: { checked: boolean; disabled?: boolean; onChange: () => void; ariaLabel: string }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onChange(); }}
-      aria-label={ariaLabel}
-      aria-pressed={checked}
-      className={`toggle-switch${checked ? ' toggle-switch--on' : ''}`}
-      style={{
-        position: 'relative',
-        width: 38,
-        height: 22,
-        borderRadius: 11,
-        border: '1px solid var(--border)',
-        background: checked ? 'var(--violet)' : 'var(--bg)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'background 0.15s ease, border-color 0.15s ease',
-        flexShrink: 0,
-        opacity: disabled ? 0.4 : 1,
-        padding: 0,
-        outline: 'none',
-      }}
-    >
-      <span
-        style={{
-          position: 'absolute',
-          top: 2,
-          left: checked ? 18 : 2,
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
-          background: checked ? '#fff' : '#888',
-          transition: 'left 0.15s ease, background 0.15s ease',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-        }}
-      />
-    </button>
-  );
-}
-
 /** NoProviderBanner - shown when no provider API keys are configured */
 function NoProviderBanner() {
   return (
@@ -202,11 +160,12 @@ function AgentListItem({
   return (
     <ListItem onClick={onClick} active={selected} style={{ padding: '12px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <ToggleSwitch
+        <Switch
           checked={agent.state === 'running'}
-          disabled={loading || agent.state === 'unknown' || !!busy}
+          loading={loading}
+          disabled={agent.state === 'unknown' || !!busy}
           onChange={() => { void onLifecycle(); }}
-          ariaLabel={agent.state === 'running' ? 'Stop container' : 'Start container'}
+          ariaLabel="Container running"
         />
         <span style={{ color: selected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
         {agent.template && (

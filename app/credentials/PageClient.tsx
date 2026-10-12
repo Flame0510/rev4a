@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Page, PageHeader, Button, Modal, Input, Pill, RemoveButton } from '@/app/components/ui';
+import { Page, PageHeader, Button, Modal, Input, Pill, RemoveButton, Switch } from '@/app/components/ui';
 import { CredentialCardsSkeleton, AgentSyncRowsSkeleton } from '@/app/components/Skeleton';
 import type { CredentialProfile } from '@/lib/credentials/vault';
 import type { CredentialProviderDef } from '@/lib/credentials/providers';
@@ -589,6 +589,8 @@ export default function CredentialsPageClient() {
                                 || (isVercel && !d.vercelCliInstalled)
                                 || (isSupabase && !d.supabaseCliInstalled);
                               const key = `${p.id}:${d.container}`;
+                              // The switch spins only when no button beside it already carries this action's spinner.
+                              const switchLoading = (busy === `on:${key}` && !failed) || (busy === `off:${key}` && native && !pending);
                               const label = d.displayName || d.agentId;
                               const dim = { opacity: detectRefreshing ? 0.4 : 1, transition: 'opacity 0.15s' } as const;
 
@@ -608,7 +610,7 @@ export default function CredentialsPageClient() {
                                       )}
                                       {oldWay && (
                                         <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 10 }}>
-                                          Delivered the old way — re-sync to move to native
+                                          Delivered the old way — switch on to move to native
                                         </span>
                                       )}
                                       {replacedBy && (
@@ -625,7 +627,12 @@ export default function CredentialsPageClient() {
                                         <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>CLI not in this image</span>
                                       )}
                                     </span>
-                                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                      {switchLoading && (
+                                        <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>
+                                          {busy === `off:${key}` ? 'Switching off…' : 'Switching on…'}
+                                        </span>
+                                      )}
                                       {pending && (
                                         <Button
                                           variant='danger'
@@ -637,7 +644,18 @@ export default function CredentialsPageClient() {
                                           {busy === `off:${key}` ? 'Retrying…' : 'Retry removal'}
                                         </Button>
                                       )}
-                                      {(isOn || oldWay) && (
+                                      {failed && !pending && (
+                                        <Button
+                                          variant='primary'
+                                          size='sm'
+                                          loading={busy === `on:${key}`}
+                                          disabled={!!busy}
+                                          onClick={() => handleToggle(p, d.container, label, true)}
+                                        >
+                                          {busy === `on:${key}` ? 'Switching on…' : 'Retry'}
+                                        </Button>
+                                      )}
+                                      {(failed || oldWay) && (
                                         <Button
                                           variant='danger'
                                           size='sm'
@@ -645,25 +663,20 @@ export default function CredentialsPageClient() {
                                           disabled={!!busy}
                                           onClick={() => handleToggle(p, d.container, label, false)}
                                         >
-                                          {busy === `off:${key}` ? 'Switching off…' : isOn ? 'Switch off' : 'Remove'}
+                                          {busy === `off:${key}` ? 'Switching off…' : 'Remove'}
                                         </Button>
                                       )}
-                                      {!native && !pending && (
-                                        <Button
-                                          variant='primary'
-                                          size='sm'
-                                          loading={busy === `on:${key}`}
-                                          disabled={!!busy}
-                                          title={heldByOther
-                                            ? `Replaces the credential from “${heldByOther.label}” on this agent`
-                                            : undefined}
-                                          onClick={() => handleToggle(p, d.container, label, true)}
-                                        >
-                                          {busy === `on:${key}`
-                                            ? 'Switching on…'
-                                            : failed ? 'Retry' : oldWay ? 'Move to native' : 'Switch on'}
-                                        </Button>
-                                      )}
+                                      <Switch
+                                        checked={native || pending}
+                                        tone={pending ? 'danger' : 'default'}
+                                        loading={switchLoading}
+                                        disabled={!!busy}
+                                        ariaLabel={`${p.label ?? p.id} delivered to ${label}`}
+                                        title={oldWay ? 'Move to native' : heldByOther
+                                          ? `Replaces the credential from “${heldByOther.label}” on this agent`
+                                          : undefined}
+                                        onChange={(next) => handleToggle(p, d.container, label, next)}
+                                      />
                                     </div>
                                   </div>
                                   {(failed || pending) && assignment?.lastError && (
@@ -695,10 +708,30 @@ export default function CredentialsPageClient() {
                                 <span style={{ marginLeft: 6, fontSize: 10 }}>{exists ? 'not running' : 'no longer exists'}</span>
                                 {a.lastError && <span style={{ marginLeft: 6, color: 'var(--red)', fontSize: 10 }}>{a.lastError}</span>}
                               </span>
-                              {exists ? (
+                              {exists && (a.enabled || a.pendingRemoval) ? (
+                                <>
+                                  {busy === `off:${k}` && (
+                                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>Switching off…</span>
+                                  )}
+                                  {a.pendingRemoval && (
+                                    <Button variant='danger' size='sm' disabled={!!busy}
+                                      onClick={() => handleToggle(p, a.agentId, a.agentId, false)}>
+                                      Retry removal
+                                    </Button>
+                                  )}
+                                  <Switch
+                                    checked
+                                    tone={a.pendingRemoval ? 'danger' : 'default'}
+                                    loading={busy === `off:${k}`}
+                                    disabled={!!busy}
+                                    ariaLabel={`${p.label ?? p.id} delivered to ${a.agentId}`}
+                                    onChange={() => handleToggle(p, a.agentId, a.agentId, false)}
+                                  />
+                                </>
+                              ) : exists ? (
                                 <Button variant='danger' size='sm' loading={busy === `off:${k}`} disabled={!!busy}
                                   onClick={() => handleToggle(p, a.agentId, a.agentId, false)}>
-                                  {busy === `off:${k}` ? 'Switching off…' : a.pendingRemoval ? 'Retry removal' : 'Switch off'}
+                                  {busy === `off:${k}` ? 'Switching off…' : 'Switch off'}
                                 </Button>
                               ) : (
                                 <Button variant='secondary' size='sm' loading={busy === `forget:${k}`} disabled={!!busy}

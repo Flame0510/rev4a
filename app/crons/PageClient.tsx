@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useResponsive } from '../design-system';
-import { Button, Pill } from '../components/ui';
+import { Button, Pill, Switch } from '../components/ui';
 import { CronJobsSkeleton, CronRunsSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
@@ -378,34 +378,14 @@ export default function CronsPage() {
                       )}
                       {job.id && (
                         <>
-                        <button
-                          onClick={() => void toggleJob(job)}
-                          disabled={busyJobId === job.id}
+                        <Switch
+                          checked={isEnabled}
+                          loading={busyJobId === job.id}
+                          size="sm"
+                          label={isEnabled ? 'Enabled' : 'Disabled'}
                           title={isEnabled ? 'Disable job' : 'Enable job'}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 5,
-                            padding: '3px 8px 3px 5px',
-                            border: `1px solid ${isEnabled ? '#255b3f' : 'var(--border)'}`,
-                            borderRadius: 0,
-                            background: isEnabled ? 'rgba(34,197,94,0.08)' : 'var(--bg2)',
-                            cursor: busyJobId === job.id ? 'not-allowed' : 'pointer',
-                            opacity: busyJobId === job.id ? 0.5 : 1,
-                            transition: 'all 0.15s', outline: 'none',
-                          }}
-                        >
-                          <span style={{
-                            display: 'inline-flex', width: 26, height: 14, borderRadius: 0,
-                            background: busyJobId === job.id ? '#555' : isEnabled ? 'var(--green)' : '#3a3a3a',
-                            alignItems: 'center', padding: '0 2px',
-                            justifyContent: isEnabled ? 'flex-end' : 'flex-start',
-                            transition: 'all 0.15s', flexShrink: 0,
-                          }}>
-                            <span style={{ width: 10, height: 10, borderRadius: 1, background: '#fff' }} />
-                          </span>
-                          <span style={{ fontSize: 9, letterSpacing: '0.07em', color: isEnabled ? 'var(--green)' : '#666' }}>
-                            {busyJobId === job.id ? '···' : isEnabled ? 'ON' : 'OFF'}
-                          </span>
-                        </button>
+                          onChange={() => void toggleJob(job)}
+                        />
                         <button
                           onClick={(e) => { e.stopPropagation(); void deleteJob(job); }}
                           disabled={busyJobId === job.id}

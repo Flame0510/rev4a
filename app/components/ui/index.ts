@@ -13,6 +13,7 @@ export * from './Pill';
 export * from './PropertyList';
 export * from './Select';
 export * from './StatusCard';
+export * from './Switch';
 export * from './Surface';
 export * from './Toast';
 export * from './tokens';
