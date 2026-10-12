@@ -40,13 +40,29 @@ export interface DockerExecOptions {
   env?: Record<string, string>;
   maxBuffer?: number;
   signal?: AbortSignal;
+  /**
+   * Only for the `…NoFail` variants: on a deadline hit, return what the command had printed
+   * instead of ''. Off by default, so a caller that treats any output as success is never
+   * handed half an answer; the credentials probe opts in (its sentinel proves completeness).
+   */
+  partialOnTimeout?: boolean;
 }
 
-function baseArgs(container: string, opts?: DockerExecOptions): string[] {
-  const args = ['exec'];
-  for (const k of Object.keys(opts?.env ?? {})) args.push('-e', k);
-  args.push(container);
-  return args;
+import {
+  isTimeoutExit,
+  clientTimeoutMs,
+  buildExecArgs,
+  isWrapperMissing,
+  timeoutCause,
+  unwrappedContainers as unwrapped,
+} from './exec-timeout';
+
+// The in-container deadline (`timeout -k 5 N`), its argv builder and exit-code
+// mapping live in exec-timeout.js, shared with the daemon: see the explanation there.
+export { isTimeoutExit, timeoutSeconds, clientTimeoutMs, buildExecArgs, isWrapperMissing, timeoutCause, unwrappedContainers } from './exec-timeout';
+
+function envKeys(opts?: DockerExecOptions): string[] {
+  return Object.keys(opts?.env ?? {});
 }
 
 /**
@@ -60,14 +76,42 @@ function baseArgs(container: string, opts?: DockerExecOptions): string[] {
  * token, is exactly the one that triggers it.
  *
  * `stderr` is kept because that is the part that actually explains the failure.
+ * A deadline hit inside the container (exit 124/137 of `timeout`) reads as
+ * "timed out", like the host-side kill always did, and carries the partial
+ * `stdout` so the `…NoFail` variants can keep returning what was printed.
  */
-function execFailure(e: unknown, container: string): Error {
-  const err = e as { stderr?: string; code?: number; killed?: boolean; name?: string };
+function execFailure(e: unknown, container: string, wrapped: boolean): Error {
+  const err = e as { stderr?: string; stdout?: string; code?: number; killed?: boolean; name?: string };
   // An abort is the caller's own doing and is matched on elsewhere by name.
   if (err.name === 'AbortError') return e as Error;
-  const cause = err.killed ? 'timed out' : err.code !== undefined ? `exit ${err.code}` : 'failed';
+  const timedOut = err.killed || (wrapped && isTimeoutExit(err.code));
+  const cause = err.killed ? 'timed out' : timedOut ? timeoutCause(err.code) : err.code !== undefined ? `exit ${err.code}` : 'failed';
   const detail = (err.stderr ?? '').trim();
-  return new Error(`docker exec ${container}: ${cause}${detail ? ` — ${detail}` : ''}`);
+  const out = new Error(`docker exec ${container}: ${cause}${detail ? ` — ${detail}` : ''}`);
+  if (timedOut) (out as Error & { partialStdout?: string }).partialStdout = typeof err.stdout === 'string' ? err.stdout : '';
+  return out;
+}
+
+async function execOnce(container: string, argv: string[], opts: DockerExecOptions | undefined, wrap: boolean): Promise<string> {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      buildExecArgs({ container, argv, envKeys: envKeys(opts), timeoutMs, wrap }),
+      {
+        encoding: 'utf-8',
+        timeout: wrap ? clientTimeoutMs(timeoutMs) : timeoutMs,
+        maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
+        signal: opts?.signal,
+        ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
+      },
+    );
+    return stdout;
+  } catch (e) {
+    const err = e as { code?: number; stderr?: string; stdout?: string };
+    if (wrap && isWrapperMissing(err.code, `${err.stdout ?? ''}\n${err.stderr ?? ''}`)) throw Object.assign(new Error('no timeout binary'), { wrapperMissing: true });
+    throw execFailure(e, container, wrap);
+  }
 }
 
 /**
@@ -77,7 +121,9 @@ function execFailure(e: unknown, container: string): Error {
  * nothing to quote and nothing to escape, so a filename with a space or a quote
  * cannot turn into a second command.
  *
- * Rejects when the command fails, the container is missing, or the timeout hits.
+ * The command runs under `timeout` inside the container, so a deadline kills it
+ * there too (see exec-timeout.js). Rejects when the command fails, the
+ * container is missing, or the timeout hits.
  */
 export async function dockerExec(
   container: string,
@@ -86,22 +132,16 @@ export async function dockerExec(
 ): Promise<string> {
   if (!resolveDockerSocket()) throw new Error('Docker is not available');
 
-  try {
-    const { stdout } = await execFileAsync(
-      'docker',
-      [...baseArgs(container, opts), ...argv],
-      {
-        encoding: 'utf-8',
-        timeout: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
-        signal: opts?.signal,
-        ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
-      },
-    );
-    return stdout;
-  } catch (e) {
-    throw execFailure(e, container);
+  if (!unwrapped().has(container)) {
+    try {
+      return await execOnce(container, argv, opts, true);
+    } catch (e) {
+      if (!(e as { wrapperMissing?: boolean }).wrapperMissing) throw e;
+      // An image without `timeout`: remember it and run the command as before.
+      unwrapped().add(container);
+    }
   }
+  return execOnce(container, argv, opts, false);
 }
 
 /**
@@ -122,7 +162,8 @@ export async function dockerExecShell(
  *
  * This is the shape most of the existing callers want: a container that is
  * stopped, or an OpenClaw subcommand that isn't available on that agent, is a
- * normal condition here — not something to fail a whole page over.
+ * normal condition here — not something to fail a whole page over. A deadline hit
+ * inside the container also gives '' unless the caller sets `partialOnTimeout`.
  */
 export async function dockerExecNoFail(
   container: string,
@@ -131,8 +172,10 @@ export async function dockerExecNoFail(
 ): Promise<string> {
   try {
     return await dockerExec(container, argv, opts);
-  } catch {
-    return '';
+  } catch (e) {
+    // A deadline hit inside the container: only a caller that opted in gets what the
+    // command had printed (the credentials probe; its sentinel proves completeness).
+    return opts?.partialOnTimeout ? ((e as { partialStdout?: string }).partialStdout ?? '') : '';
   }
 }
 
@@ -153,18 +196,37 @@ export async function dockerExecShellNoFail(
  * stdin is never written, and the command hangs or reads nothing, with no error
  * to point at. `openclaw config patch --stdin` is the case that needs this.
  */
-export function dockerExecWithInput(
+export async function dockerExecWithInput(
   container: string,
   argv: string[],
   input: string,
   opts?: DockerExecOptions,
 ): Promise<string> {
-  if (!resolveDockerSocket()) return Promise.reject(new Error('Docker is not available'));
+  if (!resolveDockerSocket()) throw new Error('Docker is not available');
 
+  if (!unwrapped().has(container)) {
+    try {
+      return await spawnOnce(container, argv, input, opts, true);
+    } catch (e) {
+      if (!(e as { wrapperMissing?: boolean }).wrapperMissing) throw e;
+      unwrapped().add(container);
+    }
+  }
+  return spawnOnce(container, argv, input, opts, false);
+}
+
+function spawnOnce(
+  container: string,
+  argv: string[],
+  input: string,
+  opts: DockerExecOptions | undefined,
+  wrap: boolean,
+): Promise<string> {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', ['exec', '-i', ...baseArgs(container, opts).slice(1), ...argv], {
+    const child = spawn('docker', buildExecArgs({ container, argv, envKeys: envKeys(opts), interactive: true, timeoutMs, wrap }), {
       stdio: ['pipe', 'pipe', 'pipe'],
-      // `baseArgs` names the variables but carries no values, so they have to
+      // `buildExecArgs` names the variables but carries no values, so they have to
       // reach docker through its own environment — without this the container
       // would be handed empty variables and never say why.
       ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
@@ -174,8 +236,8 @@ export function dockerExecWithInput(
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`docker exec timed out after ${opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`));
-    }, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      reject(new Error(`docker exec timed out after ${timeoutMs}ms`));
+    }, wrap ? clientTimeoutMs(timeoutMs) : timeoutMs);
 
     child.stdout.on('data', (c) => { stdout += c; });
     child.stderr.on('data', (c) => { stderr += c; });
@@ -183,6 +245,8 @@ export function dockerExecWithInput(
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(stdout);
+      else if (wrap && isWrapperMissing(code, `${stdout}\n${stderr}`)) reject(Object.assign(new Error('no timeout binary'), { wrapperMissing: true }));
+      else if (wrap && isTimeoutExit(code)) reject(new Error(`docker exec ${timeoutCause(code)} after ${timeoutMs}ms`));
       else reject(new Error(stderr.trim() || `docker exec exited with code ${code}`));
     });
 

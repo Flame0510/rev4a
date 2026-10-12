@@ -2890,6 +2890,10 @@ JavaScript. Three CLI calls run last and only feed display fields — `githubUse
 which are read only when `supabaseLoggedIn` is true. `supabaseLoggedIn` follows
 the **exit status** of `supabase projects list`, not the text it prints, so a
 failure whose wording is unfamiliar still reads as not logged in.
+`vercelLoggedIn` likewise needs `vercel whoami` to exit 0 with a plain username
+(one line, no spaces, not starting with `>`, `Error` or `Vercel CLI`); the hint a
+logged-out CLI prints ("> Run `vercel deploy --temporary` … `vercel login` to log
+in.") is not a user, and gives `vercelLoggedIn: false`, `vercelUser: ""`.
 `trelloLoggedIn` and `notionLoggedIn` come from the config files instead, and so
 survive a probe cut short. The three calls reach the network from inside the
 container, so a completion sentinel is emitted before them: a probe cut short

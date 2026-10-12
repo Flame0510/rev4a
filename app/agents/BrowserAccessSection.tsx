@@ -63,6 +63,15 @@ interface InviteLink {
 }
 
 const POLL_MS = 5_000;
+/** A load slower than this (or a failed one) makes the next poll wait longer. */
+const SLOW_MS = 5_000;
+const MAX_POLL_MS = 60_000;
+
+/** Delay before the next poll: 5s after a fast answer, then 10s, 20s, 40s, at most 60s while it stays slow. */
+function nextPollDelay(previousDelayMs: number, fast: boolean): number {
+  if (fast) return POLL_MS;
+  return Math.min(MAX_POLL_MS, Math.max(2 * POLL_MS, previousDelayMs * 2));
+}
 
 const APPROVED_VIA: Record<string, string> = {
   silent: 'automatically (local connection)',
@@ -160,27 +169,30 @@ export default function BrowserAccessSection({
   const inviteAbortRef = useRef<AbortController | null>(null);
   const inviteInputId = useId();
 
-  const load = useCallback(async () => {
+  /** Resolves to whether the answer was good and fast, or null when this load was superseded. */
+  const load = useCallback(async (): Promise<boolean | null> => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const startedAt = Date.now();
     try {
       const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/devices`, { signal: controller.signal });
-      if (abortRef.current !== controller) return;
+      if (abortRef.current !== controller) return null;
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         setLoadError(data?.error ?? `Could not load browser access (HTTP ${res.status})`);
-        return;
+        return false;
       }
       const data = (await res.json()) as AccessState;
       // A read that started before a mutation must not bring back what it removed.
-      if (abortRef.current !== controller) return;
+      if (abortRef.current !== controller) return null;
       setAccess(data);
       setLoadError(null);
+      return Date.now() - startedAt < SLOW_MS;
     } catch (e) {
-      if ((e as Error)?.name !== 'AbortError' && abortRef.current === controller) {
-        setLoadError('Could not load browser access');
-      }
+      if ((e as Error)?.name === 'AbortError' || abortRef.current !== controller) return null;
+      setLoadError('Could not load browser access');
+      return false;
     }
   }, [agentId]);
 
@@ -195,15 +207,46 @@ export default function BrowserAccessSection({
     // One request at a time: `load()` runs the OpenClaw CLI inside the container and can
     // take seconds on a slow agent, so the next tick waits for the previous response
     // instead of an interval stacking calls on top of each other.
+    //
+    // A slow or failing answer backs the polling off (10s, 20s, 40s, at most 60s) and a
+    // fast one returns it to 5s: every poll starts a CLI process inside the agent, and a
+    // slow agent given a new one every 5s only gets slower. Polling also pauses while the
+    // tab is hidden and does one immediate load when it becomes visible again.
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
-      await load();
-      if (alive) timer = setTimeout(() => { void tick(); }, POLL_MS);
+    let delay = POLL_MS;
+    let inFlight = false;
+    const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (alive && running && !hidden()) timer = setTimeout(() => { void tick(); }, delay);
     };
-    if (running) timer = setTimeout(() => { void tick(); }, POLL_MS);
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const fast = await load();
+      inFlight = false;
+      // null: another load took over (a mutation); keep the current pace.
+      if (fast !== null) delay = nextPollDelay(delay, fast);
+      schedule();
+    };
+    const onVisibility = () => {
+      if (!alive || !running) return;
+      if (hidden()) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      } else if (!inFlight) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        void tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    schedule();
     return () => {
       alive = false;
+      document.removeEventListener('visibilitychange', onVisibility);
       if (timer) clearTimeout(timer);
       abortRef.current?.abort();
       inviteAbortRef.current?.abort();

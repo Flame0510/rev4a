@@ -284,9 +284,36 @@ the rules for anything you touch, not as a description of the whole tree:
   argv, as `docker exec -e KEY` — docker forwards the value from its own
   environment, so it appears neither in the host process table nor in any
   rejection built from that argv.
-- **A timeout does not reject.** `docker exec` exits 0 on the SIGTERM Node sends
+- **Deadlines are enforced inside the container.** Node's `timeout` kills only the
+  `docker` CLI client; the process in the container has no TTY and keeps running,
+  which piled up dozens of `openclaw devices list` (~200 MB each) on slow agents.
+  So `dockerExec`, `dockerExecShell`, their `…NoFail` variants and
+  `dockerExecWithInput` run every command as `timeout -k 5 <N> <argv…>`
+  (N = the timeout in seconds, rounded up; `-k` rather than `--kill-after=`
+  because busybox accepts only the short form; built as an argv array, never a
+  shell string), and the host-side timer is only a safety net a few seconds longer.
+  `timeout`'s exit 124 reads as "timed out"; exit 137 as "timed out or was killed
+  (exit 137)", because an out-of-memory kill of the command looks the same. The
+  `…NoFail` variants return '' on a deadline, except for a caller that sets
+  `partialOnTimeout` (the credentials probe, whose sentinel proves completeness).
+  An image where the wrapper is unusable — no `timeout` (exit 125/126/127 and
+  "executable file not found"; Docker Desktop 29 prints that on **stdout**, so
+  stdout and stderr are both checked) or a busybox that rejects `-k` (exit 1,
+  `timeout: unrecognized option`) — fails once, is retried without the wrapper and
+  remembered per container in memory (`unwrappedContainers()`). The synchronous cron
+  paths in `lib/openclaw-cron.ts` and the daemon's two container reads
+  (`containerExec` in `daemon.js`: the costs gateway calls and the packages status)
+  use the same wrapper; the argv builder, exit-code mapping and fallback decision are
+  one CommonJS module, `lib/exec-timeout.js` (with its `.d.ts`).
+  **Not yet covered** (card BUG-7): `app/api/workspace/route.ts`, `app/api/skills/`
+  (save, delete, promote), `app/api/gateway/sync.ts` (including the `config patch`
+  over stdin) and the gateway agent route, `app/api/agents/` (`config-json`, `token`,
+  `create`), `app/api/agents-active/route.ts`, `lib/channelManager.ts`,
+  `lib/memory-context.ts`, `lib/subscription-login.ts` (bounded by its own
+  `timeout 900`) and `terminal-ws-server.js`.
+- **A host-side kill does not reject.** `docker exec` exits 0 on the SIGTERM Node sends
   when the deadline passes, so a command killed halfway *resolves* with whatever
-  it had already printed. A `try/catch` therefore cannot tell a truncated read
+  it had already printed (this is what remains for a `docker` client killed by the safety-net timer). A `try/catch` therefore cannot tell a truncated read
   from a complete one. Where that distinction matters, make the script prove it
   finished — `detect.ts` emits a `probe:complete` sentinel before its slow calls,
   `containerRead` prints a terminator after the file — and treat its absence as

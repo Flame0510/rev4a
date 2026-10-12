@@ -1,8 +1,32 @@
 import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
-import { dockerExecNoFail, mapWithConcurrency } from '@/lib/docker-exec';
+import { dockerExecNoFail, mapWithConcurrency, buildExecArgs, clientTimeoutMs, isWrapperMissing, unwrappedContainers } from '@/lib/docker-exec';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * `docker exec` for the synchronous cron paths, with the command bounded INSIDE the
+ * container (`timeout -k 5`): killing only the docker client at the host-side
+ * deadline would leave the OpenClaw CLI running there. The gateway URL is not a secret.
+ * An image without `timeout` is retried once without the wrapper.
+ */
+function dockerExecSync(containerName: string, gwUrl: string, argv: string[], timeoutMs: number): string {
+  const unwrapped = unwrappedContainers();
+  const run = (wrap: boolean) => {
+    const args = buildExecArgs({ container: containerName, argv, timeoutMs, wrap });
+    args.splice(1, 0, '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`);
+    return execFileSync('docker', args, { encoding: 'utf8', timeout: wrap ? clientTimeoutMs(timeoutMs) : timeoutMs });
+  };
+  if (unwrapped.has(containerName)) return run(false);
+  try {
+    return run(true);
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
+    if (!isWrapperMissing(err.status, `${err.stdout ?? ''}\n${err.stderr ?? ''}`)) throw e;
+    unwrapped.add(containerName);
+    return run(false);
+  }
+}
 
 /**
  * How many agents to query at once.
@@ -189,10 +213,7 @@ function toggleInContainer(containerName: string, jobId: string, enabled: boolea
   for (const gwUrl of gatewayUrls) {
     try {
       const action = enabled ? 'enable' : 'disable';
-      execFileSync('docker', [
-        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
-        containerName, 'openclaw', 'cron', action, jobId,
-      ], { encoding: 'utf8', timeout: 10000 });
+      dockerExecSync(containerName, gwUrl, ['openclaw', 'cron', action, jobId], 10000);
       return true;
     } catch { /* try next gateway port */ }
   }
@@ -299,11 +320,9 @@ export function getCronRuns(
 
   for (const gwUrl of gatewayUrls) {
     try {
-      const raw = execFileSync('docker', [
-        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
-        containerName, 'openclaw', 'cron', 'runs', '--id', jobId,
-        '--limit', String(limit),
-      ], { encoding: 'utf8', timeout: 15000 });
+      const raw = dockerExecSync(containerName, gwUrl, [
+        'openclaw', 'cron', 'runs', '--id', jobId, '--limit', String(limit),
+      ], 15000);
 
       const parsed = JSON.parse(raw.trim()) as { entries?: CronRunEntry[] };
       // Accept both empty and populated entries arrays
@@ -360,10 +379,7 @@ function removeInContainer(containerName: string, jobId: string): boolean {
   ];
   for (const gwUrl of gatewayUrls) {
     try {
-      execFileSync('docker', [
-        'exec', '-e', `OPENCLAW_GATEWAY_URL=${gwUrl}`,
-        containerName, 'openclaw', 'cron', 'remove', jobId,
-      ], { encoding: 'utf8', timeout: 10000 });
+      dockerExecSync(containerName, gwUrl, ['openclaw', 'cron', 'remove', jobId], 10000);
       return true;
     } catch { /* try next gateway port */ }
   }

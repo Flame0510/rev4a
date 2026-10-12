@@ -121,7 +121,10 @@ const PROBE_SCRIPT = [
   // "not logged in", not as a crash or a false positive.
   'k probe:complete;    printf ok; e',
   'k gh:status;         gh auth status 2>&1 || true; e',
-  'k vercel:whoami;     vercel whoami 2>&1 || true; e',
+  // The exit status is emitted with the text ("rc=<n>" on a last line): a logged-out CLI
+  // prints a hint on stdout and, depending on its version, exits 0 or not, so the text
+  // alone read as a username (see parseVercelWhoami).
+  'k vercel:whoami;     vwout=$(vercel whoami 2>&1); vwrc=$?; printf "%s\\nrc=%s" "$vwout" "$vwrc"; e',
   // Captured into a variable so the exit status survives: `|| true` discarded it,
   // and the only thing left to judge by was the text on stdout. Every failure
   // whose wording did not happen to contain "Unauthorized" — no token at all, a
@@ -132,6 +135,26 @@ const PROBE_SCRIPT = [
   'k supabase:rc;       printf %s "$sbrc"; e',
   'exit 0',
 ].join('\n');
+
+/**
+ * The signed-in Vercel username out of the probe's `vercel whoami` record, or ''.
+ *
+ * The record is the CLI's output followed by a line `rc=<exit status>`. It counts only when
+ * the status is 0 and the output is a plain username: one line, no spaces, and not one of the
+ * messages the CLI prints around a failure. A logged-out CLI printed
+ * "> Run `vercel deploy --temporary` to create a temporary deployment you can claim later, or
+ * `vercel login` to log in." and that text used to be reported as the user.
+ */
+export function parseVercelWhoami(record: string): string {
+  const lines = record.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '').split('\n');
+  const last = (lines.pop() ?? '').trim();
+  const m = /^rc=(\d+)$/.exec(last);
+  if (!m || m[1] !== '0') return '';
+  const out = lines.join('\n').trim();
+  if (!out || out.includes('\n') || /\s/.test(out)) return '';
+  if (out.startsWith('>') || /^(Error|Vercel CLI)/i.test(out)) return '';
+  return out;
+}
 
 const EMPTY_PROBE: ContainerProbe = {
   cli: { gh: false, vercel: false, supabase: false, trello: false },
@@ -147,6 +170,7 @@ const EMPTY_PROBE: ContainerProbe = {
 export async function probeContainer(container: string): Promise<ContainerProbe> {
   const raw = await dockerExecShellNoFail(container, PROBE_SCRIPT, {
     timeoutMs: 25_000,
+    partialOnTimeout: true,
     maxBuffer: 4 * 1024 * 1024,
   });
   if (!raw) return { ...EMPTY_PROBE, files: { ...EMPTY_PROBE.files }, cli: { ...EMPTY_PROBE.cli } };
@@ -167,7 +191,7 @@ export async function probeContainer(container: string): Promise<ContainerProbe>
       trello: g('cli:trello').trim() === 'yes',
     },
     ghStatus: g('gh:status'),
-    vercelWhoami: g('vercel:whoami'),
+    vercelWhoami: parseVercelWhoami(g('vercel:whoami')),
     supabaseProjects: g('supabase:projects'),
     // A hang in the call kills the script before either key is emitted, so an
     // unparseable status has to mean failure — never success by default.

@@ -18,6 +18,7 @@ const path = require('path');
 const http = require('http');
 const { dockerRequestJson, resolveDockerSocket } = require('./lib/docker-socket-path.js');
 const dockerStats = require('./lib/docker-stats.js');
+const execTimeout = require('./lib/exec-timeout.js');
 const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js');
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
 const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, failureMessage: packagesFailureMessage, splitFailed: splitPackagesFailed } = require('./lib/agent-packages.js');
@@ -932,6 +933,7 @@ const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 function failureReason(err, stdout, stderr) {
   if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'answer larger than the read limit';
   if (err.killed) return 'timed out';
+  if (err.wrappedExec && execTimeout.isTimeoutExit(err.code)) return execTimeout.timeoutCause(err.code);
   const out = String(stdout || '');
   const start = out.indexOf('{');
   if (start >= 0) {
@@ -954,8 +956,40 @@ function execFileAsync(cmd, args, timeoutMs) {
   });
 }
 
+/**
+ * Runs a command INSIDE an agent container, bounded there: `timeout -k 5 N` inside the
+ * container (killing only the docker client at the host-side deadline leaves the process running
+ * in the agent, and they pile up). The host timer is a few seconds longer. An image without
+ * `timeout` is retried once unwrapped and remembered. Rejects with `failureReason`'s text.
+ */
+async function containerExec(container, argv, timeoutMs, maxBuffer = EXEC_MAX_BUFFER) {
+  const run = (wrap) => new Promise((resolve, reject) => {
+    execFile('docker', execTimeout.buildExecArgs({ container, argv, timeoutMs, wrap }),
+      { timeout: wrap ? execTimeout.clientTimeoutMs(timeoutMs) : timeoutMs, maxBuffer, encoding: 'utf-8' },
+      (err, stdout, stderr) => {
+        if (err) {
+          err.wrappedExec = wrap;
+          err.wrapperMissing = wrap && execTimeout.isWrapperMissing(err.code, `${stdout}\n${stderr}`);
+          err.reason = failureReason(err, stdout, stderr);
+          return reject(err);
+        }
+        resolve(stdout);
+      });
+  });
+  const unwrapped = execTimeout.unwrappedContainers();
+  if (!unwrapped.has(container)) {
+    try {
+      return await run(true);
+    } catch (e) {
+      if (!e.wrapperMissing) throw new Error(e.reason);
+      unwrapped.add(container);
+    }
+  }
+  try { return await run(false); } catch (e) { throw new Error(e.reason); }
+}
+
 async function gatewayCall(container, method, params) {
-  const out = await execFileAsync('docker', ['exec', container, 'sh', '-c', COSTS_GATEWAY_CLI, 'sh',
+  const out = await containerExec(container, ['sh', '-c', COSTS_GATEWAY_CLI, 'sh',
     'gateway', 'call', method, '--json', '--timeout', String(COSTS_CALL_TIMEOUT_MS - 5000), '--params', JSON.stringify(params)],
   COSTS_CALL_TIMEOUT_MS);
   const start = out.indexOf('{');
@@ -1655,13 +1689,7 @@ const PACKAGES_MAX_BUFFER = 1024 * 1024;
 
 /** Runs `cat` in the container with a small buffer; execFileAsync's 32 MB would let an agent make the daemon hold a huge string. */
 function readPackagesFile(container) {
-  return new Promise((resolve, reject) => {
-    execFile('docker', ['exec', container, 'cat', '/root/.rev4a/packages-status.json'],
-      { timeout: PACKAGES_READ_TIMEOUT_MS, maxBuffer: PACKAGES_MAX_BUFFER, encoding: 'utf-8' }, (err, stdout, stderr) => {
-        if (err) return reject(new Error(failureReason(err, stdout, stderr)));
-        resolve(stdout);
-      });
-  });
+  return containerExec(container, ['cat', '/root/.rev4a/packages-status.json'], PACKAGES_READ_TIMEOUT_MS, PACKAGES_MAX_BUFFER);
 }
 
 async function collectPackagesStatus() {
