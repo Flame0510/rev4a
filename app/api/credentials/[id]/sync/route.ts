@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getProfile, markSynced, markDesynced } from '@/lib/credentials/vault';
-import { syncProfileToAgents, cleanAgentProviders } from '@/lib/credentials/delivery';
+import { getProfile } from '@/lib/credentials/vault';
+import { syncProfileToAgents, disableAssignment } from '@/lib/credentials/delivery';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * POST /api/credentials/[id]/sync
+ * Kept for older clients: enables the credential on the given containers (all when none).
+ * Body: { containers?: string[] }
+ */
 export async function POST(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
@@ -19,9 +24,6 @@ export async function POST(request: Request,
 
     const results = await syncProfileToAgents(id, profile.providerId, selectedContainers);
 
-    const anyError = results.some((r) => r.status === 'error');
-    markSynced(id, anyError ? 'error' : 'active');
-
     return NextResponse.json({ results });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
@@ -30,7 +32,8 @@ export async function POST(request: Request,
 
 /**
  * DELETE /api/credentials/[id]/sync
- * De-sync a credential from a single container (removes it without touching others).
+ * De-sync a credential from a single container (switches its assignment off and removes
+ * anything an earlier release wrote; other containers are untouched).
  * Body: { container: "prometheus" }
  */
 export async function DELETE(request: Request,
@@ -48,8 +51,10 @@ export async function DELETE(request: Request,
       return NextResponse.json({ error: 'container is required' }, { status: 400 });
     }
 
-    await cleanAgentProviders(container, profile.providerId);
-    markDesynced(id);
+    const result = await disableAssignment(id, container);
+    if (result.status === 'error') {
+      return NextResponse.json({ error: result.error ?? 'Removal failed' }, { status: 502 });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {

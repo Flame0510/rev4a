@@ -7,6 +7,7 @@ import { agentBusyReason } from '@/lib/agent-busy';
 import { agentEditView, EditRefusedError, startAgentEdit } from '@/lib/agent-edit';
 import { DB_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { deleteAssignmentsForAgent } from '@/lib/credentials/assignments';
 
 const BACKUP_VOLUME = 'rev4a-backups';
 
@@ -58,6 +59,15 @@ export async function DELETE(request: Request,
       );
     } catch {
       // no backups or backup volume missing — ignore
+    }
+
+    // The agent is gone with its volume, so no credential can be switched off on it any more.
+    // A new agent with the same name must not receive the old token at its first re-apply.
+    try {
+      const dropped = deleteAssignmentsForAgent(containerName, id);
+      if (dropped > 0) console.info(`[credentials] dropped ${dropped} assignment(s) of deleted agent ${containerName}`);
+    } catch (e) {
+      console.warn(`[credentials] assignments of deleted agent ${containerName} not dropped:`, (e as Error).message);
     }
 
     // Log event to events.db if it exists

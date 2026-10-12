@@ -46,9 +46,26 @@ function bootstrap(): void {
       result TEXT
     );
 
+    -- Which agent receives which credential, and how. agent_id is the container name.
+    CREATE TABLE IF NOT EXISTS credential_assignments (
+      profile_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      mode TEXT NOT NULL DEFAULT 'env',
+      synced_at INTEGER,
+      last_error TEXT,
+      pending_removal INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (profile_id, agent_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_cred_profiles_provider ON credential_profiles(provider_id);
     CREATE INDEX IF NOT EXISTS idx_cred_audit_ts ON credential_audit_log(ts);
   `);
+  // Additive and idempotent: a table created before pending_removal existed gets the column once.
+  const cols = db.prepare("PRAGMA table_info(credential_assignments)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'pending_removal')) {
+    db.exec("ALTER TABLE credential_assignments ADD COLUMN pending_removal INTEGER NOT NULL DEFAULT 0");
+  }
   db.close();
   // Again after SQLite's first open: a database path that is a symlink to a missing file is
   // created by SQLite itself, under the umask, so it is tightened only now.

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getProfile, updateProfile, deleteProfile } from '@/lib/credentials/vault';
+import { listAssignments, deleteAssignments } from '@/lib/credentials/assignments';
+import { enableAssignment } from '@/lib/credentials/delivery';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +34,17 @@ export async function PATCH(request: Request,
     }
 
     updateProfile(id, label, secret ?? {});
+
+    // A changed secret must reach the agents that hold it: rotate the enabled assignments.
+    const rotated = Object.values(secret ?? {}).some((v) => typeof v === 'string' && v.trim());
+    if (rotated) {
+      const failed: string[] = [];
+      for (const a of listAssignments(id).filter((x) => x.enabled)) {
+        const r = await enableAssignment(id, a.agentId, a.mode, { onlyIfEnabled: true });
+        if (r.status === 'error') failed.push(a.agentId);
+      }
+      if (failed.length) return NextResponse.json({ ok: true, redeliveryFailed: failed });
+    }
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
@@ -44,6 +57,16 @@ export async function DELETE(request: Request,
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
     const { id } = await params;
+    // Switch it off on the agents first: deleting the vault record would leave the
+    // token in their secret store with nothing in Rev4a accounting for it.
+    const live = listAssignments(id).filter((a) => a.enabled || a.pendingRemoval);
+    if (live.length > 0) {
+      return NextResponse.json(
+        { error: `Switch this credential off on ${live.length} agent(s) (or finish a failed removal) before deleting it` },
+        { status: 409 },
+      );
+    }
+    deleteAssignments(id);
     deleteProfile(id);
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {

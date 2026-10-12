@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
+import { reapplyAssignments } from '@/lib/credentials/delivery';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ async function applyControlUiPolicy(containerName: string): Promise<void> {
  * Apply all guaranteed config patches to a running container, then the origin policy.
  * Uses `openclaw config patch --stdin` (deep-merge) so existing
  * user customizations are never overwritten. Best-effort: a failed patch is logged
- * and the others still run.
+ * and the others still run. Ends by starting, in the background, the re-apply of the agent's credential assignments.
  */
 export async function applyRuntimeConfig(containerName: string): Promise<void> {
   for (const patch of GUARANTEED_CONFIG_PATCHES) {
@@ -175,4 +176,10 @@ export async function applyRuntimeConfig(containerName: string): Promise<void> {
   } catch (e) {
     console.warn(`[agent-setup] Control UI origin policy not applied on ${containerName}:`, (e as Error).message);
   }
+  // Credentials switched on for this agent (secret store + skill config). Not awaited: the
+  // calls take seconds and create, recreate, update and edit must not wait for them. The
+  // assignments are the source of truth; each outcome is kept on its own assignment.
+  void reapplyAssignments(containerName).catch((e) => {
+    console.warn(`[agent-setup] credentials not re-applied on ${containerName}:`, (e as Error).message);
+  });
 }

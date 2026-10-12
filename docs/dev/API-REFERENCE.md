@@ -2439,8 +2439,8 @@ key. The keys are stored in `data/provider-keys.json`.
 Third-party service credentials are managed under `/api/credentials`
 (documented below) and stored in `credentials.db`.
 
-There is no `/api/vault` route, and no per-credential agent scoping: any stored
-credential can be synced to any container.
+There is no `/api/vault` route. A credential reaches only the agents it is switched on for
+(`/api/credentials/[id]/assignments`).
 
 Full key management documentation at [PROVIDERS.md](PROVIDERS.md).
 
@@ -2757,7 +2757,7 @@ Get a single credential profile (no secret returned).
 **Auth:** browser cookie or bearer token
 
 ### `PATCH /api/credentials/[id]`
-Update label and/or secret of a credential.
+Update label and/or secret of a credential. A changed secret is re-delivered to the agents it is switched on for; agents where that failed are listed in `redeliveryFailed`.
 
 **Auth:** browser cookie or bearer token
 
@@ -2770,47 +2770,66 @@ Trello, where rotating the `token` alone must leave `apiKey` intact — both are
 required by the REST delivery. An empty `secret` (every field blank) therefore
 updates the label only.
 
-When the merge changes the stored payload, `last_synced_at` is reset to `NULL`:
-the agents still hold the previous value, so the profile reads "synced never"
-until it is delivered again, and `GET /api/credentials/detect` reports those
-agents as holding an unrecognised credential for that provider.
+When the merge changes the stored payload, `last_synced_at` is reset to `NULL`, then each
+agent the credential is switched on for is delivered again (same path as `PUT
+.../assignments`): a success sets `last_synced_at` and the profile status again and writes a
+`sync` audit entry; a failure sets the status to `error` and is kept as the assignment's
+`lastError`. Agents where it failed are listed in `redeliveryFailed` (200 either way).
+Agents the credential is not switched on for, and old-way deliveries, keep the previous
+value until switched on.
 
 ### `DELETE /api/credentials/[id]`
-Delete a credential and its secret permanently.
+Delete a credential and its secret permanently. Answers 409 while it is switched on for any agent or a switch-off is still pending.
+
+**Auth:** browser cookie or bearer token
+
+### `GET /api/credentials/[id]/assignments`
+Every agent with this credential's assignment.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ native: boolean, agents: { container, agentId, displayName, running, codex, assignment: Assignment | null }[] }` where `Assignment = { profileId, agentId, enabled, mode: 'env'|'protected', syncedAt, lastError, pendingRemoval }`. One row per agent, stopped ones included, plus a row for every assignment whose container no longer exists. `codex` is true when the agent's model (the `main` entry of `agents.list`, else `agents.defaults.model`) runs on the ChatGPT (Codex) runtime. `enabled: false` with `pendingRemoval: false` is a switched-off row, or one replaced by another profile of the same provider; `pendingRemoval: true` means the last switch-off failed and the token may still be on the agent (`lastError` says why). No secret is returned.
+
+### `PUT /api/credentials/[id]/assignments`
+Switch the credential on or off for agents.
+
+**Auth:** browser cookie or bearer token
+
+**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected' }` or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists).
+
+**Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
+
+Enabling needs OpenClaw 2026.9.0 or newer on the agent; a success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+
+Disabling tries every step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves the row in `pendingRemoval` with `lastError`, answers `status: 'error'`, and the removal is retried when Rev4a re-applies the agent's config; until then the credential cannot be deleted. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry.
+
+### `GET /api/credentials/assignments?agent=<container>`
+Every assignment (enabled, switched off, removal pending, failed; optionally of one agent) with the credential `label` and `providerId`, plus `knownAgents`: the containers that exist, running or stopped. Reads the vault database and one `docker ps`/`inspect`; never execs into an agent.
 
 **Auth:** browser cookie or bearer token
 
 ### `POST /api/credentials/[id]/sync`
-Sync the credential to agent containers.
+Kept for older clients: enables the credential on agent containers.
 
 **Auth:** browser cookie or bearer token
 
-**Body (optional):** `{ containers?: string[] }` — if omitted, targets every agent container carrying an `AGENT_ID` label.
+**Body (optional):** `{ containers?: string[] }` — if omitted, every agent container carrying an `AGENT_ID` label.
 
 **Response:** `{ results: { container: string, status: 'ok'|'error', error?: string }[] }`
 
-Each **targeted** container is first cleaned of this provider only — other
-providers on the same container are left alone — and then receives the new
-credential and its TOOLS.md row.
-
-**Containers outside `containers` are not touched.** Syncing is therefore not a
-way to revoke: dropping an agent from the list leaves whatever it already holds
-in place. Use `DELETE` below to remove a credential from a container.
+Each container is handled as `PUT .../assignments` with `enabled: true`. Containers outside `containers` are not touched.
 
 ### `DELETE /api/credentials/[id]/sync`
-Remove this credential from a single container ("de-sync").
+Switch the credential off on a single container ("de-sync").
 
 **Auth:** browser cookie or bearer token
 
 **Body:** `{ container: string }` — required.
 
-**Response:** `{ ok: true }`
+**Response:** `{ ok: true }`, or 502 `{ error }` when the native entries could not be removed.
 
-Deletes the provider's CLI auth inside that container and drops its TOOLS.md
-row. `last_synced_at` is deliberately left untouched — it records the last
-delivery, and a removal is not one — and the audit entry is recorded as
-`desync`. The profile stays `active`, because de-sync targets one container and
-the credential may still be delivered to others.
+Removes the secret store entries and the skill entry, and anything an earlier release wrote
+(CLI auth files, TOOLS.md row). `last_synced_at` stays untouched; the audit entry is `desync`.
 
 ### `GET /api/credentials/detect`
 Live-detect which credentials are actually present inside agent containers.
@@ -2847,6 +2866,7 @@ refresh, not something to block a page render on.
       "trelloLoggedIn": false,
       "trelloCliInstalled": true,
       "notionLoggedIn": false,
+      "codex": false,
       "toolsMdHasMarkers": true,
       "matchedProfiles": [
         { "profileId": "cred_xxx", "providerId": "github-pat", "label": "GitHub" }

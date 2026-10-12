@@ -18,6 +18,11 @@ mounted read-only by the container runtime.
 - **Rev4a may restart your gateway** for updates or configuration changes.
   This is normal operation and does not indicate a problem.
 
+## Credentials
+
+Credentials are environment variables provided by OpenClaw when switched on natively;
+otherwise follow the Integrations block in TOOLS.md. Never ask for or print a token.
+
 ## What Rev4a Handles
 
 - Provider API keys and model catalogue

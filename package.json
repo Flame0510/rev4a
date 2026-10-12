@@ -64,6 +64,7 @@
     "check:language": "node scripts/check-language.mjs",
     "test:agent-packages": "node scripts/test-agent-packages.mjs",
     "test:memory-limit": "node scripts/test-agent-memory-limit.mjs",
+    "test:credentials": "node scripts/test-credentials-mode.mjs && node scripts/test-credentials-native.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",
     "info:verify": "node scripts/model-info-verify.mjs"
   },

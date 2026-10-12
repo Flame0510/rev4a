@@ -44,7 +44,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create token',
       },
     ],
-    deliveryMethod: 'gh auth login --with-token',
+    deliveryMethod: 'env GH_TOKEN, GITHUB_TOKEN + github skill',
     docsUrl: 'https://github.com/settings/tokens',
   },
   {
@@ -71,7 +71,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         hint: 'Authorize Rev4a with the button below, then paste the token Trello returns.',
       },
     ],
-    deliveryMethod: 'writes ~/.config/trello/config.json',
+    deliveryMethod: 'env TRELLO_API_KEY, TRELLO_TOKEN + trello skill',
     docsUrl: 'https://trello.com/power-ups/admin',
   },
   {
@@ -91,7 +91,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create token',
       },
     ],
-    deliveryMethod: 'writes ~/.local/share/com.vercel.cli/auth.json',
+    deliveryMethod: 'env VERCEL_TOKEN',
     docsUrl: 'https://vercel.com/account/tokens',
   },
   {
@@ -111,7 +111,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create token',
       },
     ],
-    deliveryMethod: 'supabase login --token *** --no-browser',
+    deliveryMethod: 'env SUPABASE_ACCESS_TOKEN',
     docsUrl: 'https://supabase.com/dashboard/account/tokens',
   },
   {
@@ -131,7 +131,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create integration',
       },
     ],
-    deliveryMethod: 'writes ~/.config/notion/config.json',
+    deliveryMethod: 'env NOTION_API_TOKEN + notion skill',
     docsUrl: 'https://www.notion.so/my-integrations',
   },
 ];

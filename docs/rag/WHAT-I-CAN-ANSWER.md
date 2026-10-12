@@ -52,7 +52,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I check if my API key is working?"
 - "How do I take a screenshot of the dashboard?"
 - "How do I view memory files?"
-- "How do I sync credentials to an agent?"
+- "How do I switch a credential on for an agent?"
 - "How do I back up an agent?"
 - "How do I restore an agent from a backup?"
 - "How do I rebuild (recreate) an agent's container?"

@@ -314,15 +314,38 @@ Store third-party service credentials and install them into agent containers.
   **unencrypted**; anything that can read the file has them in the clear.
 - **Provider keys** are a separate store — `provider-keys.json`, managed from the
   Gateway UI.
-- **Five providers.** GitHub, Vercel and Supabase are handed to their CLI —
-  `gh auth login --with-token`, `~/.local/share/com.vercel.cli/auth.json`,
-  `supabase login --token`. Trello and Notion have no CLI in the loop: their
-  credentials are written to `~/.config/trello/config.json` and
-  `~/.config/notion/config.json`, and TOOLS.md tells the agent how to call each
-  REST API with them.
-- **Delivery is explicit.** A credential reaches a container only on sync, and
-  leaves only on de-sync. There is no per-agent permission model: any stored
-  credential can be synced to any container.
+- **Five providers.** GitHub, Trello, Vercel, Supabase and Notion. A credential reaches an
+  agent the native OpenClaw way: the token is written to the agent's OpenClaw **secret
+  store** as environment entries (`GH_TOKEN` and `GITHUB_TOKEN`, `VERCEL_TOKEN`,
+  `SUPABASE_ACCESS_TOKEN`, `TRELLO_API_KEY` and `TRELLO_TOKEN`, `NOTION_API_TOKEN`) and the
+  matching bundled skill is configured (`skills.entries`: a SecretRef `apiKey` for Notion,
+  an `env` map for Trello, a plain switch-on for GitHub) so it turns eligible by itself.
+  Rev4a writes no CLI config file and no TOOLS.md row; the agent finds the service
+  available from its environment and its skills. `gh`, `vercel` and `supabase` read their
+  variable natively.
+- **Per-agent switch.** Each credential lists the agents with a **Switch on** / **Switch
+  off** button, stored in `credential_assignments`. One credential per provider is active
+  on an agent: switching on another profile of the same provider replaces the first.
+  Each row says "delivered natively", an error with its reason (**Retry**), or "Delivered
+  the old way — re-sync to move to native" for an agent that still holds what an earlier
+  release wrote (**Move to native** switches it on and removes the old files and the
+  TOOLS.md row, for that provider on that agent only). Nothing is moved automatically on
+  update. A `Protected` mode (secret kept out of the agent) is reserved and shown
+  disabled, "coming later".
+- **Requirements.** OpenClaw 2026.9.0 or newer; an older agent is refused with a message.
+  The assignments are re-applied whenever Rev4a creates, recreates, updates or edits the
+  agent; a failure is logged and kept as the assignment's error, and never blocks the
+  operation. Editing a credential's secret re-delivers it to the agents it is on. A
+  credential switched on anywhere cannot be deleted until it is switched off.
+- **Failures and leftovers.** A switch-off tries every step; if one fails the row says "Removal failed — the token may still be on this agent" with **Retry removal**, the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. Rows for an agent that is stopped (**Switch off**) or deleted (**Forget**) stay listed; deleting an agent drops its rows. A row replaced by another profile of the same provider reads "replaced by <label>". Re-applying runs in the background after create, recreate, update and edit.
+- **Release note / rollback.** Before rolling Rev4a back below this version, switch native credentials off (or they stay in the agents): the older version does not know the secret store, and `gh` prefers `GH_TOKEN` over its own login.
+- **Codex runtime.** An agent on the ChatGPT subscription runtime gets the note "the token
+  reaches only commands run through OpenClaw": environment entries do not reach the Codex
+  native shell.
+- **Agent panel.** The CREDENTIALS section lists, read-only, what is switched on for the agent, plus credentials still delivered the old way ("re-sync to move to native").
+- **Where the token lives.** In the agent's `~/.openclaw/state/openclaw.sqlite` (unencrypted,
+  on the agent volume, so it survives a recreate and is part of a cold backup) and, for Trello,
+  also as plaintext in `openclaw.json`.
 - **Live detection** shows which credentials are actually installed, matching
   SHA-256 hashes of the tokens found in each container against the stored ones.
 

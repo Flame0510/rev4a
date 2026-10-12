@@ -79,9 +79,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/credentials': {
     title: 'Credentials',
-    description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion) once and install them into agent containers. Secrets are stored unencrypted in credentials.db; provider API keys are managed on the Gateway page, not here.',
-    actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Sync a credential to an agent container, or De-sync it to remove it', 'See which credentials are actually installed in each container (detected live)'],
-    hints: 'A credential reaches a container only when you sync it, and leaves only when you de-sync it. Any stored credential can be synced to any container.',
+    description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion) once and switch them on for the agents that need them. Secrets are stored unencrypted in credentials.db (and in the secret store of each agent they are on); provider API keys are managed on the Gateway page, not here.',
+    actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Switch a credential on or off for each agent (Switch on / Switch off); "Move to native" re-delivers one an earlier release installed the old way', 'See, per agent, whether it is delivered natively, delivered the old way, or failed (Retry)'],
+    hints: 'A credential reaches an agent only when you switch it on for that agent: the token goes into the agent\'s OpenClaw secret store as an environment variable and the matching skill is enabled (OpenClaw 2026.9.0 or newer). Switching it off removes it. A credential that is on for an agent cannot be deleted. An agent on the ChatGPT subscription runtime gets the token only in commands run through OpenClaw.',
   },
   '/config': {
     title: 'Config',

@@ -70,7 +70,7 @@
 
 **Container separation:** `openclaw-atlas` already runs as a standalone container with `AGENT_ID=atlas`, discovered dynamically by Rev4a. This proves the container-per-agent model works.
 
-**Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and installs them into containers on explicit sync. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
+**Credentials vault:** The `/credentials` page stores third-party service tokens in `credentials.db` and delivers them to the agents they are switched on for, through OpenClaw's secret store and skill config. Provider API keys live separately in `provider-keys.json`, managed from the Gateway UI.
 
 **Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any running one. Fully functional. Each running container's CPU, memory and processes are on its row, with a link to its charts on `/system`, which also shows the machine's CPU, RAM and disk.
 
@@ -435,21 +435,46 @@ Anything able to read that file, or to reach `POST /api/credentials/[id]/reveal`
 with a valid session, obtains them in the clear. Encryption (AES-256-GCM, or an
 external vault) is not implemented.
 
-**Delivery is explicit, not automatic.** Creating an agent installs nothing: a
-credential reaches a container only when the user syncs it
-(`POST /api/credentials/[id]/sync`), and leaves only on de-sync
-(`DELETE /api/credentials/[id]/sync`). There is no per-agent permission model —
-any stored credential can be synced to any container. Delivery writes each CLI's
-own config inside the container (`lib/credentials/delivery.ts`); OpenClaw's
-`secrets` subsystem covers only OpenClaw's own configuration credentials and
-offers nothing for third-party CLIs.
+**Delivery is explicit and per agent.** Creating an agent installs nothing. The table
+`credential_assignments(profile_id, agent_id, enabled, mode, synced_at, last_error)`
+records which credential is switched on for which agent (`agent_id` is the container
+name); `mode` is `env` (implemented) or `protected` (reserved).
+
+Enabling an assignment (`lib/credentials/delivery.ts`, pure parts in
+`lib/credentials/native.ts`) runs, through `docker exec` with argv arrays:
+
+1. `openclaw --version` must be 2026.9.0 or newer;
+2. `openclaw secrets store set NAME --kind env --value-file -` per environment name, the
+   value on stdin (never in argv);
+3. one `openclaw config patch --stdin` for `skills.entries.<skill>` (`apiKey` SecretRef
+   when the skill declares a primary env, `env` map for Trello, plain `enabled` for GitHub);
+4. `openclaw secrets reload` with `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000` in the exec environment (the agent Gateway port; never `--url`/`--token` in argv).
+
+Disabling runs `openclaw secrets store rm --yes NAME`, the same patch with `null`, and reload.
+Every step is attempted even when one fails; any failure keeps the row in `pending_removal`
+with `last_error` (retried at re-apply, blocks deleting the credential), never thrown out of a
+batch. The removal runs only for a row that is enabled or pending: a sibling replaced by
+another profile of the same provider shares the environment names and is left alone. Error
+texts are stripped of the secret values (raw, trimmed and JSON-escaped forms).
+Calls on one container are serialized (the patch rewrites openclaw.json). After a
+successful native delivery the files and TOOLS.md row an earlier release wrote for that
+provider on that agent are removed. `applyRuntimeConfig` starts, in the background and
+without delaying the caller, a re-apply of the agent's assignments (enabled ones delivered
+again, pending removals retried) after create, recreate, update and edit; the store and `openclaw.json` live on
+the agent volume. Environment entries reach Gateway-hosted exec but not the Codex native
+shell. Deleting an agent deletes its assignments. A successful switch updates the profile's
+`last_synced_at`/status and writes `sync`/`desync` audit entries.
+
+**Rollback.** The previous Rev4a still reads the vault and does its old delivery, but it knows
+nothing of the secret store: its de-sync does not remove the store entries, and `gh` prefers
+`GH_TOKEN` over `hosts.yml`. Before rolling Rev4a back below this version, switch native
+credentials off (or they stay in the agents). Protected mode (`kind: secret` plus an egress proxy) is a separate decision.
 
 `GET /api/credentials/detect` reports which credentials are actually installed,
 by SHA-256 hashing the token found in each container and matching it against the
 stored profiles.
 
-**Planned:** encryption at rest, and a per-agent permission model so a credential
-can be restricted to a subset of agents.
+**Planned:** encryption at rest, and the protected delivery mode.
 
 ---
 

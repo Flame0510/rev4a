@@ -276,8 +276,8 @@ export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCar
             <Skeleton width={c.delivery} height={9} />
           </div>
 
-          {/* A stored profile: label, masked secret + status + sync time, actions,
-              then the per-agent sync rows underneath. */}
+          {/* A stored profile: label, masked secret + status + delivery time, actions,
+              then the per-agent switch rows underneath. */}
           {i < configuredCards && (
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -310,7 +310,7 @@ export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCar
 }
 
 /**
- * Per-agent sync rows inside a credential profile.
+ * Per-agent switch rows inside a credential profile.
  *
  * Stands in for the block fed by /api/credentials/detect, which shells into
  * every agent container and takes seconds. The agent list itself comes from that
@@ -319,8 +319,8 @@ export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCar
  * that waits: the cards, the stored profiles and the Add buttons all come from
  * the cheap endpoint and render immediately.
  *
- * No Sync/De-sync button is drawn here on purpose. Their label depends on
- * whether the credential is installed, which is exactly what is still unknown —
+ * No Switch on / Switch off button is drawn here on purpose. Their label depends on
+ * whether the credential is on for the agent, which is exactly what is still unknown —
  * a button rendered now would have to guess, and guessing wrong invites a click
  * that does the opposite of what it says.
  */

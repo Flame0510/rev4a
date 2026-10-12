@@ -10,6 +10,7 @@ import {
   TOKEN_FIELD,
   type ContainerProbe,
 } from '@/lib/credentials/detect';
+import { agentUsesCodex } from '@/lib/credentials/runtime';
 import { mapWithConcurrency } from '@/lib/docker-exec';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
@@ -36,6 +37,8 @@ interface DetectedStatus {
   trelloLoggedIn: boolean;
   trelloCliInstalled: boolean;
   notionLoggedIn: boolean;
+  /** The default model runs on the ChatGPT (Codex) runtime: env entries reach only OpenClaw-run commands. */
+  codex: boolean;
   toolsMdHasMarkers: boolean;
   matchedProfiles: { profileId: string; providerId: string; label: string }[];
   /**
@@ -107,7 +110,7 @@ function matchProfiles(installed: Map<string, string>, profiles: HashedProfile[]
     .map(({ profileId, providerId, label }) => ({ profileId, providerId, label }));
 }
 
-function shape(container: string, agentId: string, probe: ContainerProbe, profiles: HashedProfile[]): DetectedStatus {
+function shape(container: string, agentId: string, probe: ContainerProbe, profiles: HashedProfile[], codex: boolean): DetectedStatus {
   const installed = installedHashes(probe);
   // `gh` changed the wording: 2.97 prints "…github.com account <user>", older
   // builds print "…as <user>". The image installs it unpinned from apt, so both
@@ -142,12 +145,15 @@ function shape(container: string, agentId: string, probe: ContainerProbe, profil
     supabaseLinked: !!projectRef,
     supabaseProjectRef: projectRef,
     supabaseCliInstalled: probe.cli.supabase,
+    // Old-way signal only: presence of the config file written by earlier releases. A natively
+    // delivered credential leaves no file; its state comes from the assignments, not from here.
     // Presence of the config file is the login signal for both — neither ships a
     // status command. An empty file now counts as absent, where `test -f` used
     // to accept it.
     trelloLoggedIn: !!probe.files.trelloConfig.trim(),
     trelloCliInstalled: probe.cli.trello,
     notionLoggedIn: !!probe.files.notionConfig.trim(),
+    codex,
     toolsMdHasMarkers: probe.toolsMdMarkers > 0,
     matchedProfiles: matchProfiles(installed, profiles),
     installedProviders: [...installed.keys()],
@@ -178,11 +184,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       AGENT_QUERY_CONCURRENCY,
       async ({ name, agentId }) => {
         try {
-          const probe = await probeContainer(name);
+          const [probe, codex] = await Promise.all([probeContainer(name), agentUsesCodex(name)]);
           if (!probe.ok) {
             return { container: name, agentId, error: 'Container did not respond' };
           }
-          return shape(name, agentId, probe, profiles);
+          return shape(name, agentId, probe, profiles, codex);
         } catch (e: unknown) {
           return { container: name, agentId, error: (e as Error).message };
         }

@@ -1,7 +1,22 @@
-import { dockerExecShell, mapWithConcurrency } from '@/lib/docker-exec';
-import { getSecret } from './vault';
+import { dockerExec, dockerExecShell, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
+import { getSecret, getProfile, markSynced, markDesynced } from './vault';
 import { getProvider } from './providers';
 import { listAgentContainers as listAgentContainerInfo } from './detect';
+import {
+  getAssignment,
+  listLiveForAgent,
+  recordAssignment,
+  supersedeSiblings,
+} from './assignments';
+import {
+  needsNativeRemoval,
+  nativeProvider,
+  redact,
+  runDisable,
+  runEnable,
+  type AssignmentMode,
+  type NativeExec,
+} from './native';
 
 /** Containers written to at once. Writes are heavier than reads, so lower. */
 const AGENT_WRITE_CONCURRENCY = 4;
@@ -10,6 +25,8 @@ export interface SyncResult {
   container: string;
   status: 'ok' | 'error';
   error?: string;
+  /** The switch worked, but a leftover of an earlier release could not be removed. */
+  warning?: string;
 }
 
 // ── Container discovery ────────────────────────────────────────────────────
@@ -49,16 +66,6 @@ async function containerExec(
   env?: Record<string, string>,
 ): Promise<void> {
   await dockerExecShell(container, script, { timeoutMs, env });
-}
-
-/** Whether a CLI is on PATH inside the container. Throws if the exec fails. */
-async function cliPresent(container: string, name: string): Promise<boolean> {
-  const out = await dockerExecShell(
-    container,
-    `command -v ${name} >/dev/null 2>&1 && echo ok || echo missing`,
-    { timeoutMs: 5000 },
-  );
-  return out.trim() === 'ok';
 }
 
 /** Printed after the file, so its absence proves the read was cut short. */
@@ -102,147 +109,6 @@ function b64(s: string): string {
   return Buffer.from(s, 'utf-8').toString('base64');
 }
 
-
-// ── Per-provider delivery adapters ────────────────────────────────────────
-
-interface VercelUserResponse { user?: { id?: string; defaultTeamId?: string } }
-interface VercelTeam { id: string; slug: string }
-interface VercelTeamsResponse { teams?: VercelTeam[] }
-
-/**
- * Validate a Vercel token against the API and discover its accessible team scope.
- * Returns the token and the team ID (not slug) to use in config.json.
- * Uses Node.js fetch() instead of curl — token never appears in command line.
- */
-async function discoverVercelScope(token: string): Promise<{ token: string; teamId: string | null }> {
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-  // Validate token + get user info
-  const userRes = await fetch('https://api.vercel.com/v2/user', { headers, signal: AbortSignal.timeout(10000) });
-  if (!userRes.ok) throw new Error(`Vercel API returned ${userRes.status} for /v2/user`);
-  const userData: VercelUserResponse = await userRes.json() as VercelUserResponse;
-  if (!userData?.user?.id) throw new Error('Invalid token response from Vercel API');
-
-  let teamId: string | null = null;
-  try {
-    const teamsRes = await fetch('https://api.vercel.com/v2/teams', { headers, signal: AbortSignal.timeout(10000) });
-    if (teamsRes.ok) {
-      const teamsData: VercelTeamsResponse = await teamsRes.json() as VercelTeamsResponse;
-      const teams = teamsData?.teams;
-      if (teams && teams.length > 0) {
-        const defaultTeamId = userData.user.defaultTeamId;
-        const defaultTeam = defaultTeamId
-          ? teams.find((t) => t.id === defaultTeamId)
-          : undefined;
-        teamId = (defaultTeam ?? teams[0]).id;
-      }
-    }
-  } catch {
-    // Personal token, no team scope needed
-  }
-
-  return { token, teamId };
-}
-
-async function deliverGithub(container: string, secret: Record<string, string>): Promise<void> {
-  const { token } = secret;
-  if (!token) throw new Error('Missing token');
-
-  // Require gh CLI preinstalled in the agent image
-  if (!await cliPresent(container, 'gh')) throw new Error('gh CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
-
-  await containerExec(
-    container,
-    `echo ${JSON.stringify(b64(token))} | base64 -d | gh auth login --with-token`,
-  );
-}
-
-async function deliverVercel(container: string, secret: Record<string, string>): Promise<void> {
-  const { token } = secret;
-  if (!token) throw new Error('Missing token');
-
-  // Require vercel CLI preinstalled in the agent image
-  if (!await cliPresent(container, 'vercel')) throw new Error('vercel CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
-
-  // Validate token and discover team scope via Node fetch (no curl/exec)
-  const scope = await discoverVercelScope(token);
-
-  // Write auth.json for Vercel CLI auth — same directory as config.json
-  const authJson = JSON.stringify({ token });
-  await containerExec(
-    container,
-    `mkdir -p /root/.local/share/com.vercel.cli && echo ${JSON.stringify(b64(authJson))} | base64 -d > /root/.local/share/com.vercel.cli/auth.json && chmod 600 /root/.local/share/com.vercel.cli/auth.json`,
-  );
-
-  // Write config.json with currentTeam = team ID (prevents scope errors like "ledger")
-  // Both auth.json and config.json MUST be in ~/.local/share/com.vercel.cli/
-  if (scope.teamId) {
-    const vercelConfig = JSON.stringify({ currentTeam: scope.teamId });
-    await containerExec(
-      container,
-      `echo ${JSON.stringify(b64(vercelConfig))} | base64 -d > /root/.local/share/com.vercel.cli/config.json && chmod 600 /root/.local/share/com.vercel.cli/config.json`,
-    );
-  }
-
-}
-
-async function deliverSupabase(container: string, secret: Record<string, string>): Promise<void> {
-  const { accessToken } = secret;
-  if (!accessToken || !accessToken.trim()) throw new Error('Missing Supabase access token');
-
-  // Check supabase CLI is available (installed globally in the image)
-  if (!await cliPresent(container, 'supabase')) throw new Error('supabase CLI not installed in this container. Download the current agent image from the Agents page and update this agent.');
-
-  // Login with access token — grants access to all projects on the account
-  // supabase login --token supports non-interactive auth
-  // The token travels through `docker exec -e`, never inside the script text.
-  // Interpolating it here is what let a token containing `$(...)` execute on the
-  // host as root: JSON.stringify escapes quotes but not command substitution,
-  // and execSync handed the result to the host shell before docker saw it.
-  // "$SUPABASE_ACCESS_TOKEN" is expanded by the container's shell, which does
-  // not re-parse the expanded value.
-  await containerExec(
-    container,
-    'supabase login --token "$SUPABASE_ACCESS_TOKEN" --no-browser 2>&1',
-    30000,
-    { SUPABASE_ACCESS_TOKEN: accessToken.trim() },
-  );
-}
-
-/**
- * Trello is delivered for the REST API, not for the CLI.
- *
- * The `trello` CLI stays in the base image and can still read a config of this
- * shape, but it is no longer required: the sync used to abort with "rebuild the
- * base image" when it was missing, over a tool nothing depends on. The agent is
- * told to call the API directly — see PROVIDER_ENTRIES and the Authentication
- * section that TOOLS.md carries.
- *
- * The file therefore lives under `~/.config/`, alongside Notion, rather than in
- * the CLI's own directory.
- */
-async function deliverTrello(container: string, secret: Record<string, string>): Promise<void> {
-  const { apiKey, token } = secret;
-  if (!apiKey || !token) throw new Error('Missing Trello API key or token');
-
-  const config = JSON.stringify({ apiKey, token });
-  await containerExec(
-    container,
-    `mkdir -p /root/.config/trello && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.config/trello/config.json && chmod 600 /root/.config/trello/config.json`,
-  );
-}
-
-/** Notion: no CLI, just write a config file (same pattern as Trello). */
-async function deliverNotion(container: string, secret: Record<string, string>): Promise<void> {
-  const { token } = secret;
-  if (!token) throw new Error('Missing Notion API token');
-
-  const config = JSON.stringify({ token });
-  await containerExec(
-    container,
-    `mkdir -p /root/.config/notion && echo ${JSON.stringify(b64(config))} | base64 -d > /root/.config/notion/config.json && chmod 600 /root/.config/notion/config.json`,
-  );
-}
 
 // ── TOOLS.md managed section (per-container) ──────────────────────────────
 
@@ -376,14 +242,11 @@ function writeAtomically(content: string, path: string): string {
 }
 
 /**
- * Add or remove a single provider's row from the TOOLS.md integration block
- * inside a single agent container (docker exec only, no host filesystem access).
+ * Remove a single provider's row from the TOOLS.md integration block inside an agent
+ * container (docker exec only). Throws when TOOLS.md cannot be read, so a removal that did
+ * not happen is never reported as done.
  */
-async function toggleProviderRow(
-  container: string,
-  providerId: string,
-  action: 'add' | 'remove',
-): Promise<void> {
+async function removeProviderRow(container: string, providerId: string): Promise<void> {
   const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
   if (!safe) return;
 
@@ -391,92 +254,236 @@ async function toggleProviderRow(
   if (!entry) return;
 
   const existing = await containerRead(safe, TOOLS_MD_PATH);
-  // A failed read must not lead to a write. It used to: '' meant both "empty"
-  // and "unreadable", so a transient docker error sent the add path into its
-  // "no block yet" branch, which writes the block plus `existing` — replacing
-  // the whole of TOOLS.md with just the block.
-  if (existing === null) return;
-  const row = entryRow(entry);
+  // A failed read must not lead to a write (an unreadable file is not an empty one).
+  if (existing === null) throw new Error('TOOLS.md could not be read');
   const si = existing.indexOf(MARKER_START);
   const ei = existing.indexOf(MARKER_END);
+  if (si === -1 || ei === -1 || ei <= si) return; // No block to edit
 
-  let rows: string[];
-
-  if (action === 'add') {
-    if (si !== -1 && ei !== -1 && ei > si) {
-      rows = extractRows(existing, si, ei);
-      if (!rows.some((r) => r.includes(`\`${entry.tool}\``))) {
-        rows.push(row);
-      }
-    } else {
-      // No block yet — create one with just this row
-      const newBlock = buildBlock([entry]);
-      await containerExec(safe, writeAtomically(newBlock + '\n' + existing, TOOLS_MD_PATH));
-      return;
-    }
-  } else {
-    // action === 'remove'
-    if (si === -1 || ei === -1 || ei <= si) return; // No block to edit
-    rows = extractRows(existing, si, ei).filter((r) => !r.includes(`\`${entry.tool}\``));
-  }
-
+  const rows = extractRows(existing, si, ei).filter((r) => !r.includes(`\`${entry.tool}\``));
   const newBlock = buildBlock(rowsToEntries(rows));
   const patched = existing.slice(0, si) + newBlock + existing.slice(ei + MARKER_END.length);
   await containerExec(safe, writeAtomically(patched, TOOLS_MD_PATH));
 }
 
-// ── Agent primitives — operate on ONE container ──────────────────────────
+// ── Old-way artefacts (written by earlier releases) ──────────────────────
 
 /**
- * Remove credentials for a specific provider from a single agent container.
+ * Remove the files an earlier release wrote for one provider in one container, and its
+ * TOOLS.md row. Never throws: returns what failed, as short messages, so the caller can say
+ * the removal was only partial instead of reporting success.
  */
-async function cleanProvider(container: string, providerId: string): Promise<void> {
+async function cleanLegacy(container: string, providerId: string): Promise<string[]> {
   const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
-  if (!safe) return;
+  if (!safe) return [];
+  const warnings: string[] = [];
 
-  switch (providerId) {
-    case 'github-pat':
-      try { await containerExec(safe, 'rm -rf /root/.config/gh /root/.local/share/gh 2>/dev/null; exit 0', 10000); } catch {}
-      break;
-    case 'vercel':
-      try { await containerExec(safe, 'rm -rf /root/.local/share/com.vercel.cli', 10000); } catch {}
-      break;
-    case 'supabase':
-      try { await containerExec(safe, 'rm -f /root/.supabase/access-token 2>/dev/null; exit 0', 10000); } catch {}
-      break;
-    case 'trello':
-      try { await containerExec(safe, 'rm -rf /root/.config/trello', 10000); } catch {}
-      break;
-    case 'notion':
-      try { await containerExec(safe, 'rm -rf /root/.config/notion', 10000); } catch {}
-      break;
+  const script: Record<string, string> = {
+    'github-pat': 'rm -rf /root/.config/gh /root/.local/share/gh 2>/dev/null; exit 0',
+    vercel: 'rm -rf /root/.local/share/com.vercel.cli',
+    supabase: 'rm -f /root/.supabase/access-token 2>/dev/null; exit 0',
+    trello: 'rm -rf /root/.config/trello',
+    notion: 'rm -rf /root/.config/notion',
+  };
+  if (script[providerId]) {
+    try { await containerExec(safe, script[providerId], 10000); }
+    catch { warnings.push('the old CLI files could not be removed'); }
   }
+  try { await removeProviderRow(safe, providerId); }
+  catch { warnings.push('the TOOLS.md row could not be removed'); }
+  return warnings;
 }
 
+// ── Native delivery: OpenClaw secret store + skill config ──────────────────
+
+const NATIVE_TIMEOUT_MS = 30_000;
+
+function execFor(container: string): NativeExec {
+  return {
+    run: (argv, env) => dockerExec(container, argv, { timeoutMs: NATIVE_TIMEOUT_MS, ...(env ? { env } : {}) }),
+    runWithInput: (argv, input) => dockerExecWithInput(container, argv, input, { timeoutMs: NATIVE_TIMEOUT_MS }),
+  };
+}
+
+// On globalThis: Next bundles each route separately, and every bundle must queue behind the
+// same chain or two routes could patch one agent's openclaw.json at once.
+const g = globalThis as unknown as { __rev4aCredChains?: Map<string, Promise<unknown>> };
+const chains = (g.__rev4aCredChains ??= new Map<string, Promise<unknown>>());
+
 /**
- * Inject a credential for a given provider into a single agent container.
+ * One native change at a time per container. `openclaw config patch` is a
+ * read-modify-write of openclaw.json, so two providers delivered to one agent at
+ * once would race on it.
  */
-async function deliverToAgent(
+function serialized<T>(container: string, fn: () => Promise<T>): Promise<T> {
+  const prev = chains.get(container) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const tail = next.catch(() => undefined);
+  chains.set(container, tail);
+  void tail.then(() => { if (chains.get(container) === tail) chains.delete(container); });
+  return next;
+}
+
+const safeName = (c: string): string => c.replace(/[^a-zA-Z0-9_.-]/g, '');
+
+function secretValues(profileId: string): string[] {
+  try { return Object.values(getSecret(profileId)); } catch { return []; }
+}
+
+/**
+ * Switch a credential on for one agent. Native first; only once that worked are the
+ * files and the TOOLS.md row an earlier release wrote for this provider removed, so an
+ * agent whose native delivery fails keeps working the old way. Never throws.
+ */
+export async function enableAssignment(
+  profileId: string,
   container: string,
-  providerId: string,
-  secret: Record<string, string>,
-): Promise<void> {
-  switch (providerId) {
-    case 'github-pat': await deliverGithub(container, secret); break;
-    case 'vercel':     await deliverVercel(container, secret); break;
-    case 'supabase':   await deliverSupabase(container, secret); break;
-    case 'trello':     await deliverTrello(container, secret); break;
-    case 'notion':     await deliverNotion(container, secret); break;
-    default: throw new Error(`No delivery adapter for: ${providerId}`);
+  mode: AssignmentMode = 'env',
+  opts: { onlyIfEnabled?: boolean } = {},
+): Promise<SyncResult> {
+  const name = safeName(container);
+  if (!name) return { container, status: 'error', error: 'Invalid agent name' };
+  const profile = getProfile(profileId);
+  if (!profile) return { container: name, status: 'error', error: 'Credential not found' };
+  if (mode !== 'env') {
+    return { container: name, status: 'error', error: 'Protected mode is not available yet' };
+  }
+  if (!nativeProvider(profile.providerId)) {
+    return { container: name, status: 'error', error: `No native delivery for ${profile.providerId}` };
+  }
+
+  return serialized(name, async (): Promise<SyncResult> => {
+    // A re-delivery (secret edited) must not switch back on what was switched off meanwhile.
+    if (opts.onlyIfEnabled && !getAssignment(profileId, name)?.enabled) return { container: name, status: 'ok' };
+    try {
+      await runEnable(execFor(name), profile.providerId, getSecret(profileId));
+    } catch (e) {
+      const error = (e as Error).message;
+      try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
+      try { markSynced(profileId, 'error'); } catch { /* keep the delivery result */ }
+      return { container: name, status: 'error', error };
+    }
+    // Migration: only this provider, only this agent. Idempotent.
+    const warnings = await cleanLegacy(name, profile.providerId);
+    try {
+      supersedeSiblings(profileId, profile.providerId, name);
+      recordAssignment(profileId, name, { enabled: true, mode, ok: true });
+      markSynced(profileId, 'active');
+    } catch (e) {
+      console.warn(`[credentials] delivered to ${name} but could not record it:`, (e as Error).message);
+    }
+    return warnings.length
+      ? { container: name, status: 'ok', warning: `Switched on, but ${warnings.join(' and ')}` }
+      : { container: name, status: 'ok' };
+  });
+}
+
+/**
+ * Switch a credential off for one agent. The native removal runs only when this row is
+ * enabled or still pending a removal: a sibling that another profile replaced shares the
+ * same environment names, and removing them would wipe the active credential. Every step is
+ * tried; if any fails the row stays in "removal pending" (kept, retried at re-apply, blocks
+ * deleting the credential). Anything an earlier release wrote is removed too. Never throws.
+ */
+export async function disableAssignment(profileId: string, container: string): Promise<SyncResult> {
+  const name = safeName(container);
+  if (!name) return { container, status: 'error', error: 'Invalid agent name' };
+  const profile = getProfile(profileId);
+  if (!profile) return { container: name, status: 'error', error: 'Credential not found' };
+
+  return serialized(name, async (): Promise<SyncResult> => {
+    const existing = getAssignment(profileId, name);
+    // Replaced by another profile of the same provider: nothing of its own is on the agent.
+    if (existing && !needsNativeRemoval(existing)) return { container: name, status: 'ok' };
+    // Switched on but never delivered (its enable failed) while a sibling of the same provider
+    // is delivered here: the environment names on the agent are the sibling's, leave them.
+    if (existing && existing.enabled && !existing.pendingRemoval && existing.syncedAt == null
+      && listLiveForAgent(name).some((o) => o.profileId !== profileId && o.enabled && o.syncedAt != null
+        && getProfile(o.profileId)?.providerId === profile.providerId)) {
+      try { recordAssignment(profileId, name, { enabled: false, ok: true }); } catch { /* keep the result */ }
+      return { container: name, status: 'ok' };
+    }
+
+    let errors: string[] = [];
+    if (existing) {
+      try {
+        errors = await runDisable(execFor(name), profile.providerId, secretValues(profileId));
+      } catch (e) {
+        errors = [redact((e as Error).message, secretValues(profileId))];
+      }
+    }
+    const warnings = await cleanLegacy(name, profile.providerId);
+
+    if (existing) {
+      try {
+        recordAssignment(profileId, name, errors.length
+          ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
+          : { enabled: false, ok: true });
+      } catch { /* keep the result */ }
+    }
+    if (errors.length) return { container: name, status: 'error', error: `Removal failed: ${errors.join('; ')}` };
+    try { markDesynced(profileId); } catch { /* keep the result */ }
+    return warnings.length
+      ? { container: name, status: 'ok', warning: `Switched off, but ${warnings.join(' and ')}` }
+      : { container: name, status: 'ok' };
+  });
+}
+
+/**
+ * Bring one agent in line with its assignments: enabled ones are delivered again, pending
+ * removals are retried. Called in the background after create, recreate, update and edit
+ * (the store and `openclaw.json` normally survive on the agent volume, so this is a
+ * consistency pass). A failure is logged and kept in `last_error`; it never throws.
+ */
+export async function reapplyAssignments(container: string): Promise<void> {
+  const name = safeName(container);
+  if (!name) return;
+  let assignments;
+  try {
+    assignments = listLiveForAgent(name);
+  } catch (e) {
+    console.warn(`[credentials] assignments unreadable for ${name}:`, (e as Error).message);
+    return;
+  }
+  for (const listed of assignments) {
+    // Decided inside the per-agent queue from a fresh read: a switch-off (or a re-enable)
+    // made while this pass waited must win over the snapshot taken above.
+    await serialized(name, async () => {
+      const a = getAssignment(listed.profileId, name);
+      if (!a || !needsNativeRemoval(a)) return;
+      try {
+        const profile = getProfile(a.profileId);
+        if (!profile || !nativeProvider(profile.providerId)) return;
+        if (a.enabled) {
+          if (a.mode !== 'env') return;
+          await runEnable(execFor(name), profile.providerId, getSecret(a.profileId));
+          recordAssignment(a.profileId, name, { enabled: true, mode: a.mode, ok: true });
+          return;
+        }
+        // Pending removal. If another profile of the same provider is now active here, the
+        // entries belong to it: only the pending mark goes.
+        const takenOver = listLiveForAgent(name).some((o) => o.enabled && o.profileId !== a.profileId
+          && getProfile(o.profileId)?.providerId === profile.providerId);
+        const errors = takenOver ? [] : await runDisable(execFor(name), profile.providerId, secretValues(a.profileId));
+        recordAssignment(a.profileId, name, errors.length
+          ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
+          : { enabled: false, ok: true });
+        if (errors.length) console.warn(`[credentials] removal still pending on ${name} (${a.profileId})`);
+      } catch (e) {
+        const error = redact((e as Error).message, secretValues(a.profileId));
+        console.warn(`[credentials] re-apply failed on ${name} (${a.profileId}):`, error);
+        try {
+          recordAssignment(a.profileId, name, { enabled: a.enabled, mode: a.mode, ok: false, error, pendingRemoval: a.pendingRemoval });
+        } catch { /* logged above */ }
+      }
+    }).catch((e) => console.warn(`[credentials] re-apply failed on ${name}:`, (e as Error).message));
   }
 }
 
 /**
- * Sync a credential to specific containers.
- *
- * - Cleans credentials from selected containers, then delivers new ones.
- * - Manages the TOOLS.md integration block row-by-row for the given provider only.
- * - Unselected containers are NOT touched.
+ * Enable a credential on the given containers (every agent when none are given).
+ * This is what the older "sync" route now means. The profile's status and audit entry are
+ * written per container by {@link enableAssignment}.
  */
 export async function syncProfileToAgents(
   profileId: string,
@@ -484,58 +491,6 @@ export async function syncProfileToAgents(
   containers?: string[],
 ): Promise<SyncResult[]> {
   if (!getProvider(providerId)) throw new Error(`Unknown provider: ${providerId}`);
-
-  const secret = getSecret(profileId);
-  // Deduplicated: TOOLS.md is edited with a read-modify-write, so the same
-  // container appearing twice would have two passes racing on one file. No
-  // caller sends duplicates today — the UI always passes a single name and
-  // `docker ps` names are unique — but the route forwards `body.containers`
-  // unchecked, so nothing else stops it.
-  const selectedTargets = [...new Set(containers ?? await listAgentContainers())]
-    .map((c) => c.replace(/[^a-zA-Z0-9_.-]/g, ''))
-    .filter(Boolean);
-
-  // Three passes, kept sequential relative to each other: every target is
-  // cleaned before any is delivered to, and TOOLS.md is only touched once the
-  // outcome of every delivery is known. Within a pass the containers run
-  // concurrently — each callback handles its own failures, because
-  // mapWithConcurrency is fail-fast and one unreachable container would
-  // otherwise discard the results already computed for the others.
-  await mapWithConcurrency(selectedTargets, AGENT_WRITE_CONCURRENCY, async (container) => {
-    try { await cleanProvider(container, providerId); } catch { /* best-effort, as before */ }
-  });
-
-  const results: SyncResult[] = await mapWithConcurrency(
-    selectedTargets,
-    AGENT_WRITE_CONCURRENCY,
-    async (container): Promise<SyncResult> => {
-      try {
-        await deliverToAgent(container, providerId, secret);
-        return { container, status: 'ok' };
-      } catch (e: unknown) {
-        return { container, status: 'error', error: (e as Error).message };
-      }
-    },
-  );
-
-  await mapWithConcurrency(selectedTargets, AGENT_WRITE_CONCURRENCY, async (container, i) => {
-    const wasDelivered = results[i]?.status === 'ok';
-    try {
-      await toggleProviderRow(container, providerId, wasDelivered ? 'add' : 'remove');
-    } catch { /* TOOLS.md is documentation; a failure here must not fail the sync */ }
-  });
-
-  return results;
-}
-
-/**
- * Clean a single provider from a single agent container and update its TOOLS.md.
- * Used by the De-sync button in the UI and by the sync endpoint for initial cleanup.
- */
-export async function cleanAgentProviders(container: string, providerId: string): Promise<void> {
-  const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
-  if (!safe) return;
-
-  await cleanProvider(safe, providerId);
-  await toggleProviderRow(safe, providerId, 'remove');
+  const targets = [...new Set(containers ?? await listAgentContainers())].map(safeName).filter(Boolean);
+  return mapWithConcurrency(targets, AGENT_WRITE_CONCURRENCY, (c) => enableAssignment(profileId, c));
 }

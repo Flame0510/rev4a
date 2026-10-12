@@ -537,6 +537,26 @@ CREATE TABLE credential_secrets (
 this file, or reach `POST /api/credentials/[id]/reveal` with a valid session, has
 the secrets in the clear.
 
+### `credential_assignments` — which agent gets which credential
+
+```sql
+CREATE TABLE IF NOT EXISTS credential_assignments (
+  profile_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,          -- container name
+  enabled INTEGER NOT NULL DEFAULT 0,
+  mode TEXT NOT NULL DEFAULT 'env', -- 'env' implemented, 'protected' reserved
+  synced_at INTEGER,               -- last successful delivery (ms), NULL after a failure
+  last_error TEXT,                 -- redacted message of the last failure
+  pending_removal INTEGER NOT NULL DEFAULT 0, -- the last switch-off failed; retried at re-apply
+  PRIMARY KEY (profile_id, agent_id)
+);
+```
+
+Added with native credential delivery (additive, created with `IF NOT EXISTS`). Holds no secret. The source of truth
+for re-applying delivery after a recreate. Older releases ignore the table. `pending_removal`
+is added to a table created without it by a guarded `ALTER TABLE` at startup. Rows are deleted
+with their credential, and with their agent when the agent is deleted.
+
 ### `credential_audit_log` — append-only audit trail
 
 ```sql

@@ -5,6 +5,8 @@ import { Page, PageHeader, Button, Modal, Input, Pill, RemoveButton } from '@/ap
 import { CredentialCardsSkeleton, AgentSyncRowsSkeleton } from '@/app/components/Skeleton';
 import type { CredentialProfile } from '@/lib/credentials/vault';
 import type { CredentialProviderDef } from '@/lib/credentials/providers';
+import type { CredentialAssignment } from '@/lib/credentials/assignments';
+import { CODEX_NOTE } from '@/lib/credentials/native';
 
 interface ApiData {
   profiles: CredentialProfile[];
@@ -59,6 +61,12 @@ export default function CredentialsPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // What is switched on for which agent. Read from the vault database, so it is instant
+  // and never waits for detect.
+  const [assignments, setAssignments] = useState<CredentialAssignment[]>([]);
+  // Containers that exist (running or stopped): tells a stopped agent from a missing one.
+  const [knownAgents, setKnownAgents] = useState<string[]>([]);
+
   const [detectData, setDetectData] = useState<{
     container: string;
     agentId: string;
@@ -77,6 +85,8 @@ export default function CredentialsPageClient() {
     trelloLoggedIn: boolean;
     trelloCliInstalled: boolean;
     notionLoggedIn: boolean;
+    /** The agent's default model runs on the ChatGPT (Codex) runtime. */
+    codex?: boolean;
     matchedProfiles?: { profileId: string; providerId: string; label: string }[];
     installedProviders?: string[];
     /** Present instead of the fields above when the probe failed for this
@@ -93,7 +103,7 @@ export default function CredentialsPageClient() {
   // Whether detect has ever answered, success or failure. A one-way latch, and
   // deliberately not reset per call: every mutation fires a single page-wide
   // `loadDetect()`, so clearing it each time would hide every delete button on
-  // the page for the duration of any one sync.
+  // the page for the duration of any one switch.
   const [detectLoaded, setDetectLoaded] = useState(false);
 
   // Distinct from `detectLoaded`, which only records that the call finished.
@@ -103,7 +113,7 @@ export default function CredentialsPageClient() {
   const [detectFailed, setDetectFailed] = useState(false);
 
   // One key identifies the single mutation allowed in flight, e.g.
-  // 'delete:cred_123' or 'sync:cred_123:agent_ab'. Replaces the scattered
+  // 'delete:cred_123' or 'on:cred_123:agent_ab'. Replaces the scattered
   // per-action booleans: the previous `syncingContainer` held only a container
   // name, but the per-agent rows are rendered once per profile, so syncing one
   // profile put every other profile's button for that container into a
@@ -140,9 +150,9 @@ export default function CredentialsPageClient() {
   }, []);
 
   /**
-   * Apply a confirmed sync/de-sync to the detected state right away.
+   * Apply a confirmed switch-on/off to the detected (old-way) state right away.
    *
-   * The Sync / De-sync label is driven by `matchedProfiles`, which only detect
+   * The old-way label is driven by `matchedProfiles`, which only detect
    * fills in — and detect takes seconds. Waiting for it left the button live
    * again but still showing the state from before the click, so it invited a
    * second, pointless press. This is not a guess: the server has already
@@ -158,17 +168,17 @@ export default function CredentialsPageClient() {
       if (d.container !== container) return d;
       // Keyed on the provider, not the profile. A container holds one credential
       // per provider, and both operations act on the provider as a whole:
-      // delivery cleans it before writing, de-sync removes its config outright.
+      // switching on replaces it, switching off removes it outright.
       // So no sibling profile can survive either one, and filtering by profile id
       // left the previous holder still marked as installed — two rows showing a
-      // green tick, each offering a De-sync that would take the other's token.
+      // green tick, each offering a Remove that would take the other's token.
       const without = (d.matchedProfiles ?? []).filter((m) => m.providerId !== profile.providerId);
 
       // `installedProviders` has to move together with `matchedProfiles`.
       // Updating only the latter left the row reading the two against each
       // other — provider still listed as installed, no profile accounting for
       // it — which is exactly the ◆ "unknown credential" state, held for the
-      // whole seconds-long gap until detect answered and cleared it. The de-sync
+      // whole seconds-long gap until detect answered and cleared it. The switch-off
       // path removes the provider's credential from the container outright, so
       // dropping it here is what the container actually looks like; the guard
       // keeps it if some other profile of the same provider is still matched.
@@ -199,11 +209,25 @@ export default function CredentialsPageClient() {
    * the mutation paths refresh the cheap one and let the expensive one catch up
    * behind, instead of making the user wait on work their change did not need.
    */
+  // Assignments are secondary: without them every row reads as off, but the cards still render.
+  const loadAssignments = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const a = await fetch('/api/credentials/assignments', { signal });
+      if (!a.ok) return;
+      const json = await a.json() as { assignments?: CredentialAssignment[]; knownAgents?: string[] };
+      setAssignments(json.assignments ?? []);
+      setKnownAgents(json.knownAgents ?? []);
+    } catch (e: unknown) {
+      if ((e as Error)?.name === 'AbortError') throw e;
+    }
+  }, []);
+
   const loadProfiles = useCallback(async (signal?: AbortSignal) => {
     const res = await fetch('/api/credentials', { signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     setData(await res.json() as ApiData);
-  }, []);
+    await loadAssignments(signal);
+  }, [loadAssignments]);
 
   // Only the most recently started detect may apply its answer. Two can easily
   // overlap: a mutation fires one without awaiting it, then releases the lock
@@ -298,47 +322,41 @@ export default function CredentialsPageClient() {
     return () => controller.abort();
   }, [load]);
 
-  const handleSyncOne = async (profile: CredentialProfile, container: string, label?: string) => {
-    if (!claimBusy(`sync:${profile.id}:${container}`)) return;
+  /**
+   * Switch a credential on or off for one agent. One busy key per switch, e.g.
+   * 'on:cred_1:agent_a'. On success the new assignment is applied at once: the server
+   * has confirmed it, and the detect refresh that follows only corroborates it.
+   */
+  const handleToggle = async (profile: CredentialProfile, container: string, label: string, enable: boolean, forget = false) => {
+    if (!claimBusy(`${forget ? 'forget' : enable ? 'on' : 'off'}:${profile.id}:${container}`)) return;
     try {
-      const res = await fetch(`/api/credentials/${profile.id}/sync`, {
-        method: 'POST',
+      const res = await fetch(`/api/credentials/${profile.id}/assignments`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ containers: [container] }),
+        body: JSON.stringify(forget ? { agent: container, forget: true } : { agent: container, enabled: enable, mode: 'env' }),
       });
-      const json = await readMutation<{ results?: { container: string; status: string }[] }>(res);
-      const ok = json.results?.[0]?.status === 'ok';
-      if (ok) applyMatchLocally(profile, container, true);
-      showToast(ok ? `Synced to ${label || container}` : 'Sync error');
+      const json = await readMutation<{
+        results?: { container: string; status: string; error?: string; warning?: string }[];
+        agents?: { container: string; assignment: CredentialAssignment | null }[];
+      }>(res);
+      const result = json.results?.[0];
+      // Every profile of the provider is re-read, not only this one: switching one on replaces
+      // the other profile's assignment on that agent, and its row must say so.
+      await loadAssignments();
+      if (result?.status === 'ok') {
+        // The old-way files for this provider are gone after either action.
+        applyMatchLocally(profile, container, false);
+        const done = forget ? `Forgot ${label}` : enable ? `Switched on for ${label}` : `Switched off for ${label}`;
+        showToast(result.warning ? `${done} — ${result.warning}` : done);
+      } else {
+        showToast(result?.error ?? 'Failed');
+      }
     } catch (e: unknown) {
       showToast((e as Error).message);
     } finally {
       releaseBusy();
     }
-    // Refreshed outside the busy window on purpose. Detect takes seconds, and
-    // `disabled={!!busy}` is page-wide, so awaiting it here left every button
-    // on the page dead for that whole time after each sync. The dimmed rows
-    // already say the detected state is being re-read.
-    void loadDetect();
-  };
-
-  const handleDeSyncOne = async (profile: CredentialProfile, container: string, label?: string) => {
-    if (!claimBusy(`desync:${profile.id}:${container}`)) return;
-    try {
-      const res = await fetch(`/api/credentials/${profile.id}/sync`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ container }),
-      });
-      await readMutation<{ ok?: boolean }>(res);
-      applyMatchLocally(profile, container, false);
-      showToast(`Removed from ${label || container}`);
-    } catch (e: unknown) {
-      showToast((e as Error).message);
-    } finally {
-      releaseBusy();
-    }
-    // Same reasoning as handleSyncOne above.
+    // Outside the busy window, as before: detect takes seconds.
     void loadDetect();
   };
 
@@ -370,7 +388,7 @@ export default function CredentialsPageClient() {
         <PageHeader
           eyebrow=""
           title="Credentials"
-          description="Store third-party credentials once, sync to all agent containers."
+          description="Store third-party credentials once, switch them on for the agents that need them."
         />
         <CredentialCardsSkeleton />
       </Page>
@@ -391,7 +409,7 @@ export default function CredentialsPageClient() {
       <PageHeader
         eyebrow=""
         title="Credentials"
-        description="Store third-party credentials once, sync to all agent containers."
+        description="Store third-party credentials once, switch them on for the agents that need them."
       />
 
       {error && (
@@ -479,7 +497,7 @@ export default function CredentialsPageClient() {
                           <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                             <span>{p.secretMasked ?? '••••••••'}</span>
                             <span style={{ color: p.status === 'active' ? 'var(--green)' : 'var(--red)' }}>●</span>
-                            <span>synced {formatRelative(p.lastSyncedAt)}</span>
+                            <span>delivered {formatRelative(p.lastSyncedAt)}</span>
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -498,10 +516,16 @@ export default function CredentialsPageClient() {
                           {detectLoaded
                             && !detectFailed
                             && !detectData.some((d) => d.error)
-                            && !detectData.some((d) => d.matchedProfiles?.some((m) => m.profileId === p.id)) && (
+                            && !detectData.some((d) => d.matchedProfiles?.some((m) => m.profileId === p.id))
+                            && !assignments.some((a) => a.profileId === p.id && (a.enabled || a.pendingRemoval)) && (
                             <RemoveButton label={p.label ?? p.id} disabled={!!busy} onClick={() => setDeleteId(p.id)} />
                           )}
                         </div>
+                      </div>
+                      {/* Protected mode (secret kept out of the agent, egress proxy) is a separate decision. */}
+                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-dim)' }}>
+                        <span>Mode: environment variable</span>
+                        <Button type="button" variant="ghost" size="sm" disabled title="Coming later">Protected — coming later</Button>
                       </div>
                       {/* Agent detect status — all containers shown for every provider */}
                       {/* Three states, kept distinct on purpose: not answered
@@ -539,135 +563,152 @@ export default function CredentialsPageClient() {
                               }
 
                               const matchByProfile = d.matchedProfiles?.some((m) => m.profileId === p.id);
-                              // A credential is installed for this provider, but it is not
-                              // this profile's — and not any stored profile's either. It is
-                              // what an edited-then-not-resynced credential looks like, and
-                              // also a token installed by hand or left by a deleted profile.
-                              // The slot holds someone else's credential. Syncing this
-                              // profile evicts it, so the button has to say so — whether or
-                              // not the vault can name the occupant.
-                              const providerOccupied =
-                                !matchByProfile
-                                && (d.installedProviders?.includes(p.providerId) ?? false);
-                              // The vault CAN name it: another stored profile of the same
-                              // provider matches. Not foreign, just not this one.
-                              const heldByOther = providerOccupied
+                              const assignment = assignments.find((a) => a.profileId === p.id && a.agentId === d.container);
+                              const isOn = !!assignment?.enabled;
+                              const failed = isOn && !!assignment?.lastError;
+                              const native = isOn && !failed;
+                              // A switch-off that failed: the token may still be on the agent.
+                              const pending = !!assignment?.pendingRemoval;
+                              // Another profile of this provider is on here; its entries took this one's place.
+                              const replacer = !isOn && !pending
+                                ? assignments.find((o) => o.enabled && o.agentId === d.container && o.profileId !== p.id
+                                  && profiles.find((x) => x.id === o.profileId)?.providerId === p.providerId)
+                                : undefined;
+                              const replacedBy = replacer ? profiles.find((x) => x.id === replacer.profileId)?.label : undefined;
+                              // Written by an earlier release (CLI config files + TOOLS.md row) and
+                              // not yet moved: it keeps working until the operator switches it on.
+                              const oldWay = !isOn && !pending && !!matchByProfile;
+                              const heldByOther = !isOn && !pending && !replacedBy && !matchByProfile
                                 ? (d.matchedProfiles ?? []).find((m) => m.providerId === p.providerId)
                                 : undefined;
-                              // Nobody accounts for it — the ◆ case, kept narrow.
-                              const foreignCredential = providerOccupied && !heldByOther;
-
-                              // Determine CLI installed status for this provider on this agent
-                              const cliOk = isGithub
-                                ? d.githubCliInstalled
-                                : isVercel
-                                  ? d.vercelCliInstalled
-                                  : isSupabase
-                                    ? d.supabaseCliInstalled
-                                    // Trello and Notion are both used through their REST
-                                    // API, so there is no CLI whose absence could block
-                                    // them; `trelloCliInstalled` stays in the response for
-                                    // shape compatibility but no longer gates anything.
-                                    : true;
-
-                              let extraInfo = '';
-                              if (matchByProfile) {
-                                if (isGithub && d.githubUser) {
-                                  extraInfo = d.githubUser;
-                                } else if (isVercel) {
-                                  const parts = [];
-                                  if (d.vercelUser) parts.push(d.vercelUser);
-                                  if (d.vercelTeam) parts.push('@' + d.vercelTeam);
-                                  extraInfo = parts.join(' ');
-                                } else if (isSupabase) {
-                                  const parts = [];
-                                  if (d.supabaseLoggedIn) parts.push('logged in');
-                                  if (d.supabaseLinked) parts.push('linked: ' + d.supabaseProjectRef);
-                                  extraInfo = parts.join(', ');
-                                } else if (isTrello) {
-                                  extraInfo = '';
-                                }
-                              }
-
-                              // Show CLI missing indicator when not matched and CLI is absent
-                              const showCliMissing = !matchByProfile && !cliOk;
+                              // Only gh, vercel and supabase have a CLI that could be missing from the
+                              // image. The token still reaches the agent as an environment variable, so
+                              // this is a note and never blocks the switch. Trello and Notion are used
+                              // through their REST API, so nothing about a CLI applies to them.
+                              const cliMissing = (isGithub && !d.githubCliInstalled)
+                                || (isVercel && !d.vercelCliInstalled)
+                                || (isSupabase && !d.supabaseCliInstalled);
+                              const key = `${p.id}:${d.container}`;
+                              const label = d.displayName || d.agentId;
+                              const dim = { opacity: detectRefreshing ? 0.4 : 1, transition: 'opacity 0.15s' } as const;
 
                               return (
-                                <div key={d.container || d.agentId} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                                  {/* Only the detected state fades while detect is
-                                      re-read — never the buttons. Dimming their
-                                      ancestor made them read as disabled while they
-                                      were still perfectly clickable. */}
-                                  <span style={{
-                                    color: matchByProfile
-                                      ? 'var(--green)'
-                                      : foreignCredential ? 'var(--yellow)' : 'var(--text-dim)',
-                                    fontSize: 12, fontWeight: 700,
-                                    opacity: detectRefreshing ? 0.4 : 1,
-                                    transition: 'opacity 0.15s',
-                                  }}>
-                                    {matchByProfile ? '✓' : foreignCredential ? '◆' : '○'}
-                                  </span>
-                                  <span style={{
-                                    color: 'var(--text-dim)', flex: 1,
-                                    opacity: detectRefreshing ? 0.4 : 1,
-                                    transition: 'opacity 0.15s',
-                                  }}>
-                                    {d.displayName || d.agentId}
-                                    {extraInfo && (
-                                      <span style={{ marginLeft: 6, color: 'var(--green)', fontSize: 10 }}>{extraInfo}</span>
-                                    )}
-                                    {foreignCredential && (
-                                      <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 10 }}>
-                                        unknown credential
-                                      </span>
-                                    )}
-                                    {heldByOther && (
-                                      <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
-                                        held by {heldByOther.label}
-                                      </span>
-                                    )}
-                                    {showCliMissing && (
-                                      <span style={{ marginLeft: 6, color: 'var(--red)', fontSize: 10 }}>CLI not installed</span>
-                                    )}
-                                  </span>
-                                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                    {showCliMissing ? (
-                                      <span style={{ fontSize: 10, color: 'var(--text-dim)', padding: '4px 8px', border: '1px solid var(--border)' }}>
-                                        Rebuild image
-                                      </span>
-                                    ) : matchByProfile ? (
-                                      <Button
-                                        variant='danger'
-                                        size='sm'
-                                        loading={busy === `desync:${p.id}:${d.container}`}
-                                        disabled={!!busy}
-                                        onClick={() => handleDeSyncOne(p, d.container, d.displayName || d.agentId)}
-                                      >
-                                        {busy === `desync:${p.id}:${d.container}` ? 'Removing…' : 'De-sync'}
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        variant='primary'
-                                        size='sm'
-                                        loading={busy === `sync:${p.id}:${d.container}`}
-                                        disabled={!!busy}
-                                        title={heldByOther
-                                          ? `Replaces the credential from “${heldByOther.label}” on this agent`
-                                          : providerOccupied
-                                            ? 'Replaces the credential currently installed on this agent'
+                                <div key={d.container || d.agentId} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{
+                                      color: native ? 'var(--green)' : failed || pending ? 'var(--red)' : oldWay ? 'var(--yellow)' : 'var(--text-dim)',
+                                      fontSize: 12, fontWeight: 700, ...dim,
+                                    }}>
+                                      {native ? '✓' : failed || pending ? '!' : oldWay ? '◆' : '○'}
+                                    </span>
+                                    <span style={{ color: 'var(--text-dim)', flex: 1, ...dim }}>
+                                      {label}
+                                      {native && (
+                                        <span style={{ marginLeft: 6, color: 'var(--green)', fontSize: 10 }}>delivered natively</span>
+                                      )}
+                                      {oldWay && (
+                                        <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 10 }}>
+                                          Delivered the old way — re-sync to move to native
+                                        </span>
+                                      )}
+                                      {replacedBy && (
+                                        <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
+                                          replaced by {replacedBy}
+                                        </span>
+                                      )}
+                                      {heldByOther && (
+                                        <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
+                                          held by {heldByOther.label}
+                                        </span>
+                                      )}
+                                      {cliMissing && (
+                                        <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>CLI not in this image</span>
+                                      )}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                      {pending && (
+                                        <Button
+                                          variant='danger'
+                                          size='sm'
+                                          loading={busy === `off:${key}`}
+                                          disabled={!!busy}
+                                          onClick={() => handleToggle(p, d.container, label, false)}
+                                        >
+                                          {busy === `off:${key}` ? 'Retrying…' : 'Retry removal'}
+                                        </Button>
+                                      )}
+                                      {(isOn || oldWay) && (
+                                        <Button
+                                          variant='danger'
+                                          size='sm'
+                                          loading={busy === `off:${key}`}
+                                          disabled={!!busy}
+                                          onClick={() => handleToggle(p, d.container, label, false)}
+                                        >
+                                          {busy === `off:${key}` ? 'Switching off…' : isOn ? 'Switch off' : 'Remove'}
+                                        </Button>
+                                      )}
+                                      {!native && !pending && (
+                                        <Button
+                                          variant='primary'
+                                          size='sm'
+                                          loading={busy === `on:${key}`}
+                                          disabled={!!busy}
+                                          title={heldByOther
+                                            ? `Replaces the credential from “${heldByOther.label}” on this agent`
                                             : undefined}
-                                        onClick={() => handleSyncOne(p, d.container, d.displayName || d.agentId)}
-                                      >
-                                        {busy === `sync:${p.id}:${d.container}` ? 'Syncing…' : 'Sync'}
-                                      </Button>
-                                    )}
+                                          onClick={() => handleToggle(p, d.container, label, true)}
+                                        >
+                                          {busy === `on:${key}`
+                                            ? 'Switching on…'
+                                            : failed ? 'Retry' : oldWay ? 'Move to native' : 'Switch on'}
+                                        </Button>
+                                      )}
+                                    </div>
                                   </div>
+                                  {(failed || pending) && assignment?.lastError && (
+                                    <div style={{ marginLeft: 18, color: 'var(--red)', fontSize: 10 }}>
+                                      {pending ? 'Removal failed — the token may still be on this agent. ' : ''}{assignment.lastError}
+                                    </div>
+                                  )}
+                                  {isOn && d.codex && (
+                                    <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>{CODEX_NOTE}</div>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
                         )}
+                      {/* Assignments whose agent detect did not list: stopped (switch off runs when Rev4a
+                          next applies the agent's config) or deleted (the row can only be forgotten). */}
+                      {detectLoaded && assignments
+                        .filter((a) => a.profileId === p.id && (a.enabled || a.pendingRemoval || a.lastError)
+                          && !detectData.some((d) => d.container === a.agentId))
+                        .map((a) => {
+                          const exists = knownAgents.includes(a.agentId);
+                          const k = `${p.id}:${a.agentId}`;
+                          return (
+                            <div key={a.agentId} style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                              <span style={{ color: 'var(--yellow)', fontWeight: 700 }}>◆</span>
+                              <span style={{ color: 'var(--text-dim)', flex: 1 }}>
+                                {a.agentId}
+                                <span style={{ marginLeft: 6, fontSize: 10 }}>{exists ? 'not running' : 'no longer exists'}</span>
+                                {a.lastError && <span style={{ marginLeft: 6, color: 'var(--red)', fontSize: 10 }}>{a.lastError}</span>}
+                              </span>
+                              {exists ? (
+                                <Button variant='danger' size='sm' loading={busy === `off:${k}`} disabled={!!busy}
+                                  onClick={() => handleToggle(p, a.agentId, a.agentId, false)}>
+                                  {busy === `off:${k}` ? 'Switching off…' : a.pendingRemoval ? 'Retry removal' : 'Switch off'}
+                                </Button>
+                              ) : (
+                                <Button variant='secondary' size='sm' loading={busy === `forget:${k}`} disabled={!!busy}
+                                  onClick={() => handleToggle(p, a.agentId, a.agentId, false, true)}>
+                                  {busy === `forget:${k}` ? 'Forgetting…' : 'Forget'}
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                     );
                     })}
@@ -707,7 +748,11 @@ export default function CredentialsPageClient() {
           providers={providers}
           editProfile={editProfile}
           onClose={() => setEditProfile(null)}
-          onSaved={async () => { await refreshAfterChange(); setEditProfile(null); showToast('Credential updated'); }}
+          onSaved={async (failed) => {
+            await refreshAfterChange();
+            setEditProfile(null);
+            showToast(failed?.length ? `Credential updated, but not delivered to: ${failed.join(', ')}` : 'Credential updated');
+          }}
         />
       )}
 
@@ -752,7 +797,7 @@ interface AddEditModalProps {
   onClose: () => void;
   /** May be async: the modal keeps its Save button spinning until it settles,
    *  so the dialog closes once the new data is on screen, not before. */
-  onSaved: () => void | Promise<void>;
+  onSaved: (redeliveryFailed?: string[]) => void | Promise<void>;
 }
 
 function AddEditModal({ open, providers, initialProviderId, editProfile, onClose, onSaved }: AddEditModalProps) {
@@ -791,6 +836,7 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
     savingRef.current = true;
     setSaving(true);
     setError(null);
+    let failedAgents: string[] | undefined;
     try {
       if (isEdit && editProfile) {
         const res = await fetch(`/api/credentials/${editProfile.id}`, {
@@ -798,7 +844,8 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label.trim(), secret: fields }),
         });
-        await readMutation<Record<string, never>>(res);
+        const json = await readMutation<{ redeliveryFailed?: string[] }>(res);
+        failedAgents = json.redeliveryFailed;
       } else {
         const res = await fetch('/api/credentials', {
           method: 'POST',
@@ -807,7 +854,7 @@ function AddEditModal({ open, providers, initialProviderId, editProfile, onClose
         });
         await readMutation<{ id?: string }>(res);
       }
-      await onSaved();
+      await onSaved(failedAgents);
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {
