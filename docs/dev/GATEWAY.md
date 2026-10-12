@@ -512,7 +512,7 @@ Restart the Rev4a server (via systemd).
    to the file directly without restarting the gateway.
 
    The model `input` list follows each agent's OpenClaw version
-   (`lib/agent-versions.json`, resolved by `containerVersionSync()`): 2026.9.3 accepts
+   (`lib/agent-versions.json`, resolved by `containerVersionSync()`): 2026.9.3 and 2026.9.9 accept
    `text | image | audio | video`, an older release may accept less, and one unknown
    value makes it discard the whole generated catalogue
    (`model catalog load issue`). That is why a version stays in the table while agents

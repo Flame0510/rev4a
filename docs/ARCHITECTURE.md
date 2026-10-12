@@ -152,7 +152,7 @@ The central container, running the Next.js dashboard + orchestration API.
   `.last-version` file), so an agent on an older supported release is never sent an
   `input` value it would reject — one unknown value discards the whole generated
   catalogue. A version stays listed while agents still run it, and listing it is also what
-  lets a rollback pull its image: since 2026.9.3 is the only entry, a rollback whose target
+  lets a rollback pull its image: a rollback whose target
   is no longer listed is refused up front (`startAgentRollback()`) instead of restoring a
   volume on a version this build cannot run. `lib/agent-images.ts`
   lists local `openclaw-agent-base:<version>` images through the Docker API, reads an
@@ -343,7 +343,7 @@ Docker image for every agent container.
 
 **Contents:** See the live Dockerfile at
 `agent-templates/base-image/Dockerfile` (authoritative source).
-The image installs `openclaw`, `vercel`, `trello-cli`, `gh`, `supabase`,
+The image installs `openclaw`, `vercel`, `gh`, `jq`, `supabase`,
 copies the entrypoint script, and applies baseline gateway config patches.
 
 

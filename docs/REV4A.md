@@ -403,7 +403,7 @@ Available templates:
 Each agent is created with a **persistent Docker volume** `agent-<name>-data`
 mounted at `/root`. This cleanly separates two planes:
 
-- **Software → image.** OpenClaw, `gh`, `vercel`, `supabase`, `trello`, Node — all
+- **Software → image.** OpenClaw, `gh`, `jq`, `vercel`, `supabase`, Node — all
   live in the agent image `openclaw-agent-base:<version>` (outside `/root`). A recreate
   keeps the agent's OpenClaw version; moving an agent to a newer version is a separate
   update.
@@ -421,7 +421,7 @@ a re-created agent keeps the workspace the user edited.
 | **Backup** | `tar` of `/root` (excl. npm cache) → `.tar.gz` in the `rev4a-backups` volume, while the agent runs |
 | **Cold backup** | stop → archive `/root` (excl. npm cache) as `.partial` in a helper container → read the archive back → rename → start again if it was running. Other operations on the agent answer 409 meanwhile. Survives a Rev4a restart. API only for now (`/api/agents/[id]/cold-backup`) |
 | **Update** | the agent panel's OPENCLAW VERSION section, when a newer supported version is downloaded: count transcript events and cron jobs → cold pre-update backup → recreate on the new version (its data migrates one way) → wait for that version → check nothing went missing. Unused agent images are removed afterwards |
-| **Rollback** | after an update: stop → restore the pre-update backup → recreate on the previous version. Everything since the backup is lost |
+| **Rollback** | after an update: stop → restore the pre-update backup → recreate on the previous version. Everything since the backup is lost. This is the only way back: 2026.9.9 moves the OpenClaw state database from schema 16 to 19 and 2026.9.3 refuses to start on that volume (verified), so recreating on the older version without restoring the backup does not work |
 | **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
 | **Recreate** | auto-backup first (aborts if it fails) → rebuild on the agent's own OpenClaw version (`openclaw-agent-base:<version>`, tagged or pulled when missing) keeping the volume. Never changes version |
 | **Restart** | `docker restart`, nothing else |
@@ -479,7 +479,7 @@ An image with several `-rev.` tags is *current* when any of them is the pinned r
 Built from `node:24-bookworm-slim`, includes:
 - OpenClaw, pinned by the `OPENCLAW_VERSION` build argument and recorded as the
   `org.opencontainers.image.version` label
-- `gh`, `vercel`, `trello`, `supabase`
+- `gh`, `jq`, `vercel`, `supabase`
 - Plugins under `/opt/openclaw-plugins`, outside the agent volume and pinned to the same
   OpenClaw release: DuckDuckGo web search
 - `openssl` (for local token generation)

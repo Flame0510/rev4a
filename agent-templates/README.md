@@ -5,7 +5,7 @@
 The image every agent container runs, built from
 [`base-image/Dockerfile`](base-image/Dockerfile).
 
-It contains Node 24, OpenClaw, `gh`, `vercel`, `trello`, `supabase`, the plugins
+It contains Node 24, OpenClaw, `gh`, `jq`, `vercel`, `supabase`, the plugins
 shipped with the image under `/opt/openclaw-plugins` (DuckDuckGo web search), and
 the entrypoint. The OpenClaw release is the `OPENCLAW_VERSION` build argument, also
 recorded as the `org.opencontainers.image.version` label:

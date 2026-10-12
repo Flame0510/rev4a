@@ -1,7 +1,7 @@
 # OpenClaw Agent Base Image
 #
 # Base image for agent containers in the Rev4a ecosystem.
-# Includes: Node, OpenClaw, gh CLI, Vercel CLI, Trello CLI, Supabase CLI, entrypoint.
+# Includes: Node, OpenClaw, gh CLI, jq, Vercel CLI, Supabase CLI, entrypoint.
 #
 # The agent's persistent volume is mounted at /root. Whatever this image writes
 # under /root (openclaw.json, installed plugins) reaches only agents created on an
@@ -9,17 +9,17 @@
 # and recreate (lib/agent-setup.ts); the config patches below only seed new volumes.
 #
 # Build:
-#   docker build -t openclaw-agent-base:2026.9.3 -f Dockerfile .
+#   docker build -t openclaw-agent-base:2026.9.9 -f Dockerfile .
 #   docker build --build-arg OPENCLAW_VERSION=<version> -t openclaw-agent-base:<version> .
 #
 # Test:
-#   docker run --rm openclaw-agent-base:2026.9.3 openclaw --version
+#   docker run --rm openclaw-agent-base:2026.9.9 openclaw --version
 
 FROM node:24-bookworm-slim
 
 # The OpenClaw release this image runs, also recorded as a label so it can be read
 # with `docker image inspect` without starting a container.
-ARG OPENCLAW_VERSION=2026.9.3
+ARG OPENCLAW_VERSION=2026.9.9
 ARG SUPABASE_VERSION=2.109.1
 # The short commit sha of this build; the workflow passes it. It matches the immutable
 # `<version>-<sha>` tag, which is what lib/agent-versions.json's `imageRevision` names.
@@ -34,12 +34,13 @@ LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
 
-# System dependencies + gh CLI
+# System dependencies (jq is needed by the bundled OpenClaw trello skill) + gh CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     openssl \
     gpg \
+    jq \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -58,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # gateway.controlUi.dangerouslyDisableDeviceAuth is not set: OpenClaw 9.x retired
 # it, ignores it and `doctor --fix` removes it. Browsers pair through device approval.
-RUN npm install -g "openclaw@${OPENCLAW_VERSION}" vercel trello-cli --allow-scripts=openclaw \
+RUN npm install -g "openclaw@${OPENCLAW_VERSION}" vercel --allow-scripts=openclaw \
     && ARCH="$(dpkg --print-architecture)" \
     && curl -fsSL "https://github.com/supabase/cli/releases/download/v${SUPABASE_VERSION}/supabase_linux_${ARCH}.tar.gz" -o /tmp/supabase.tar.gz \
     && tar xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase \
