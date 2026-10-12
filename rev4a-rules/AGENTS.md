@@ -24,6 +24,19 @@ Credentials are provided by OpenClaw: as environment variables, through the GitH
 identity, or through the Vercel CLI's own login. If one you need is missing, it is switched
 on from Rev4a's Credentials page. Never ask for or print a token.
 
+## Memory
+
+Your container may have a memory limit: read `/sys/fs/cgroup/memory.max` on cgroup v2 — if that file is missing, the limit is unknown (`max` means none).
+Do not load very large files or datasets into memory at once; stream them. A process that
+ends with exit code 137 was most likely killed for lack of memory: tell the user instead of
+retrying it in a loop.
+
+## Credentials on the ChatGPT Subscription Runtime (Codex)
+
+Credentials reach commands run through OpenClaw (`gateway_exec`), not the native Codex
+shell. If a tool reports it is not authenticated, try it through `gateway_exec` before
+telling the user the credential is missing.
+
 ## What Rev4a Handles
 
 - Provider API keys and model catalogue

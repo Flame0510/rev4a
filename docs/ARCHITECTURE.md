@@ -504,7 +504,9 @@ Calls on one container are serialized on the agent's config lock (below): the pa
 successful native delivery the files and TOOLS.md row an earlier release wrote for that
 provider on that agent are removed. `applyRuntimeConfig` starts, in the background and
 without delaying the caller, a re-apply of the agent's assignments (enabled ones delivered
-again, pending removals retried) after create, recreate, update and edit; the store and `openclaw.json` live on
+again, pending removals retried) after create, recreate, update and edit; the lifecycle route does the same after a
+start or restart once the Gateway is ready (a plain start does not run `applyRuntimeConfig`). Credential changes on
+a stopped or busy agent are refused (409); the store and `openclaw.json` live on
 the agent volume. Environment entries reach Gateway-hosted exec but not the Codex native
 shell. Deleting an agent deletes its assignments. A successful switch updates the profile's
 `last_synced_at`/status and writes `sync`/`desync` audit entries.

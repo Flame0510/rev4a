@@ -6,7 +6,9 @@
  *   node scripts/test-credentials-native.mjs
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as n from '../lib/credentials/native.ts';
+import { writeRefusal } from '../lib/credentials/guard.ts';
 
 let passed = 0;
 const pending = [];
@@ -262,6 +264,36 @@ test('redact: escaped, untrimmed and short forms', () => {
   // short values: only as a whole token, never inside a word
   assert.equal(n.redact('key abc and abcdef', ['abc']), 'key *** and abcdef');
   assert.equal(n.redact('no secrets here', ['']), 'no secrets here');
+});
+
+// lib/credentials/guard.ts: when a user-facing switch is refused (stopped, gone or busy agent).
+test('a running idle agent is allowed', () => {
+  assert.equal(writeRefusal({ exists: true, running: true, busy: null }), null);
+});
+test('a stopped agent is refused with the start hint', () => {
+  assert.match(writeRefusal({ exists: true, running: false, busy: null }), /^Not running — start the agent/);
+});
+test('a busy running agent is refused with the reason', () => {
+  const m = writeRefusal({ exists: true, running: true, busy: 'An update of this agent is running' });
+  assert.match(m, /^Busy: An update of this agent is running — its credentials are re-applied/);
+});
+test('a missing agent is refused', () => {
+  assert.match(writeRefusal({ exists: false, running: false, busy: null }), /no longer exists/);
+});
+test('stopped wins over busy (nothing can be written either way)', () => {
+  assert.match(writeRefusal({ exists: true, running: false, busy: 'x' }), /^Not running/);
+});
+test('the re-apply path never calls the check, the user-facing ones do', () => {
+  const src = fs.readFileSync(new URL('../lib/credentials/delivery.ts', import.meta.url), 'utf8');
+  const body = (name) => {
+    const i = src.indexOf(`export async function ${name}`);
+    assert.ok(i >= 0, name);
+    const next = src.indexOf('\nexport ', i + 10);
+    return src.slice(i, next < 0 ? undefined : next);
+  };
+  assert.ok(!body('reapplyAssignments').includes('agentWriteRefusal'));
+  assert.ok(body('enableAssignment').includes('agentWriteRefusal'));
+  assert.ok(body('disableAssignment').includes('agentWriteRefusal'));
 });
 
 await Promise.all(pending);

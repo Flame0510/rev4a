@@ -66,6 +66,8 @@ export default function CredentialsPageClient() {
   const [assignments, setAssignments] = useState<CredentialAssignment[]>([]);
   // Containers that exist (running or stopped): tells a stopped agent from a missing one.
   const [knownAgents, setKnownAgents] = useState<string[]>([]);
+  // Per agent container: display name, running flag and the job (if any) that owns it.
+  const [agentInfo, setAgentInfo] = useState<Record<string, { displayName: string | null; running: boolean; busy: string | null }>>({});
 
   const [detectData, setDetectData] = useState<{
     container: string;
@@ -221,9 +223,11 @@ export default function CredentialsPageClient() {
     try {
       const a = await fetch('/api/credentials/assignments', { signal });
       if (!a.ok) throw new Error(`HTTP ${a.status}`);
-      const json = await a.json() as { assignments?: CredentialAssignment[]; knownAgents?: string[] };
+      const json = await a.json() as { assignments?: CredentialAssignment[]; knownAgents?: string[];
+        agents?: { container: string; displayName: string | null; running: boolean; busy: string | null }[] };
       setAssignments(json.assignments ?? []);
       setKnownAgents(json.knownAgents ?? []);
+      setAgentInfo(Object.fromEntries((json.agents ?? []).map((x) => [x.container, x])));
       setAssignmentsFailed(false);
     } catch (e: unknown) {
       if ((e as Error)?.name === 'AbortError') throw e;
@@ -625,6 +629,8 @@ export default function CredentialsPageClient() {
                               // The switch spins only when no button beside it already carries this action's spinner.
                               const switchLoading = (busy === `on:${key}` && !failed) || (busy === `off:${key}` && native && !pending);
                               const label = d.displayName || d.agentId;
+                              // An update, recreate, edit or backup owns this agent: its switch waits for the job.
+                              const jobBusy = agentInfo[d.container]?.busy ?? null;
                               const dim = { opacity: detectRefreshing ? 0.4 : 1, transition: 'opacity 0.15s' } as const;
 
                               return (
@@ -663,7 +669,7 @@ export default function CredentialsPageClient() {
                                           variant='danger'
                                           size='sm'
                                           loading={busy === `off:${key}`}
-                                          disabled={!!busy}
+                                          disabled={!!busy || !!jobBusy}
                                           onClick={() => handleToggle(p, d.container, label, false)}
                                         >
                                           {busy === `off:${key}` ? 'Retrying…' : 'Retry removal'}
@@ -674,7 +680,7 @@ export default function CredentialsPageClient() {
                                           variant='primary'
                                           size='sm'
                                           loading={busy === `on:${key}`}
-                                          disabled={!!busy}
+                                          disabled={!!busy || !!jobBusy}
                                           onClick={() => handleToggle(p, d.container, label, true)}
                                         >
                                           {busy === `on:${key}` ? 'Switching on…' : 'Retry'}
@@ -685,7 +691,7 @@ export default function CredentialsPageClient() {
                                           variant='danger'
                                           size='sm'
                                           loading={busy === `off:${key}`}
-                                          disabled={!!busy}
+                                          disabled={!!busy || !!jobBusy}
                                           onClick={() => handleToggle(p, d.container, label, false)}
                                         >
                                           {busy === `off:${key}` ? 'Switching off…' : 'Remove'}
@@ -696,9 +702,11 @@ export default function CredentialsPageClient() {
                                         checked={native || pending}
                                         tone={pending ? 'danger' : 'default'}
                                         loading={switchLoading}
-                                        disabled={!!busy}
+                                        disabled={!!busy || !!jobBusy}
                                         ariaLabel={`${p.label ?? p.id} delivered to ${label}`}
-                                        title={heldByOther
+                                        title={jobBusy
+                                          ? `Busy: ${jobBusy} — its credentials are re-applied when it finishes`
+                                          : heldByOther
                                           ? `Replaces the credential from “${heldByOther.label}” on this agent`
                                           : undefined}
                                         onChange={(next) => handleToggle(p, d.container, label, next)}
@@ -726,45 +734,66 @@ export default function CredentialsPageClient() {
                           && !detectData.some((d) => d.container === a.agentId))
                         .map((a) => {
                           const exists = knownAgents.includes(a.agentId);
+                          const info = agentInfo[a.agentId];
+                          const name = info?.displayName || a.agentId;
+                          const stopped = exists && !(info?.running ?? false);
+                          const jobBusy = info?.busy ?? null;
+                          const why = jobBusy
+                            ? `Busy: ${jobBusy} — its credentials are re-applied when it finishes`
+                            : stopped ? 'Not running — start the agent to change its credentials' : undefined;
+                          const locked = !!why;
                           const k = `${p.id}:${a.agentId}`;
                           return (
-                            <div key={a.agentId} style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                              <span style={{ color: 'var(--yellow)', fontWeight: 700 }}>◆</span>
-                              <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                                {a.agentId}
-                                <span style={{ marginLeft: 6, fontSize: 10 }}>{exists ? 'not running' : 'no longer exists'}</span>
-                                {a.lastError && <span style={{ marginLeft: 6, color: 'var(--red)', fontSize: 10 }}>{a.lastError}</span>}
-                              </span>
-                              {exists && (a.enabled || a.pendingRemoval) ? (
-                                <>
-                                  {busy === `off:${k}` && (
-                                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>Switching off…</span>
-                                  )}
-                                  {a.pendingRemoval && (
-                                    <Button variant='danger' size='sm' disabled={!!busy}
-                                      onClick={() => handleToggle(p, a.agentId, a.agentId, false)}>
-                                      Retry removal
-                                    </Button>
-                                  )}
-                                  <Switch
-                                    checked
-                                    tone={a.pendingRemoval ? 'danger' : 'default'}
-                                    loading={busy === `off:${k}`}
-                                    disabled={!!busy}
-                                    ariaLabel={`${p.label ?? p.id} delivered to ${a.agentId}`}
-                                    onChange={() => handleToggle(p, a.agentId, a.agentId, false)}
-                                  />
-                                </>
-                              ) : exists ? (
-                                <Button variant='danger' size='sm' loading={busy === `off:${k}`} disabled={!!busy}
-                                  onClick={() => handleToggle(p, a.agentId, a.agentId, false)}>
-                                  {busy === `off:${k}` ? 'Switching off…' : 'Switch off'}
-                                </Button>
-                              ) : (
-                                <Button variant='secondary' size='sm' loading={busy === `forget:${k}`} disabled={!!busy}
-                                  onClick={() => handleToggle(p, a.agentId, a.agentId, false, true)}>
-                                  {busy === `forget:${k}` ? 'Forgetting…' : 'Forget'}
-                                </Button>
+                            <div key={a.agentId} style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ color: 'var(--yellow)', fontWeight: 700 }}>◆</span>
+                                <span style={{ color: 'var(--text-dim)', flex: 1 }} title={name !== a.agentId ? a.agentId : undefined}>
+                                  {name}
+                                  {name !== a.agentId && <span style={{ marginLeft: 6, fontSize: 10 }}>{a.agentId}</span>}
+                                  <span style={{ marginLeft: 6, fontSize: 10 }}>
+                                    {!exists ? 'no longer exists' : jobBusy ? 'busy' : 'not running'}
+                                  </span>
+                                </span>
+                                {exists && (a.enabled || a.pendingRemoval) ? (
+                                  <>
+                                    {busy === `off:${k}` && (
+                                      <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>Switching off…</span>
+                                    )}
+                                    {a.pendingRemoval && (
+                                      <Button variant='danger' size='sm' disabled={!!busy || locked}
+                                        onClick={() => handleToggle(p, a.agentId, name, false)}>
+                                        Retry removal
+                                      </Button>
+                                    )}
+                                    <Switch
+                                      checked
+                                      tone={a.pendingRemoval ? 'danger' : 'default'}
+                                      loading={busy === `off:${k}`}
+                                      disabled={!!busy || locked}
+                                      title={why}
+                                      ariaLabel={`${p.label ?? p.id} delivered to ${name}`}
+                                      onChange={() => handleToggle(p, a.agentId, name, false)}
+                                    />
+                                  </>
+                                ) : exists ? (
+                                  <Button variant='danger' size='sm' loading={busy === `off:${k}`} disabled={!!busy || locked}
+                                    onClick={() => handleToggle(p, a.agentId, name, false)}>
+                                    {busy === `off:${k}` ? 'Switching off…' : 'Switch off'}
+                                  </Button>
+                                ) : (
+                                  <Button variant='secondary' size='sm' loading={busy === `forget:${k}`} disabled={!!busy}
+                                    onClick={() => handleToggle(p, a.agentId, name, false, true)}>
+                                    {busy === `forget:${k}` ? 'Forgetting…' : 'Forget'}
+                                  </Button>
+                                )}
+                              </div>
+                              {exists && why && (
+                                <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>{why}</div>
+                              )}
+                              {a.lastError && (
+                                <div style={{ marginLeft: 18, color: 'var(--red)', fontSize: 10 }}>
+                                  {a.pendingRemoval ? 'Removal failed — the token may still be on this agent. ' : ''}{a.lastError}
+                                </div>
                               )}
                             </div>
                           );

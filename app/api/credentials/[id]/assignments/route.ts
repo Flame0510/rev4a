@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getProfile } from '@/lib/credentials/vault';
 import { listAssignments, deleteAssignment, parseMode, type CredentialAssignment } from '@/lib/credentials/assignments';
-import { enableAssignment, disableAssignment, type SyncResult } from '@/lib/credentials/delivery';
+import { enableAssignment, disableAssignment, agentWriteRefusal, type SyncResult } from '@/lib/credentials/delivery';
 import { nativeProvider } from '@/lib/credentials/native';
 import { agentUsesCodex } from '@/lib/credentials/runtime';
 import { listAgentContainers } from '@/lib/subscriptions';
@@ -70,6 +70,8 @@ interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?:
  * disabling removes them (and anything an earlier release wrote). Per-agent failures
  * come back in `results` and in the assignment's `lastError`; the call itself is 200, also when
  * only the final read of the agent rows fails (`refreshFailed: true`, no `agents`; the caller re-reads).
+ * 409 (nothing written) when an agent is stopped or busy with an update, recreate, restore, edit or backup:
+ * its credentials are re-applied by Rev4a when that ends.
  * `{ agent, forget: true }` drops the row of an agent that no longer exists (409 otherwise).
  */
 export async function PUT(request: Request,
@@ -103,6 +105,13 @@ export async function PUT(request: Request,
         return NextResponse.json({ error: `Agent "${it.agent}" not found` }, { status: 404 });
       }
       parsed.push({ agent: it.agent, enabled: it.enabled === true, mode, forget });
+    }
+
+    // A stopped or busy agent cannot take the change: refuse the whole call before writing anything.
+    for (const p of parsed) {
+      if (p.forget) continue;
+      const refusal = await agentWriteRefusal(p.agent);
+      if (refusal) return NextResponse.json({ error: `${p.agent}: ${refusal}` }, { status: 409 });
     }
 
     const results: SyncResult[] = await mapWithConcurrency(parsed, CONCURRENCY, async (p) => {

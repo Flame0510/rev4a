@@ -3,6 +3,8 @@ import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId, isLifecycleCoolingDown, markLifecycleCooldown } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { reapplyAssignments } from '@/lib/credentials/delivery';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +82,15 @@ export async function POST(
       }
     } else {
       execSync(`docker ${action} ${containerName}`, { timeout: 30000 });
+    }
+
+    // A plain start or restart does not go through applyRuntimeConfig, so the agent's
+    // credentials are brought in line here, in the background once its Gateway is ready:
+    // a secret edited while it was stopped and a removal left pending both land now.
+    if (action !== 'stop') {
+      void (async () => {
+        if (await waitForGatewayReady(containerName)) await reapplyAssignments(containerName);
+      })().catch((e) => console.warn(`[lifecycle] credential re-apply after ${action} failed on ${containerName}:`, (e as Error).message));
     }
 
     // Read final state

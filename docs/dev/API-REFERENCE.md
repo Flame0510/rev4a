@@ -2797,7 +2797,7 @@ Switch the credential on or off for agents.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected' }` or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists).
+**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected' }` or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). Switching on or off answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — its credentials are re-applied when it finishes`); `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). The background re-apply after create, recreate, update and edit does not go through this check.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
@@ -2808,7 +2808,7 @@ Two providers are delivered without a secret-store environment entry, because th
 Disabling tries every step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves the row in `pendingRemoval` with `lastError`, answers `status: 'error'`, and the removal is retried when Rev4a re-applies the agent's config; until then the credential cannot be deleted. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry.
 
 ### `GET /api/credentials/assignments?agent=<container>`
-Every assignment (enabled, switched off, removal pending, failed; optionally of one agent) with the credential `label` and `providerId`, plus `knownAgents`: the containers that exist, running or stopped. Reads the vault database and one `docker ps`/`inspect`; never execs into an agent.
+Every assignment (enabled, switched off, removal pending, failed; optionally of one agent) with the credential `label` and `providerId`, plus `knownAgents`: the containers that exist, running or stopped, and `agents`: per known agent `{ container, displayName, running, busy }` (`displayName` is the `AGENT_NAME` env or null; `busy` is the reason from `agentBusyReason` while an update, recreate, restore, edit, backup or memory-limit change owns the agent, else null). Reads the vault database and one `docker ps`/`inspect`; never execs into an agent.
 
 **Auth:** browser cookie or bearer token
 

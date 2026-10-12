@@ -1,5 +1,8 @@
 import { dockerExec, dockerExecShell, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
+import { agentBusyReason } from '@/lib/agent-busy';
+import { listAgentContainers as listAgentRows } from '@/lib/subscriptions';
+import { writeRefusal } from './guard';
 import { getSecret, getProfile, markSynced, markDesynced } from './vault';
 import { getProvider } from './providers';
 import { listAgentContainers as listAgentContainerInfo } from './detect';
@@ -379,6 +382,26 @@ const serialized = withAgentConfigLock;
 
 const safeName = (c: string): string => c.replace(/[^a-zA-Z0-9_.-]/g, '');
 
+/**
+ * Why a user-facing switch on or off must not run on this agent now (stopped, gone, or owned
+ * by an update / recreate / restore / edit / backup), or null. `reapplyAssignments` does not
+ * call this: the jobs run it themselves once they have finished. When Docker cannot be read
+ * the answer is null, so the attempt fails (and is recorded) the way it always did.
+ */
+export async function agentWriteRefusal(container: string): Promise<string | null> {
+  const name = safeName(container);
+  try {
+    const row = (await listAgentRows({ fresh: true })).find((a) => a.container === name);
+    return writeRefusal({
+      exists: !!row,
+      running: !!row?.running,
+      busy: row ? await agentBusyReason(row.agentId) : null,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function secretValues(profileId: string): string[] {
   try { return Object.values(getSecret(profileId)); } catch { return []; }
 }
@@ -405,6 +428,8 @@ export async function enableAssignment(
   if (!nativeProvider(profile.providerId)) {
     return { container: name, status: 'error', error: `No native delivery for ${profile.providerId}` };
   }
+  const refusal = await agentWriteRefusal(name);
+  if (refusal) return { container: name, status: 'error', error: refusal };
 
   return serialized(name, async (): Promise<SyncResult> => {
     // A re-delivery (secret edited) must not switch back on what was switched off meanwhile.
@@ -444,6 +469,8 @@ export async function disableAssignment(profileId: string, container: string): P
   if (!name) return { container, status: 'error', error: 'Invalid agent name' };
   const profile = getProfile(profileId);
   if (!profile) return { container: name, status: 'error', error: 'Credential not found' };
+  const refusal = await agentWriteRefusal(name);
+  if (refusal) return { container: name, status: 'error', error: refusal };
 
   return serialized(name, async (): Promise<SyncResult> => {
     const existing = getAssignment(profileId, name);
