@@ -112,6 +112,12 @@ export default function CredentialsPageClient() {
   // every credential the moment the session expired or Docker went down.
   const [detectFailed, setDetectFailed] = useState(false);
 
+  // The assignments read failed (network, session, server). Without this flag every switch read
+  // "off", which is a claim about the agents the page cannot make. While it is set the switches
+  // are not rendered and a Retry is offered. `assignmentsRetrying` is the Retry button's own spinner.
+  const [assignmentsFailed, setAssignmentsFailed] = useState(false);
+  const [assignmentsRetrying, setAssignmentsRetrying] = useState(false);
+
   // One key identifies the single mutation allowed in flight, e.g.
   // 'delete:cred_123' or 'on:cred_123:agent_ab'. Replaces the scattered
   // per-action booleans: the previous `syncingContainer` held only a container
@@ -209,18 +215,30 @@ export default function CredentialsPageClient() {
    * the mutation paths refresh the cheap one and let the expensive one catch up
    * behind, instead of making the user wait on work their change did not need.
    */
-  // Assignments are secondary: without them every row reads as off, but the cards still render.
+  // Assignments are secondary: the cards render without them, but a failed read is said out loud
+  // (`assignmentsFailed`) and the switches are withheld instead of reading as off.
   const loadAssignments = useCallback(async (signal?: AbortSignal) => {
     try {
       const a = await fetch('/api/credentials/assignments', { signal });
-      if (!a.ok) return;
+      if (!a.ok) throw new Error(`HTTP ${a.status}`);
       const json = await a.json() as { assignments?: CredentialAssignment[]; knownAgents?: string[] };
       setAssignments(json.assignments ?? []);
       setKnownAgents(json.knownAgents ?? []);
+      setAssignmentsFailed(false);
     } catch (e: unknown) {
       if ((e as Error)?.name === 'AbortError') throw e;
+      setAssignmentsFailed(true);
     }
   }, []);
+
+  const retryAssignments = async () => {
+    setAssignmentsRetrying(true);
+    try {
+      await loadAssignments();
+    } catch { /* an abort: nothing to report */ } finally {
+      setAssignmentsRetrying(false);
+    }
+  };
 
   const loadProfiles = useCallback(async (signal?: AbortSignal) => {
     const res = await fetch('/api/credentials', { signal });
@@ -543,6 +561,20 @@ export default function CredentialsPageClient() {
                           {detectData.length > 0 ? ' — showing the last known state' : ''}
                         </div>
                       )}
+                      {assignmentsFailed && (
+                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--red)' }}>
+                          <span>Could not read which agents have this credential switched on</span>
+                          <Button
+                            variant='secondary'
+                            size='sm'
+                            loading={assignmentsRetrying}
+                            disabled={assignmentsRetrying || !!busy}
+                            onClick={() => void retryAssignments()}
+                          >
+                            {assignmentsRetrying ? 'Retrying…' : 'Retry'}
+                          </Button>
+                        </div>
+                      )}
                       {detectLoaded && detectData.length > 0 && (
                         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
                           {detectData.map((d) => {
@@ -575,9 +607,10 @@ export default function CredentialsPageClient() {
                                   && profiles.find((x) => x.id === o.profileId)?.providerId === p.providerId)
                                 : undefined;
                               const replacedBy = replacer ? profiles.find((x) => x.id === replacer.profileId)?.label : undefined;
-                              // Written by an earlier release (CLI config files + TOOLS.md row) and
-                              // not yet moved: it keeps working until the operator switches it on.
-                              const oldWay = !isOn && !pending && !!matchByProfile;
+                              // A token of this provider present but not from this profile: a
+                              // credential switched off that left something behind, or one delivered
+                              // by hand. There is no "delivered the old way" state: switching on
+                              // delivers the credential the current way, whatever is on the agent.
                               const heldByOther = !isOn && !pending && !replacedBy && !matchByProfile
                                 ? (d.matchedProfiles ?? []).find((m) => m.providerId === p.providerId)
                                 : undefined;
@@ -598,21 +631,13 @@ export default function CredentialsPageClient() {
                                 <div key={d.container || d.agentId} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <span style={{
-                                      color: native ? 'var(--green)' : failed || pending ? 'var(--red)' : oldWay ? 'var(--yellow)' : 'var(--text-dim)',
+                                      color: native ? 'var(--green)' : failed || pending ? 'var(--red)' : 'var(--text-dim)',
                                       fontSize: 12, fontWeight: 700, ...dim,
                                     }}>
-                                      {native ? '✓' : failed || pending ? '!' : oldWay ? '◆' : '○'}
+                                      {native ? '✓' : failed || pending ? '!' : '○'}
                                     </span>
                                     <span style={{ color: 'var(--text-dim)', flex: 1, ...dim }}>
                                       {label}
-                                      {native && (
-                                        <span style={{ marginLeft: 6, color: 'var(--green)', fontSize: 10 }}>delivered natively</span>
-                                      )}
-                                      {oldWay && (
-                                        <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 10 }}>
-                                          Delivered the old way — switch on to move to native
-                                        </span>
-                                      )}
                                       {replacedBy && (
                                         <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
                                           replaced by {replacedBy}
@@ -655,7 +680,7 @@ export default function CredentialsPageClient() {
                                           {busy === `on:${key}` ? 'Switching on…' : 'Retry'}
                                         </Button>
                                       )}
-                                      {(failed || oldWay) && (
+                                      {failed && (
                                         <Button
                                           variant='danger'
                                           size='sm'
@@ -666,17 +691,19 @@ export default function CredentialsPageClient() {
                                           {busy === `off:${key}` ? 'Switching off…' : 'Remove'}
                                         </Button>
                                       )}
+                                      {!assignmentsFailed && (
                                       <Switch
                                         checked={native || pending}
                                         tone={pending ? 'danger' : 'default'}
                                         loading={switchLoading}
                                         disabled={!!busy}
                                         ariaLabel={`${p.label ?? p.id} delivered to ${label}`}
-                                        title={oldWay ? 'Move to native' : heldByOther
+                                        title={heldByOther
                                           ? `Replaces the credential from “${heldByOther.label}” on this agent`
                                           : undefined}
                                         onChange={(next) => handleToggle(p, d.container, label, next)}
                                       />
+                                      )}
                                     </div>
                                   </div>
                                   {(failed || pending) && assignment?.lastError && (

@@ -76,7 +76,10 @@ function asJson(body: string): Record<string, unknown> | null {
  */
 export async function waitForGatewayReady(
   container: string,
-  timeoutMs = 60_000,
+  // Generous: a first boot migrates and seeds the volume, and a loaded host can
+  // stretch that well past a minute. A too-short window deletes a healthy agent
+  // (the create route removes the container on timeout), so bias to waiting.
+  timeoutMs = 120_000,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 

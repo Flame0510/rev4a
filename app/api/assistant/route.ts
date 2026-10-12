@@ -80,8 +80,8 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/credentials': {
     title: 'Credentials',
     description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion) once and switch them on for the agents that need them. Secrets are stored unencrypted in credentials.db (and in the secret store of each agent they are on); provider API keys are managed on the Gateway page, not here.',
-    actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Switch a credential on or off for each agent (Switch on / Switch off); "Move to native" re-delivers one an earlier release installed the old way', 'See, per agent, whether it is delivered natively, delivered the old way, or failed (Retry)'],
-    hints: 'A credential reaches an agent only when you switch it on for that agent: the token goes into the agent\'s OpenClaw secret store as an environment variable and the matching skill is enabled (OpenClaw 2026.9.0 or newer). Switching it off removes it. A credential that is on for an agent cannot be deleted. An agent on the ChatGPT subscription runtime gets the token only in commands run through OpenClaw.',
+    actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Switch a credential on or off for each agent (Switch on / Switch off); switching on re-delivers it the current way', 'See, per agent, whether it is switched on, off, or failed (Retry)'],
+    hints: 'A credential reaches an agent only when you switch it on for that agent (OpenClaw 2026.9.0 or newer; Trello needs 2026.9.9): most through the agent\'s OpenClaw secret store plus the matching skill, GitHub through OpenClaw\'s managed GitHub identity, Vercel through the CLI\'s own config files. Switching it off removes it. A credential that is on for an agent cannot be deleted. An agent on the ChatGPT subscription runtime gets the token only in commands run through OpenClaw.',
   },
   '/config': {
     title: 'Config',

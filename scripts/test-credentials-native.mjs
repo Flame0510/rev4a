@@ -29,8 +29,10 @@ const SECRETS = {
 
 test('provider -> env names', () => {
   const names = (id) => n.NATIVE_PROVIDERS[id].env.map((e) => e.name);
-  assert.deepEqual(names('github-pat'), ['GH_TOKEN', 'GITHUB_TOKEN']);
-  assert.deepEqual(names('vercel'), ['VERCEL_TOKEN']);
+  // GitHub's names are override-blocked by OpenClaw and Vercel's env is ignored by
+  // the CLI, so neither is delivered through the secret store (see managed.ts).
+  assert.deepEqual(names('github-pat'), []);
+  assert.deepEqual(names('vercel'), []);
   assert.deepEqual(names('supabase'), ['SUPABASE_ACCESS_TOKEN']);
   assert.deepEqual(names('trello'), ['TRELLO_API_KEY', 'TRELLO_TOKEN']);
   assert.deepEqual(names('notion'), ['NOTION_API_TOKEN']);
@@ -105,7 +107,9 @@ test('plans are idempotent: same input, same plan', () => {
 
 test('plan order: store entries, skill patch (if any), reload', () => {
   assert.deepEqual(n.enablePlan('trello').map((s) => s.kind), ['store-set', 'store-set', 'config-patch', 'reload']);
-  assert.deepEqual(n.enablePlan('vercel').map((s) => s.kind), ['store-set', 'reload']);
+  assert.deepEqual(n.enablePlan('supabase').map((s) => s.kind), ['store-set', 'reload']);
+  // GitHub keeps only the skill patch: its token goes through the managed profile.
+  assert.deepEqual(n.enablePlan('github-pat').map((s) => s.kind), ['config-patch', 'reload']);
   assert.deepEqual(n.disablePlan('notion').map((s) => s.kind), ['store-rm', 'config-patch', 'reload']);
 });
 
@@ -144,6 +148,29 @@ test('version gate: 2026.9.x and newer only', () => {
   assert.ok(!n.supportsNative('2026.8.9'));
   assert.ok(!n.supportsNative('2026.7.1'));
   assert.ok(!n.supportsNative(null));
+  // A provider can raise the floor: Trello's skill needs jq, which entered the image with 2026.9.9.
+  assert.ok(n.supportsNative('2026.9.9', '2026.9.9'));
+  assert.ok(!n.supportsNative('2026.9.3', '2026.9.9'));
+});
+
+test('trello needs 2026.9.9; the others keep the base floor', () => {
+  assert.equal(n.NATIVE_PROVIDERS.trello.minVersion, '2026.9.9');
+  for (const id of ['github-pat', 'vercel', 'supabase', 'notion']) {
+    assert.equal(n.NATIVE_PROVIDERS[id].minVersion, undefined, id);
+  }
+});
+
+test('trello is refused on an agent without jq (2026.9.3), before writing anything', async () => {
+  const exec = fakeExec({ version: 'OpenClaw 2026.9.3 (1391f7c)' });
+  await assert.rejects(n.runEnable(exec, 'trello', SECRETS.trello), /needs OpenClaw 2026\.9\.9 or newer/);
+  assert.equal(exec.calls.length, 1);
+});
+
+test('assertDeliverable (used for vercel and github too) refuses an agent below the floor', async () => {
+  const old = fakeExec({ version: 'OpenClaw 2026.8.9 (abc)' });
+  await assert.rejects(n.assertDeliverable(old, 'vercel'), /needs OpenClaw 2026\.9\.0 or newer/);
+  assert.equal(old.calls.length, 1);
+  await n.assertDeliverable(fakeExec({ version: 'OpenClaw 2026.9.3 (1391f7c)' }), 'vercel');
 });
 
 // ── failure paths, with the exec primitives injected ─────────────────────────────────
@@ -167,16 +194,16 @@ function fakeExec({ failOn = () => false, version = 'OpenClaw 2026.9.9 (bcfc888)
 }
 
 test('a failed rm mid-way still attempts every other step', async () => {
-  const exec = fakeExec({ failOn: (a) => a.includes('GH_TOKEN') });
-  const errors = await n.runDisable(exec, 'github-pat');
+  const exec = fakeExec({ failOn: (a) => a.includes('TRELLO_API_KEY') });
+  const errors = await n.runDisable(exec, 'trello');
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /remove GH_TOKEN/);
+  assert.match(errors[0], /remove TRELLO_API_KEY/);
   const kinds = exec.calls.map((c) => c.argv.slice(0, 4).join(' '));
   assert.deepEqual(kinds, [
     'openclaw secrets store rm', 'openclaw secrets store rm',
     'openclaw config patch --stdin', 'openclaw secrets reload',
   ]);
-  assert.ok(exec.calls.some((c) => c.argv.includes('GITHUB_TOKEN')), 'the second rm ran');
+  assert.ok(exec.calls.some((c) => c.argv.includes('TRELLO_TOKEN')), 'the second rm ran');
 });
 
 test('every step failing returns every failure, none thrown', async () => {

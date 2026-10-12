@@ -96,7 +96,7 @@ async function runEdit(id: number, agentId: string, container: Awaited<ReturnTyp
     }
     await applyRuntimeConfig(agentId);
     try {
-      patchRev4aProvider(agentId);
+      await patchRev4aProvider(agentId);
     } catch (e) {
       console.error('[agent:edit] provider patch failed:', (e as Error).message);
     }

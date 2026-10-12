@@ -65,11 +65,11 @@ function schedule(): void {
 }
 
 /** Write `bands` into every agent; on a miss, owe a retry until MAX_TRIES. */
-function sync(bands: string): void {
+async function sync(bands: string): Promise<void> {
   let ok = false;
   let summary = '';
   try {
-    const outcome = syncAllAgents();
+    const outcome = await syncAllAgents();
     ok = outcome.ok;
     summary = outcome.summary;
   } catch (e) {
@@ -92,7 +92,7 @@ function sync(bands: string): void {
   }
 }
 
-function check(): void {
+async function check(): Promise<void> {
   try {
     const bands = bandsNow(new Date());
     const offered = loadOfferedModels().some((m) => priceScheduleFor(m.id));
@@ -100,10 +100,10 @@ function check(): void {
       // A change of band: write it now, whatever retry was owed for the previous one.
       state.tries = 0;
       state.retryAfter = undefined;
-      if (offered) sync(bands);
+      if (offered) await sync(bands);
       else state.applied = bands; // nothing on offer is priced by time of day
     } else if (state.retryAfter && Date.now() >= state.retryAfter) {
-      if (offered) sync(bands);
+      if (offered) await sync(bands);
       else state.retryAfter = undefined;
     }
   } catch (e) {

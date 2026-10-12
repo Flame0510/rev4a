@@ -12,6 +12,8 @@
  * it with `openclaw config patch` itself — so it was removed.
  */
 import { execSync, execFileSync } from 'child_process';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
+import { dockerExecWithInput } from '@/lib/docker-exec';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -306,20 +308,28 @@ function containerAgentIdSync(name: string): string {
  * catalogue is not an empty one, and patching it in would strip every model from
  * the agent. `syncAllAgents()` refuses for the same reason.
  *
+ * Async, and queued behind every other writer of this agent's openclaw.json
+ * (lib/agent-config-lock.ts): `config patch` is a read-modify-write of the file.
+ *
  * No gateway restart: `config patch` reports "Change will apply without restarting
  * the gateway" for a models-only patch, and the Gateway watches openclaw.json with
  * gateway.reload defaulting to hybrid.
  */
-export function patchRev4aProvider(container: string): void {
+export async function patchRev4aProvider(container: string): Promise<void> {
   if (bundledCatalogueStatus() === 'unavailable') {
     throw new Error('models.config.json could not be read; models.providers.rev4a left unchanged');
   }
   // The agent's own version: an older release rejects `input` values it does not know.
   const input = JSON.stringify({ models: { providers: { rev4a: buildRev4aProviderConfig(containerVersionSync(container), containerAgentIdSync(container)) } } });
-  execFileSync('docker', ['exec', '-i', container, 'sh', '-c', 'openclaw config patch --stdin'], {
-    timeout: 15000,
-    stdio: 'pipe',
-    input,
+  // Through dockerExecWithInput: the patch goes in on stdin, and the in-container timeout
+  // wrapper kills `config patch` at its deadline, so a slow patch cannot keep writing after
+  // the lock has moved on to the next writer.
+  await withAgentConfigLock(container, async () => {
+    try {
+      await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], input, { timeoutMs: 15000 });
+    } catch (e) {
+      throw new Error(String((e as Error).message || e).split('\n')[0]);
+    }
   });
 }
 
@@ -361,7 +371,7 @@ function stoppedNote(outcome: SyncOutcome): string {
  * loose strings that no caller inspected, so a sync that reached no container
  * surfaced as success.
  */
-export function syncAllAgents(): SyncOutcome {
+export async function syncAllAgents(): Promise<SyncOutcome> {
   const rev4aProviderConfig = buildRev4aProviderConfig();
   const outcome: SyncOutcome = {
     ok: false,
@@ -422,7 +432,10 @@ export function syncAllAgents(): SyncOutcome {
     try {
       // Per agent: the `input` list follows the version that agent runs, so an agent on
       // an older supported release never receives a modality value it would reject.
-      syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name), container.agentId || container.name));
+      // Read + rewrite of the whole file: one hold of the agent's config lock around both.
+      await withAgentConfigLock(container.name, async () => {
+        syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name), container.agentId || container.name));
+      });
       outcome.synced.push(container.name);
       if (!container.running) outcome.stopped.push(container.name);
     } catch (e: unknown) {

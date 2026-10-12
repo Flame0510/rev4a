@@ -463,19 +463,36 @@ with a valid session, obtains them in the clear. Encryption (AES-256-GCM, or an
 external vault) is not implemented.
 
 **Delivery is explicit and per agent.** Creating an agent installs nothing. The table
-`credential_assignments(profile_id, agent_id, enabled, mode, synced_at, last_error)`
+`credential_assignments(profile_id, agent_id, enabled, mode, synced_at, last_error, pending_removal)`
 records which credential is switched on for which agent (`agent_id` is the container
 name); `mode` is `env` (implemented) or `protected` (reserved).
 
 Enabling an assignment (`lib/credentials/delivery.ts`, pure parts in
 `lib/credentials/native.ts`) runs, through `docker exec` with argv arrays:
 
-1. `openclaw --version` must be 2026.9.0 or newer;
+1. `openclaw --version` must be 2026.9.0 or newer (Trello requires 2026.9.9, whose image ships the `jq` its skill needs);
 2. `openclaw secrets store set NAME --kind env --value-file -` per environment name, the
    value on stdin (never in argv);
 3. one `openclaw config patch --stdin` for `skills.entries.<skill>` (`apiKey` SecretRef
    when the skill declares a primary env, `env` map for Trello, plain `enabled` for GitHub);
 4. `openclaw secrets reload` with `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000` in the exec environment (the agent Gateway port; never `--url`/`--token` in argv).
+
+Two providers skip the environment entry, because it cannot work
+(`lib/credentials/managed.ts`):
+
+- **GitHub** (`github-pat`): `GH_TOKEN` and `GITHUB_TOKEN` are in OpenClaw's
+  `host-env-security` override-blocked list, so a store `env` entry with either name is
+  dropped before any command runs and `gh` stays logged out. The delivery writes a one-use
+  `github-setup-<32hex>` handoff to the secret store and calls `tools.github.configure`
+  (`mode: managed`) over the Gateway RPC; OpenClaw validates the PAT, writes a private `gh`
+  profile under its own credentials directory and keeps only `tools.github.profileId` in
+  config (which sets `GH_CONFIG_DIR` on each Gateway exec). Disabling calls the same RPC
+  with `mode: inherit`. The bundled `github` skill is still switched on.
+- **Vercel**: the CLI resolves its scope from the account default team and, for a
+  `northstar` account, forces it even when `config.json` names another team, so a
+  `VERCEL_TOKEN`-only environment inherits a default team the token may not reach and every
+  command fails. The delivery discovers an accessible team from the Vercel API and writes
+  the CLI's own `auth.json` + `config.json {currentTeam}`.
 
 Disabling runs `openclaw secrets store rm --yes NAME`, the same patch with `null`, and reload.
 Every step is attempted even when one fails; any failure keeps the row in `pending_removal`
@@ -483,7 +500,7 @@ with `last_error` (retried at re-apply, blocks deleting the credential), never t
 batch. The removal runs only for a row that is enabled or pending: a sibling replaced by
 another profile of the same provider shares the environment names and is left alone. Error
 texts are stripped of the secret values (raw, trimmed and JSON-escaped forms).
-Calls on one container are serialized (the patch rewrites openclaw.json). After a
+Calls on one container are serialized on the agent's config lock (below): the patch rewrites openclaw.json. After a
 successful native delivery the files and TOOLS.md row an earlier release wrote for that
 provider on that agent are removed. `applyRuntimeConfig` starts, in the background and
 without delaying the caller, a re-apply of the agent's assignments (enabled ones delivered
@@ -493,9 +510,21 @@ shell. Deleting an agent deletes its assignments. A successful switch updates th
 `last_synced_at`/status and writes `sync`/`desync` audit entries.
 
 **Rollback.** The previous Rev4a still reads the vault and does its old delivery, but it knows
-nothing of the secret store: its de-sync does not remove the store entries, and `gh` prefers
-`GH_TOKEN` over `hosts.yml`. Before rolling Rev4a back below this version, switch native
-credentials off (or they stay in the agents). Protected mode (`kind: secret` plus an egress proxy) is a separate decision.
+nothing of the secret store and of the managed GitHub identity: its switch-off removes neither.
+Before rolling Rev4a back below this version, switch credentials off here (the store entries and
+the `gh` profile live on the agent volume, so they survive a recreate otherwise). Protected mode
+(`kind: secret` plus an egress proxy) is a separate decision.
+
+**One write queue per agent for `openclaw.json`.** Several things write that file:
+`openclaw config patch` (runtime config in `lib/agent-setup.ts`, the Rev4a provider block in
+`app/api/gateway/sync.ts`, the model changes in `lib/subscriptions.ts`, credentials in
+`lib/credentials/delivery.ts`) and whole-file rewrites (agent create, `PUT /api/gateway/agent`,
+the Telegram channel in `lib/channelManager.ts`, and `syncAllAgents`). All of them run through
+`withAgentConfigLock(container, fn)` in `lib/agent-config-lock.ts`: one promise chain per
+container on `globalThis` (every route bundle shares it), a failure never blocks the next
+writer, a holder past 2 minutes is logged. A rewrite reads and writes inside the same hold.
+The lock is not re-entrant: code inside it must not take it again for the same container.
+Different agents never wait for each other. Test: `npm run test:agent-config-lock`.
 
 `GET /api/credentials/detect` reports which credentials are actually installed,
 by SHA-256 hashing the token found in each container and matching it against the

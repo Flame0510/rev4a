@@ -38,17 +38,26 @@ export interface SkillBinding {
 export interface NativeProvider {
   env: EnvEntry[];
   skill?: SkillBinding;
+  /**
+   * OpenClaw version this provider needs, when it is newer than {@link NATIVE_MIN_VERSION}.
+   * Trello's bundled skill runs through `curl` and `jq`, and `jq` only entered the image
+   * with 2026.9.9: on an older agent the skill is not eligible, so a delivery that looked
+   * successful would leave the credential unusable. Refusing the delivery tells the
+   * operator to update the agent instead.
+   */
+  minVersion?: string;
 }
 
 export const NATIVE_PROVIDERS: Record<string, NativeProvider> = {
+  // GitHub and Vercel keep no env entries on purpose: OpenClaw drops GH_TOKEN /
+  // GITHUB_TOKEN (override-blocked, see managed.ts) and the Vercel CLI ignores a
+  // token-only environment. Their delivery is provider-specific (managed.ts); the
+  // github skill is still switched on here.
   'github-pat': {
-    env: [
-      { name: 'GH_TOKEN', field: 'token' },
-      { name: 'GITHUB_TOKEN', field: 'token' },
-    ],
+    env: [],
     skill: { name: 'github', via: 'none' },
   },
-  vercel: { env: [{ name: 'VERCEL_TOKEN', field: 'token' }] },
+  vercel: { env: [] },
   supabase: { env: [{ name: 'SUPABASE_ACCESS_TOKEN', field: 'accessToken' }] },
   trello: {
     env: [
@@ -56,6 +65,7 @@ export const NATIVE_PROVIDERS: Record<string, NativeProvider> = {
       { name: 'TRELLO_TOKEN', field: 'token' },
     ],
     skill: { name: 'trello', via: 'env' },
+    minVersion: '2026.9.9',
   },
   notion: {
     env: [{ name: 'NOTION_API_TOKEN', field: 'token' }],
@@ -169,12 +179,12 @@ export function disablePlan(providerId: string): PlanStep[] {
 }
 
 
-/** True when `version` (e.g. `2026.9.3`) is at least {@link NATIVE_MIN_VERSION}. */
-export function supportsNative(version: string | null | undefined): boolean {
+/** True when `version` (e.g. `2026.9.3`) is at least `min` (default {@link NATIVE_MIN_VERSION}). */
+export function supportsNative(version: string | null | undefined, min = NATIVE_MIN_VERSION): boolean {
   const m = /(\d{4})\.(\d{1,2})\.(\d{1,2})/.exec(version ?? '');
   if (!m) return false;
   const a = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const b = NATIVE_MIN_VERSION.split('.').map(Number);
+  const b = min.split('.').map(Number);
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
   return true;
 }
@@ -223,16 +233,26 @@ export interface NativeExec {
   runWithInput(argv: string[], input: string): Promise<string>;
 }
 
+/**
+ * Refuse, before anything is written, when the agent runs an OpenClaw older than the
+ * provider needs. Every provider goes through this, including the two that are delivered
+ * by managed.ts (GitHub, Vercel) rather than by {@link runEnable}.
+ */
+export async function assertDeliverable(exec: NativeExec, providerId: string): Promise<void> {
+  const version = /(\d{4}\.\d{1,2}\.\d{1,2})/.exec(await exec.run([...VERSION_ARGV]))?.[1] ?? null;
+  const min = nativeProvider(providerId)?.minVersion ?? NATIVE_MIN_VERSION;
+  if (!supportsNative(version, min)) {
+    throw new Error(
+      `Native credential delivery needs OpenClaw ${min} or newer; this agent runs ${version ?? 'an unknown version'}. Update the agent first.`,
+    );
+  }
+}
+
 /** Write the store entries and the skill config, then reload. Throws a message free of secret values. */
 export async function runEnable(exec: NativeExec, providerId: string, secret: Record<string, string>): Promise<void> {
   const values = Object.values(secret).map((v) => v ?? '');
   try {
-    const version = /(\d{4}\.\d{1,2}\.\d{1,2})/.exec(await exec.run([...VERSION_ARGV]))?.[1] ?? null;
-    if (!supportsNative(version)) {
-      throw new Error(
-        `Native credential delivery needs OpenClaw ${NATIVE_MIN_VERSION} or newer; this agent runs ${version ?? 'an unknown version'}. Update the agent first.`,
-      );
-    }
+    await assertDeliverable(exec, providerId);
     for (const input of storeInputs(providerId, secret)) {
       await exec.runWithInput(storeSetArgv(input.name), input.value); // name in argv, value on stdin
     }

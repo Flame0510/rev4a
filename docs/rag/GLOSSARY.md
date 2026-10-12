@@ -37,7 +37,7 @@ What an agent spent in USD. Each agent's OpenClaw prices every model call itself
 DeepSeek bills half price outside its peak hours (peak: 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday). Rev4a writes the lower prices into the agents when off-peak starts and the full ones when it ends, so each call is priced at the rate in force when it ran. The Costs page header and the agent panel's COSTS section (Rates now) show the current band.
 
 ## Credential
-A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. A credential reaches an agent only when the user switches it on for that agent on the Credentials page: the token goes into the agent's OpenClaw secret store as an environment variable and the matching skill is enabled. Switching it off removes it. Every reveal is written to an audit table that no route or view reads.
+A third-party service token (GitHub PAT, Trello API key, Vercel token, Supabase access key, Notion API token) stored in the Rev4a vault. A credential reaches an agent only when the user switches it on for that agent on the Credentials page: the token goes into the agent's OpenClaw secret store as an environment variable and the matching skill is enabled (GitHub instead uses OpenClaw's managed GitHub identity; Vercel uses the CLI's own auth.json + config.json). Switching it off removes it. Every reveal is written to an audit table that no route or view reads.
 
 ## Cron / Cron Job
 A scheduled task that runs an agent automatically at a fixed time (e.g. every night at 3:15 AM). Configured with standard cron syntax. Jobs can be enabled/disabled per entry.
@@ -128,7 +128,7 @@ Optional reverse proxy an operator can put in front of the Rev4a dashboard or of
 Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. Undone with Rollback.
 
 ## Vault
-Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads), a per-agent switch, and a status per agent (delivered natively, delivered the old way, error). Secrets are stored unencrypted.
+Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads) and a per-agent switch (on, off, or an error). Secrets are stored unencrypted.
 
 ## Workspace
 The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the host workspace, which appears as `Local`, and all agent containers.

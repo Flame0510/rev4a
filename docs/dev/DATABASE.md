@@ -492,8 +492,8 @@ none until the daemon or the first proxied call creates it.
 ## Credentials Database (`credentials.db`)
 
 The credential hub uses a **separate SQLite file** (`credentials.db`) alongside
-events.db in the same data directory. It stores credentials that can be synced
-to agent containers via CLI auth or env files.
+events.db in the same data directory. It stores credentials that can be switched
+on, per agent, and delivered through OpenClaw (see `credential_assignments`).
 
 **Location:** `data/credentials.db` (same directory as `events.db`)
 **Custom path:** Set `REV4A_CREDENTIALS_DB` env var to override.
@@ -552,7 +552,7 @@ CREATE TABLE IF NOT EXISTS credential_assignments (
 );
 ```
 
-Added with native credential delivery (additive, created with `IF NOT EXISTS`). Holds no secret. The source of truth
+Added with per-agent credential delivery (additive, created with `IF NOT EXISTS`). Holds no secret. The source of truth
 for re-applying delivery after a recreate. Older releases ignore the table. `pending_removal`
 is added to a table created without it by a guarded `ALTER TABLE` at startup. Rows are deleted
 with their credential, and with their agent when the agent is deleted.
@@ -570,7 +570,7 @@ CREATE TABLE credential_audit_log (
 );
 ```
 
-Actions: `create`, `update`, `delete`, `sync`, `desync`, `reveal`.
+Actions: `create`, `update`, `delete`, `sync` (switched on), `desync` (switched off), `reveal`.
 
 Nothing reads `credential_audit_log`: it is written by `appendAudit()` and exposed
 through no route or view.

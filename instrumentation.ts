@@ -22,7 +22,7 @@ export async function register() {
       // The outcome used to be discarded. syncAllAgents reports failures instead of
       // throwing, so the catch below never saw a sync that reached no container —
       // Docker not yet up at boot left the fleet stale with nothing in the log.
-      const outcome = syncAllAgents();
+      const outcome = await syncAllAgents();
       startupSynced = outcome.ok;
       if (outcome.ok) {
         console.log(`[rev4a] Startup sync: ${outcome.summary}`);

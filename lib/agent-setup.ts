@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
 import { reapplyAssignments } from '@/lib/credentials/delivery';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,7 @@ export function withControlUiPolicy(current: unknown): Record<string, unknown> {
   return next;
 }
 
+/** One `config patch`. Callers hold the agent's config lock (see lib/agent-config-lock.ts). */
 async function patchConfig(containerName: string, patch: object): Promise<void> {
   await dockerExecWithInput(containerName, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify(patch), {
     timeoutMs: CONFIG_PATCH_TIMEOUT_MS,
@@ -145,6 +147,11 @@ async function patchConfig(containerName: string, patch: object): Promise<void> 
  * if the Gateway refuses it, the policy the Control UI needs is already in place.
  */
 async function applyControlUiPolicy(containerName: string): Promise<void> {
+  // Read and patches under one hold: the policy is decided from what the read returned.
+  await withAgentConfigLock(containerName, () => applyControlUiPolicyLocked(containerName));
+}
+
+async function applyControlUiPolicyLocked(containerName: string): Promise<void> {
   const raw = await dockerExec(containerName, ['cat', '/root/.openclaw/openclaw.json'], { timeoutMs: CONFIG_PATCH_TIMEOUT_MS });
   const current = (JSON.parse(raw) as { gateway?: { controlUi?: Record<string, unknown> } })?.gateway?.controlUi ?? {};
 
@@ -166,7 +173,7 @@ async function applyControlUiPolicy(containerName: string): Promise<void> {
 export async function applyRuntimeConfig(containerName: string): Promise<void> {
   for (const patch of GUARANTEED_CONFIG_PATCHES) {
     try {
-      await patchConfig(containerName, patch);
+      await withAgentConfigLock(containerName, () => patchConfig(containerName, patch));
     } catch (e) {
       console.warn(`[agent-setup] config patch failed on ${containerName}:`, (e as Error).message);
     }

@@ -237,7 +237,7 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
 
     await applyRuntimeConfig(agentId);
     try {
-      patchRev4aProvider(agentId);
+      await patchRev4aProvider(agentId);
     } catch (e) {
       console.error('[agent:update] provider patch failed:', (e as Error).message);
     }

@@ -21,6 +21,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { SUPPORTED_VERSIONS, parseOpenClawVersion } from '@/lib/agent-versions';
 import { listLocalAgentImages } from '@/lib/agent-images';
 import { dockerRequestJson } from '@/lib/docker-socket-path';
@@ -314,7 +315,7 @@ async function writeDefaultModel(container: string, model: { primary: string | n
   const body = model.primary === null ? { fallbacks: model.fallbacks } : model;
   const patch = JSON.stringify({ agents: { defaults: { model: body } } });
   try {
-    await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], patch, { timeoutMs: 30_000 });
+    await withAgentConfigLock(container, () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], patch, { timeoutMs: 30_000 }));
   } catch {
     throw new SubscriptionError(502, 'The agent refused the model change.');
   }
@@ -533,18 +534,22 @@ async function readAgentList(container: string): Promise<Record<string, unknown>
  * array is replaced as a whole), read just before, with only that entry's model changed.
  */
 async function writeMainModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
-  const list = await readAgentList(container);
-  const main = list?.find((e) => e && e.id === 'main');
-  if (!list || !main) throw new SubscriptionError(502, 'Could not read the agent configuration.');
-  // Like writeDefaultModel: a null primary is left out (an entry with only fallbacks keeps that
-  // shape) instead of being written as an explicit null.
-  const entryModel = model.primary === null ? { fallbacks: model.fallbacks } : { primary: model.primary, fallbacks: model.fallbacks };
-  const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
-  try {
-    await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: 30_000 });
-  } catch {
-    throw new SubscriptionError(502, 'The agent refused the model change.');
-  }
+  // The list is read, changed and sent back whole: hold the agent's config lock across all three,
+  // or a patch landing in between would be overwritten by the stale list.
+  await withAgentConfigLock(container, async () => {
+    const list = await readAgentList(container);
+    const main = list?.find((e) => e && e.id === 'main');
+    if (!list || !main) throw new SubscriptionError(502, 'Could not read the agent configuration.');
+    // Like writeDefaultModel: a null primary is left out (an entry with only fallbacks keeps that
+    // shape) instead of being written as an explicit null.
+    const entryModel = model.primary === null ? { fallbacks: model.fallbacks } : { primary: model.primary, fallbacks: model.fallbacks };
+    const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
+    try {
+      await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: 30_000 });
+    } catch {
+      throw new SubscriptionError(502, 'The agent refused the model change.');
+    }
+  });
   const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
   if (!after || !sameModel(after.model as AgentModelRef, model)) {
     throw new SubscriptionError(502, 'The model change did not apply as expected. Check the agent panel.');

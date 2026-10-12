@@ -93,6 +93,10 @@ the Gateway:
    the file's original mode, and apply it when started or resumed
 7. **Does NOT restart** the gateway
 
+Steps 4–6 for one container run inside that agent's `openclaw.json` write queue
+(`lib/agent-config-lock.ts`), as does `patchRev4aProvider`: a credential, subscription, Telegram or
+model write to the same agent waits its turn instead of racing the sync and losing an update.
+
 ### Agent identity header (proxy metering)
 
 The `rev4a` block also carries `headers: { "x-rev4a-agent": "<AGENT_ID of that container>" }`

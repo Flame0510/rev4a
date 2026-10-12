@@ -23,6 +23,7 @@
  */
 import { execSync } from 'child_process';
 import { dockerExec, dockerExecShellNoFail } from '@/lib/docker-exec';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 
 // ── Types ────────────────────────────────────
 
@@ -147,6 +148,8 @@ export async function setTelegramConfig(
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
 
   try {
+    // Read and write inside one lock: another writer on this agent between them would be lost.
+    return await withAgentConfigLock(container, async () => {
     // A failed read is not an empty config: writing `{}` back would replace the agent's
     // whole openclaw.json with the channel block (the historical defect this route had).
     const config = readConfigJson(container);
@@ -186,6 +189,7 @@ export async function setTelegramConfig(
 
     writeConfigJson(container, config);
     return { success: true };
+    });
   } catch (e) {
     return { success: false, error: (e as Error).message };
   }
@@ -196,6 +200,7 @@ export async function removeTelegram(agentId: string): Promise<{ success: boolea
   if (!container) return { success: false, error: `Agent container not found: ${agentId}` };
 
   try {
+    return await withAgentConfigLock(container, async () => {
     const config = readConfigJson(container);
     if (!config) return { success: false, error: 'No config found' };
 
@@ -217,6 +222,7 @@ export async function removeTelegram(agentId: string): Promise<{ success: boolea
     removeBindings(config, agentId, 'telegram');
     writeConfigJson(container, config);
     return { success: true };
+    });
   } catch (e) {
     return { success: false, error: (e as Error).message };
   }

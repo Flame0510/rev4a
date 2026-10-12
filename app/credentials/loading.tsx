@@ -15,7 +15,7 @@ const PageSkeleton = () => (
     <PageHeader
       eyebrow=""
       title="Credentials"
-      description="Store third-party credentials once, sync to all agent containers."
+      description="Store third-party credentials once, switch them on for the agents that need them."
     />
     <CredentialCardsSkeleton />
   </Page>

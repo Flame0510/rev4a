@@ -56,8 +56,9 @@ Rev4a shows the outcome (phase 2): the agent panel's SYSTEM PACKAGES section lis
 
 Tools installed any other way (`npm -g`, `pip`, a downloaded binary) are not recorded:
 the agent keeps them under `/root/.local`, whose `bin` is on `PATH`. The rules the agent
-reads are in `rev4a-rules/AGENTS.md`, which also tells it that credentials are environment
-variables provided by OpenClaw (secret store plus the enabled skill), not files in TOOLS.md. Test: `bash scripts/test-rev4a-apt.sh`.
+reads are in `rev4a-rules/AGENTS.md`, which also tells it that credentials are provided by OpenClaw
+when switched on in Rev4a — environment variables plus the enabled skill, OpenClaw's managed
+identity for GitHub, the CLI's own login files for Vercel — and never come from TOOLS.md. Test: `bash scripts/test-rev4a-apt.sh`.
 
 ### Access
 

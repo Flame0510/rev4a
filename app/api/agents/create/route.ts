@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { patchRev4aProvider } from '../../gateway/sync';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { extractProviderAndModel } from '@/app/api/provider/upstream';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig, withControlUiPolicy } from '@/lib/agent-setup';
@@ -22,7 +23,7 @@ import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 // both offer the same ranges and the same error messages (lib/agent-ports.ts).
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 180; // docker run (60s) + startup wait (60s) + seeding (60s)
+export const maxDuration = 300; // docker run (60s) + startup wait (120s) + seeding (60s)
 
 const TEMPLATES_DIR = templatesDir(process.cwd());
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
@@ -286,14 +287,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // DB logging is optional, ignore failures
     }
 
-    // Wait for startup to complete (/startupz, up to 60s). Not /health, which
+    // Wait for startup to complete (/startupz, up to 120s). Not /health, which
     // answers as soon as the HTTP server listens. If it does not come up, remove
     // the container: a zombie agent with no config is worse than an explicit failure.
     const ready = await waitForGatewayReady(containerName);
     if (!ready) {
       try { execSync(`docker rm -f ${containerName}`, { timeout: 10000 }); } catch { /* best-effort */ }
       return NextResponse.json(
-        { success: false, error: `Container started but its gateway did not finish starting within 60s. Container removed — try again.` },
+        { success: false, error: `Container started but its gateway did not finish starting within 120s. Container removed — try again.` },
         { status: 500 },
       );
     }
@@ -333,52 +334,56 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }
 
-      // Read the config OpenClaw generated on first boot
-      const raw = execSync(
-        `docker exec ${containerName} cat /root/.openclaw/openclaw.json`,
-        { timeout: 8000, encoding: 'utf-8' },
-      ).trim();
-      const config = JSON.parse(raw);
+      // Read, change and write openclaw.json under the agent's config lock, so no patch
+      // (credentials, subscriptions) can land between the read and the write and be lost.
+      await withAgentConfigLock(containerName, async () => {
+        // Read the config OpenClaw generated on first boot
+        const raw = execSync(
+          `docker exec ${containerName} cat /root/.openclaw/openclaw.json`,
+          { timeout: 8000, encoding: 'utf-8' },
+        ).trim();
+        const config = JSON.parse(raw);
 
-      // Merge all required sections in one pass (one write; the Gateway reloads the file by itself)
+        // Merge all required sections in one pass (one write; the Gateway reloads the file by itself)
 
-      // controlUi — keep what the image and OpenClaw wrote, and apply the browser-origin
-      // policy so the Control UI opens on whatever host the agent is reached on.
-      // Recreate re-applies the same policy through applyRuntimeConfig.
-      const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
-      gatewaySection.controlUi = withControlUiPolicy(gatewaySection.controlUi);
-      config.gateway = gatewaySection;
+        // controlUi — keep what the image and OpenClaw wrote, and apply the browser-origin
+        // policy so the Control UI opens on whatever host the agent is reached on.
+        // Recreate re-applies the same policy through applyRuntimeConfig.
+        const gatewaySection = (config.gateway || {}) as Record<string, unknown>;
+        gatewaySection.controlUi = withControlUiPolicy(gatewaySection.controlUi);
+        config.gateway = gatewaySection;
 
-      // Model reference (primary + fallbacks)
-      {
-        // Always the canonical `rev4a/<provider>/<model>`: the Agents chips and the
-        // Model panel look the primary up by catalogue id, so the alias form
-        // (`rev4a/deepseek-flash`) or a bare name would show as not in the catalogue.
-        const modelRef = toRev4aRef(effectiveModel);
-        const fallbackRefs = (fallbacks || []).map((fb: string) => toRev4aRef(fb));
-        const agents = (config.agents || {}) as Record<string, unknown>;
-        const defaults = (agents.defaults || {}) as Record<string, unknown>;
-        defaults.model = {
-          primary: modelRef,
-          fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
+        // Model reference (primary + fallbacks)
+        {
+          // Always the canonical `rev4a/<provider>/<model>`: the Agents chips and the
+          // Model panel look the primary up by catalogue id, so the alias form
+          // (`rev4a/deepseek-flash`) or a bare name would show as not in the catalogue.
+          const modelRef = toRev4aRef(effectiveModel);
+          const fallbackRefs = (fallbacks || []).map((fb: string) => toRev4aRef(fb));
+          const agents = (config.agents || {}) as Record<string, unknown>;
+          const defaults = (agents.defaults || {}) as Record<string, unknown>;
+          defaults.model = {
+            primary: modelRef,
+            fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
+          };
+          agents.defaults = defaults;
+          config.agents = agents;
+        }
+
+        // Disable update check (agents are managed through Rev4a)
+        config.update = {
+          checkOnStart: false,
+          auto: { enabled: false },
         };
-        agents.defaults = defaults;
-        config.agents = agents;
-      }
 
-      // Disable update check (agents are managed through Rev4a)
-      config.update = {
-        checkOnStart: false,
-        auto: { enabled: false },
-      };
+        // Merge model + update + gateway settings (create-specific, not in applyRuntimeConfig)
 
-      // Merge model + update + gateway settings (create-specific, not in applyRuntimeConfig)
-
-      // Single write
-      execSync(
-        `docker exec -i ${containerName} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-        { timeout: 15000, input: JSON.stringify(config, null, 2) },
-      );
+        // Single write
+        execSync(
+          `docker exec -i ${containerName} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+          { timeout: 15000, input: JSON.stringify(config, null, 2) },
+        );
+      });
 
       // No restart: the Gateway watches openclaw.json and reloads it by itself
       // (it logs "[reload] ..."), and gateway.controlUi is hot-applied. The
@@ -397,7 +402,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Also guarantee models.providers.rev4a (host-dependent, not in base image).
       // Like the full-file write above, this needs no restart: the Gateway
       // reloads openclaw.json by itself.
-      patchRev4aProvider(containerName);
+      await patchRev4aProvider(containerName);
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
       console.error('[agent:create] runtime config patch failed:', (e as Error).message || String(e));

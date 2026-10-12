@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { execSync } from 'child_process';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { readFastStatus, statusReadFailedMessage, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
 import { keepStoredRef } from '@/lib/subscriptions-parse';
@@ -139,57 +140,65 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // Read current config
-    const raw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
-    if (!raw) {
-      return NextResponse.json({ status: 'error', error: 'Failed to read config from container (empty)' }, { status: 500 });
-    }
+    const requestedModel = body.model; // narrowed above; the closure below would lose that
+    // Read, change and write openclaw.json under the agent's config lock: a patch or
+    // another rewrite landing between the read and the write would be lost, or tear the file.
+    const locked = await withAgentConfigLock(safeContainer, async () => {
+      // Read current config
+      const raw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
+      if (!raw) {
+        return NextResponse.json({ status: 'error', error: 'Failed to read config from container (empty)' }, { status: 500 });
+      }
 
-    let config: Record<string, unknown>;
-    try {
-      config = JSON.parse(raw);
-    } catch (e) {
-      return NextResponse.json({
-        status: 'error',
-        error: 'Failed to parse config from container',
-        detail: raw.slice(0, 200),
-      }, { status: 500 });
-    }
+      let config: Record<string, unknown>;
+      try {
+        config = JSON.parse(raw);
+      } catch (e) {
+        return NextResponse.json({
+          status: 'error',
+          error: 'Failed to parse config from container',
+          detail: raw.slice(0, 200),
+        }, { status: 500 });
+      }
 
-    // Update model config
-    const agents = (config.agents || {}) as Record<string, unknown>;
-    const list = (agents.list || []) as Record<string, unknown>[];
+      // Update model config
+      const agents = (config.agents || {}) as Record<string, unknown>;
+      const list = (agents.list || []) as Record<string, unknown>[];
 
-    const mainAgent = list.find((a) => a.id === 'main');
-    if (mainAgent) {
-      const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(mainAgent.model));
-      // The primary never doubles as its own fallback.
-      fallbacks = fallbacks.filter((fb) => fb !== primary);
-      mainAgent.model = {
-        primary,
-        fallbacks,
-      };
-    }
+      const mainAgent = list.find((a) => a.id === 'main');
+      if (mainAgent) {
+        const primary = ensureRev4aPrefix(requestedModel);
+        let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(mainAgent.model));
+        // The primary never doubles as its own fallback.
+        fallbacks = fallbacks.filter((fb) => fb !== primary);
+        mainAgent.model = {
+          primary,
+          fallbacks,
+        };
+      }
 
-    const defaults = (agents.defaults || {}) as Record<string, unknown>;
-    {
-      const primary = ensureRev4aPrefix(body.model);
-      let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(defaults.model));
-      fallbacks = fallbacks.filter((fb) => fb !== primary);
-      defaults.model = {
-        primary,
-        fallbacks,
-      };
-    }
+      const defaults = (agents.defaults || {}) as Record<string, unknown>;
+      {
+        const primary = ensureRev4aPrefix(requestedModel);
+        let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(defaults.model));
+        fallbacks = fallbacks.filter((fb) => fb !== primary);
+        defaults.model = {
+          primary,
+          fallbacks,
+        };
+      }
 
-    // Write back
-    const newConfig = JSON.stringify(config, null, 2);
-    execSync(
-      `docker exec -i ${safeContainer} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-      { timeout: 15000, maxBuffer: 1024 * 1024, input: newConfig },
-    );
+      // Write back
+      const newConfig = JSON.stringify(config, null, 2);
+      execSync(
+        `docker exec -i ${safeContainer} sh -c 'cat > /root/.openclaw/openclaw.json'`,
+        { timeout: 15000, maxBuffer: 1024 * 1024, input: newConfig },
+      );
 
+      return { defaults };
+    });
+    if (locked instanceof NextResponse) return locked;
+    const { defaults } = locked;
     // No gateway restart: the Gateway watches openclaw.json and hot-applies this.
     // Confirmed against a live agent by writing the file exactly the way this
     // route does — the container logged:

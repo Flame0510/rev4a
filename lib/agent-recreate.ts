@@ -250,7 +250,7 @@ async function runRecreate(id: number, agentId: string, image: string): Promise<
     }
     await applyRuntimeConfig(agentId);
     try {
-      patchRev4aProvider(agentId);
+      await patchRev4aProvider(agentId);
     } catch (e) {
       console.error('[agent:recreate] provider patch failed:', (e as Error).message);
     }

@@ -1,4 +1,5 @@
 import { dockerExec, dockerExecShell, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
+import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { getSecret, getProfile, markSynced, markDesynced } from './vault';
 import { getProvider } from './providers';
 import { listAgentContainers as listAgentContainerInfo } from './detect';
@@ -9,6 +10,7 @@ import {
   supersedeSiblings,
 } from './assignments';
 import {
+  assertDeliverable,
   needsNativeRemoval,
   nativeProvider,
   redact,
@@ -17,6 +19,14 @@ import {
   type AssignmentMode,
   type NativeExec,
 } from './native';
+import {
+  discoverVercelTeam,
+  githubDisable,
+  githubEnable,
+  removeStoreEntries,
+  vercelDisable,
+  vercelEnable,
+} from './managed';
 
 /** Containers written to at once. Writes are heavier than reads, so lower. */
 const AGENT_WRITE_CONCURRENCY = 4;
@@ -77,7 +87,7 @@ const READ_COMPLETE = '\x04';
  * Returns '' when the file is genuinely absent or empty, and null when the read
  * did not complete. Callers that write the file back MUST treat null as "do not
  * write": to the rewrite path an unfinished read is indistinguishable from an
- * empty file, and TOOLS.md's "no block yet" branch replaces the whole file.
+ * empty file, and the branch that finds no block to edit would rewrite the whole file.
  *
  * A try/catch alone does not separate the two, which is the trap this function
  * was already caught in. `docker exec` exits 0 on the SIGTERM a timeout sends,
@@ -88,9 +98,8 @@ const READ_COMPLETE = '\x04';
  * died before the end and nothing may be concluded from what arrived.
  *
  * `;` rather than `|| true`: when the file really is missing `cat` fails, the
- * terminator is still printed, and the caller correctly gets '' — the case that
- * must still create TOOLS.md, since an agent from the `custom` template starts
- * without one until OpenClaw writes it.
+ * terminator is still printed, and the caller correctly gets '' — an agent from the
+ * `custom` template starts without a TOOLS.md until OpenClaw writes one.
  */
 async function containerRead(container: string, path: string): Promise<string | null> {
   try {
@@ -110,7 +119,9 @@ function b64(s: string): string {
 }
 
 
-// ── TOOLS.md managed section (per-container) ──────────────────────────────
+// ── TOOLS.md integration block: removal only ─────────────────────────────
+// Rev4a no longer writes this block; earlier releases did, and a successful switch-on
+// removes the row they left for the provider (cleanLegacy below).
 
 const MARKER_START = '<!-- REV4A:INTEGRATIONS:START -->';
 const MARKER_END = '<!-- REV4A:INTEGRATIONS:END -->';
@@ -280,7 +291,9 @@ async function cleanLegacy(container: string, providerId: string): Promise<strin
 
   const script: Record<string, string> = {
     'github-pat': 'rm -rf /root/.config/gh /root/.local/share/gh 2>/dev/null; exit 0',
-    vercel: 'rm -rf /root/.local/share/com.vercel.cli',
+    // No `vercel` entry: the CLI's own files ARE the native delivery now
+    // (managed.ts). The removal happens in vercelDisable, only on switch-off —
+    // removing them here would delete the files an enable just wrote.
     supabase: 'rm -f /root/.supabase/access-token 2>/dev/null; exit 0',
     trello: 'rm -rf /root/.config/trello',
     notion: 'rm -rf /root/.config/notion',
@@ -305,24 +318,64 @@ function execFor(container: string): NativeExec {
   };
 }
 
-// On globalThis: Next bundles each route separately, and every bundle must queue behind the
-// same chain or two routes could patch one agent's openclaw.json at once.
-const g = globalThis as unknown as { __rev4aCredChains?: Map<string, Promise<unknown>> };
-const chains = (g.__rev4aCredChains ??= new Map<string, Promise<unknown>>());
+// ── Provider dispatch ───────────────────────────────────────────────────────
 
 /**
- * One native change at a time per container. `openclaw config patch` is a
- * read-modify-write of openclaw.json, so two providers delivered to one agent at
- * once would race on it.
+ * Secret-store `env` entries an earlier native delivery wrote for a provider the
+ * secret store can no longer carry (or never could). GitHub's names are dropped by
+ * OpenClaw; Vercel's are ignored by the CLI. They are cleaned on enable and disable.
  */
-function serialized<T>(container: string, fn: () => Promise<T>): Promise<T> {
-  const prev = chains.get(container) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  const tail = next.catch(() => undefined);
-  chains.set(container, tail);
-  void tail.then(() => { if (chains.get(container) === tail) chains.delete(container); });
-  return next;
+const STALE_ENV_ENTRIES: Record<string, readonly string[]> = {
+  'github-pat': ['GH_TOKEN', 'GITHUB_TOKEN'],
+  vercel: ['VERCEL_TOKEN'],
+};
+
+/** Deliver one provider, including the two the secret store cannot carry (see managed.ts). */
+async function applyEnable(exec: NativeExec, providerId: string, secret: Record<string, string>): Promise<void> {
+  if (providerId === 'github-pat') {
+    const token = (secret.token ?? '').trim();
+    if (!token) throw new Error('Missing token in the stored credential');
+    await runEnable(exec, providerId, secret); // switch the bundled github skill on
+    await removeStoreEntries(exec, STALE_ENV_ENTRIES['github-pat']);
+    await githubEnable(exec, token);
+    return;
+  }
+  if (providerId === 'vercel') {
+    const token = (secret.token ?? '').trim();
+    if (!token) throw new Error('Missing token in the stored credential');
+    await assertDeliverable(exec, providerId); // same version floor as every other provider
+    const team = await discoverVercelTeam(token);
+    await vercelEnable(exec, token, team);
+    await removeStoreEntries(exec, STALE_ENV_ENTRIES.vercel);
+    return;
+  }
+  await runEnable(exec, providerId, secret);
 }
+
+/** Remove one provider. Every step is attempted; returns the failures (empty = fully removed). */
+async function applyDisable(exec: NativeExec, providerId: string, values: readonly string[]): Promise<string[]> {
+  if (providerId !== 'github-pat' && providerId !== 'vercel') return runDisable(exec, providerId, values);
+  const errors: string[] = [];
+  const attempt = async (what: string, fn: () => Promise<unknown>): Promise<void> => {
+    try { await fn(); } catch (e) { errors.push(redact(`${what}: ${(e as Error).message}`, values)); }
+  };
+  if (providerId === 'github-pat') {
+    await attempt('remove the GitHub identity', () => githubDisable(exec));
+    await attempt('remove the github skill entry', () => runDisable(exec, providerId, values));
+  } else {
+    await attempt('remove the Vercel config', () => vercelDisable(exec));
+  }
+  await attempt('remove the leftover environment entries', () => removeStoreEntries(exec, STALE_ENV_ENTRIES[providerId]));
+  return errors;
+}
+
+/**
+ * One change at a time per container, on the queue every writer of the agent's openclaw.json
+ * shares (lib/agent-config-lock.ts): `openclaw config patch` is a read-modify-write of the
+ * file, so two providers delivered to one agent at once — or a delivery racing a runtime
+ * patch or a whole-file rewrite — would lose an update.
+ */
+const serialized = withAgentConfigLock;
 
 const safeName = (c: string): string => c.replace(/[^a-zA-Z0-9_.-]/g, '');
 
@@ -331,9 +384,10 @@ function secretValues(profileId: string): string[] {
 }
 
 /**
- * Switch a credential on for one agent. Native first; only once that worked are the
- * files and the TOOLS.md row an earlier release wrote for this provider removed, so an
- * agent whose native delivery fails keeps working the old way. Never throws.
+ * Switch a credential on for one agent: the provider's delivery (the secret store and skill
+ * config, the GitHub identity, or the Vercel CLI files). Only once that worked are the files
+ * and the TOOLS.md row an earlier release wrote for this provider removed, so an agent whose
+ * delivery fails keeps what it had. Never throws.
  */
 export async function enableAssignment(
   profileId: string,
@@ -356,7 +410,7 @@ export async function enableAssignment(
     // A re-delivery (secret edited) must not switch back on what was switched off meanwhile.
     if (opts.onlyIfEnabled && !getAssignment(profileId, name)?.enabled) return { container: name, status: 'ok' };
     try {
-      await runEnable(execFor(name), profile.providerId, getSecret(profileId));
+      await applyEnable(execFor(name), profile.providerId, getSecret(profileId));
     } catch (e) {
       const error = (e as Error).message;
       try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
@@ -407,7 +461,7 @@ export async function disableAssignment(profileId: string, container: string): P
     let errors: string[] = [];
     if (existing) {
       try {
-        errors = await runDisable(execFor(name), profile.providerId, secretValues(profileId));
+        errors = await applyDisable(execFor(name), profile.providerId, secretValues(profileId));
       } catch (e) {
         errors = [redact((e as Error).message, secretValues(profileId))];
       }
@@ -456,7 +510,7 @@ export async function reapplyAssignments(container: string): Promise<void> {
         if (!profile || !nativeProvider(profile.providerId)) return;
         if (a.enabled) {
           if (a.mode !== 'env') return;
-          await runEnable(execFor(name), profile.providerId, getSecret(a.profileId));
+          await applyEnable(execFor(name), profile.providerId, getSecret(a.profileId));
           recordAssignment(a.profileId, name, { enabled: true, mode: a.mode, ok: true });
           return;
         }
@@ -464,7 +518,7 @@ export async function reapplyAssignments(container: string): Promise<void> {
         // entries belong to it: only the pending mark goes.
         const takenOver = listLiveForAgent(name).some((o) => o.enabled && o.profileId !== a.profileId
           && getProfile(o.profileId)?.providerId === profile.providerId);
-        const errors = takenOver ? [] : await runDisable(execFor(name), profile.providerId, secretValues(a.profileId));
+        const errors = takenOver ? [] : await applyDisable(execFor(name), profile.providerId, secretValues(a.profileId));
         recordAssignment(a.profileId, name, errors.length
           ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
           : { enabled: false, ok: true });
@@ -482,7 +536,7 @@ export async function reapplyAssignments(container: string): Promise<void> {
 
 /**
  * Enable a credential on the given containers (every agent when none are given).
- * This is what the older "sync" route now means. The profile's status and audit entry are
+ * This is what the legacy sync route now means. The profile's status and audit entry are
  * written per container by {@link enableAssignment}.
  */
 export async function syncProfileToAgents(

@@ -111,7 +111,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/memory` | Agent memory browser |
 | `/gateway` (model rows) | Each model has a **Details** (`⋯`) action opening a modal with what is known about it: description, price and the provider it comes from, architecture and parameters (mixture of experts, layers, hidden size, attention heads, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with their sources, licence and popularity. The facts come from the model's card on Hugging Face and — for the vendor's own size claim and benchmarks — from hand-curated entries that always cite a source and a date; nothing is estimated. |
 | `/crons` | Scheduled cron jobs — auto-discovered from the host gateway and every running agent container (Docker containers with `AGENT_ID` label), on/off toggle, run history per job |
-| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion) — SQLite vault, synced into agent containers as CLI config or, for the REST-only providers, as a config file the agent reads |
+| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion) — SQLite vault; each credential has a switch per agent that delivers it through OpenClaw (environment entries and skill config for Trello, Notion and Supabase, the managed GitHub identity, the Vercel CLI's own files) |
 | `/subscriptions` | ChatGPT (Codex) accounts per agent: connect an agent by device code (Rev4a shows a link and a code, you enter the code on OpenAI), see until when each agent is connected, see the account's usage limits (5 hours and weekly, with reset times), see the model each agent uses (read-only, with a link to the agent panel where it is chosen), disconnect. The tokens stay in the agent's volume; Rev4a stores nothing |
 | `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |
 | `/plugins` | Plugin manager |
@@ -316,36 +316,44 @@ Store third-party service credentials and install them into agent containers.
   Gateway UI.
 - **Five providers.** GitHub, Trello, Vercel, Supabase and Notion. A credential reaches an
   agent the native OpenClaw way: the token is written to the agent's OpenClaw **secret
-  store** as environment entries (`GH_TOKEN` and `GITHUB_TOKEN`, `VERCEL_TOKEN`,
-  `SUPABASE_ACCESS_TOKEN`, `TRELLO_API_KEY` and `TRELLO_TOKEN`, `NOTION_API_TOKEN`) and the
-  matching bundled skill is configured (`skills.entries`: a SecretRef `apiKey` for Notion,
-  an `env` map for Trello, a plain switch-on for GitHub) so it turns eligible by itself.
-  Rev4a writes no CLI config file and no TOOLS.md row; the agent finds the service
-  available from its environment and its skills. `gh`, `vercel` and `supabase` read their
-  variable natively.
+  store** as environment entries (`SUPABASE_ACCESS_TOKEN`, `TRELLO_API_KEY` and
+  `TRELLO_TOKEN`, `NOTION_API_TOKEN`) and the matching bundled skill is configured
+  (`skills.entries`: a SecretRef `apiKey` for Notion, an `env` map for Trello, a plain
+  switch-on for GitHub) so it turns eligible by itself. Rev4a writes no TOOLS.md row; the
+  agent finds the service available from its environment and its skills. `supabase` reads
+  its variable natively.
+- **GitHub and Vercel are special.** OpenClaw drops `GH_TOKEN` and `GITHUB_TOKEN` (they are
+  reserved environment overrides), and the Vercel CLI ignores a token-only environment (for a
+  `northstar` account it forces the account default team). GitHub is delivered as OpenClaw's
+  **managed GitHub identity** — a one-use handoff plus `tools.github.configure`, which keeps
+  only a `tools.github.profileId` in config — and Vercel through the CLI's own `auth.json` +
+  `config.json {currentTeam}`, with an accessible team discovered from the Vercel API. `config.json` is always rewritten, without `currentTeam` when no accessible team is found, so a team left by an earlier delivery never survives. A failed GitHub enable, and a switch-off, remove any `github-setup-*` handoff left in the secret store. Vercel and GitHub are held to the same OpenClaw version floor as the others.
 - **Per-agent switch.** Each credential lists the agents with a **Switch on** / **Switch
   off** button, stored in `credential_assignments`. One credential per provider is active
   on an agent: switching on another profile of the same provider replaces the first.
-  Each row says "delivered natively", an error with its reason (**Retry**), or "Delivered
-  the old way — re-sync to move to native" for an agent that still holds what an earlier
-  release wrote (**Move to native** switches it on and removes the old files and the
-  TOOLS.md row, for that provider on that agent only). Nothing is moved automatically on
-  update. A `Protected` mode (secret kept out of the agent) is reserved and shown
-  disabled, "coming later".
-- **Requirements.** OpenClaw 2026.9.0 or newer; an older agent is refused with a message.
+  Each row shows the switch, or an error with its reason (**Retry**) when delivery failed.
+  When the page cannot read the assignments (network or session error) it says so with a
+  **Retry** and shows no switches, rather than showing every credential as off.
+  There is no separate "delivered the old way" state: switching on delivers the credential
+  the current way and, on success, removes the files and the TOOLS.md row an earlier
+  release wrote for that provider on that agent. Nothing is moved automatically on update.
+  A `Protected` mode (secret kept out of the agent) is reserved and shown disabled,
+  "coming later".
+- **Requirements.** OpenClaw 2026.9.0 or newer; an older agent is refused with a message. Trello needs **2026.9.9** or newer: its bundled skill runs through `jq`, which entered the image with that release, so on an older agent the switch is refused and says to update the agent.
   The assignments are re-applied whenever Rev4a creates, recreates, updates or edits the
   agent; a failure is logged and kept as the assignment's error, and never blocks the
-  operation. Editing a credential's secret re-delivers it to the agents it is on. A
+  operation. Editing a credential's secret re-delivers it to the agents it is on, two agents at a time (the request is allowed up to 300 s). A
   credential switched on anywhere cannot be deleted until it is switched off.
 - **Failures and leftovers.** A switch-off tries every step; if one fails the row says "Removal failed — the token may still be on this agent" with **Retry removal**, the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. Rows for an agent that is stopped (**Switch off**) or deleted (**Forget**) stay listed; deleting an agent drops its rows. A row replaced by another profile of the same provider reads "replaced by <label>". Re-applying runs in the background after create, recreate, update and edit.
-- **Release note / rollback.** Before rolling Rev4a back below this version, switch native credentials off (or they stay in the agents): the older version does not know the secret store, and `gh` prefers `GH_TOKEN` over its own login.
+- **Release note / rollback.** Writes to one agent's `openclaw.json` (credentials, subscriptions, the Rev4a provider block, the Control UI policy, channels, model changes) are queued per agent, so two of them never run at once: they only wait for each other when several happen together. Before rolling Rev4a back below this version, switch credentials off (or they stay in the agents): the older version knows neither the secret store nor the managed GitHub identity, and a replaced profile is never removed.
 - **Codex runtime.** An agent on the ChatGPT subscription runtime gets the note "the token
   reaches only commands run through OpenClaw": environment entries do not reach the Codex
   native shell.
-- **Agent panel.** The CREDENTIALS section lists, read-only, what is switched on for the agent, plus credentials still delivered the old way ("re-sync to move to native").
+- **Agent panel.** The CREDENTIALS section lists, read-only, what is switched on for the agent.
 - **Where the token lives.** In the agent's `~/.openclaw/state/openclaw.sqlite` (unencrypted,
-  on the agent volume, so it survives a recreate and is part of a cold backup) and, for Trello,
-  also as plaintext in `openclaw.json`.
+  on the agent volume, so it survives a recreate and is part of a cold backup), for Trello also
+  as plaintext in `openclaw.json`, for Vercel in `~/.local/share/com.vercel.cli/auth.json`, and
+  for GitHub inside OpenClaw's private `gh` profile under `~/.openclaw/credentials/github/`.
 - **Live detection** shows which credentials are actually installed, matching
   SHA-256 hashes of the tokens found in each container against the stored ones.
 
@@ -411,7 +419,7 @@ Available templates:
 1. The container boots with the newest supported OpenClaw version downloaded here, `openclaw-agent-base:<version>`; the create answers `409` when none is — see [Agent Templates](#agent-templates) below.
 2. OpenClaw gateway starts automatically with `--allow-unconfigured`, generating its own default config.
 3. The route waits for the gateway to finish starting with `waitForGatewayReady()`, up
-   to 60 s: `/startupz` has to report `started`. A 503 (starting or draining), a
+   to 120 s: `/startupz` has to report `started`. A 503 (starting or draining), a
    non-JSON 200 or no answer all mean "not yet".
 4. Once ready, the route writes:
    - `gateway.controlUi` with the browser-origin policy (`withControlUiPolicy()` in `lib/agent-setup.ts`): the Host-header fallback on, so the Control UI is accepted from the host the browser connected to — a public IP is refused without it — while pages from other origins are refused; an `allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` are dropped, any other allowlist is kept. Recreate re-applies the policy. Each new browser still needs a one-time device approval

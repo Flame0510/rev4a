@@ -1001,7 +1001,7 @@ Create a new agent container from a template.
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
-2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 60 s)
+2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 120 s)
 3. Once ready, rewrites `openclaw.json` in one write — `gateway.controlUi`,
    `agents.defaults.model` (primary and fallbacks, always as `rev4a/<provider>/<model>`)
    and `update`; the Gateway reloads the file by itself (no restart)
@@ -2763,6 +2763,8 @@ Update label and/or secret of a credential. A changed secret is re-delivered to 
 
 **Body:** `{ label: string, secret: Record<string, string> }`
 
+Re-delivery runs two agents at a time and the route declares `maxDuration = 300`.
+
 Secret fields are **merged** onto the stored payload, not substituted for it:
 only the fields carrying a non-empty value are written, and every blank field
 keeps whatever is already stored. This matters for the one two-field provider,
@@ -2775,8 +2777,8 @@ agent the credential is switched on for is delivered again (same path as `PUT
 .../assignments`): a success sets `last_synced_at` and the profile status again and writes a
 `sync` audit entry; a failure sets the status to `error` and is kept as the assignment's
 `lastError`. Agents where it failed are listed in `redeliveryFailed` (200 either way).
-Agents the credential is not switched on for, and old-way deliveries, keep the previous
-value until switched on.
+Agents the credential is not switched on for, and anything an earlier release delivered,
+keep the previous value until switched on.
 
 ### `DELETE /api/credentials/[id]`
 Delete a credential and its secret permanently. Answers 409 while it is switched on for any agent or a switch-off is still pending.
@@ -2797,9 +2799,11 @@ Switch the credential on or off for agents.
 
 **Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected' }` or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists).
 
-**Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
+**Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
-Enabling needs OpenClaw 2026.9.0 or newer on the agent; a success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello needs 2026.9.9, whose image ships the `jq` its skill requires; on an older agent the delivery is refused and the assignment records "update the agent"); a success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+
+Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`).
 
 Disabling tries every step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves the row in `pendingRemoval` with `lastError`, answers `status: 'error'`, and the removal is retried when Rev4a re-applies the agent's config; until then the credential cannot be deleted. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry.
 
@@ -2820,16 +2824,18 @@ Kept for older clients: enables the credential on agent containers.
 Each container is handled as `PUT .../assignments` with `enabled: true`. Containers outside `containers` are not touched.
 
 ### `DELETE /api/credentials/[id]/sync`
-Switch the credential off on a single container ("de-sync").
+Switch the credential off on a single container.
 
 **Auth:** browser cookie or bearer token
 
 **Body:** `{ container: string }` — required.
 
-**Response:** `{ ok: true }`, or 502 `{ error }` when the native entries could not be removed.
+**Response:** `{ ok: true }`, or 502 `{ error }` when the entries could not be removed.
 
-Removes the secret store entries and the skill entry, and anything an earlier release wrote
-(CLI auth files, TOOLS.md row). `last_synced_at` stays untouched; the audit entry is `desync`.
+Removes the secret store entries and the skill entry, anything an earlier release wrote
+(CLI auth files, TOOLS.md row), and — for the two special providers — the managed GitHub
+override (`tools.github.configure`, `mode: inherit`) or the Vercel `auth.json`/`config.json`.
+`last_synced_at` stays untouched; the audit entry is `desync`.
 
 ### `GET /api/credentials/detect`
 Live-detect which credentials are actually present inside agent containers.
@@ -2903,7 +2909,10 @@ Credential files read: `~/.config/gh/hosts.yml`,
 `~/.local/share/com.vercel.cli/auth.json` and `config.json`,
 `~/.supabase/access-token` and `/data/supabase/config.toml`,
 `~/.config/trello/config.json`, `~/.config/notion/config.json`, plus TOOLS.md
-markers at `/root/.openclaw/workspace/TOOLS.md`.
+markers at `/root/.openclaw/workspace/TOOLS.md`. A natively delivered GitHub credential
+leaves none of these: the managed identity keeps its token in OpenClaw's private `gh` profile
+under `~/.openclaw/credentials/github/`, so `githubLoggedIn` and `matchedProfiles` stay empty
+for it — its state comes from the assignment, not from here.
 
 `matchedProfiles` is determined by SHA256-hashing the token installed in the container
 and comparing it against the hashed token of each stored profile in the vault.

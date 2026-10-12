@@ -68,7 +68,8 @@ interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?:
  * Body: { agent, enabled, mode? } or { assignments: [{ agent, enabled, mode? }] }.
  * Enabling writes the secret store entries and the skill config on that agent;
  * disabling removes them (and anything an earlier release wrote). Per-agent failures
- * come back in `results` and in the assignment's `lastError`; the call itself is 200.
+ * come back in `results` and in the assignment's `lastError`; the call itself is 200, also when
+ * only the final read of the agent rows fails (`refreshFailed: true`, no `agents`; the caller re-reads).
  * `{ agent, forget: true }` drops the row of an agent that no longer exists (409 otherwise).
  */
 export async function PUT(request: Request,
@@ -111,7 +112,15 @@ export async function PUT(request: Request,
       }
       return p.enabled ? enableAssignment(id, p.agent, p.mode) : disableAssignment(id, p.agent);
     });
-    return NextResponse.json({ results, agents: await buildRows(id) });
+    // The changes are done and recorded. Only the read that builds the answer can fail now, and
+    // that must not turn a committed switch into a 500: answer with the results and let the
+    // page re-read.
+    try {
+      return NextResponse.json({ results, agents: await buildRows(id) });
+    } catch (e: unknown) {
+      console.warn('[credentials] assignments saved, but the refreshed rows could not be built:', (e as Error).message);
+      return NextResponse.json({ results, refreshFailed: true });
+    }
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

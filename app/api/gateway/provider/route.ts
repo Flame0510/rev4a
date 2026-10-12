@@ -221,9 +221,9 @@ export async function GET(request: NextRequest) {
  * 500. `syncAllAgents` already reports Docker and per-container failures as data;
  * this only guards the rest.
  */
-function runSync(): SyncOutcome {
+async function runSync(): Promise<SyncOutcome> {
   try {
-    return syncAllAgents();
+    return await syncAllAgents();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, activeModels: 0, total: 0, synced: [], stopped: [], failed: [], configError: msg, summary: `Not applied to any agent: ${msg}.` };
@@ -238,7 +238,7 @@ export async function POST(request: NextRequest) {
 
     if (body._syncOnly) {
       // Here the sync *is* the operation, so its outcome is the status.
-      const sync = runSync();
+      const sync = await runSync();
       return NextResponse.json(
         sync.ok ? { status: 'ok', sync } : { status: 'error', error: sync.summary, sync },
         { status: sync.ok ? 200 : 502 },
@@ -253,7 +253,7 @@ export async function POST(request: NextRequest) {
     const isRemove = !apiKeyValue || apiKeyValue.trim() === '';
     setProviderApiKey(providerName, isRemove ? null : apiKeyValue!.trim());
     // The key is saved whatever the sync does next; report the two separately.
-    const sync = runSync();
+    const sync = await runSync();
     return NextResponse.json({
       status: 'ok', provider: providerName, configured: !isRemove,
       sync,
@@ -294,7 +294,7 @@ export async function PUT(request: NextRequest) {
     toggleModelOverride(modelId, enabled);
     // `status` is the toggle, committed at this point. `sync` is whether the fleet
     // got it — reported alongside, not folded into `status`.
-    const sync = runSync();
+    const sync = await runSync();
     return NextResponse.json({ status: 'ok', modelId, enabled, provider: models[idx].provider, sync });
   } catch (e: unknown) {
     return NextResponse.json({ status: 'error', error: e instanceof Error ? e.message : String(e) }, { status: 500 });

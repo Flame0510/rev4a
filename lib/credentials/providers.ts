@@ -44,7 +44,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create token',
       },
     ],
-    deliveryMethod: 'env GH_TOKEN, GITHUB_TOKEN + github skill',
+    deliveryMethod: 'OpenClaw managed GitHub identity (the PAT) + github skill',
     docsUrl: 'https://github.com/settings/tokens',
   },
   {
@@ -91,7 +91,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
         docsLabel: 'Create token',
       },
     ],
-    deliveryMethod: 'env VERCEL_TOKEN',
+    deliveryMethod: "the Vercel CLI's own auth.json and config.json",
     docsUrl: 'https://vercel.com/account/tokens',
   },
   {

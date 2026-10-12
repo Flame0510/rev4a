@@ -20,8 +20,9 @@ mounted read-only by the container runtime.
 
 ## Credentials
 
-Credentials are environment variables provided by OpenClaw when switched on natively;
-otherwise follow the Integrations block in TOOLS.md. Never ask for or print a token.
+Credentials are provided by OpenClaw: as environment variables, through the GitHub
+identity, or through the Vercel CLI's own login. If one you need is missing, it is switched
+on from Rev4a's Credentials page. Never ask for or print a token.
 
 ## What Rev4a Handles
 
