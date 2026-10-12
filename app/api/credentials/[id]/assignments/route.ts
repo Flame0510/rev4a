@@ -61,7 +61,7 @@ export async function GET(request: Request,
   }
 }
 
-interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?: unknown }
+interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?: unknown; held?: unknown; intentOnly?: unknown }
 
 /**
  * PUT /api/credentials/[id]/assignments
@@ -72,6 +72,11 @@ interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?:
  * only the final read of the agent rows fails (`refreshFailed: true`, no `agents`; the caller re-reads).
  * 409 (nothing written) when an agent is stopped or busy with an update, recreate, restore, edit or backup:
  * its credentials are re-applied by Rev4a when that ends.
+ * `held: true` on a switch-off says the page saw this credential in the container: the removal runs
+ * even when Rev4a has no enabled row for it (the container, not the table, is the source of truth).
+ * `intentOnly: true` (with `enabled: false`) clears only Rev4a's setting and runs nothing in the container:
+ * the page sends it when the agent holds ANOTHER credential of the same provider, which a provider-wide
+ * removal would delete.
  * `{ agent, forget: true }` drops the row of an agent that no longer exists (409 otherwise).
  */
 export async function PUT(request: Request,
@@ -90,7 +95,7 @@ export async function PUT(request: Request,
     }
 
     const known = new Set((await listAgentContainers({ fresh: true })).map((a) => a.container));
-    const parsed: { agent: string; enabled: boolean; mode: 'env' | 'protected'; forget: boolean }[] = [];
+    const parsed: { agent: string; enabled: boolean; mode: 'env' | 'protected'; forget: boolean; held: boolean; intentOnly: boolean }[] = [];
     for (const it of items) {
       const forget = it.forget === true;
       if (typeof it.agent !== 'string' || !it.agent || (!forget && typeof it.enabled !== 'boolean')) {
@@ -104,7 +109,10 @@ export async function PUT(request: Request,
       if (!forget && it.enabled && !known.has(it.agent)) {
         return NextResponse.json({ error: `Agent "${it.agent}" not found` }, { status: 404 });
       }
-      parsed.push({ agent: it.agent, enabled: it.enabled === true, mode, forget });
+      if ((it.held !== undefined && typeof it.held !== 'boolean') || (it.intentOnly !== undefined && typeof it.intentOnly !== 'boolean')) {
+        return NextResponse.json({ error: '"held" and "intentOnly" must be booleans' }, { status: 400 });
+      }
+      parsed.push({ agent: it.agent, enabled: it.enabled === true, mode, forget, held: it.held === true, intentOnly: it.intentOnly === true && it.enabled === false });
     }
 
     // A stopped or busy agent cannot take the change: refuse the whole call before writing anything.
@@ -119,7 +127,7 @@ export async function PUT(request: Request,
         deleteAssignment(id, p.agent);
         return { container: p.agent, status: 'ok' as const };
       }
-      return p.enabled ? enableAssignment(id, p.agent, p.mode) : disableAssignment(id, p.agent);
+      return p.enabled ? enableAssignment(id, p.agent, p.mode) : disableAssignment(id, p.agent, { held: p.held, intentOnly: p.intentOnly });
     });
     // The changes are done and recorded. Only the read that builds the answer can fail now, and
     // that must not turn a committed switch into a 500: answer with the results and let the

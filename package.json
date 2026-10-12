@@ -66,7 +66,7 @@
     "test:memory-limit": "node scripts/test-agent-memory-limit.mjs",
     "test:docker-exec": "node scripts/test-docker-exec.mjs",
     "test:agent-config-lock": "node scripts/test-agent-config-lock.mjs",
-    "test:credentials": "node scripts/test-credentials-mode.mjs && node scripts/test-credentials-native.mjs && node scripts/test-credentials-managed.mjs",
+    "test:credentials": "node scripts/test-credentials-mode.mjs && node scripts/test-credentials-native.mjs && node scripts/test-credentials-managed.mjs && node scripts/test-credentials-detect.mjs && node scripts/test-credentials-intent.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",
     "info:verify": "node scripts/model-info-verify.mjs"
   },

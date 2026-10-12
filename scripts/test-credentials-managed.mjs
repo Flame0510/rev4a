@@ -159,5 +159,10 @@ test('removeStoreEntries runs one rm per name with --yes', async () => {
   ]);
 });
 
+// The detect probe parser has its own file; run it with this suite (package.json lists three files).
+await import('./test-credentials-detect.mjs');
+// So does the intent-only switch-off (its own throw-away data directory).
+await import('./test-credentials-intent.mjs');
+
 await Promise.all(pending);
 console.log(`\n${passed} passed`);

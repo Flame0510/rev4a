@@ -2797,7 +2797,7 @@ Switch the credential on or off for agents.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected' }` or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). Switching on or off answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — its credentials are re-applied when it finishes`); `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). The background re-apply after create, recreate, update and edit does not go through this check.
+**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected', held?: boolean, intentOnly?: boolean }` (`held: true` on a switch-off says the page saw this credential in the container, so the removal runs even when Rev4a has no enabled row for it; `intentOnly: true` with `enabled: false` only clears Rev4a's own setting and runs nothing in the container, for a row whose agent holds ANOTHER credential of the same provider, since the removal is provider-wide and would delete that one; it is refused for a row with a removal pending; both must be booleans, else 400) or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). Switching on or off answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — its credentials are re-applied when it finishes`); `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). The background re-apply after create, recreate, update and edit does not go through this check.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
@@ -2877,11 +2877,28 @@ refresh, not something to block a page render on.
       "matchedProfiles": [
         { "profileId": "cred_xxx", "providerId": "github-pat", "label": "GitHub" }
       ],
-      "installedProviders": ["github-pat"]
+      "installedProviders": ["github-pat"],
+      "credentials": [
+        { "providerId": "github-pat", "present": true, "profileId": "cred_xxx", "profileIds": ["cred_xxx"], "method": "github-identity", "login": "Flame0510" },
+        { "providerId": "trello", "present": false, "profileId": null, "profileIds": [], "method": null }
+      ]
     }
   ]
 }
 ```
+
+`credentials` has one entry per provider and is what the Credentials page's switches show (the container
+is the source of truth; the assignments table is only Rev4a's intent). `present` is true when the agent
+holds a credential of that provider by any method, `false` when the container was read and holds none,
+and `null` when it could not be read for that provider: the secret store failed to open (Trello, Notion, Supabase
+only: a locked or corrupt database, a schema change) or the in-container script did not finish (every provider).
+A `null` is never "holds nothing": the page then shows Rev4a's own setting with a note. A managed GitHub
+profile id with no `hosts.yml` of its own is `present: false` (the identity cannot authenticate). `method` is `store` (OpenClaw secret store: Trello,
+Notion, Supabase), `github-identity` (the managed GitHub identity, read from its private profile),
+`vercel-files` (the Vercel CLI files) or `legacy-files` (a file an earlier release wrote). `profileId`
+is the stored credential whose token hash equals the one the agent holds (`profileIds` lists every match);
+null with `present: true` means the agent holds a token no stored credential accounts for. `login` is
+the GitHub login when known. The response never contains a token or a hash.
 
 An agent whose probe failed is returned in its place as
 `{ "container", "agentId", "error" }` — none of the fields above are present, so

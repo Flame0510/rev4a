@@ -2,6 +2,7 @@ import { dockerExec, dockerExecShell, dockerExecWithInput, mapWithConcurrency } 
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { listAgentContainers as listAgentRows } from '@/lib/subscriptions';
+import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { writeRefusal } from './guard';
 import { getSecret, getProfile, markSynced, markDesynced } from './vault';
 import { getProvider } from './providers';
@@ -10,6 +11,7 @@ import {
   getAssignment,
   listLiveForAgent,
   recordAssignment,
+  setAssignmentError,
   supersedeSiblings,
 } from './assignments';
 import {
@@ -464,21 +466,42 @@ export async function enableAssignment(
  * tried; if any fails the row stays in "removal pending" (kept, retried at re-apply, blocks
  * deleting the credential). Anything an earlier release wrote is removed too. Never throws.
  */
-export async function disableAssignment(profileId: string, container: string): Promise<SyncResult> {
+export async function disableAssignment(
+  profileId: string,
+  container: string,
+  // `held`: the Credentials page saw this profile's token in the container (the container is the
+  // source of truth), so the removal runs even when Rev4a has no enabled row for it.
+  // `intentOnly`: clear only Rev4a's own setting (enabled = false), touch nothing in the container.
+  // It is for a row whose agent holds ANOTHER credential of the same provider: a provider-wide
+  // removal would delete that other credential.
+  opts: { held?: boolean; intentOnly?: boolean } = {},
+): Promise<SyncResult> {
   const name = safeName(container);
   if (!name) return { container, status: 'error', error: 'Invalid agent name' };
   const profile = getProfile(profileId);
   if (!profile) return { container: name, status: 'error', error: 'Credential not found' };
+  if (opts.intentOnly) {
+    return serialized(name, async (): Promise<SyncResult> => {
+      const cur = getAssignment(profileId, name);
+      // A removal that is still pending has real work to do in the container: not an intent-only case.
+      if (cur?.pendingRemoval) return { container: name, status: 'error', error: 'A removal is pending on this agent: retry it instead' };
+      if (cur) {
+        try { recordAssignment(profileId, name, { enabled: false, ok: true }); }
+        catch (e) { return { container: name, status: 'error', error: (e as Error).message }; }
+      }
+      return { container: name, status: 'ok' };
+    });
+  }
   const refusal = await agentWriteRefusal(name);
   if (refusal) return { container: name, status: 'error', error: refusal };
 
   return serialized(name, async (): Promise<SyncResult> => {
     const existing = getAssignment(profileId, name);
     // Replaced by another profile of the same provider: nothing of its own is on the agent.
-    if (existing && !needsNativeRemoval(existing)) return { container: name, status: 'ok' };
+    if (existing && !needsNativeRemoval(existing) && !opts.held) return { container: name, status: 'ok' };
     // Switched on but never delivered (its enable failed) while a sibling of the same provider
     // is delivered here: the environment names on the agent are the sibling's, leave them.
-    if (existing && existing.enabled && !existing.pendingRemoval && existing.syncedAt == null
+    if (!opts.held && existing && existing.enabled && !existing.pendingRemoval && existing.syncedAt == null
       && listLiveForAgent(name).some((o) => o.profileId !== profileId && o.enabled && o.syncedAt != null
         && getProfile(o.profileId)?.providerId === profile.providerId)) {
       try { recordAssignment(profileId, name, { enabled: false, ok: true }); } catch { /* keep the result */ }
@@ -486,7 +509,7 @@ export async function disableAssignment(profileId: string, container: string): P
     }
 
     let errors: string[] = [];
-    if (existing) {
+    if (existing || opts.held) {
       try {
         errors = await applyDisable(execFor(name), profile.providerId, secretValues(profileId));
       } catch (e) {
@@ -558,6 +581,47 @@ export async function reapplyAssignments(container: string): Promise<void> {
         } catch { /* logged above */ }
       }
     }).catch((e) => console.warn(`[credentials] re-apply failed on ${name}:`, (e as Error).message));
+  }
+}
+
+/** True only when the container is known to be running (an unreadable answer counts as not running). */
+async function agentIsRunning(name: string): Promise<boolean> {
+  try {
+    return !!(await listAgentRows({ fresh: true })).find((a) => a.container === name)?.running;
+  } catch {
+    return false;
+  }
+}
+
+/** How long a start, restart or update waits for the Gateway before giving up on the re-apply. */
+const REAPPLY_READY_TIMEOUT_MS = 10 * 60_000;
+
+export const GATEWAY_NOT_READY_ERROR = 'Gateway not ready — credentials not re-applied';
+
+/**
+ * Re-apply an agent's credentials once its Gateway answers /startupz, waiting up to ten
+ * minutes (a slow host, an emulated image). If it never gets ready the enabled assignments
+ * carry `last_error` "Gateway not ready — credentials not re-applied", so the Credentials page
+ * says so instead of the re-apply failing silently. Never throws.
+ */
+export async function reapplyWhenReady(container: string, timeoutMs = REAPPLY_READY_TIMEOUT_MS): Promise<void> {
+  const name = safeName(container);
+  if (!name) return;
+  try {
+    if (await waitForGatewayReady(name, timeoutMs)) {
+      await reapplyAssignments(name);
+      return;
+    }
+    // Nothing to say about an agent that was stopped while we waited: its start re-applies.
+    if (!(await agentIsRunning(name))) return;
+    for (const a of listLiveForAgent(name)) {
+      if (!a.enabled) continue;
+      // Only the message: a row already delivered stays delivered (synced_at is kept).
+      try { setAssignmentError(a.profileId, name, GATEWAY_NOT_READY_ERROR); } catch { /* logged below */ }
+    }
+    console.warn(`[credentials] ${name}: ${GATEWAY_NOT_READY_ERROR}`);
+  } catch (e) {
+    console.warn(`[credentials] re-apply after start failed on ${name}:`, (e as Error).message);
   }
 }
 

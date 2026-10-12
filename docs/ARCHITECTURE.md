@@ -528,9 +528,19 @@ writer, a holder past 2 minutes is logged. A rewrite reads and writes inside the
 The lock is not re-entrant: code inside it must not take it again for the same container.
 Different agents never wait for each other. Test: `npm run test:agent-config-lock`.
 
-`GET /api/credentials/detect` reports which credentials are actually installed,
-by SHA-256 hashing the token found in each container and matching it against the
-stored profiles.
+`GET /api/credentials/detect` reports which credentials each container really holds, and the
+Credentials page drives its switches from it: the container is the source of truth, `credential_assignments`
+is only Rev4a's intent (re-applied after create, recreate, update, edit, start and restart). The one probe
+exec per container (`PROBE_SCRIPT`, fixed text) reads every delivery method with one constant `node -e` script
+(`DIGEST_SCRIPT`) that runs inside the agent and prints hashes only: the OpenClaw secret store (table
+`secret_store_entries` of `~/.openclaw/state/openclaw.sqlite`, read-only; not the CLI, which masks some values),
+the managed GitHub identity (`agents.entries.main.tools.github.profileId` of the parsed `openclaw.json`, then that profile's `hosts.yml` under
+`~/.openclaw/credentials/github/agents/*/<profileId>/`), the Vercel `auth.json`, and the files earlier releases
+wrote. The hash is `hashToken` (SHA-256 of the trimmed value, 12 hex characters), so no raw token ever leaves
+the container nor reaches Rev4a's logs; the parser (`lib/credentials/detect.ts`) matches hashes to the stored
+profiles. The script ends each read with a marker (`store-ok` after the secret store, `digest-ok` as the last line): without them the answer for those providers is `present: null` (unknown), never "holds nothing". After a start, restart, create, recreate, update or edit, `reapplyWhenReady` polls `/startupz` for up to
+10 minutes and then re-applies; a Gateway that never gets ready is recorded as `last_error` on each enabled
+assignment (only `last_error`: a row already delivered keeps `synced_at`; nothing is recorded if the container stopped while waiting).
 
 **Planned:** encryption at rest, and the protected delivery mode.
 

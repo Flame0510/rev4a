@@ -91,6 +91,8 @@ export default function CredentialsPageClient() {
     codex?: boolean;
     matchedProfiles?: { profileId: string; providerId: string; label: string }[];
     installedProviders?: string[];
+    /** What the container really holds per provider: the switches' state (the container is the source of truth). */
+    credentials?: { providerId: string; present: boolean | null; profileId: string | null; profileIds: string[]; method: string | null; login?: string }[];
     /** Present instead of the fields above when the probe failed for this
      *  container. Every other property is absent, so it must be checked first. */
     error?: string;
@@ -158,9 +160,9 @@ export default function CredentialsPageClient() {
   }, []);
 
   /**
-   * Apply a confirmed switch-on/off to the detected (old-way) state right away.
+   * Apply a confirmed switch-on/off to the detected state right away.
    *
-   * The old-way label is driven by `matchedProfiles`, which only detect
+   * The switch is driven by what detect found in the container, which only detect
    * fills in — and detect takes seconds. Waiting for it left the button live
    * again but still showing the state from before the click, so it invited a
    * second, pointless press. This is not a guess: the server has already
@@ -197,8 +199,13 @@ export default function CredentialsPageClient() {
       if (matched) installed.add(profile.providerId);
       else installed.delete(profile.providerId);
 
+      const credentials = (d.credentials ?? []).map((c) => c.providerId !== profile.providerId ? c
+        : matched
+          ? { ...c, present: true, profileId: profile.id, profileIds: [profile.id] }
+          : { providerId: c.providerId, present: false, profileId: null, profileIds: [], method: null });
       return {
         ...d,
+        credentials,
         matchedProfiles: matched
           ? [...without, { profileId: profile.id, providerId: profile.providerId, label: profile.label }]
           : without,
@@ -349,13 +356,17 @@ export default function CredentialsPageClient() {
    * 'on:cred_1:agent_a'. On success the new assignment is applied at once: the server
    * has confirmed it, and the detect refresh that follows only corroborates it.
    */
-  const handleToggle = async (profile: CredentialProfile, container: string, label: string, enable: boolean, forget = false) => {
+  const handleToggle = async (profile: CredentialProfile, container: string, label: string, enable: boolean, forget = false, held?: boolean, intentOnly = false) => {
     if (!claimBusy(`${forget ? 'forget' : enable ? 'on' : 'off'}:${profile.id}:${container}`)) return;
     try {
       const res = await fetch(`/api/credentials/${profile.id}/assignments`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(forget ? { agent: container, forget: true } : { agent: container, enabled: enable, mode: 'env' }),
+        body: JSON.stringify(forget ? { agent: container, forget: true }
+          : enable ? { agent: container, enabled: true, mode: 'env' }
+          // `held`: the page saw this token in the container, so the removal runs even without an enabled row.
+          // `intentOnly`: the agent holds ANOTHER credential of this provider; only Rev4a's setting is cleared.
+          : { agent: container, enabled: false, mode: 'env', held: held ?? false, ...(intentOnly ? { intentOnly: true } : {}) }),
       });
       const json = await readMutation<{
         results?: { container: string; status: string; error?: string; warning?: string }[];
@@ -366,8 +377,9 @@ export default function CredentialsPageClient() {
       // the other profile's assignment on that agent, and its row must say so.
       await loadAssignments();
       if (result?.status === 'ok') {
-        // The old-way files for this provider are gone after either action.
-        applyMatchLocally(profile, container, false);
+        // The server confirmed the change: the container now holds this credential (on) or none (off).
+        // An intent-only clear changed nothing in the container: detect will say what it holds.
+        if (!intentOnly) applyMatchLocally(profile, container, enable);
         const done = forget ? `Forgot ${label}` : enable ? `Switched on for ${label}` : `Switched off for ${label}`;
         showToast(result.warning ? `${done} — ${result.warning}` : done);
       } else {
@@ -539,6 +551,7 @@ export default function CredentialsPageClient() {
                             && !detectFailed
                             && !detectData.some((d) => d.error)
                             && !detectData.some((d) => d.matchedProfiles?.some((m) => m.profileId === p.id))
+                            && !detectData.some((d) => !d.credentials || d.credentials.some((c) => c.providerId === p.providerId && c.present === null))
                             && !assignments.some((a) => a.profileId === p.id && (a.enabled || a.pendingRemoval)) && (
                             <RemoveButton label={p.label ?? p.id} disabled={!!busy} onClick={() => setDeleteId(p.id)} />
                           )}
@@ -598,26 +611,29 @@ export default function CredentialsPageClient() {
                                 );
                               }
 
-                              const matchByProfile = d.matchedProfiles?.some((m) => m.profileId === p.id);
+                              // The container is the source of truth: the switch shows what detect found in it.
+                              // The assignment is only Rev4a's intent (what it re-applies after a restart).
+                              const cred = d.credentials?.find((c) => c.providerId === p.providerId);
                               const assignment = assignments.find((a) => a.profileId === p.id && a.agentId === d.container);
-                              const isOn = !!assignment?.enabled;
-                              const failed = isOn && !!assignment?.lastError;
-                              const native = isOn && !failed;
-                              // A switch-off that failed: the token may still be on the agent.
+                              const intentOn = !!assignment?.enabled;
+                              // null (or no answer for this provider): the container could not be read. Never
+                              // guessed as "holds nothing": the switch shows Rev4a's setting, with a note.
+                              const unknown = !cred || cred.present === null;
+                              const inContainer = cred?.present === true && cred.profileIds.includes(p.id);
+                              // A pending removal keeps the switch on and red, as before.
                               const pending = !!assignment?.pendingRemoval;
-                              // Another profile of this provider is on here; its entries took this one's place.
-                              const replacer = !isOn && !pending
-                                ? assignments.find((o) => o.enabled && o.agentId === d.container && o.profileId !== p.id
-                                  && profiles.find((x) => x.id === o.profileId)?.providerId === p.providerId)
+                              // Another credential of this provider is what the agent holds.
+                              const otherHeld = cred?.present === true && !inContainer;
+                              const otherLabel = otherHeld
+                                ? (cred.profileIds.length ? profiles.find((x) => x.id === cred.profileIds[0])?.label : undefined)
+                                  ?? (cred.login ? `an unknown credential (${cred.login})` : 'an unknown credential')
                                 : undefined;
-                              const replacedBy = replacer ? profiles.find((x) => x.id === replacer.profileId)?.label : undefined;
-                              // A token of this provider present but not from this profile: a
-                              // credential switched off that left something behind, or one delivered
-                              // by hand. There is no "delivered the old way" state: switching on
-                              // delivers the credential the current way, whatever is on the agent.
-                              const heldByOther = !isOn && !pending && !replacedBy && !matchByProfile
-                                ? (d.matchedProfiles ?? []).find((m) => m.providerId === p.providerId)
-                                : undefined;
+                              // Switched on in Rev4a, yet this agent does not hold it (an error from the last
+                              // delivery, or another Rev4a / the agent itself changed it): say so, offer Redeliver.
+                              const missing = intentOn && !inContainer && !pending && !unknown;
+                              const failed = missing && !!assignment?.lastError;
+                              const native = inContainer && !pending;
+                              const heldByOther = otherHeld ? { label: otherLabel as string } : undefined;
                               // Only gh, vercel and supabase have a CLI that could be missing from the
                               // image. The token still reaches the agent as an environment variable, so
                               // this is a note and never blocks the switch. Trello and Notion are used
@@ -627,7 +643,7 @@ export default function CredentialsPageClient() {
                                 || (isSupabase && !d.supabaseCliInstalled);
                               const key = `${p.id}:${d.container}`;
                               // The switch spins only when no button beside it already carries this action's spinner.
-                              const switchLoading = (busy === `on:${key}` && !failed) || (busy === `off:${key}` && native && !pending);
+                              const switchLoading = (busy === `on:${key}` && !missing) || (busy === `off:${key}` && (native || (unknown && intentOn)) && !pending);
                               const label = d.displayName || d.agentId;
                               // An update, recreate, edit or backup owns this agent: its switch waits for the job.
                               const jobBusy = agentInfo[d.container]?.busy ?? null;
@@ -637,21 +653,16 @@ export default function CredentialsPageClient() {
                                 <div key={d.container || d.agentId} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <span style={{
-                                      color: native ? 'var(--green)' : failed || pending ? 'var(--red)' : 'var(--text-dim)',
+                                      color: native ? 'var(--green)' : missing || pending ? 'var(--red)' : 'var(--text-dim)',
                                       fontSize: 12, fontWeight: 700, ...dim,
                                     }}>
-                                      {native ? '✓' : failed || pending ? '!' : '○'}
+                                      {native ? '✓' : missing || pending ? '!' : unknown ? '?' : '○'}
                                     </span>
                                     <span style={{ color: 'var(--text-dim)', flex: 1, ...dim }}>
                                       {label}
-                                      {replacedBy && (
-                                        <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
-                                          replaced by {replacedBy}
-                                        </span>
-                                      )}
                                       {heldByOther && (
                                         <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
-                                          held by {heldByOther.label}
+                                          holds {heldByOther.label}
                                         </span>
                                       )}
                                       {cliMissing && (
@@ -675,7 +686,7 @@ export default function CredentialsPageClient() {
                                           {busy === `off:${key}` ? 'Retrying…' : 'Retry removal'}
                                         </Button>
                                       )}
-                                      {failed && !pending && (
+                                      {missing && (
                                         <Button
                                           variant='primary'
                                           size='sm'
@@ -683,23 +694,26 @@ export default function CredentialsPageClient() {
                                           disabled={!!busy || !!jobBusy}
                                           onClick={() => handleToggle(p, d.container, label, true)}
                                         >
-                                          {busy === `on:${key}` ? 'Switching on…' : 'Retry'}
+                                          {busy === `on:${key}` ? 'Redelivering…' : 'Redeliver'}
                                         </Button>
                                       )}
-                                      {failed && (
+                                      {missing && (
                                         <Button
                                           variant='danger'
                                           size='sm'
                                           loading={busy === `off:${key}`}
                                           disabled={!!busy || !!jobBusy}
-                                          onClick={() => handleToggle(p, d.container, label, false)}
+                                          title={otherHeld
+                                            ? `Clears Rev4a's setting only; the agent keeps ${otherLabel}`
+                                            : undefined}
+                                          onClick={() => handleToggle(p, d.container, label, false, false, false, otherHeld)}
                                         >
                                           {busy === `off:${key}` ? 'Switching off…' : 'Remove'}
                                         </Button>
                                       )}
                                       {!assignmentsFailed && (
                                       <Switch
-                                        checked={native || pending}
+                                        checked={native || pending || (unknown && intentOn)}
                                         tone={pending ? 'danger' : 'default'}
                                         loading={switchLoading}
                                         disabled={!!busy || !!jobBusy}
@@ -709,17 +723,33 @@ export default function CredentialsPageClient() {
                                           : heldByOther
                                           ? `Replaces the credential from “${heldByOther.label}” on this agent`
                                           : undefined}
-                                        onChange={(next) => handleToggle(p, d.container, label, next)}
+                                        onChange={(next) => handleToggle(p, d.container, label, next, false, native)}
                                       />
                                       )}
                                     </div>
                                   </div>
-                                  {(failed || pending) && assignment?.lastError && (
+                                  {missing && (
                                     <div style={{ marginLeft: 18, color: 'var(--red)', fontSize: 10 }}>
-                                      {pending ? 'Removal failed — the token may still be on this agent. ' : ''}{assignment.lastError}
+                                      {failed ? assignment?.lastError : 'Not found in the agent'}
+                                      {otherHeld ? ` — the agent holds ${otherLabel} instead` : ''}
                                     </div>
                                   )}
-                                  {isOn && d.codex && (
+                                  {unknown && (
+                                    <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>
+                                      Could not read the agent's credentials — showing Rev4a's setting
+                                    </div>
+                                  )}
+                                  {pending && assignment?.lastError && (
+                                    <div style={{ marginLeft: 18, color: 'var(--red)', fontSize: 10 }}>
+                                      Removal failed — the token may still be on this agent. {assignment.lastError}
+                                    </div>
+                                  )}
+                                  {inContainer && !intentOn && !pending && (
+                                    <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>
+                                      Found in the agent (not switched on from this Rev4a)
+                                    </div>
+                                  )}
+                                  {native && d.codex && (
                                     <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>{CODEX_NOTE}</div>
                                   )}
                                 </div>

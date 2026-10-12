@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
-import { reapplyAssignments } from '@/lib/credentials/delivery';
+import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ export async function applyRuntimeConfig(containerName: string): Promise<void> {
   // Credentials switched on for this agent (secret store + skill config). Not awaited: the
   // calls take seconds and create, recreate, update and edit must not wait for them. The
   // assignments are the source of truth; each outcome is kept on its own assignment.
-  void reapplyAssignments(containerName).catch((e) => {
+  void reapplyWhenReady(containerName).catch((e) => {
     console.warn(`[agent-setup] credentials not re-applied on ${containerName}:`, (e as Error).message);
   });
 }

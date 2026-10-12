@@ -110,6 +110,17 @@ export function recordAssignment(
   }
 }
 
+/** Set only `last_error` on an existing row; enabled, synced_at and the pending mark stay as they are. */
+export function setAssignmentError(profileId: string, agentId: string, error: string): void {
+  const db = openCredentialsDb(false);
+  try {
+    db.prepare('UPDATE credential_assignments SET last_error = ? WHERE profile_id = ? AND agent_id = ?')
+      .run(error.slice(0, 500), profileId, agentId);
+  } finally {
+    db.close();
+  }
+}
+
 /** Switch off the other profiles of the same provider on this agent: the env names would collide. */
 export function supersedeSiblings(profileId: string, providerId: string, agentId: string): string[] {
   const db = openCredentialsDb(false);

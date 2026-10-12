@@ -3,12 +3,13 @@ import { listProfiles, getSecret } from '@/lib/credentials/vault';
 import {
   listAgentContainers,
   probeContainer,
-  providerTokenHash,
   profileTokenHash,
   vercelCurrentTeam,
   supabaseProjectRef,
-  TOKEN_FIELD,
+  detectHoldings,
+  resolveCredentials,
   type ContainerProbe,
+  type DetectedCredential,
 } from '@/lib/credentials/detect';
 import { agentUsesCodex } from '@/lib/credentials/runtime';
 import { mapWithConcurrency } from '@/lib/docker-exec';
@@ -47,6 +48,13 @@ interface DetectedStatus {
    * `matchedProfiles` holds a credential nobody in the vault accounts for.
    */
   installedProviders: string[];
+  /**
+   * What the container really holds, per provider, by every delivery method (secret store,
+   * managed GitHub identity, Vercel files, an older release's files). The page's switch state.
+   * Hashes are compared inside this route; no token value is ever returned. `present` is null
+   * where the container could not be read for that provider (never guessed as "holds nothing").
+   */
+  credentials: DetectedCredential[];
 }
 
 interface DetectionError {
@@ -86,32 +94,9 @@ function loadHashedProfiles(): HashedProfile[] {
     .filter((p) => p.tokenHash);
 }
 
-/**
- * Hash of whatever token each provider currently has installed in the container.
- *
- * Computed for every provider, not only those with a stored profile. The probe
- * has already fetched all of these files in its single exec, so the extra work
- * is a handful of SHA-256 over short strings — and restricting it would hide the
- * case that matters most: a token present in the container that matches nothing
- * in the vault, which is what a credential edited after syncing looks like.
- */
-function installedHashes(probe: ContainerProbe): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const providerId of Object.keys(TOKEN_FIELD)) {
-    const h = providerTokenHash(probe, providerId);
-    if (h) out.set(providerId, h);
-  }
-  return out;
-}
-
-function matchProfiles(installed: Map<string, string>, profiles: HashedProfile[]) {
-  return profiles
-    .filter((p) => installed.get(p.providerId) === p.tokenHash)
-    .map(({ profileId, providerId, label }) => ({ profileId, providerId, label }));
-}
-
 function shape(container: string, agentId: string, probe: ContainerProbe, profiles: HashedProfile[], codex: boolean): DetectedStatus {
-  const installed = installedHashes(probe);
+  const credentials = resolveCredentials(detectHoldings(probe), profiles, probe.digests);
+  const held = (providerId: string) => credentials.find((c) => c.providerId === providerId);
   // `gh` changed the wording: 2.97 prints "…github.com account <user>", older
   // builds print "…as <user>". The image installs it unpinned from apt, so both
   // are accepted rather than tracking whichever one ships today.
@@ -134,8 +119,8 @@ function shape(container: string, agentId: string, probe: ContainerProbe, profil
     container,
     agentId,
     displayName: probe.agentName || undefined,
-    githubLoggedIn,
-    githubUser: ghMatch?.[1] ?? '',
+    githubLoggedIn: githubLoggedIn || !!held('github-pat')?.present,
+    githubUser: ghMatch?.[1] ?? held('github-pat')?.login ?? '',
     githubCliInstalled: probe.cli.gh,
     vercelLoggedIn,
     vercelUser: vercelLoggedIn ? extractUsername(probe.vercelWhoami) : '',
@@ -145,18 +130,18 @@ function shape(container: string, agentId: string, probe: ContainerProbe, profil
     supabaseLinked: !!projectRef,
     supabaseProjectRef: projectRef,
     supabaseCliInstalled: probe.cli.supabase,
-    // Old-way signal only: presence of the config file written by earlier releases. A natively
-    // delivered credential leaves no file; its state comes from the assignments, not from here.
-    // Presence of the config file is the login signal for both — neither ships a
-    // status command. An empty file now counts as absent, where `test -f` used
-    // to accept it.
-    trelloLoggedIn: !!probe.files.trelloConfig.trim(),
+    // Neither ships a status command: a credential in the secret store or in the config file an
+    // earlier release wrote is what "logged in" means here.
+    trelloLoggedIn: !!held('trello')?.present,
     trelloCliInstalled: probe.cli.trello,
-    notionLoggedIn: !!probe.files.notionConfig.trim(),
+    notionLoggedIn: !!held('notion')?.present,
     codex,
     toolsMdHasMarkers: probe.toolsMdMarkers > 0,
-    matchedProfiles: matchProfiles(installed, profiles),
-    installedProviders: [...installed.keys()],
+    matchedProfiles: profiles
+      .filter((p) => credentials.some((c) => c.profileIds.includes(p.profileId)))
+      .map(({ profileId, providerId, label }) => ({ profileId, providerId, label })),
+    installedProviders: credentials.filter((c) => c.present === true).map((c) => c.providerId),
+    credentials,
   };
 }
 

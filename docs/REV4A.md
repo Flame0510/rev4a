@@ -354,8 +354,17 @@ Store third-party service credentials and install them into agent containers.
   on the agent volume, so it survives a recreate and is part of a cold backup), for Trello also
   as plaintext in `openclaw.json`, for Vercel in `~/.local/share/com.vercel.cli/auth.json`, and
   for GitHub inside OpenClaw's private `gh` profile under `~/.openclaw/credentials/github/`.
-- **Live detection** shows which credentials are actually installed, matching
-  SHA-256 hashes of the tokens found in each container against the stored ones.
+- **The container is the source of truth.** The switches show what each agent really holds, read by
+  live detection from every delivery method (the OpenClaw secret store, the managed GitHub identity,
+  the Vercel CLI files and the files an earlier release wrote) and matched to the stored credentials by
+  SHA-256 hash of the token. Rev4a's own table of switched-on credentials is only its intent, used to
+  re-apply after create, recreate, update, edit, start and restart. Mismatches are shown plainly:
+  switched on but "Not found in the agent" (with **Redeliver**), found in the agent though not switched
+  on from this Rev4a (the switch shows on; switching off removes it), or the agent holds another
+  credential of the same provider (it says which one). While detection has not answered, the rows show
+  a loading state, not "off". When the agent's credentials cannot be read (secret store locked, script cut short) the
+  row says "Could not read the agent's credentials — showing Rev4a's setting" instead of claiming "Not found". After a start or restart Rev4a waits up to 10 minutes for the Gateway
+  before re-applying; if it never gets ready the page shows "Gateway not ready — credentials not re-applied".
 
 ### Subscriptions (`/subscriptions`)
 Use a ChatGPT Plus or Pro (Codex) subscription in an agent. One accordion, "ChatGPT (Codex)": closed it says "N of M agents connected" and the account email(s) with the plan ("Plus", "Pro"); open it lists the models the account offers (name, context) and one row per agent with its state (Connected until a date, Not connected, Stopped, Error), **Connect** / **Disconnect**. A connected agent also shows its model read-only ("Model: gpt-5.6-sol · fallback deepseek-flash") and a link "Change in the agent panel" (`/agents?agent=<id>`). The page manages accounts only; it never chooses a model.
