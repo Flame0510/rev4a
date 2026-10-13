@@ -132,7 +132,7 @@ purpose: it is the last gate before npm and must not assume CI has run on that c
 The Docker stats parser also has focused tests (`node scripts/test-docker-stats.mjs`), as do the
 proxy metering (`node scripts/test-proxy-usage.mjs`) and the update state
 (`node scripts/test-update-state.mjs`), and the Subscriptions helpers
-(`node --no-warnings scripts/test-subscriptions.mjs`), the credential delivery (`npm run test:credentials`)
+(`node --no-warnings scripts/test-subscriptions.mjs`), the credential delivery (`npm run test:credentials`), Docker exec (`npm run test:docker-exec`)
 and the per-agent `openclaw.json` write queue (`npm run test:agent-config-lock`). Anything that writes an
 agent's `openclaw.json` must go through `withAgentConfigLock` (`lib/agent-config-lock.ts`).
 These gates do not replace a running-instance check for behavior changes.

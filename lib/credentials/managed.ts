@@ -102,11 +102,14 @@ async function sweepGithubHandoffs(exec: NativeExec): Promise<void> {
 /** Drop the managed override (the agent falls back to native/absent GitHub identity). */
 export async function githubDisable(exec: NativeExec): Promise<void> {
   const script = 'openclaw gateway call tools.github.configure --params "$REV4A_CONF_PARAMS" >/dev/null';
-  await exec.run(['sh', '-c', script], {
-    OPENCLAW_GATEWAY_URL: GATEWAY_URL,
-    REV4A_CONF_PARAMS: githubInheritParams(),
-  });
-  await sweepGithubHandoffs(exec);
+  try {
+    await exec.run(['sh', '-c', script], {
+      OPENCLAW_GATEWAY_URL: GATEWAY_URL,
+      REV4A_CONF_PARAMS: githubInheritParams(),
+    });
+  } finally {
+    await sweepGithubHandoffs(exec);
+  }
 }
 
 // ── Vercel: the CLI's own auth.json + config.json{currentTeam} ─────────────
@@ -148,7 +151,7 @@ export function vercelConfig(team: string | null): Record<string, string> {
 
 export async function vercelEnable(exec: NativeExec, token: string, team: string | null): Promise<void> {
   const script = [
-    `mkdir -p ${VERCEL_DIR}`,
+    `umask 077 && mkdir -p ${VERCEL_DIR}`,
     `printf '%s' "$REV4A_VERCEL_AUTH" | base64 -d > ${VERCEL_DIR}/auth.json`,
     `printf '%s' "$REV4A_VERCEL_CONF" | base64 -d > ${VERCEL_DIR}/config.json`,
     `chmod 600 ${VERCEL_DIR}/auth.json ${VERCEL_DIR}/config.json`,

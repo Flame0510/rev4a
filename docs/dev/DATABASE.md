@@ -524,6 +524,10 @@ CREATE TABLE credential_profiles (
 );
 ```
 
+`last_synced_at` records the last successful delivery. A failed delivery changes
+`status` to `error` without stamping a new sync time; a successful removal also
+leaves the last delivery time intact.
+
 ### `credential_secrets` — stored secret payloads
 
 ```sql

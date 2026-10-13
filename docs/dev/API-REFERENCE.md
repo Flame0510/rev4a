@@ -1112,7 +1112,7 @@ banner polls to resume after a reload. `status`: `rebuilding` → `done` | `fail
 ---
 
 ### `POST /api/agents/[id]/restart`
-Restart an agent container (shorter than recreate — keeps everything intact).
+Restart an agent container (shorter than recreate — keeps everything intact). After a successful restart, credential assignments are re-applied in the background once the Gateway is ready.
 
 **Auth:** browser cookie
 
@@ -1211,7 +1211,7 @@ taken: restoring replaces the volume with the archive on purpose.
    large workspace takes minutes to decompress. The file name reaches the container
    through its environment, never as shell syntax.
 3. The container is started again even when the extract failed, so the agent never stays
-   down. A volume with no container (volume-only agent) is restored anyway.
+   down. After a successful start, credential assignments are re-applied in the background once the Gateway is ready. A volume with no container (volume-only agent) is restored anyway.
 
 The job is recorded in `agent_restores`, so a page reload or a Rev4a restart never loses
 it: while it runs, anything else that would touch the agent answers `409`
@@ -1382,8 +1382,7 @@ its pre-update backup exists. `202` with the `update` (`rolling_back`).
 2. The agent is stopped and its volume replaced by the pre-update backup.
 3. The container is recreated on `openclaw-agent-base:<from>` and must report that version.
 
-Rev4a's config is not re-applied: the restored `openclaw.json` is the one that version
-accepted. Everything the agent did after the backup is lost. `409` when there is nothing
+The restored `openclaw.json` stays in place; credential assignments are re-applied in the background after the previous version starts and its Gateway is ready. Everything the agent did after the backup is lost. `409` when there is nothing
 to roll back, the backup is gone, or an update or backup is running.
 
 ---
@@ -1397,6 +1396,7 @@ Start, stop or restart an agent container.
 
 Redundant actions are no-ops: starting a running container, or stopping a stopped
 one, succeeds without touching it.
+After an actual start or restart, credential assignments are re-applied in the background once the Gateway is ready.
 
 **Errors:** `400` for a malformed body, an unknown action, or an invalid agent id;
 `404` when no container carries that `AGENT_ID`.
@@ -2790,22 +2790,22 @@ Every agent with this credential's assignment.
 
 **Auth:** browser cookie or bearer token
 
-**Response:** `{ native: boolean, agents: { container, agentId, displayName, running, codex, assignment: Assignment | null }[] }` where `Assignment = { profileId, agentId, enabled, mode: 'env'|'protected', syncedAt, lastError, pendingRemoval }`. One row per agent, stopped ones included, plus a row for every assignment whose container no longer exists. `codex` is true when the agent's model (the `main` entry of `agents.list`, else `agents.defaults.model`) runs on the ChatGPT (Codex) runtime. `enabled: false` with `pendingRemoval: false` is a switched-off row, or one replaced by another profile of the same provider; `pendingRemoval: true` means the last switch-off failed and the token may still be on the agent (`lastError` says why). No secret is returned.
+**Response:** `{ native: boolean, agents: { container, agentId, displayName, running, codex, assignment: Assignment | null }[] }` where `Assignment = { profileId, agentId, enabled, mode: 'env'|'protected', syncedAt, lastError, pendingRemoval }`. `native` means this credential's provider has a native delivery implementation in Rev4a; it does not assert that the agent's OpenClaw version supports it or that a delivery succeeded. One row per agent, stopped ones included, plus a row for every assignment whose container no longer exists. `codex` is true when the agent's model (the `main` entry of `agents.list`, else `agents.defaults.model`) runs on the ChatGPT (Codex) runtime. `enabled: false` with `pendingRemoval: false` is a switched-off row, or one replaced by another profile of the same provider; `pendingRemoval: true` means the last switch-off failed and the token may still be on the agent (`lastError` says why). No secret is returned.
 
 ### `PUT /api/credentials/[id]/assignments`
 Switch the credential on or off for agents.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected', held?: boolean, intentOnly?: boolean }` (`held: true` on a switch-off says the page saw this credential in the container, so the removal runs even when Rev4a has no enabled row for it; `intentOnly: true` with `enabled: false` only clears Rev4a's own setting and runs nothing in the container, for a row whose agent holds ANOTHER credential of the same provider, since the removal is provider-wide and would delete that one; it is refused for a row with a removal pending; both must be booleans, else 400) or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). Switching on or off answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — its credentials are re-applied when it finishes`); `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). The background re-apply after create, recreate, update and edit does not go through this check.
+**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected', held?: boolean, intentOnly?: boolean }` (`held: true` on a switch-off says the page saw this credential in the container, so the removal runs even when Rev4a has no enabled row for it; `intentOnly: true` with `enabled: false` only clears Rev4a's own setting and runs nothing in the container, for a row whose agent holds ANOTHER credential of the same provider, since the removal is provider-wide and would delete that one; it is refused for a row with a removal pending; both must be booleans, else 400) or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). A container write answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — try again when it finishes`); `intentOnly` and `forget` run no container command and bypass this check. `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). Background re-apply after create, recreate, update, edit, restore, rollback, start and restart does not go through this check. The route allows up to 300 seconds for a batch of up to 100 items.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
-Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello needs 2026.9.9, whose image ships the `jq` its skill requires; on an older agent the delivery is refused and the assignment records "update the agent"); a success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello needs 2026.9.9, whose image ships the `jq` its skill requires); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
 
 Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`).
 
-Disabling tries every step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves the row in `pendingRemoval` with `lastError`, answers `status: 'error'`, and the removal is retried when Rev4a re-applies the agent's config; until then the credential cannot be deleted. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry.
+Disabling tries every supported step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves a row in `pendingRemoval` with `lastError`, including a failed `held: true` removal with no previous row; the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry. When the last TOOLS.md integration row is removed, its entire marker block is removed.
 
 ### `GET /api/credentials/assignments?agent=<container>`
 Every assignment (enabled, switched off, removal pending, failed; optionally of one agent) with the credential `label` and `providerId`, plus `knownAgents`: the containers that exist, running or stopped, and `agents`: per known agent `{ container, displayName, running, busy }` (`displayName` is the `AGENT_NAME` env or null; `busy` is the reason from `agentBusyReason` while an update, recreate, restore, edit, backup or memory-limit change owns the agent, else null). Reads the vault database and one `docker ps`/`inspect`; never execs into an agent.
@@ -2870,7 +2870,7 @@ refresh, not something to block a page render on.
       "supabaseProjectRef": "",
       "supabaseCliInstalled": true,
       "trelloLoggedIn": false,
-      "trelloCliInstalled": true,
+      "trelloCliInstalled": false,
       "notionLoggedIn": false,
       "codex": false,
       "toolsMdHasMarkers": true,
@@ -2891,7 +2891,7 @@ refresh, not something to block a page render on.
 is the source of truth; the assignments table is only Rev4a's intent). `present` is true when the agent
 holds a credential of that provider by any method, `false` when the container was read and holds none,
 and `null` when it could not be read for that provider: the secret store failed to open (Trello, Notion, Supabase
-only: a locked or corrupt database, a schema change) or the in-container script did not finish (every provider).
+only: a locked or corrupt database or a read error) or the in-container script did not finish (every provider). An older database without `secret_store_entries` is a successful empty store read.
 A `null` is never "holds nothing": the page then shows Rev4a's own setting with a note. A managed GitHub
 profile id with no `hosts.yml` of its own is `present: false` (the identity cannot authenticate). `method` is `store` (OpenClaw secret store: Trello,
 Notion, Supabase), `github-identity` (the managed GitHub identity, read from its private profile),
@@ -2907,10 +2907,12 @@ consumers must check `error` first.
 Each container is read with a **single** `docker exec` running one script that
 emits NUL-delimited key/value pairs; containers are probed concurrently. The
 script reads the credential files directly and the parsing happens in
-JavaScript. Three CLI calls run last and only feed display fields — `githubUser`,
+JavaScript. Three CLI calls run last and may feed display fields — `githubUser`,
 `vercelUser`, `vercelTeam`, and the `githubLoggedIn` / `vercelLoggedIn` /
 `supabaseLoggedIn` flags, along with `supabaseLinked` and `supabaseProjectRef`,
 which are read only when `supabaseLoggedIn` is true. `supabaseLoggedIn` follows
+`githubLoggedIn` and `githubUser` also read the managed GitHub identity when present.
+`supabaseLoggedIn` follows
 the **exit status** of `supabase projects list`, not the text it prints, so a
 failure whose wording is unfamiliar still reads as not logged in.
 `vercelLoggedIn` likewise needs `vercel whoami` to exit 0 with a plain username
@@ -2923,13 +2925,13 @@ container, so a completion sentinel is emitted before them: a probe cut short
 during them still yields valid token matching, with those display fields empty.
 
 Credential files read: `~/.config/gh/hosts.yml`,
+`~/.openclaw/state/openclaw.sqlite` (`secret_store_entries`),
+`~/.openclaw/openclaw.json` (`agents.entries.main.tools.github.profileId`),
+`~/.openclaw/credentials/github/agents/*/<profileId>/hosts.yml` for the managed GitHub identity,
 `~/.local/share/com.vercel.cli/auth.json` and `config.json`,
 `~/.supabase/access-token` and `/data/supabase/config.toml`,
 `~/.config/trello/config.json`, `~/.config/notion/config.json`, plus TOOLS.md
-markers at `/root/.openclaw/workspace/TOOLS.md`. A natively delivered GitHub credential
-leaves none of these: the managed identity keeps its token in OpenClaw's private `gh` profile
-under `~/.openclaw/credentials/github/`, so `githubLoggedIn` and `matchedProfiles` stay empty
-for it — its state comes from the assignment, not from here.
+markers at `/root/.openclaw/workspace/TOOLS.md`. The managed GitHub identity and secret store contribute to `githubLoggedIn` and `matchedProfiles` when their tokens match stored profiles. `trelloCliInstalled` is a legacy CLI probe; it is false on the 2026.9.9 image, whose bundled Trello skill uses `curl` and `jq`. The detect route allows up to 300 seconds for its container probes.
 
 `matchedProfiles` is determined by SHA256-hashing the token installed in the container
 and comparing it against the hashed token of each stored profile in the vault.

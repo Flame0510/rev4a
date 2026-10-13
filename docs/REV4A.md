@@ -328,10 +328,9 @@ Store third-party service credentials and install them into agent containers.
   **managed GitHub identity** — a one-use handoff plus `tools.github.configure`, which keeps
   only a `tools.github.profileId` in config — and Vercel through the CLI's own `auth.json` +
   `config.json {currentTeam}`, with an accessible team discovered from the Vercel API. `config.json` is always rewritten, without `currentTeam` when no accessible team is found, so a team left by an earlier delivery never survives. A failed GitHub enable, and a switch-off, remove any `github-setup-*` handoff left in the secret store. Vercel and GitHub are held to the same OpenClaw version floor as the others.
-- **Per-agent switch.** Each credential lists the agents with a **Switch on** / **Switch
-  off** button, stored in `credential_assignments`. One credential per provider is active
+- **Per-agent switch.** Each credential lists the agents with a **Switch**, with Rev4a's intent stored in `credential_assignments`. One credential per provider is active
   on an agent: switching on another profile of the same provider replaces the first.
-  Each row shows the switch, or an error with its reason (**Retry**) when delivery failed.
+  Each row shows the switch and, when needed, **Redeliver**, **Remove** or **Retry removal**. A credential enabled in Rev4a but missing from the agent says "Not found in the agent"; an unreadable provider shows an unknown state (`?`) and Rev4a's setting. A stopped or busy agent shows a disabled switch with the reason.
   When the page cannot read the assignments (network or session error) it says so with a
   **Retry** and shows no switches, rather than showing every credential as off.
   There is no separate "delivered the old way" state: switching on delivers the credential
@@ -339,12 +338,12 @@ Store third-party service credentials and install them into agent containers.
   release wrote for that provider on that agent. Nothing is moved automatically on update.
   A `Protected` mode (secret kept out of the agent) is reserved and shown disabled,
   "coming later".
-- **Requirements.** OpenClaw 2026.9.0 or newer; an older agent is refused with a message. Trello needs **2026.9.9** or newer: its bundled skill runs through `jq`, which entered the image with that release, so on an older agent the switch is refused and says to update the agent.
-  The assignments are re-applied whenever Rev4a creates, recreates, updates or edits the
+- **Requirements.** OpenClaw 2026.9.0 or newer for delivery; an older agent is refused with a message and no new enabled assignment. Trello needs **2026.9.9** or newer: its bundled skill runs through `jq`, which entered the image with that release, so on an older agent the switch is refused and says to update the agent.
+  The assignments are re-applied whenever Rev4a creates, recreates, updates, edits, restores, rolls back, starts or restarts the
   agent; a failure is logged and kept as the assignment's error, and never blocks the
   operation. Editing a credential's secret re-delivers it to the agents it is on, two agents at a time (the request is allowed up to 300 s). A
-  credential switched on anywhere cannot be deleted until it is switched off.
-- **Failures and leftovers.** A switch-off tries every step; if one fails the row says "Removal failed — the token may still be on this agent" with **Retry removal**, the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. Rows for an agent that is stopped or busy show its display name (the container name as a small label) and a disabled switch with the reason ("Not running — start the agent to change its credentials" / "Busy: <reason> — its credentials are re-applied when it finishes"); the server refuses such a change with 409, and Rev4a re-applies the enabled credentials itself after a recreate, update or edit, and in the background after a start or restart from the Agents page once the Gateway is ready — so a secret edited while the agent was stopped, or a removal left pending, lands when it comes back. The switch of a running agent is disabled the same way while a job owns it. Rows for a deleted agent (**Forget**) stay listed; deleting an agent drops its rows. A row replaced by another profile of the same provider reads "replaced by <label>". Re-applying runs in the background after create, recreate, update and edit.
+  credential switched on anywhere cannot be deleted until it is switched off. A failed delivery changes the card's status without changing its last successful delivery time; a credential never delivered shows "Never delivered".
+- **Failures and leftovers.** A switch-off tries every supported step; if one fails the row says "Removal failed — the token may still be on this agent" with **Retry removal**, the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. This includes a failed removal of a credential found in the agent with no prior Rev4a assignment. Rows for an agent that is stopped or busy show its display name (the container name as a small label) and a disabled switch with the reason ("Not running — start the agent to change its credentials" / "Busy: <reason> — try again when it finishes"); the server refuses a container write with 409, while an intent-only **Remove** can clear Rev4a's setting without touching a stopped or busy container. Re-apply runs in the background after create, recreate, update, edit, restore, rollback, start and restart once the Gateway is ready. The switch of a running agent is disabled while a job owns it. Rows for a deleted agent (**Forget**) stay listed; deleting an agent drops its rows. A row replaced by another profile of the same provider reads "replaced by <label>".
 - **Release note / rollback.** Writes to one agent's `openclaw.json` (credentials, subscriptions, the Rev4a provider block, the Control UI policy, channels, model changes) are queued per agent, so two of them never run at once: they only wait for each other when several happen together. Before rolling Rev4a back below this version, switch credentials off (or they stay in the agents): the older version knows neither the secret store nor the managed GitHub identity, and a replaced profile is never removed.
 - **Codex runtime.** An agent on the ChatGPT subscription runtime gets the note "the token
   reaches only commands run through OpenClaw": environment entries do not reach the Codex
@@ -358,7 +357,7 @@ Store third-party service credentials and install them into agent containers.
   live detection from every delivery method (the OpenClaw secret store, the managed GitHub identity,
   the Vercel CLI files and the files an earlier release wrote) and matched to the stored credentials by
   SHA-256 hash of the token. Rev4a's own table of switched-on credentials is only its intent, used to
-  re-apply after create, recreate, update, edit, start and restart. Mismatches are shown plainly:
+  re-apply after create, recreate, update, edit, restore, rollback, start and restart. Mismatches are shown plainly:
   switched on but "Not found in the agent" (with **Redeliver**), found in the agent though not switched
   on from this Rev4a (the switch shows on; switching off removes it), or the agent holds another
   credential of the same provider (it says which one). While detection has not answered, the rows show

@@ -494,7 +494,7 @@ Two providers skip the environment entry, because it cannot work
   command fails. The delivery discovers an accessible team from the Vercel API and writes
   the CLI's own `auth.json` + `config.json {currentTeam}`.
 
-Disabling runs `openclaw secrets store rm --yes NAME`, the same patch with `null`, and reload.
+Disabling on OpenClaw 2026.9.0 or newer runs `openclaw secrets store rm --yes NAME`, the same patch with `null`, and reload. Older agents have no secret store or managed GitHub identity; disabling skips those steps and cleans only legacy files (including Vercel CLI files).
 Every step is attempted even when one fails; any failure keeps the row in `pending_removal`
 with `last_error` (retried at re-apply, blocks deleting the credential), never thrown out of a
 batch. The removal runs only for a row that is enabled or pending: a sibling replaced by
@@ -504,12 +504,11 @@ Calls on one container are serialized on the agent's config lock (below): the pa
 successful native delivery the files and TOOLS.md row an earlier release wrote for that
 provider on that agent are removed. `applyRuntimeConfig` starts, in the background and
 without delaying the caller, a re-apply of the agent's assignments (enabled ones delivered
-again, pending removals retried) after create, recreate, update and edit; the lifecycle route does the same after a
-start or restart once the Gateway is ready (a plain start does not run `applyRuntimeConfig`). Credential changes on
-a stopped or busy agent are refused (409); the store and `openclaw.json` live on
+again, pending removals retried) after create, recreate, update and edit; the restart and lifecycle routes do the same after a restart or start, and restore and rollback do so after a successful start once the Gateway is ready. Credential changes on
+a stopped or busy agent are refused (409) when they write into the container; an intent-only removal changes Rev4a's table without a container write. The store and `openclaw.json` live on
 the agent volume. Environment entries reach Gateway-hosted exec but not the Codex native
 shell. Deleting an agent deletes its assignments. A successful switch updates the profile's
-`last_synced_at`/status and writes `sync`/`desync` audit entries.
+`last_synced_at`/status and writes `sync`/`desync` audit entries. Failed delivery changes status but leaves `last_synced_at` at the last successful delivery.
 
 **Rollback.** The previous Rev4a still reads the vault and does its old delivery, but it knows
 nothing of the secret store and of the managed GitHub identity: its switch-off removes neither.
@@ -530,7 +529,7 @@ Different agents never wait for each other. Test: `npm run test:agent-config-loc
 
 `GET /api/credentials/detect` reports which credentials each container really holds, and the
 Credentials page drives its switches from it: the container is the source of truth, `credential_assignments`
-is only Rev4a's intent (re-applied after create, recreate, update, edit, start and restart). The one probe
+is only Rev4a's intent (re-applied after create, recreate, update, edit, restore, rollback, start and restart). The one probe
 exec per container (`PROBE_SCRIPT`, fixed text) reads every delivery method with one constant `node -e` script
 (`DIGEST_SCRIPT`) that runs inside the agent and prints hashes only: the OpenClaw secret store (table
 `secret_store_entries` of `~/.openclaw/state/openclaw.sqlite`, read-only; not the CLI, which masks some values),
@@ -538,7 +537,7 @@ the managed GitHub identity (`agents.entries.main.tools.github.profileId` of the
 `~/.openclaw/credentials/github/agents/*/<profileId>/`), the Vercel `auth.json`, and the files earlier releases
 wrote. The hash is `hashToken` (SHA-256 of the trimmed value, 12 hex characters), so no raw token ever leaves
 the container nor reaches Rev4a's logs; the parser (`lib/credentials/detect.ts`) matches hashes to the stored
-profiles. The script ends each read with a marker (`store-ok` after the secret store, `digest-ok` as the last line): without them the answer for those providers is `present: null` (unknown), never "holds nothing". After a start, restart, create, recreate, update or edit, `reapplyWhenReady` polls `/startupz` for up to
+profiles. The script ends each read with a marker (`store-ok` after the secret store, including an older database without the table; `digest-ok` as the last line): without them the answer for those providers is `present: null` (unknown), never "holds nothing". After a start, restart, create, recreate, update, edit, restore or rollback, `reapplyWhenReady` polls `/startupz` for up to
 10 minutes and then re-applies; a Gateway that never gets ready is recorded as `last_error` on each enabled
 assignment (only `last_error`: a row already delivered keeps `synced_at`; nothing is recorded if the container stopped while waiting).
 

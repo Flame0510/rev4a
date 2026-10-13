@@ -531,7 +531,7 @@ export default function CredentialsPageClient() {
                           <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                             <span>{p.secretMasked ?? '••••••••'}</span>
                             <span style={{ color: p.status === 'active' ? 'var(--green)' : 'var(--red)' }}>●</span>
-                            <span>delivered {formatRelative(p.lastSyncedAt)}</span>
+                            <span>{p.lastSyncedAt ? `delivered ${formatRelative(p.lastSyncedAt)}` : 'Never delivered'}</span>
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -719,7 +719,7 @@ export default function CredentialsPageClient() {
                                         disabled={!!busy || !!jobBusy}
                                         ariaLabel={`${p.label ?? p.id} delivered to ${label}`}
                                         title={jobBusy
-                                          ? `Busy: ${jobBusy} — its credentials are re-applied when it finishes`
+                                          ? `Busy: ${jobBusy} — try again when it finishes`
                                           : heldByOther
                                           ? `Replaces the credential from “${heldByOther.label}” on this agent`
                                           : undefined}
@@ -757,8 +757,8 @@ export default function CredentialsPageClient() {
                             })}
                           </div>
                         )}
-                      {/* Assignments whose agent detect did not list: stopped (switch off runs when Rev4a
-                          next applies the agent's config) or deleted (the row can only be forgotten). */}
+                      {/* Assignments whose agent detect did not list: stopped (switch off is
+                          disabled until start) or deleted (the row can only be forgotten). */}
                       {detectLoaded && assignments
                         .filter((a) => a.profileId === p.id && (a.enabled || a.pendingRemoval || a.lastError)
                           && !detectData.some((d) => d.container === a.agentId))
@@ -769,7 +769,7 @@ export default function CredentialsPageClient() {
                           const stopped = exists && !(info?.running ?? false);
                           const jobBusy = info?.busy ?? null;
                           const why = jobBusy
-                            ? `Busy: ${jobBusy} — its credentials are re-applied when it finishes`
+                            ? `Busy: ${jobBusy} — try again when it finishes`
                             : stopped ? 'Not running — start the agent to change its credentials' : undefined;
                           const locked = !!why;
                           const k = `${p.id}:${a.agentId}`;

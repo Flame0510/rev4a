@@ -319,10 +319,8 @@ export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCar
  * that waits: the cards, the stored profiles and the Add buttons all come from
  * the cheap endpoint and render immediately.
  *
- * No Switch on / Switch off button is drawn here on purpose. Their label depends on
- * whether the credential is on for the agent, which is exactly what is still unknown —
- * a button rendered now would have to guess, and guessing wrong invites a click
- * that does the opposite of what it says.
+ * No Switch is drawn here: its checked state depends on what the agent holds.
+ * Detection has not answered yet, so the page cannot assign a checked state.
  */
 export function AgentSyncRowsSkeleton({ rows = 3 }: { rows?: number }) {
   const widths = ['62%', '48%', '55%'];

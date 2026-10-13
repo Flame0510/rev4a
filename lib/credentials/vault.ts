@@ -222,9 +222,16 @@ export function markDesynced(id: string): void {
 export function markSynced(id: string, status: 'active' | 'error'): void {
   const db = openDb(false);
   try {
-    db.prepare(
-      'UPDATE credential_profiles SET last_synced_at = ?, status = ?, updated_at = ? WHERE id = ?',
-    ).run(Date.now(), status, Date.now(), id);
+    const now = Date.now();
+    if (status === 'active') {
+      db.prepare(
+        'UPDATE credential_profiles SET last_synced_at = ?, status = ?, updated_at = ? WHERE id = ?',
+      ).run(now, status, now, id);
+    } else {
+      db.prepare(
+        'UPDATE credential_profiles SET status = ?, updated_at = ? WHERE id = ?',
+      ).run(status, now, id);
+    }
     appendAudit(db, 'sync', id, status);
   } finally {
     db.close();

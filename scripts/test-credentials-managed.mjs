@@ -97,6 +97,7 @@ test('vercel enable without a team still writes config.json, without currentTeam
   const conf = JSON.parse(Buffer.from(env.REV4A_VERCEL_CONF, 'base64').toString());
   assert.ok(!('currentTeam' in conf), 'no stale currentTeam');
   assert.ok(!JSON.stringify(argv).includes(TOKEN), 'token in argv or script text');
+  assert.ok(argv[2].startsWith('umask 077 &&'), 'auth.json is private from creation');
 });
 
 test('vercelConfig carries currentTeam only when a team was found', () => {
@@ -148,6 +149,14 @@ test('a failing sweep does not fail the disable', async () => {
   let n = 0;
   const exec = { run: async () => { if (n++ === 1) throw new Error('list failed'); return ''; }, runWithInput: async () => '' };
   await m.githubDisable(exec);
+});
+
+test('github disable sweeps handoffs even when configure fails', async () => {
+  const calls = [];
+  const exec = { run: async (argv) => { calls.push(argv); if (calls.length === 1) throw new Error('configure failed'); return ''; }, runWithInput: async () => '' };
+  await assert.rejects(m.githubDisable(exec), /configure failed/);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1][2], /secrets store list/);
 });
 
 test('removeStoreEntries runs one rm per name with --yes', async () => {

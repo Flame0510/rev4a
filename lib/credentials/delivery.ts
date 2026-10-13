@@ -11,6 +11,7 @@ import {
   getAssignment,
   listLiveForAgent,
   recordAssignment,
+  removalRecordState,
   setAssignmentError,
   supersedeSiblings,
 } from './assignments';
@@ -21,6 +22,7 @@ import {
   redact,
   runDisable,
   runEnable,
+  UnsupportedNativeVersionError,
   type AssignmentMode,
   type NativeExec,
 } from './native';
@@ -196,10 +198,6 @@ function entryRow(entry: IntegrationEntry): string {
 function buildBlock(integrations: IntegrationEntry[]): string {
   const ts = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
-  if (integrations.length === 0) {
-    return `${MARKER_START}\n_No integrations configured via Rev4a._\n${MARKER_END}`;
-  }
-
   const rows = integrations.map((e) => entryRow(e)).join('\n');
   // Emitted only for the providers present that need it; absent entirely when
   // every synced credential is CLI-backed.
@@ -277,7 +275,8 @@ async function removeProviderRow(container: string, providerId: string): Promise
   if (si === -1 || ei === -1 || ei <= si) return; // No block to edit
 
   const rows = extractRows(existing, si, ei).filter((r) => !r.includes(`\`${entry.tool}\``));
-  const newBlock = buildBlock(rowsToEntries(rows));
+  const entries = rowsToEntries(rows);
+  const newBlock = entries.length ? buildBlock(entries) : '';
   const patched = existing.slice(0, si) + newBlock + existing.slice(ei + MARKER_END.length);
   await containerExec(safe, writeAtomically(patched, TOOLS_MD_PATH));
 }
@@ -440,7 +439,11 @@ export async function enableAssignment(
       await applyEnable(execFor(name), profile.providerId, getSecret(profileId));
     } catch (e) {
       const error = (e as Error).message;
-      try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
+      // An unsupported version refused delivery before writing anything. Preserve any
+      // previous assignment, and do not invent an enabled row for a new one.
+      if (!(e instanceof UnsupportedNativeVersionError)) {
+        try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
+      }
       try { markSynced(profileId, 'error'); } catch { /* keep the delivery result */ }
       return { container: name, status: 'error', error };
     }
@@ -518,11 +521,10 @@ export async function disableAssignment(
     }
     const warnings = await cleanLegacy(name, profile.providerId);
 
-    if (existing) {
+    const removalState = removalRecordState(existing, opts.held === true, errors);
+    if (removalState) {
       try {
-        recordAssignment(profileId, name, errors.length
-          ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
-          : { enabled: false, ok: true });
+        recordAssignment(profileId, name, removalState);
       } catch { /* keep the result */ }
     }
     if (errors.length) return { container: name, status: 'error', error: `Removal failed: ${errors.join('; ')}` };

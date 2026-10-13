@@ -7,8 +7,10 @@ import { agentUsesCodex } from '@/lib/credentials/runtime';
 import { listAgentContainers } from '@/lib/subscriptions';
 import { mapWithConcurrency } from '@/lib/docker-exec';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { requiresContainerWrite } from '@/lib/credentials/guard';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 const CONCURRENCY = 4;
 
@@ -70,8 +72,7 @@ interface PutItem { agent?: unknown; enabled?: unknown; mode?: unknown; forget?:
  * disabling removes them (and anything an earlier release wrote). Per-agent failures
  * come back in `results` and in the assignment's `lastError`; the call itself is 200, also when
  * only the final read of the agent rows fails (`refreshFailed: true`, no `agents`; the caller re-reads).
- * 409 (nothing written) when an agent is stopped or busy with an update, recreate, restore, edit or backup:
- * its credentials are re-applied by Rev4a when that ends.
+ * 409 (nothing written) for a container write when an agent is stopped or busy.
  * `held: true` on a switch-off says the page saw this credential in the container: the removal runs
  * even when Rev4a has no enabled row for it (the container, not the table, is the source of truth).
  * `intentOnly: true` (with `enabled: false`) clears only Rev4a's setting and runs nothing in the container:
@@ -115,9 +116,9 @@ export async function PUT(request: Request,
       parsed.push({ agent: it.agent, enabled: it.enabled === true, mode, forget, held: it.held === true, intentOnly: it.intentOnly === true && it.enabled === false });
     }
 
-    // A stopped or busy agent cannot take the change: refuse the whole call before writing anything.
+    // Intent-only and forget operations run nothing in the container.
     for (const p of parsed) {
-      if (p.forget) continue;
+      if (!requiresContainerWrite(p)) continue;
       const refusal = await agentWriteRefusal(p.agent);
       if (refusal) return NextResponse.json({ error: `${p.agent}: ${refusal}` }, { status: 409 });
     }

@@ -13,6 +13,7 @@ import { BACKUP_VOLUME } from '@/lib/cold-backup';
 import { inspectAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
 import { activeRestoreAgentIds, insertRestore, isRestoreActive, latestRestore, markInterruptedRestores, updateRestoreRow, type AgentRestoreRow } from '@/lib/agent-restore-state';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { reapplyWhenReady } from '@/lib/credentials/delivery';
 
 /** A 13 GB workspace takes minutes to decompress; 30 minutes leaves room and still ends. */
 const EXTRACT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -89,6 +90,8 @@ async function runRestore(id: number, agentId: string, file: string): Promise<vo
       if (!started.ok) {
         const note = `the container did not come back: ${started.error}`;
         failure = failure ? `${failure}; ${note}` : `the volume was restored, but ${note}`;
+      } else {
+        void reapplyWhenReady(name).catch((e) => console.warn(`[restore] credential re-apply failed on ${name}:`, (e as Error).message));
       }
     }
     if (failure) updateRestoreRow(id, { status: 'failed', error: failure });

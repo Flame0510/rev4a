@@ -38,6 +38,7 @@ import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { reapplyWhenReady } from '@/lib/credentials/delivery';
 
 /** A migration runs `doctor --fix` before the Gateway starts; allow for large state. */
 const MIGRATION_READY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -395,8 +396,8 @@ async function runRollbackStart(agentId: string): Promise<number> {
 
 /**
  * Restore exactly the pre-update state: the volume from the backup, the container on the
- * previous image. Rev4a's config is not re-applied — the restored `openclaw.json` is the
- * one that version accepted.
+ * previous image. Rev4a's config patches are not re-applied — the restored `openclaw.json` is the
+ * one that version accepted; only the agent's enabled credentials are, in the background.
  */
 async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect): Promise<void> {
   const agentId = row.agent_id;
@@ -434,6 +435,7 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
     const version = parseOpenClawVersion(await dockerExecNoFail(agentId, ['openclaw', '--version'], { timeoutMs: 60_000 }));
     if (version !== fromVersion) throw new Error(`The agent reports OpenClaw ${version ?? 'no version'} instead of ${fromVersion}`);
 
+    void reapplyWhenReady(name).catch((e) => console.warn(`[rollback] credential re-apply failed on ${name}:`, (e as Error).message));
     updateRow(row.id, { status: 'rolled_back' });
   } catch (e) {
     updateRow(row.id, { status: 'rollback_failed', error: shortError(e) });

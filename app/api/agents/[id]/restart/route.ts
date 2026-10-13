@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import { resolveAgentedContainer, isValidAgentId } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { reapplyWhenReady } from '@/lib/credentials/delivery';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export async function POST(request: Request,
     if (busy) return NextResponse.json({ error: busy }, { status: 409 });
 
     execSync(`docker restart ${containerName}`, { timeout: 30000 });
+    void reapplyWhenReady(containerName).catch((e) => console.warn(`[restart] credential re-apply failed on ${containerName}:`, (e as Error).message));
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {

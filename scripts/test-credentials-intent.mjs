@@ -73,6 +73,25 @@ try {
   assert.equal(a.getAssignment(id, 'agent_p').pendingRemoval, true);
   console.log('ok   intent-only never clears a pending removal');
 
+  // A held credential may come from outside this Rev4a. If its removal fails,
+  // persist a pending row so Retry and the delete guard can find it.
+  const heldState = a.removalRecordState(null, true, ['store refused']);
+  assert.deepEqual(heldState, { enabled: false, pendingRemoval: true, ok: false, error: 'Removal failed: store refused' });
+  a.recordAssignment(id, 'agent_held', heldState);
+  const heldRow = a.getAssignment(id, 'agent_held');
+  assert.equal(heldRow.enabled, false);
+  assert.equal(heldRow.pendingRemoval, true);
+  assert.match(heldRow.lastError, /Removal failed/);
+  assert.equal(a.removalRecordState(null, true, []), null);
+  console.log('ok   failed held removal creates a pending row without an earlier assignment');
+
+  vault.markSynced(id, 'active');
+  const deliveredAt = vault.getProfile(id).lastSyncedAt;
+  assert.ok(deliveredAt);
+  vault.markSynced(id, 'error');
+  assert.equal(vault.getProfile(id).lastSyncedAt, deliveredAt);
+  console.log('ok   failed delivery does not stamp last_synced_at');
+
   // The Gateway-not-ready message touches last_error only: a delivered row stays delivered.
   a.recordAssignment(id, 'agent_d', { enabled: true, mode: 'env', ok: true });
   const before = a.getAssignment(id, 'agent_d');

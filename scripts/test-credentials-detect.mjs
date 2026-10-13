@@ -126,8 +126,8 @@ test('DIGEST_SCRIPT, run for real against a sandbox, prints hashes only and matc
     noSecrets(r.stdout);
     assert.ok(!r.stdout.includes('SENTINEL_RETIRED_PROFILE_zzzz'));
     const dg = d.parseDigests(r.stdout);
-    assert.deepEqual(dg.store.filter((e) => e.hash).map((e) => e.name).sort(), ['SUPABASE_ACCESS_TOKEN', 'TRELLO_TOKEN']);
-    assert.equal(dg.store.find((e) => e.name === 'SHORT').hash, '', 'a value under 10 characters is no token');
+    assert.deepEqual(dg.store.filter((e) => e.hash).map((e) => e.name).sort(), ['SHORT', 'SUPABASE_ACCESS_TOKEN', 'TRELLO_TOKEN']);
+    assert.equal(dg.store.find((e) => e.name === 'SHORT').hash, H('abc'), 'short non-empty values match hashToken');
     assert.ok(!dg.store.some((e) => e.name === 'NOTION_API_TOKEN'), 'a deleted entry is skipped');
     assert.equal(dg.store.find((e) => e.name === 'SUPABASE_ACCESS_TOKEN').hash, H(S.supabase), 'trimmed, same as hashToken');
     assert.equal(dg.githubProfileId, 'ghp_abc123', 'the profile id comes from agents.entries.main.tools.github only');
@@ -168,8 +168,8 @@ async function runDigest(setup) {
   }
 }
 
-test('DIGEST_SCRIPT: an unreadable secret store prints no store-ok; a script that ran prints digest-ok', async () => {
-  // The database exists but has no secret_store_entries table (a schema change or an older OpenClaw).
+test('DIGEST_SCRIPT: an older store has no entries; a corrupt store stays unknown', async () => {
+  // Older OpenClaw has a database but no secret_store_entries table.
   const noTable = await runDigest(async (w, box, path) => {
     const fs = await import('node:fs');
     const { DatabaseSync } = await import('node:sqlite');
@@ -178,11 +178,13 @@ test('DIGEST_SCRIPT: an unreadable secret store prints no store-ok; a script tha
     db.exec('CREATE TABLE other (x TEXT)');
     db.close();
   });
-  assert.equal(noTable.storeOk, false);
+  assert.equal(noTable.storeOk, true);
+  assert.deepEqual(noTable.store, []);
   assert.equal(noTable.digestOk, true);
   // A file that is not a database at all (corrupt).
   const corrupt = await runDigest((w) => w('root/.openclaw/state/openclaw.sqlite', 'this is not sqlite'));
   assert.equal(corrupt.storeOk, false);
+  assert.equal(corrupt.digestOk, true);
   // No database file: nothing was ever stored, which is a successful read of an empty store.
   const none = await runDigest(() => {});
   assert.equal(none.storeOk, true);

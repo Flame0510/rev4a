@@ -123,12 +123,12 @@ export interface ContainerProbe {
  * Runs inside the agent (node is in the image) and prints one tab-separated line per finding,
  * hashes only: `store<TAB>NAME<TAB>kind<TAB>hash`, `gh-profile<TAB>id`, `gh-identity<TAB>hash<TAB>login`,
  * `gh-legacy`, `vercel`, `supabase-legacy`, `trello-legacy`, `notion-legacy`, plus two completion
- * markers: `store-ok` after the secret store was read (a locked or corrupt database, a schema change
- * or a missing node:sqlite prints none, so "holds nothing" is never guessed) and `digest-ok` as the
+ * markers: `store-ok` after the secret store was read (including an older database without the
+ * table; a locked or corrupt database or a missing node:sqlite prints none) and `digest-ok` as the
  * last line (the script ran to its end). The hash is exactly
  * hashToken (lib/credentials/hash.ts): sha256 of the trimmed value, first 12 hex characters. A value
- * shorter than 10 characters counts as no token. It is read from the sources, not from the OpenClaw
- * CLI, which masks some values. A missing database, table or file prints nothing. The text holds no
+ * trimmed empty string counts as no token. It is read from the sources, not from the OpenClaw
+ * CLI, which masks some values. A missing database or table prints `store-ok`. The text holds no
  * single quote (it sits inside a shell single-quoted argument) and no interpolation.
  *
  * The secret store is table secret_store_entries of /root/.openclaw/state/openclaw.sqlite.
@@ -138,7 +138,7 @@ export interface ContainerProbe {
  */
 export const DIGEST_SCRIPT = [
   'const fs=require("fs"),c=require("crypto");',
-  'const h=v=>{if(typeof v!=="string")return "";v=v.trim();return v.length<10?"":c.createHash("sha256").update(v,"utf-8").digest("hex").slice(0,12)};',
+  'const h=v=>{if(typeof v!=="string")return "";v=v.trim();return v?c.createHash("sha256").update(v,"utf-8").digest("hex").slice(0,12):""};',
   'const rd=f=>{try{return fs.readFileSync(f,"utf8")}catch(e){return ""}};',
   'const js=f=>{try{return JSON.parse(rd(f))}catch(e){return {}}};',
   'const cl=v=>String(v==null?"":v).replace(/[\\t\\r\\n]/g," ");',
@@ -146,7 +146,7 @@ export const DIGEST_SCRIPT = [
   'const uq=v=>{const m=/^(["\\x27])(.*)\\1$/.exec(v);return m?m[2]:v};',
   'const yml=t=>{let k="",u="",m;for(const l of t.split("\\n")){if(!k&&(m=/^\\s*oauth_token:\\s*(.+?)\\s*$/.exec(l)))k=uq(m[1]);if(!u&&(m=/^\\s*user:\\s*(\\S+)\\s*$/.exec(l)))u=uq(m[1])}return [h(k),u]};',
   'try{if(!fs.existsSync("/root/.openclaw/state/openclaw.sqlite"))o("store-ok");else{const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync("/root/.openclaw/state/openclaw.sqlite",{readOnly:true});',
-  'for(const r of d.prepare("SELECT name,value,kind FROM secret_store_entries WHERE deleted_at_ms IS NULL").all())o("store",r.name,r.kind,h(r.value));d.close();o("store-ok")}}catch(e){}',
+  'try{const t=d.prepare("SELECT name FROM sqlite_master WHERE type=? AND name=?").get("table","secret_store_entries");if(t)for(const r of d.prepare("SELECT name,value,kind FROM secret_store_entries WHERE deleted_at_ms IS NULL").all())o("store",r.name,r.kind,h(r.value));o("store-ok")}finally{d.close()}}}catch(e){}',
   'try{const g=js("/root/.openclaw/openclaw.json");const p=g&&g.agents&&g.agents.entries&&g.agents.entries.main&&g.agents.entries.main.tools&&g.agents.entries.main.tools.github&&g.agents.entries.main.tools.github.profileId;const pid=typeof p==="string"&&/^[A-Za-z0-9_-]{1,80}$/.test(p)?p:"";if(pid){o("gh-profile",pid);',
   'const b="/root/.openclaw/credentials/github/agents/";for(const x of fs.readdirSync(b)){const t=rd(b+x+"/"+pid+"/hosts.yml");if(t){const [k,u]=yml(t);o("gh-identity",k,u);break}}}}catch(e){}',
   'try{const [k,u]=yml(rd("/root/.config/gh/hosts.yml"));if(k)o("gh-legacy",k,u)}catch(e){}',

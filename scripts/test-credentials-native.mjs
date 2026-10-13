@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as n from '../lib/credentials/native.ts';
-import { writeRefusal } from '../lib/credentials/guard.ts';
+import { writeRefusal, requiresContainerWrite } from '../lib/credentials/guard.ts';
 
 let passed = 0;
 const pending = [];
@@ -218,6 +218,12 @@ test('a clean disable reports no failure', async () => {
   assert.deepEqual(await n.runDisable(fakeExec(), 'notion'), []);
 });
 
+test('intent-only and forget requests do not need a running agent', () => {
+  assert.equal(requiresContainerWrite({ forget: false, intentOnly: true }), false);
+  assert.equal(requiresContainerWrite({ forget: true, intentOnly: false }), false);
+  assert.equal(requiresContainerWrite({ forget: false, intentOnly: false }), true);
+});
+
 test('only an enabled or pending row is removed from the agent', () => {
   assert.equal(n.needsNativeRemoval({ enabled: true, pendingRemoval: false }), true);
   assert.equal(n.needsNativeRemoval({ enabled: false, pendingRemoval: true }), true);
@@ -275,7 +281,7 @@ test('a stopped agent is refused with the start hint', () => {
 });
 test('a busy running agent is refused with the reason', () => {
   const m = writeRefusal({ exists: true, running: true, busy: 'An update of this agent is running' });
-  assert.match(m, /^Busy: An update of this agent is running — its credentials are re-applied/);
+  assert.match(m, /^Busy: An update of this agent is running — try again when it finishes$/);
 });
 test('a missing agent is refused', () => {
   assert.match(writeRefusal({ exists: false, running: false, busy: null }), /no longer exists/);

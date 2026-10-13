@@ -102,6 +102,8 @@ export const SECRETS_RELOAD_ARGV: readonly string[] = ['openclaw', 'secrets', 'r
 export const SECRETS_RELOAD_ENV: Readonly<Record<string, string>> = { OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:3000' };
 export const VERSION_ARGV: readonly string[] = ['openclaw', '--version'];
 
+export class UnsupportedNativeVersionError extends Error {}
+
 // ── stdin payloads ──────────────────────────────────────────────────────────────────
 
 /** One store entry to write: the name goes to argv, the value to stdin. */
@@ -239,13 +241,17 @@ export interface NativeExec {
  * by managed.ts (GitHub, Vercel) rather than by {@link runEnable}.
  */
 export async function assertDeliverable(exec: NativeExec, providerId: string): Promise<void> {
-  const version = /(\d{4}\.\d{1,2}\.\d{1,2})/.exec(await exec.run([...VERSION_ARGV]))?.[1] ?? null;
+  const version = await agentVersion(exec);
   const min = nativeProvider(providerId)?.minVersion ?? NATIVE_MIN_VERSION;
   if (!supportsNative(version, min)) {
-    throw new Error(
+    throw new UnsupportedNativeVersionError(
       `Native credential delivery needs OpenClaw ${min} or newer; this agent runs ${version ?? 'an unknown version'}. Update the agent first.`,
     );
   }
+}
+
+async function agentVersion(exec: NativeExec): Promise<string | null> {
+  return /(\d{4}\.\d{1,2}\.\d{1,2})/.exec(await exec.run([...VERSION_ARGV]))?.[1] ?? null;
 }
 
 /** Write the store entries and the skill config, then reload. Throws a message free of secret values. */
@@ -260,6 +266,7 @@ export async function runEnable(exec: NativeExec, providerId: string, secret: Re
     if (patch) await exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch));
     await exec.run([...SECRETS_RELOAD_ARGV], { ...SECRETS_RELOAD_ENV });
   } catch (e) {
+    if (e instanceof UnsupportedNativeVersionError) throw e;
     throw new Error(redact((e as Error).message, values));
   }
 }

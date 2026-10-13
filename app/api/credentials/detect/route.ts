@@ -16,6 +16,7 @@ import { mapWithConcurrency } from '@/lib/docker-exec';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 /** Containers probed at once. Each is a single `docker exec`. */
 const AGENT_QUERY_CONCURRENCY = 6;
@@ -36,6 +37,7 @@ interface DetectedStatus {
   supabaseProjectRef: string;
   supabaseCliInstalled: boolean;
   trelloLoggedIn: boolean;
+  /** Legacy trello-cli probe; false on the 2026.9.9 image, whose bundled skill uses curl and jq. */
   trelloCliInstalled: boolean;
   notionLoggedIn: boolean;
   /** The default model runs on the ChatGPT (Codex) runtime: env entries reach only OpenClaw-run commands. */

@@ -110,6 +110,18 @@ export function recordAssignment(
   }
 }
 
+/** A failed held removal needs a row even when Rev4a did not enable the credential. */
+export function removalRecordState(
+  existing: CredentialAssignment | null,
+  held: boolean,
+  errors: readonly string[],
+): { enabled: false; pendingRemoval: true; ok: false; error: string } | { enabled: false; ok: true } | null {
+  if (!existing && (!held || errors.length === 0)) return null;
+  return errors.length
+    ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
+    : { enabled: false, ok: true };
+}
+
 /** Set only `last_error` on an existing row; enabled, synced_at and the pending mark stay as they are. */
 export function setAssignmentError(profileId: string, agentId: string, error: string): void {
   const db = openCredentialsDb(false);

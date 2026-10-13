@@ -85,7 +85,7 @@ export default function SubscriptionsPageClient() {
   const [confirmDisconnect, setConfirmDisconnect] = useState<SubAgent | null>(null);
 
   // One AbortController per row for its status read, one per row for its job poll: a newer
-  // request cancels the one still in flight (AGENTS.md §2.2b rule 9).
+  // request cancels the one still in flight (AGENTS.md §2.2b rule 10).
   const rowAbort = useRef(new Map<string, AbortController>());
   const pollAbort = useRef(new Map<string, AbortController>());
   const pollTimer = useRef(new Map<string, ReturnType<typeof setTimeout>>());

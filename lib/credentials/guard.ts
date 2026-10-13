@@ -5,8 +5,9 @@
  * Switching a credential on or off writes into the running OpenClaw of that agent, so it is
  * refused while the container is stopped (nothing there can receive or drop the secret) and
  * while a long job (update, recreate, restore, edit, backup, memory limit) owns the agent.
- * Rev4a re-applies an agent's enabled credentials by itself when such a job ends
- * (`reapplyAssignments`); that path does not go through this check.
+ * Rev4a re-applies an agent's enabled credentials after update, recreate, edit,
+ * restore, rollback, start and restart (`reapplyWhenReady`). That path does not
+ * go through this check.
  */
 export interface AgentWriteState {
   /** The container exists (running or stopped). */
@@ -16,10 +17,15 @@ export interface AgentWriteState {
   busy: string | null;
 }
 
+/** Intent-only and forget requests change only Rev4a's assignment table. */
+export function requiresContainerWrite(change: { forget: boolean; intentOnly: boolean }): boolean {
+  return !change.forget && !change.intentOnly;
+}
+
 /** The message to refuse with, or null when the change may go ahead. */
 export function writeRefusal(state: AgentWriteState): string | null {
   if (!state.exists) return 'This agent no longer exists';
   if (!state.running) return 'Not running — start the agent to change its credentials';
-  if (state.busy) return `Busy: ${state.busy} — its credentials are re-applied when it finishes`;
+  if (state.busy) return `Busy: ${state.busy} — try again when it finishes`;
   return null;
 }
