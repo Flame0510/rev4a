@@ -224,6 +224,20 @@ export default function Sidebar() {
     }
   };
 
+  const logoutButton = (
+    <button
+            onClick={handleLogout}
+            className="sidebar__item sidebar__item--logout"
+          >
+            <span className="sidebar__icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M10 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2M6 12l-4-4 4-4M2 8h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+            <span className="sidebar__label">Logout</span>
+          </button>
+  );
+
   const navItems = (
     <nav className="sidebar__nav">
       {NAV.map(({ href, label, icon }) => (
@@ -285,6 +299,7 @@ export default function Sidebar() {
         <div className="mobile-drawer__wrapper" aria-hidden={!mobileOpen}>
           <nav className="mobile-drawer">
             {navItems}
+            <div className="mobile-drawer__logout">{logoutButton}</div>
           </nav>
         </div>
       </header>
@@ -301,17 +316,7 @@ export default function Sidebar() {
         </div>
         {navItems}
         <div className="sidebar__bottom">
-          <button
-            onClick={handleLogout}
-            className="sidebar__item sidebar__item--logout"
-          >
-            <span className="sidebar__icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M10 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2M6 12l-4-4 4-4M2 8h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </span>
-            <span className="sidebar__label">Logout</span>
-          </button>
+          {logoutButton}
           <div className="sidebar__footer">
             {ocVersion || ''}
           </div>

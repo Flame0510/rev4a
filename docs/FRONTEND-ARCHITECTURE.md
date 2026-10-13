@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-13
 
 ## Layering
 
@@ -32,6 +32,7 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `LoadingSpinner` | `LoadingSpinner.tsx` | Inline or fullscreen spinner. |
 | `Tabs` | `Tabs.tsx` | Tab navigation bar with optional count badges. |
 | `ItemList` / `ListContainer` / `ListItem` / `ListItemSeparator` | `ItemList.tsx` | List primitives for sidebar/panel item lists. |
+| `AgentCard` | `AgentCard.tsx` | One agent in the Agents list: line 1 status `Switch` + display name (CSS ellipsis, never sliced in JS, so emoji stay whole) + an `action` slot (Open Control UI); line 2 muted meta (template pill, image, ports); line 3 `model` (+ its chip); `chips` wrap in one row. It is a `div`, not a button around buttons: a transparent button (`.agent-card__hit`) covers the card and selects it, and the switch and the action sit above it, so touching them never opens the detail. `selected` gives a violet left rule and `#1a1030` fill (desktop split view). Touch targets are at least 44 px high under 768 px. Styles: `.agent-card` family in `globals.css`. |
 | `FilterBar` | `FilterBar.tsx` | Horizontal filter button group. |
 | `PropertyList` | `PropertyList.tsx` | 2-column grid for label/value pairs. Children rendered as `<Fragment>` — do not wrap in extra `<div>`. |
 | `TemplateOption` | `TemplateOption.tsx` | Agent template selection card with avatar, description, optional badge. Centralises create-agent card styling. |
@@ -206,7 +207,11 @@ For interactive pages that can change view/file/tab quickly:
 For every new/changed page:
 
 1. No new one-off card styles unless justified.
-2. Use `app/components/ui/*` primitives first — `Button`, `Input`, `Select`, `Modal`, `Toast`, `Surface`, `Metric`, `StatusCard`, `Meter`, `TimeSeriesChart`, `Pill`, `Page`, `Tabs`, `ItemList`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `MemoryLimitPicker`.
+2. Use `app/components/ui/*` primitives first — `Button`, `Input`, `Select`, `Modal`, `Toast`, `Surface`, `Metric`, `StatusCard`, `Meter`, `TimeSeriesChart`, `Pill`, `Page`, `Tabs`, `ItemList`, `AgentCard`, `FilterBar`, `PropertyList`, `TemplateOption`, `LoadingSpinner`, `MemoryLimitPicker`.
 3. Async data must render skeleton, not fake zero values.
 4. Business logic stays in `lib`/API routes; UI consumes typed payloads.
 5. If a pattern is introduced, name it and keep it in `lib/patterns` or `app/components/ui`.
+
+## Scrolling on a phone (Agents page)
+
+`.app-shell__content` is a bounded flex column (100svh minus the top bar and the bottom navigation). A page inside it must give its root `flex: 1; min-height: 0; overflow: hidden` and have **one** scrolling region (`flex: 1; min-height: 0; overflow-y: auto`); a root without `min-height: 0` grows with its content and the inner scroller never gets a bounded height, so nothing scrolls. Never use `100dvh` inside the shell: it ignores the top bar and the navigation. On /agents (phone) the header and filter row stay fixed; banners, the Gateway Token form and the list scroll together, in that order (the form scrolls away and the list gets the screen). The detail keeps its BACK header fixed and scrolls banners and panel together. `node scripts/ui-check-agents-mobile.mjs` checks this in a browser against a running instance (see its header for the environment variables).

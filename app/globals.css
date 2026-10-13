@@ -288,8 +288,12 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 }
 
 .mobile-topbar--open .mobile-drawer__wrapper {
-  max-height: 1000px; /* large enough to fit all items */
+  /* All items, but never taller than the screen below the top bar: a short phone scrolls the drawer. */
+  max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+.mobile-drawer__logout { border-top: 1px solid var(--color-border-700); margin-top: 4px; padding-top: 4px; }
 
 .mobile-drawer {
   background: var(--color-bg-900);
@@ -1652,3 +1656,70 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ui-switch--loading, .ui-switch--loading:disabled { cursor: progress; }
 .ui-switch--loading:disabled { opacity: 0.7; }
 .ui-switch__label { color: var(--text-dim); letter-spacing: 0.04em; }
+
+/* ── AgentCard (Agents list) ─────────────────────────────────── */
+.agent-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  background: transparent;
+  font-family: var(--font-mono-stack);
+  font-size: 12px;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.agent-card:hover { background: var(--bg2); }
+.agent-card--selected { background: #1a1030; border-left-color: var(--violet); }
+.agent-card--selected .agent-card__name { color: var(--violet); }
+/* The whole card selects the agent; the switch and the action sit above it. */
+.agent-card__hit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.agent-card__hit:focus-visible { outline: 1px solid var(--violet-dim); outline-offset: -2px; }
+.agent-card__row,
+.agent-card__meta,
+.agent-card__model,
+.agent-card__chips { position: relative; pointer-events: none; }
+.agent-card__row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-card__control { pointer-events: auto; position: relative; z-index: 1; display: inline-flex; align-items: center; flex-shrink: 0; }
+.agent-card__action { margin-left: auto; }
+.agent-card__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-card__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 11px; color: var(--text-dim); min-width: 0; }
+.agent-card__meta-item { overflow-wrap: anywhere; }
+.agent-card__template {
+  font-size: 10px;
+  color: var(--violet);
+  padding: 1px 6px;
+  border: 1px solid rgba(146, 91, 252, 0.25);
+  background: rgba(146, 91, 252, 0.12);
+  border-radius: 0;
+}
+.agent-card__model { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: var(--text-dim); min-width: 0; }
+.agent-card__chips { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 767px) {
+  /* Touch targets: at least 44 px high for the switch and the action. */
+  .agent-card__row { min-height: 44px; }
+  .agent-card__control .ui-switch,
+  .agent-card__control .ui-btn { min-height: 44px; }
+  .agent-card__control .ui-switch { min-width: 44px; justify-content: center; }
+  .agent-card__control .ui-btn { min-width: 44px; }
+  .agent-card { padding: 6px 14px 10px; }
+}

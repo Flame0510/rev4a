@@ -24,3 +24,4 @@ export { default as ModalityIcons, parseModality, type ParsedModality } from './
 export * from './Meter';
 export * from './TimeSeriesChart';
 export * from './MemoryLimitPicker';
+export * from './AgentCard';

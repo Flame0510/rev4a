@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, ListItem, Badge, ConfirmModal, Input, Switch, type Tone } from '../components/ui';
+import { Button, AgentCard, Badge, ConfirmModal, Input, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
@@ -69,6 +69,13 @@ interface Agent {
   newBuildAvailable?: boolean;
 }
 
+/**
+ * The floating Wizard and Pulse buttons are `position: fixed` over the bottom of the content
+ * (44 px high, up to ~44 px above its end): the scroll regions end with this much padding so the
+ * last content scrolls clear of them.
+ */
+const FLOATING_CLEARANCE = 64;
+
 type FilterState = 'all' | 'running' | 'exited';
 
 const STATUS_BULLET: Record<string, string> = {
@@ -129,6 +136,47 @@ function NoProviderBanner() {
 }
 
 
+/**
+ * The image as the card shows it. An agent whose image lost its tag reports a bare digest
+ * (`sha256:<64 hex>`): show the OpenClaw version when known, else the first 12 hex digits.
+ */
+function imageLabel(agent: Agent): string {
+  const image = agent.image || '';
+  if (/^sha256:/i.test(image)) {
+    if (agent.openclawVersion) return `OpenClaw ${agent.openclawVersion}`;
+    return `sha256:${image.slice('sha256:'.length, 'sha256:'.length + 12)}`;
+  }
+  return image.includes('/') ? image.split('/').pop() ?? image : image;
+}
+
+/**
+ * Publish mappings as the card shows them: consecutive host and container ports (same protocol)
+ * become one range, `3710–3715 → 3000–3005`; mappings that do not continue a run stay listed.
+ */
+function compactPorts(ports: string): string {
+  const parsed = (ports || '').split(',').map((p) => p.trim()).filter(Boolean).map((p) => {
+    const m = /^(\d+):(\d+)(\/\w+)?$/.exec(p);
+    return m ? { raw: p, host: +m[1], cont: +m[2], proto: m[3] ?? '' } : { raw: p, host: NaN, cont: NaN, proto: '' };
+  });
+  // Numeric order by host port; the sort is stable, and unparseable entries keep their order, after the others.
+  parsed.sort((x, y) => {
+    if (Number.isNaN(x.host) || Number.isNaN(y.host)) return Number.isNaN(x.host) === Number.isNaN(y.host) ? 0 : Number.isNaN(x.host) ? 1 : -1;
+    return x.host - y.host || x.cont - y.cont;
+  });
+  const out: string[] = [];
+  let i = 0;
+  while (i < parsed.length) {
+    const a = parsed[i];
+    if (Number.isNaN(a.host)) { out.push(a.raw); i++; continue; }
+    let j = i;
+    while (j + 1 < parsed.length && parsed[j + 1].host === parsed[j].host + 1 && parsed[j + 1].cont === parsed[j].cont + 1 && parsed[j + 1].proto === a.proto) j++;
+    const b = parsed[j];
+    out.push(j === i ? `${a.host} → ${a.cont}${a.proto}` : `${a.host}–${b.host} → ${a.cont}–${b.cont}${a.proto}`);
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
 /** Shared agent list-item used in both mobile and desktop views. */
 function AgentListItem({
   agent,
@@ -157,113 +205,96 @@ function AgentListItem({
   onClick: () => void;
   onLifecycle: () => void;
 }) {
-  return (
-    <ListItem onClick={onClick} active={selected} style={{ padding: '12px 14px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Switch
-          checked={agent.state === 'running'}
-          loading={loading}
-          disabled={agent.state === 'unknown' || !!busy}
-          onChange={() => { void onLifecycle(); }}
-          ariaLabel="Container running"
-        />
-        <span style={{ color: selected ? 'var(--violet)' : 'var(--text)', fontSize: 13, fontWeight: 500 }}>{agent.displayName || agent.name}</span>
-        {agent.template && (
-          <span style={{ fontSize: 10, background: 'rgba(146,91,252,0.12)', color: 'var(--violet)', padding: '1px 6px', borderRadius: 0, border: '1px solid rgba(146,91,252,0.25)' }}>{agent.template}</span>
-        )}
-        <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          {loading && <span style={{ fontSize: 10, color: '#888' }}>...</span>}
-          {agent.state === 'running' && agent.controlPort && (
-            <OpenControlUiButton agentId={agent.agentId} stopPropagation />
+  const row = modelSummary[agent.agentId];
+  let model: React.ReactNode = null;
+  if (row && row.primary) {
+    // A bare `openai/<id>` is a ChatGPT subscription model: it is not in the Rev4a catalogue on
+    // purpose, so the catalogue health the summary computes does not apply to it. Whether the
+    // agent is signed in is shown in its panel (Subscription line), so the card shows a neutral
+    // state, neither green nor red.
+    const primary: string = row.primary;
+    const m = { ...row, primary, health: primary.startsWith('openai/') ? 'subscription' : row.health };
+    // Tone follows what the operator has to do about it: red means the agent
+    // will fail on its next turn, amber means it still works on a retired name.
+    // The red states differ in remedy — pick another model for the first two,
+    // run Sync All on the Gateway page for OUT OF SYNC.
+    const failing = m.health === 'missing' || m.health === 'disabled' || m.health === 'out-of-sync';
+    const tone = failing ? 'danger' : m.health === 'deprecated' ? 'warning' : undefined;
+    const chip = m.health === 'missing' ? 'NOT IN CATALOGUE'
+               : m.health === 'disabled' ? 'NOT ENABLED'
+               : m.health === 'out-of-sync' ? 'OUT OF SYNC'
+               : m.health === 'deprecated' ? 'DEPRECATED'
+               // Mirrors subscriptionChip() in lib/subscriptions-parse.js (tested there; that module
+               // evaluates code at load and stays out of the browser bundle): a subscription primary
+               // with no fallback goes silent at the usage limit, so it keeps the warning.
+               : m.health === 'subscription' ? (m.fallbackCount === 0 ? 'NO FALLBACK' : null)
+               : m.fallbackCount === 0 ? 'NO FALLBACK' : null;
+    model = (
+      <>
+        <span style={{ overflowWrap: 'anywhere' }}>
+          {modelLabel(m.primary)}
+          {/* Only the first fallback: a list here would drown the row, and the
+              full set is editable in the detail panel anyway. */}
+          {m.firstFallback && (
+            <span style={{ opacity: 0.75 }}>
+              {' ↳ '}{modelLabel(m.firstFallback)}
+              {m.fallbackCount > 1 && ` +${m.fallbackCount - 1}`}
+            </span>
           )}
-        </div>
-      </div>
-      <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-        {agent.image?.includes('/') ? agent.image.split('/').pop() : agent.image}
-        {agent.ports && <span style={{ marginLeft: 8 }}>{agent.ports}</span>}
-      </div>
-      {(() => {
-        const row = modelSummary[agent.agentId];
-        if (!row || !row.primary) return null;
-        // A bare `openai/<id>` is a ChatGPT subscription model: it is not in the Rev4a catalogue on
-        // purpose, so the catalogue health the summary computes does not apply to it. Whether the
-        // agent is signed in is shown in its panel (Subscription line), so the card shows a neutral
-        // state, neither green nor red.
-        const primary: string = row.primary;
-        const m = { ...row, primary, health: primary.startsWith('openai/') ? 'subscription' : row.health };
-        // Tone follows what the operator has to do about it: red means the agent
-        // will fail on its next turn, amber means it still works on a retired name.
-        // The red states differ in remedy — pick another model for the first two,
-        // run Sync All on the Gateway page for OUT OF SYNC.
-        const failing = m.health === 'missing' || m.health === 'disabled' || m.health === 'out-of-sync';
-        const tone = failing ? 'danger' : m.health === 'deprecated' ? 'warning' : undefined;
-        const chip = m.health === 'missing' ? 'NOT IN CATALOGUE'
-                   : m.health === 'disabled' ? 'NOT ENABLED'
-                   : m.health === 'out-of-sync' ? 'OUT OF SYNC'
-                   : m.health === 'deprecated' ? 'DEPRECATED'
-                   // Mirrors subscriptionChip() in lib/subscriptions-parse.js (tested there; that module
-                   // evaluates code at load and stays out of the browser bundle): a subscription primary
-                   // with no fallback goes silent at the usage limit, so it keeps the warning.
-                   : m.health === 'subscription' ? (m.fallbackCount === 0 ? 'NO FALLBACK' : null)
-                   : m.fallbackCount === 0 ? 'NO FALLBACK' : null;
-        return (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>
-              {modelLabel(m.primary)}
-              {/* Only the first fallback: a list here would drown the row, and the
-                  full set is editable in the detail panel anyway. */}
-              {m.firstFallback && (
-                <span style={{ color: '#666' }}>
-                  {' ↳ '}{modelLabel(m.firstFallback)}
-                  {m.fallbackCount > 1 && ` +${m.fallbackCount - 1}`}
-                </span>
-              )}
-            </span>
-            {chip && (
-              <Badge tone={(tone ?? 'neutral') as Tone}>
-                <span style={{ fontSize: 8, padding: '1px 6px' }}>{chip}</span>
-              </Badge>
-            )}
-          </div>
-        );
-      })()}
-      {channelSummary[agent.agentId]?.telegram && (
-        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-          <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
-        </div>
-      )}
-      {(deviceSummary[agent.agentId]?.pending ?? 0) > 0 && (
-        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-          <Badge tone="warning">
-            <span style={{ fontSize: 8, padding: '1px 6px' }}>
-              {deviceSummary[agent.agentId].pending === 1 ? 'BROWSER WAITING' : `${deviceSummary[agent.agentId].pending} BROWSERS WAITING`}
-            </span>
+        </span>
+        {chip && (
+          <Badge tone={(tone ?? 'neutral') as Tone}>
+            <span style={{ fontSize: 8, padding: '1px 6px' }}>{chip}</span>
           </Badge>
-        </div>
+        )}
+      </>
+    );
+  }
+
+  const pending = deviceSummary[agent.agentId]?.pending ?? 0;
+  const b = backupSummary[agent.agentId];
+  const activity = !b ? null
+    : b.kind === 'backup' ? (b.percent !== null && b.percent !== undefined ? `BACKUP ${b.percent}%` : 'BACKUP…')
+    : b.kind === 'restore' ? 'RESTORING'
+    : b.kind === 'recreate' ? 'RECREATING'
+    : b.kind === 'edit' ? 'EDITING'
+    : 'UPDATING';
+  const hasChips = !!b || channelSummary[agent.agentId]?.telegram || pending > 0 || agent.updateAvailable || agent.newBuildAvailable;
+  const chips = hasChips ? (
+    <>
+      {activity && <Badge tone="neutral"><span style={{ fontSize: 8, padding: '1px 6px' }}>{activity}</span></Badge>}
+      {channelSummary[agent.agentId]?.telegram && (
+        <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
+      )}
+      {pending > 0 && (
+        <Badge tone="warning">
+          <span style={{ fontSize: 8, padding: '1px 6px' }}>{pending === 1 ? 'BROWSER WAITING' : `${pending} BROWSERS WAITING`}</span>
+        </Badge>
       )}
       {(agent.updateAvailable || agent.newBuildAvailable) && (
-        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-          <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>{agent.updateAvailable ? 'UPDATE AVAILABLE' : 'NEW BUILD'}</span></Badge>
-        </div>
+        <Badge tone="warning"><span style={{ fontSize: 8, padding: '1px 6px' }}>{agent.updateAvailable ? 'UPDATE AVAILABLE' : 'NEW BUILD'}</span></Badge>
       )}
-      {(() => {
-        const b = backupSummary[agent.agentId];
-        if (!b) return null;
-        const label =
-          b.kind === 'backup' ? (b.percent !== null && b.percent !== undefined ? `BACKUP ${b.percent}%` : 'BACKUP…')
-          : b.kind === 'restore' ? 'RESTORING'
-          : b.kind === 'recreate' ? 'RECREATING'
-          : b.kind === 'edit' ? 'EDITING'
-          : 'UPDATING';
-        return (
-          <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-            <Badge tone="neutral">
-              <span style={{ fontSize: 8, padding: '1px 6px' }}>{label}</span>
-            </Badge>
-          </div>
-        );
-      })()}
-    </ListItem>
+    </>
+  ) : null;
+
+  return (
+    <AgentCard
+      name={agent.displayName || agent.name}
+      template={agent.template}
+      running={agent.state === 'running'}
+      toggling={loading}
+      toggleDisabled={agent.state === 'unknown' || !!busy}
+      onToggle={() => { void onLifecycle(); }}
+      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation /> : undefined}
+      meta={[
+        imageLabel(agent),
+        compactPorts(agent.ports),
+      ]}
+      model={model}
+      chips={chips}
+      selected={selected}
+      onSelect={onClick}
+    />
   );
 }
 
@@ -641,19 +672,19 @@ export default function AgentsPageClient() {
   if (isMobile) {
     if (!showList && selected) {
       return (
-        <div style={{ height: '100dvh', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
               BACK
             </Button>
-            <span style={{ fontSize: 12, color: 'var(--violet)' }}>{selected.displayName || selected.name}</span>
+            <span style={{ fontSize: 12, color: 'var(--violet)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.displayName || selected.name}</span>
           </div>
-          <ImageDownloadBanner onImageReady={handleImageReady} />
-        {providersConfigured === false && <NoProviderBanner />}
-          {/* Scrollable content */}
-          <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          {/* One scrolling region: banners and the detail scroll together, the header stays put. */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', paddingBottom: FLOATING_CLEARANCE }} data-testid="agent-detail-scroll">
+            <ImageDownloadBanner onImageReady={handleImageReady} />
+            {providersConfigured === false && <NoProviderBanner />}
             <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} />
           </div>
         </div>
@@ -662,7 +693,7 @@ export default function AgentsPageClient() {
 
     // Mobile: list
     return (
-      <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
@@ -670,17 +701,18 @@ export default function AgentsPageClient() {
             + NEW
           </Button>
         </div>
-        <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: '8px 14px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           {(['all', 'running', 'exited'] as const).map((f) => (
             <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
               {f}
             </Button>
-          ))} 
+          ))}
         </div>
-        <ImageDownloadBanner onImageReady={handleImageReady} />
-        {providersConfigured === false && <NoProviderBanner />}
-        {tokenSection}
-        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {/* One scrolling region: banners, the gateway token form, then the list. Header and filters stay put; the form scrolls away with the rest. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', paddingBottom: FLOATING_CLEARANCE }} data-testid="agents-list-scroll">
+          <ImageDownloadBanner onImageReady={handleImageReady} />
+          {providersConfigured === false && <NoProviderBanner />}
+          {tokenSection}
           {filtered.length === 0 && <div style={{ padding: 14, color: '#888', fontSize: 12 }}>No agents found</div>}
           {filtered.map((agent) => (
             <AgentListItem
