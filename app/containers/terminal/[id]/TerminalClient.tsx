@@ -78,7 +78,7 @@ function themeFromTokens() {
  * terminal-ws-server.js. The shell survives a dropped connection for two minutes and a
  * reconnect with the same session id picks it up; see docs/CONTAINER-TERMINAL.md.
  */
-export default function TerminalClient({ containerId }: { containerId: string }) {
+export default function TerminalClient({ containerId, displayName = null }: { containerId: string; displayName?: string | null }) {
   const router = useRouter();
   const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -250,7 +250,8 @@ export default function TerminalClient({ containerId }: { containerId: string })
       <div className="terminal-page__bar">
         <div className="terminal-page__title">
           <span className="ui-kicker ui-kicker--accent">Terminal</span>
-          <span className="terminal-page__container">{containerId}</span>
+          <span className="terminal-page__container" title={displayName ? containerId : undefined}>{displayName || containerId}</span>
+          {displayName && displayName !== containerId && <span className="ui-muted" style={{ fontSize: 11, fontFamily: 'var(--font-mono-stack)' }}>{containerId}</span>}
           <Badge tone={s.tone}>{s.label}</Badge>
         </div>
         <div className="terminal-page__actions">

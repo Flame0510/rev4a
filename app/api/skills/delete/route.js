@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 
 
@@ -56,7 +57,7 @@ export async function DELETE(request) {
         execFileSync('docker', ['exec', containerName, 'test', '-d', skillDir], { encoding: 'utf8', timeout: 5000 });
       } catch {
         return NextResponse.json(
-          { error: `Skill "${skillName}" not found in container ${containerName}` },
+          { error: `Skill "${skillName}" not found in ${describeAgent(containerName)}` },
           { status: 404 }
         );
       }

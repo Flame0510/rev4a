@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import { dockerExecNoFail, mapWithConcurrency, buildExecArgs, clientTimeoutMs, isWrapperMissing, unwrappedContainers } from '@/lib/docker-exec';
 
 import { gatewayCliArgv } from '@/lib/gateway-cli';
+import { describeAgent } from '@/lib/agent-names';
 
 const execFileAsync = promisify(execFile);
 
@@ -346,7 +347,7 @@ export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronP
   if (containerName) {
     const ok = toggleInContainer(containerName, id, patch.enabled);
     if (ok) return { ok: true, job: { id, enabled: patch.enabled } as OpenClawCronJob };
-    return { ok: false, error: `Failed to toggle cron in container ${containerName}` };
+    return { ok: false, error: `Failed to toggle cron in ${describeAgent(containerName)}` };
   }
 
   const ok = toggleOnHost(id, patch.enabled);
@@ -390,7 +391,7 @@ export function removeCronJob(id: string, containerName?: string): CronRemoveRes
   if (containerName) {
     const ok = removeInContainer(containerName, id);
     if (ok) return { ok: true };
-    return { ok: false, error: `Failed to remove cron job in container ${containerName}` };
+    return { ok: false, error: `Failed to remove cron job in ${describeAgent(containerName)}` };
   }
 
   const ok = removeOnHost(id);

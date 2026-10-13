@@ -26,6 +26,7 @@ import { activeUpdateAgentIds } from '@/lib/agent-update-state';
 import { activeRecreateAgentIds } from '@/lib/agent-recreate-state';
 import { activeRestoreAgentIds } from '@/lib/agent-restore-state';
 import { activeEditAgentIds } from '@/lib/agent-edit-state';
+import { getAgentDisplayNames } from '@/lib/agent-names';
 import { priceAt, type ModelCost } from '@/lib/model-pricing';
 import { AGENT_HEADER } from '@/lib/proxy-usage';
 
@@ -449,7 +450,12 @@ export async function syncAllAgents(): Promise<SyncOutcome> {
   } else if (outcome.ok) {
     outcome.summary = `Synced ${outcome.synced.length} of ${outcome.total} agent(s)${stoppedNote(outcome)}.`;
   } else {
-    const names = outcome.failed.map((f) => `${f.container} (${f.error})`).join(', ');
+    // The agent's display name first, the container in parentheses; a failed lookup keeps the container name.
+    const display = await getAgentDisplayNames(outcome.failed.map((f) => f.container)).catch(() => new Map<string, string>());
+    const names = outcome.failed.map((f) => {
+      const n = display.get(f.container);
+      return `${n && n !== f.container ? `${n} (${f.container})` : f.container} (${f.error})`;
+    }).join(', ');
     outcome.summary = `Synced ${outcome.synced.length} of ${outcome.total} agent(s)${stoppedNote(outcome)}. Not applied to: ${names}.`;
   }
   return outcome;

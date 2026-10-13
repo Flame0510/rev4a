@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { NextResponse, type NextRequest } from 'next/server';
+import { getAgentDisplayNames } from '@/lib/agent-names';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 const LOCAL_ROOT = (process.env.REV4A_WORKSPACE_ROOT || '').replace(/\/+$/, '/');
@@ -49,7 +50,7 @@ function getWorkspace(id: string): Workspace | null {
   return null;
 }
 
-function listWorkspaces(): Workspace[] {
+async function listWorkspaces(): Promise<Workspace[]> {
   const workspaces: Workspace[] = [];
   if (HAS_LOCAL_WORKSPACE) {
     workspaces.push({ id: 'local', label: 'Local', type: 'host', path: LOCAL_ROOT });
@@ -63,18 +64,12 @@ function listWorkspaces(): Workspace[] {
       { timeout: 5000, encoding: 'utf-8' },
     ).trim();
     if (output) {
-      for (const line of output.split('\n')) {
-        const [name, agentId] = line.split('|');
+      const rows = output.split('\n').map((line) => line.split('|'));
+      // Display names (AGENT_NAME) from the shared cached inspect, not an exec per container.
+      const names = await getAgentDisplayNames(rows.map(([n]) => n));
+      for (const [name, agentId] of rows) {
         if (name && agentId) {
-          // Read AGENT_NAME env for display name (fallback to agentId)
-          let displayName = '';
-          try {
-            displayName = execFileSync(
-              'docker',
-              ['exec', name, 'sh', '-c', 'printenv AGENT_NAME'],
-              { timeout: 3000, encoding: 'utf-8' },
-            ).trim();
-          } catch { /* use fallback */ }
+          const displayName = names.get(name) ?? '';
           workspaces.push({
             id: `container-${name}`,
             label: displayName || `${agentId} (${name})`,
@@ -275,12 +270,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // action=list → list available workspaces
   if (action === 'list') {
-    return NextResponse.json({ workspaces: listWorkspaces() });
+    return NextResponse.json({ workspaces: await listWorkspaces() });
   }
 
   // No workspace specified → default to first available
   if (!ws) {
-    const all = listWorkspaces();
+    const all = await listWorkspaces();
     ws = all.length > 0 ? all[0].id : '';
   }
 

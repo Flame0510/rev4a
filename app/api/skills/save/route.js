@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { execSync, execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 
 const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
@@ -35,7 +36,7 @@ function readSkillContent(skillPath, containerName) {
         encoding: 'utf8', timeout: 5000
       });
     } catch {
-      throw Object.assign(new Error(`Skill not found in container ${containerName}`), { status: 404 });
+      throw Object.assign(new Error(`Skill not found in ${describeAgent(containerName)}`), { status: 404 });
     }
   }
 

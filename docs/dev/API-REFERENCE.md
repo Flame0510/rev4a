@@ -1074,8 +1074,8 @@ At least one field is required; an empty `displayName` is rejected.
 
 The rebuild itself (`recreateAgentContainer()`) re-checks the ports it is about to
 publish against every other container and refuses **before removing anything** when one
-is taken, naming the holder: `Port 3700 is already published by agent_a0000004 (Night
-Shift). Change this agent's port range in the Edit panel, then retry: nothing was
+is taken, naming the holder (display name first): `Port 3700 is already published by Night
+Shift (agent_a0000004). Change this agent's port range in the Edit panel, then retry: nothing was
 changed.` The row lands in `failed` with that message and the agent keeps running. The
 same guard protects Update and Rollback, whose rows record the same text.
 
@@ -2187,7 +2187,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 ```json
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
-`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
 
 ---
 
@@ -2235,7 +2235,7 @@ a warning above $10 or with calls without a price, each with its recommendation,
 ### `GET /api/crons`
 List of scheduled cron jobs from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`).
 
-Jobs from agent containers include `containerName` and `source: "container"` fields.
+Jobs from agent containers include `containerName` and `source: "container"` fields, plus `agentName`: the agent's display name (the container's `AGENT_NAME`), or `null` when the agent has none and for host jobs. The page labels tabs, pills and the detail by `agentName` and shows `containerName` only as a secondary detail. The names come from `lib/agent-names.ts` (one cached `docker inspect` for all containers).
 Jobs from the host gateway have `source: "host"`.
 
 **Auth:** Bearer or browser cookie
@@ -2268,6 +2268,7 @@ Jobs from the host gateway have `source: "host"`.
     "source": "container",
     "agentId": "atlas",
     "containerName": "openclaw-atlas",
+    "agentName": "Atlas",
     "computedNextRunAtMs": 1749600000000
   }
 ]
@@ -2561,7 +2562,7 @@ Skill discovery across three sources:
 - **Bundled:** skills shipped with OpenClaw (read-only)
 
 ### `GET /api/skills`
-List all available skills from all sources.
+List all available skills from all sources. Workspace skills carry `agentName`, the agent's display name (`AGENT_NAME`), or `null` when it has none; the page labels by it and shows `containerName` as a secondary detail.
 
 **Auth:** browser cookie
 
@@ -2583,6 +2584,7 @@ List all available skills from all sources.
       "type": "workspace",
       "agentId": "atlas",
       "containerName": "openclaw-atlas",
+      "agentName": "Atlas",
       "path": "/root/.openclaw/workspace/skills/my-custom-skill",
       "skillMdPath": "/root/.openclaw/workspace/skills/my-custom-skill/SKILL.md",
       "hasSkillMd": true,

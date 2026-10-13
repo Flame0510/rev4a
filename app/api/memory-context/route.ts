@@ -8,7 +8,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
 
   try {
-    return NextResponse.json(getMemoryContextSnapshot());
+    return NextResponse.json(await getMemoryContextSnapshot());
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }

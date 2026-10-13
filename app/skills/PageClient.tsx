@@ -54,6 +54,8 @@ interface Skill {
   skillMdPath?: string;
   agentId?: string;
   containerName?: string;
+  /** The agent's display name (AGENT_NAME); null when it has none. */
+  agentName?: string | null;
 }
 
 export default function SkillsPage() {
@@ -235,7 +237,7 @@ export default function SkillsPage() {
   const typeColor: Record<string, BadgeColor> = { shared: 'violet', workspace: 'green', bundled: 'blue' };
 
   const typeLabel = (s: Skill) => {
-    if (s.agentId) return `agent:${s.agentId}`;
+    if (s.agentId) return `agent:${s.agentName || s.agentId}`;
     return s.type;
   };
 
@@ -367,9 +369,9 @@ export default function SkillsPage() {
                   )}
                   {(selected.agentId || selected.containerName) && (
                     <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {selected.agentId && <Badge color="green">agent:{selected.agentId}</Badge>}
+                      {selected.agentId && <Badge color="green">agent:{selected.agentName || selected.agentId}</Badge>}
                       {selected.containerName && (
-                        <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 10, color: 'var(--text-dim)' }}>
+                        <span title="Container name" style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 10, color: 'var(--text-dim)' }}>
                           {selected.containerName}
                         </span>
                       )}

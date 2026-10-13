@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { execSync, execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 
 
@@ -68,7 +69,7 @@ export async function POST(request) {
       });
     } catch {
       return NextResponse.json(
-        { error: `Skill "${skillName}" not found in container ${containerName}` },
+        { error: `Skill "${skillName}" not found in ${describeAgent(containerName)}` },
         { status: 404 }
       );
     }

@@ -648,7 +648,7 @@ export default function AgentsPageClient() {
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
               BACK
             </Button>
-            <span style={{ fontSize: 12, color: 'var(--violet)' }}>{selected.name}</span>
+            <span style={{ fontSize: 12, color: 'var(--violet)' }}>{selected.displayName || selected.name}</span>
           </div>
           <ImageDownloadBanner onImageReady={handleImageReady} />
         {providersConfigured === false && <NoProviderBanner />}
@@ -1250,7 +1250,7 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={() => { setShowDeleteConfirm(false); handleDelete(); }}
-        title={`Delete ${agent.name}?`}
+        title={`Delete ${agent.displayName || agent.name}?`}
         message="This permanently deletes the container, its persistent volume, and ALL its backups. This cannot be undone."
         confirmLabel="Delete Agent"
         cancelLabel="Cancel"
@@ -1265,7 +1265,7 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
           <UpdateSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
         </div>
       </div>
-      <RecreateSection agentName={agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
+      <RecreateSection agentName={agent.name} displayName={agent.displayName || agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1713,8 +1713,10 @@ interface RecreateJob {
   error: string | null;
 }
 
-function RecreateSection({ agentName, agentBusy, newBuildVersion = null, onRecreated, onStarted }: {
+function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = null, onRecreated, onStarted }: {
   agentName: string;
+  /** The agent display name, for texts the user reads; agentName is the container, for URLs. */
+  displayName?: string;
   /** The OpenClaw version of this agent when a newer build of it is downloaded (the NEW BUILD badge): the section says so. */
   newBuildVersion?: string | null;
   /** A long operation is running on this agent. */
@@ -1878,7 +1880,7 @@ function RecreateSection({ agentName, agentBusy, newBuildVersion = null, onRecre
         onClose={() => setShowConfirm(false)}
         onConfirm={handleRecreate}
         title="Recreate Container"
-        message={`Recreate container "${agentName}"?\n\nAn automatic cold backup is taken first — the agent stops for it — then the container is rebuilt on the current build of its OpenClaw version (a newer build if one was downloaded). Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted and the agent is started again.`}
+        message={`Recreate the container of "${displayName || agentName}"?\n\nAn automatic cold backup is taken first — the agent stops for it — then the container is rebuilt on the current build of its OpenClaw version (a newer build if one was downloaded). Workspace, credentials, and state are preserved in the persistent volume. If the backup fails, the recreate is aborted and the agent is started again.`}
         confirmLabel="Recreate"
         cancelLabel="Cancel"
         tone="warning"

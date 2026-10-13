@@ -20,6 +20,8 @@ interface CronJob {
   description?: string;
   agentId?: string;
   containerName?: string;
+  /** The agent's display name (AGENT_NAME); null when the agent has none. */
+  agentName?: string | null;
   sessionKey?: string;
   sessionTarget?: string;
   wakeMode?: string;
@@ -109,7 +111,7 @@ function describeCron(expr: string): string {
 
 interface AgentFilter {
   key: string;       // 'all' | 'host' | containerName
-  label: string;     // 'ALL' | 'HOST' | agentId
+  label: string;     // 'ALL' | 'HOST' | agent display name (container name when it has none)
   source: string;    // 'all' | 'host' | 'container'
   containerName?: string;
 }
@@ -127,7 +129,7 @@ function buildAgentFilters(jobs: CronJob[]): AgentFilter[] {
       seen.add(job.containerName);
       filters.push({
         key: job.containerName,
-        label: job.containerName,
+        label: job.agentName || job.containerName,
         source: 'container',
         containerName: job.containerName,
       });
@@ -309,6 +311,7 @@ export default function CronsPage() {
               key={af.key}
               variant={agentFilter === af.key ? 'primary' : 'ghost'}
               size="sm"
+              title={af.containerName}
               onClick={() => setAgentFilter(af.key)}
             >
               {af.label} ({filterJobs(jobs, af.key).length})
@@ -374,7 +377,7 @@ export default function CronsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                       {isContainered && (
-                        <span style={{ fontSize: 9 }}><Pill tone="success">{job.containerName ?? job.agentId ?? 'agent'}</Pill></span>
+                        <span style={{ fontSize: 9 }} title={job.containerName ?? undefined}><Pill tone="success">{job.agentName ?? job.containerName ?? job.agentId ?? 'agent'}</Pill></span>
                       )}
                       {job.id && (
                         <>
@@ -450,7 +453,8 @@ export default function CronsPage() {
                   {/* Meta row */}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 10, color: '#555', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
                     {job.source === 'host' && <span>source: <span style={{ color: '#888' }}>host (gateway)</span></span>}
-                    {isContainered && <span>container: <span style={{ color: '#888' }}>{String(job.containerName)}</span></span>}
+                    {isContainered && <span>agent: <span style={{ color: '#888' }}>{String(job.agentName ?? job.containerName)}</span></span>}
+                    {isContainered && job.agentName && <span title="Container name" style={{ color: '#444' }}>{String(job.containerName)}</span>}
                     {model && <span>model: <span style={{ color: '#888' }}>{String(model)}</span></span>}
                     {job.sessionTarget && <span>target: <span style={{ color: '#888' }}>{String(job.sessionTarget)}</span></span>}
                     {job.delivery?.channel && <span>→ <span style={{ color: '#888' }}>{String(job.delivery.channel)}</span></span>}

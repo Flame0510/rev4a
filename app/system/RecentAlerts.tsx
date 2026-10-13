@@ -8,7 +8,7 @@ import type { Tone } from '../components/ui/tokens';
 const POLL_MS = 60_000;
 const LIMIT = 10;
 
-interface Alert { ts: number; metric: string | null; message: string }
+interface Alert { ts: number; metric: string | null; message: string; container?: string | null; agentName?: string | null; displayMessage?: string }
 
 /** A disk at its limit is the one that does not clear by itself. Only its own keys, never the prototype's. */
 const TONE: Record<string, Tone> = { disk: 'danger', cpu: 'warning', ram: 'warning', container_pids: 'warning', container_memory: 'warning', container_oom: 'danger', packages_failed: 'danger' };
@@ -63,7 +63,7 @@ export function RecentAlerts({ timeZone }: { timeZone: string }) {
           <div className="system-alert" key={`${a.ts}-${a.message}`}>
             <span className="ui-muted">{format.format(new Date(a.ts))}</span>
             <span>{a.metric ? <Pill tone={toneOf(a.metric)}>{a.metric}</Pill> : null}</span>
-            <span>{a.message}</span>
+            <span>{a.displayMessage ?? a.message}{a.container && !(a.displayMessage ?? a.message).includes(a.container) ? <span className="ui-muted" style={{ marginLeft: 6, fontSize: 11 }}>{a.agentName && !(a.displayMessage ?? a.message).includes(a.agentName) ? `${a.agentName} · ` : ''}{a.container}</span> : null}</span>
           </div>
         ))}
       </div>

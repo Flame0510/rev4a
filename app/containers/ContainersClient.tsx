@@ -112,7 +112,7 @@ export default function ContainersClient() {
                 background: c.state === 'running' ? 'var(--green)' : (c.state === 'restarting' ? 'var(--yellow)' : 'var(--red)')
               }} />
               <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-mono-stack)', wordBreak: 'break-all', flex: '1 1 auto', minWidth: 0 }}>
-                {c.name}
+                {c.displayName || c.name}
               </span>
               <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0, fontFamily: 'var(--font-mono-stack)' }}>
                 {c.state === 'running' ? c.status.replace(/^Up\s+/, '') : c.status}
@@ -120,7 +120,7 @@ export default function ContainersClient() {
               {c.state === 'running' && (
                 // A client-side navigation (prefetched), not a full page reload.
                 <Link
-                  href={`/containers/terminal/${encodeURIComponent(c.name)}`}
+                  href={`/containers/terminal/${encodeURIComponent(c.name)}${c.displayName ? `?name=${encodeURIComponent(c.displayName)}` : ''}`}
                   style={{
                     fontSize: 10,
                     color: 'var(--violet)',
@@ -159,7 +159,7 @@ export default function ContainersClient() {
             {(c.displayName || c.agentId) && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {c.displayName ? (
-                  <Pill tone="accent">{c.displayName}</Pill>
+                  <><Pill tone="accent">agent</Pill><span className="ui-muted" style={{ fontSize: 11, fontFamily: 'var(--font-mono-stack)' }}>{c.name}</span></>
                 ) : c.agentId ? (
                   <Pill tone="neutral">{c.agentId}</Pill>
                 ) : null}

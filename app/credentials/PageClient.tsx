@@ -870,7 +870,7 @@ export default function CredentialsPageClient() {
           onSaved={async (failed) => {
             await refreshAfterChange();
             setEditProfile(null);
-            showToast(failed?.length ? `Credential updated, but not delivered to: ${failed.join(', ')}` : 'Credential updated');
+            showToast(failed?.length ? `Credential updated, but not delivered to: ${failed.map((c) => agentInfo[c]?.displayName ?? c).join(', ')}` : 'Credential updated');
           }}
         />
       )}

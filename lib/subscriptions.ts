@@ -18,6 +18,7 @@
  * email -> container map used to find a source agent per account 60 s.
  */
 import { execFile } from 'child_process';
+import { getAgentDisplayNames } from '@/lib/agent-names';
 import { promisify } from 'util';
 import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
@@ -150,19 +151,7 @@ async function readAgentContainers(): Promise<AgentContainer[]> {
   // One inspect for all; a failure only costs the names, the agents are still listed.
   if (rows.length) {
     try {
-      const { stdout: env } = await execFileAsync(
-        'docker',
-        // Prints only AGENT_NAME, never the rest of the env (it holds the gateway token).
-        ['inspect', '--format', '{{.Name}}{{range .Config.Env}}{{$p := split . "="}}{{if eq (index $p 0) "AGENT_NAME"}}\t{{.}}{{end}}{{end}}', ...rows.map((r) => r.container)],
-        { encoding: 'utf8', timeout: 8000 },
-      );
-      const names = new Map<string, string>();
-      for (const line of env.trim().split('\n')) {
-        const [cname, ...vars] = line.split('\t');
-        const v = vars.find((e) => e.startsWith('AGENT_NAME='));
-        const display = v ? v.slice('AGENT_NAME='.length).trim() : '';
-        if (cname && display) names.set(cname.replace(/^\//, ''), display);
-      }
+      const names = await getAgentDisplayNames(rows.map((r) => r.container));
       for (const r of rows) r.displayName = names.get(r.container) ?? null;
     } catch { /* names stay null */ }
   }

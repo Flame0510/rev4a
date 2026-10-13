@@ -72,7 +72,7 @@ export async function getUsedHostPorts(opts: { excludeContainerId?: string } = {
   return new Set((await getHostPortHolders(opts)).keys());
 }
 
-/** How a holder reads in an error: `agent_a0000004 (Night Shift)`, or the name alone. */
+/** How a holder reads in an error: `Night Shift (agent_a0000004)` (the display name first), or the container name alone. */
 export function describeHolder(holder: HostPortHolder): string {
-  return holder.displayName ? `${holder.name} (${holder.displayName})` : holder.name;
+  return holder.displayName ? `${holder.displayName} (${holder.name})` : holder.name;
 }

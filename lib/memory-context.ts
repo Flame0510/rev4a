@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getAgentDisplayNames } from '@/lib/agent-names';
 
 export const OPENCLAW_CONFIG_PATH = '/data/.openclaw/openclaw.json';
 export const SHARED_CONTEXT_DIR = '/data/.openclaw/shared-context';
@@ -189,7 +190,7 @@ function inspectGlobalContext(warnings: string[]): FileSummary[] {
   });
 }
 
-function discoverAgents(globalWarnings: string[]): AgentSeed[] {
+async function discoverAgents(globalWarnings: string[]): Promise<AgentSeed[]> {
   const config = safeReadConfigWarnings(globalWarnings);
   const defaultWorkspace = typeof config.agents?.defaults?.workspace === 'string' && config.agents.defaults.workspace.trim()
     ? config.agents.defaults.workspace.trim()
@@ -245,17 +246,11 @@ function discoverAgents(globalWarnings: string[]): AgentSeed[] {
       { timeout: 5000, encoding: 'utf-8' },
     ).trim();
     if (out) {
-      for (const line of out.split('\n')) {
-        const [containerName, agentId] = line.split('|');
-        if (!containerName || !agentId) continue;
-        // Read AGENT_NAME from container env
-        let displayName = '';
-        try {
-          displayName = execSync(
-            `docker exec ${containerName} sh -c 'printenv AGENT_NAME'`,
-            { timeout: 3000, encoding: 'utf-8' },
-          ).trim();
-        } catch { /* env read failed — use fallback */ }
+      const containers: string[][] = String(out).split('\n').map((line: string) => line.split('|')).filter(([c, a]: string[]) => c && a);
+      // One shared, cached `docker inspect` for every name (lib/agent-names.ts), not an exec per container.
+      const names = await getAgentDisplayNames(containers.map(([c]) => c));
+      for (const [containerName, agentId] of containers) {
+        const displayName = names.get(containerName) ?? '';
         const workspace = '/root/.openclaw/workspace/';
         upsert(agentId, displayName || containerName, workspace, 'docker', displayName || undefined);
       }
@@ -340,10 +335,10 @@ function inspectAgent(seed: AgentSeed): AgentMemorySummary {
   return summary;
 }
 
-export function getMemoryContextSnapshot(): MemoryContextPayload {
+export async function getMemoryContextSnapshot(): Promise<MemoryContextPayload> {
   const warnings: string[] = [];
   const globalContext = inspectGlobalContext(warnings);
-  const agents = discoverAgents(warnings).map(inspectAgent);
+  const agents = (await discoverAgents(warnings)).map(inspectAgent);
 
   const allAgentWarnings = agents.flatMap((agent) => agent.warnings);
   const healths = agents.map((agent) => agent.strategy.health);

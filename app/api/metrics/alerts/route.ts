@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { containersInText, getAgentDisplayNames, nameContainersInText } from '@/lib/agent-names';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +50,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           values: Array.isArray(data.values) ? data.values.filter((v): v is number => typeof v === 'number') : [],
         };
       });
-      return NextResponse.json({ alerts });
+      // Display names are resolved now, so rows stored by older versions (container names in the
+      // message text) read well too. One cached inspect; the stored rows are never rewritten.
+      const candidates = new Set<string>();
+      for (const a of alerts) {
+        if (a.container) candidates.add(a.container);
+        for (const c of containersInText(a.message)) candidates.add(c);
+      }
+      const names = await getAgentDisplayNames([...candidates]);
+      return NextResponse.json({
+        alerts: alerts.map((a) => {
+          const own = a.container ? names.get(a.container) ?? null : null;
+          const mentioned = containersInText(a.message);
+          return {
+            ...a,
+            agentName: own ?? (mentioned.length === 1 ? names.get(mentioned[0]) ?? null : null),
+            displayMessage: nameContainersInText(a.message, names),
+          };
+        }),
+      });
     } finally {
       db.close();
     }

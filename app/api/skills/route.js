@@ -4,6 +4,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { getAgentDisplayNames } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 import { dockerExecShellNoFail, mapWithConcurrency } from '@/lib/docker-exec';
 
@@ -146,6 +147,8 @@ export async function GET(request) {
   // 2. Agent container skills (workspace-local) — one bulk read per agent,
   //    agents queried concurrently.
   const agents = await discoverAgentContainers();
+  // Display names (AGENT_NAME) for the labels; one cached inspect, never an exec per agent.
+  const agentNames = await getAgentDisplayNames(agents.map((a) => a.containerName));
   const perAgent = await mapWithConcurrency(agents, AGENT_QUERY_CONCURRENCY, (agent) =>
     readSkillsBulk(agent.containerName, WORKSPACE_SKILLS_DIR),
   );
@@ -159,6 +162,7 @@ export async function GET(request) {
         type: 'workspace',
         agentId: agent.agentId,
         containerName: agent.containerName,
+        agentName: agentNames.get(agent.containerName) || null,
         path: `${WORKSPACE_SKILLS_DIR}/${name}`,
         skillMdPath: `${WORKSPACE_SKILLS_DIR}/${name}/SKILL.md`,
         hasSkillMd: true,
