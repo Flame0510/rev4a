@@ -15,21 +15,11 @@
 import { dockerExec, dockerExecNoFail } from '@/lib/docker-exec';
 import { dockerFetch } from '@/lib/docker-socket';
 import { isValidAgentId } from '@/lib/container';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 
 const CLI_TIMEOUT_MS = 20_000;
 const LINK_TIMEOUT_MS = 30_000;
 const CONFIG_TIMEOUT_MS = 8_000;
-
-/**
- * Runs `openclaw "$@"` against the agent's own Gateway. Arguments stay positional
- * (`sh -c <script> sh <args…>`): nothing a caller passes is interpolated into the
- * script.
- */
-const GATEWAY_CLI = [
-  'export OPENCLAW_GATEWAY_PORT=3000',
-  'if [ -f /root/.agent-token ]; then OPENCLAW_GATEWAY_TOKEN=$(head -1 /root/.agent-token | tr -d "[:space:]"); export OPENCLAW_GATEWAY_TOKEN; fi',
-  'exec openclaw "$@"',
-].join('; ');
 
 const REQUEST_ID_RE = /^[A-Za-z0-9-]{8,80}$/;
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -103,7 +93,7 @@ function parseCliJson(output: string): unknown {
 }
 
 async function runCli(container: string, args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<unknown> {
-  const out = await dockerExec(container, ['sh', '-c', GATEWAY_CLI, 'sh', ...args], { timeoutMs });
+  const out = await dockerExec(container, gatewayCliArgv(args), { timeoutMs });
   return parseCliJson(out);
 }
 

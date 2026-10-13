@@ -25,6 +25,7 @@ export async function resolve(specifier, context, next) {
 `;
 register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
 const m = await import('../lib/credentials/managed.ts');
+const gw = await import('../lib/gateway-cli.ts');
 
 let passed = 0;
 const pending = [];
@@ -57,6 +58,7 @@ test('github enable calls the two RPCs; the token is only in the env', async () 
   const { argv, env } = exec.calls[0];
   assert.deepEqual(argv.slice(0, 2), ['sh', '-c']);
   const script = argv[2];
+  assert.ok(script.startsWith(gw.GATEWAY_TOKEN_SNIPPET + '; '), 'token resolved before the RPCs');
   assert.match(script, /openclaw gateway call secrets\.store\.set --params "\$REV4A_STORE_PARAMS"/);
   assert.match(script, /openclaw gateway call tools\.github\.configure --params "\$REV4A_CONF_PARAMS"/);
   // The secret is nowhere in the argv / script text.

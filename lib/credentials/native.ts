@@ -2,11 +2,13 @@
  * Native OpenClaw delivery, the pure half: which environment entries and which skill
  * config a provider needs, and the exact argv / JSON the delivery layer sends.
  *
- * This file has no imports of other modules on purpose. It is the part a test can run
- * with plain node, and it is where the "no secret in argv" rule is enforced by
+ * This file imports only lib/gateway-cli.ts, which has no imports itself. It is the part a
+ * test can run with plain node, and it is where the "no secret in argv" rule is enforced by
  * construction: no function here takes a secret and returns argv. A value only ever
  * leaves as the stdin text of `secrets store set`, built by {@link storeInputs}.
  */
+
+import { gatewayCliArgv } from '../gateway-cli';
 
 /** The Rev4a mode of an assignment. `protected` is reserved and not implemented. */
 export type AssignmentMode = 'env' | 'protected';
@@ -100,6 +102,14 @@ export const SECRETS_RELOAD_ARGV: readonly string[] = ['openclaw', 'secrets', 'r
  * would reach the process table); the token itself comes from the container env.
  */
 export const SECRETS_RELOAD_ENV: Readonly<Record<string, string>> = { OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:3000' };
+/**
+ * The reload as it runs in the container: through the shared Gateway CLI wrapper, so the CLI
+ * uses the token in /root/.agent-token (a rotated token) like the Gateway does. The plan above
+ * keeps the plain command; the URL stays in the environment.
+ */
+export function secretsReloadExecArgv(): string[] {
+  return gatewayCliArgv(SECRETS_RELOAD_ARGV.slice(1), { port: null });
+}
 export const VERSION_ARGV: readonly string[] = ['openclaw', '--version'];
 
 export class UnsupportedNativeVersionError extends Error {}
@@ -264,7 +274,7 @@ export async function runEnable(exec: NativeExec, providerId: string, secret: Re
     }
     const patch = enablePatch(providerId, secret);
     if (patch) await exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch));
-    await exec.run([...SECRETS_RELOAD_ARGV], { ...SECRETS_RELOAD_ENV });
+    await exec.run(secretsReloadExecArgv(), { ...SECRETS_RELOAD_ENV });
   } catch (e) {
     if (e instanceof UnsupportedNativeVersionError) throw e;
     throw new Error(redact((e as Error).message, values));
@@ -286,7 +296,7 @@ export async function runDisable(exec: NativeExec, providerId: string, secretVal
   for (const e of p.env) await attempt(`remove ${e.name}`, () => exec.run(storeRemoveArgv(e.name)));
   const patch = disablePatch(providerId);
   if (patch) await attempt('remove the skill entry', () => exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch)));
-  await attempt('reload', () => exec.run([...SECRETS_RELOAD_ARGV], { ...SECRETS_RELOAD_ENV }));
+  await attempt('reload', () => exec.run(secretsReloadExecArgv(), { ...SECRETS_RELOAD_ENV }));
   return errors;
 }
 

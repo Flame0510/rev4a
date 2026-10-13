@@ -7,7 +7,25 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import * as n from '../lib/credentials/native.ts';
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+// native.ts imports gateway-cli without an extension, as Next resolves it; a small resolve
+// hook gives plain Node the same view.
+const hooks = `
+import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith('.') && context.parentURL?.startsWith('file:') && !/\\.\\w+$/.test(specifier)) {
+    const p = new URL(specifier, context.parentURL).pathname + '.ts';
+    if (existsSync(p)) return next(pathToFileURL(p).href, context);
+  }
+  return next(specifier, context);
+}
+`;
+register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
+const n = await import('../lib/credentials/native.ts');
+const gw = await import('../lib/gateway-cli.ts');
 import { writeRefusal, requiresContainerWrite } from '../lib/credentials/guard.ts';
 
 let passed = 0;
@@ -200,7 +218,8 @@ test('a failed rm mid-way still attempts every other step', async () => {
   const errors = await n.runDisable(exec, 'trello');
   assert.equal(errors.length, 1);
   assert.match(errors[0], /remove TRELLO_API_KEY/);
-  const kinds = exec.calls.map((c) => c.argv.slice(0, 4).join(' '));
+  // The reload runs through the Gateway CLI wrapper (sh -c <script> sh <args>): show it as the openclaw command.
+  const kinds = exec.calls.map((c) => (c.argv[0] === 'sh' ? ['openclaw', ...c.argv.slice(4)] : c.argv).slice(0, 4).join(' '));
   assert.deepEqual(kinds, [
     'openclaw secrets store rm', 'openclaw secrets store rm',
     'openclaw config patch --stdin', 'openclaw secrets reload',
@@ -239,7 +258,9 @@ test('enable: values only on stdin, reload gets the gateway env', async () => {
     for (const v of Object.values(SECRETS.trello)) assert.ok(!flat.includes(v), 'secret in argv or env');
   }
   const reload = exec.calls.at(-1);
-  assert.deepEqual(reload.argv, ['openclaw', 'secrets', 'reload']);
+  assert.deepEqual(reload.argv, gw.gatewayCliArgv(['secrets', 'reload'], { port: null }));
+  assert.equal(reload.argv[4], 'secrets');
+  assert.ok(reload.argv[2].includes('/root/.agent-token'), 'reload must resolve the file token');
   assert.deepEqual(reload.env, { OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:3000' });
   assert.equal(exec.calls.filter((c) => c.input !== null).length, 3); // two store entries and the patch
 });

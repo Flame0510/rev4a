@@ -914,7 +914,7 @@ const COSTS_CALL_TIMEOUT_MS = 60_000;
 /**
  * Runs `openclaw "$@"` against the agent's own Gateway on port 3000, with the token
  * resolved inside the container as the entrypoint does (lib/agent-devices.ts, same
- * script): it never reaches argv on the host. Arguments stay positional.
+ * script, kept identical to lib/gateway-cli.ts): it never reaches argv on the host.
  */
 const COSTS_GATEWAY_CLI = [
   'export OPENCLAW_GATEWAY_PORT=3000',

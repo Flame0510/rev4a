@@ -475,7 +475,7 @@ Enabling an assignment (`lib/credentials/delivery.ts`, pure parts in
    value on stdin (never in argv);
 3. one `openclaw config patch --stdin` for `skills.entries.<skill>` (`apiKey` SecretRef
    when the skill declares a primary env, `env` map for Trello, plain `enabled` for GitHub);
-4. `openclaw secrets reload` with `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000` in the exec environment (the agent Gateway port; never `--url`/`--token` in argv).
+4. `openclaw secrets reload` with `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000` in the exec environment (the agent Gateway port; never `--url`/`--token` in argv). Every Gateway CLI call (the reload, the GitHub RPCs, cron list/edit, the subscription usage read, the devices and update paths) goes through `lib/gateway-cli.ts`, which exports the token from `/root/.agent-token` when that file exists (a token rotated from the dashboard), else keeps the container's `OPENCLAW_GATEWAY_TOKEN`, the entrypoint's precedence; the token is read inside the container.
 
 Two providers skip the environment entry, because it cannot work
 (`lib/credentials/managed.ts`):

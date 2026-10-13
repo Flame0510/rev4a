@@ -22,6 +22,7 @@ import { promisify } from 'util';
 import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { SUPPORTED_VERSIONS, parseOpenClawVersion } from '@/lib/agent-versions';
 import { listLocalAgentImages } from '@/lib/agent-images';
 import { dockerRequestJson } from '@/lib/docker-socket-path';
@@ -430,7 +431,8 @@ async function readAccountModels(container: string, email: string | null): Promi
   if (hit && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
   const out = await dockerExec(
     container,
-    ['openclaw', 'models', 'list', '--provider', PROVIDER_ID, '--json'],
+    // Reaches the Gateway: the token must be the one it runs with (see lib/gateway-cli.ts).
+    gatewayCliArgv(['models', 'list', '--provider', PROVIDER_ID, '--json']),
     { timeoutMs: CLI_TIMEOUT_MS },
   );
   const models = parseModelList(out);

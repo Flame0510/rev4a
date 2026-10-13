@@ -2,6 +2,8 @@ import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
 import { dockerExecNoFail, mapWithConcurrency, buildExecArgs, clientTimeoutMs, isWrapperMissing, unwrappedContainers } from '@/lib/docker-exec';
 
+import { gatewayCliArgv } from '@/lib/gateway-cli';
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -180,7 +182,7 @@ async function listJobsInContainer(containerName: string): Promise<OpenClawCronJ
   for (const gwUrl of gatewayUrls) {
     const raw = await dockerExecNoFail(
       containerName,
-      ['openclaw', 'cron', 'list', '--json', '--all'],
+      gatewayCliArgv(['cron', 'list', '--json', '--all'], { port: null }),
       { env: { OPENCLAW_GATEWAY_URL: gwUrl }, timeoutMs: 15000 },
     );
     if (!raw) continue;
@@ -213,7 +215,7 @@ function toggleInContainer(containerName: string, jobId: string, enabled: boolea
   for (const gwUrl of gatewayUrls) {
     try {
       const action = enabled ? 'enable' : 'disable';
-      dockerExecSync(containerName, gwUrl, ['openclaw', 'cron', action, jobId], 10000);
+      dockerExecSync(containerName, gwUrl, gatewayCliArgv(['cron', action, jobId], { port: null }), 10000);
       return true;
     } catch { /* try next gateway port */ }
   }
@@ -320,9 +322,7 @@ export function getCronRuns(
 
   for (const gwUrl of gatewayUrls) {
     try {
-      const raw = dockerExecSync(containerName, gwUrl, [
-        'openclaw', 'cron', 'runs', '--id', jobId, '--limit', String(limit),
-      ], 15000);
+      const raw = dockerExecSync(containerName, gwUrl, gatewayCliArgv(['cron', 'runs', '--id', jobId, '--limit', String(limit)], { port: null }), 15000);
 
       const parsed = JSON.parse(raw.trim()) as { entries?: CronRunEntry[] };
       // Accept both empty and populated entries arrays
@@ -379,7 +379,7 @@ function removeInContainer(containerName: string, jobId: string): boolean {
   ];
   for (const gwUrl of gatewayUrls) {
     try {
-      dockerExecSync(containerName, gwUrl, ['openclaw', 'cron', 'remove', jobId], 10000);
+      dockerExecSync(containerName, gwUrl, gatewayCliArgv(['cron', 'remove', jobId], { port: null }), 10000);
       return true;
     } catch { /* try next gateway port */ }
   }

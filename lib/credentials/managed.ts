@@ -26,6 +26,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { gatewayShellScript } from '../gateway-cli';
 import { redact, storeRemoveArgv, type NativeExec } from './native';
 
 /** The single OpenClaw agent inside a Rev4a container. */
@@ -74,7 +75,7 @@ export async function githubEnable(exec: NativeExec, token: string): Promise<voi
     'openclaw gateway call tools.github.configure --params "$REV4A_CONF_PARAMS" >/dev/null',
   ].join(' && ');
   try {
-    await exec.run(['sh', '-c', script], {
+    await exec.run(['sh', '-c', gatewayShellScript(script)], {
       OPENCLAW_GATEWAY_URL: GATEWAY_URL,
       REV4A_STORE_PARAMS: githubStoreParams(name, token),
       REV4A_CONF_PARAMS: githubConfigureParams(name),
@@ -96,14 +97,14 @@ async function sweepGithubHandoffs(exec: NativeExec): Promise<void> {
     "openclaw secrets store list 2>/dev/null | grep -o 'github-setup-[a-f0-9]\\{32\\}' | sort -u |",
     'while read -r n; do openclaw secrets store rm --yes "$n" >/dev/null 2>&1; done; exit 0',
   ].join(' ');
-  try { await exec.run(['sh', '-c', script]); } catch { /* best effort */ }
+  try { await exec.run(['sh', '-c', gatewayShellScript(script)]); } catch { /* best effort */ }
 }
 
 /** Drop the managed override (the agent falls back to native/absent GitHub identity). */
 export async function githubDisable(exec: NativeExec): Promise<void> {
   const script = 'openclaw gateway call tools.github.configure --params "$REV4A_CONF_PARAMS" >/dev/null';
   try {
-    await exec.run(['sh', '-c', script], {
+    await exec.run(['sh', '-c', gatewayShellScript(script)], {
       OPENCLAW_GATEWAY_URL: GATEWAY_URL,
       REV4A_CONF_PARAMS: githubInheritParams(),
     });

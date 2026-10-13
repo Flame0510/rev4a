@@ -21,6 +21,7 @@
  */
 import { dockerExec, dockerExecNoFail } from '@/lib/docker-exec';
 import { isValidAgentId } from '@/lib/container';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { compareVersions, isSupportedVersion, localImageRef, parseOpenClawVersion } from '@/lib/agent-versions';
 import {
   containerOpenClawVersion,
@@ -108,15 +109,9 @@ async function countTranscripts(container: string): Promise<Record<string, numbe
   return JSON.parse(line.slice('REV4A-COUNTS '.length)) as Record<string, number>;
 }
 
-const CRON_LIST = [
-  'export OPENCLAW_GATEWAY_PORT=3000',
-  'if [ -f /root/.agent-token ]; then OPENCLAW_GATEWAY_TOKEN=$(head -1 /root/.agent-token | tr -d "[:space:]"); export OPENCLAW_GATEWAY_TOKEN; fi',
-  'exec openclaw cron list --all --json',
-].join('; ');
-
 /** Names of the agent's cron jobs; null when the list cannot be read. */
 async function cronJobNames(container: string): Promise<string[] | null> {
-  const out = await dockerExecNoFail(container, ['sh', '-c', CRON_LIST], { timeoutMs: 120_000 });
+  const out = await dockerExecNoFail(container, gatewayCliArgv(['cron', 'list', '--all', '--json']), { timeoutMs: 120_000 });
   const start = out.search(/[{[]/);
   if (start === -1) return null;
   try {

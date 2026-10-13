@@ -12,6 +12,7 @@
  * reported in `errors` and never fails the others.
  */
 import { dockerExec } from '@/lib/docker-exec';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { parseUsageStatus, usageCacheAction, type UsageAccount } from '@/lib/subscriptions-parse';
 import { findAccountSources, subscriptionGeneration } from '@/lib/subscriptions';
 
@@ -45,7 +46,7 @@ const inflight = (): Map<string, Promise<UsageAccount>> => (g.__rev4aUsageInflig
 async function readUsage(container: string, email: string): Promise<UsageAccount> {
   const out = await dockerExec(
     container,
-    ['timeout', String(IN_CONTAINER_TIMEOUT_S), 'sh', '-c', 'OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000 openclaw status --usage --json'],
+    ['timeout', String(IN_CONTAINER_TIMEOUT_S), ...gatewayCliArgv(['status', '--usage', '--json'])],
     { timeoutMs: HOST_TIMEOUT_MS },
   );
   // A docker exec that hit its deadline resolves with no output: that is a failure, not "no usage".
