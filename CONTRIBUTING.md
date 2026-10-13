@@ -115,10 +115,11 @@ it, and it is the gate a change passes *before* it is merged:
 1. `npm run check:language` — the 100% English rule (first, because it is the cheapest
    and it names the offending file and line)
 2. `npm run typecheck` — `tsc --noEmit`
-3. `npm run check:package-types` — pack the publishable files, require a sibling `.d.ts`
+3. `npm test` — every fast test (see below)
+4. `npm run check:package-types` — pack the publishable files, require a sibling `.d.ts`
    for every CommonJS `.js`/`.mjs` in `lib/`, and typecheck the unpacked package under
    `node_modules/@flame0510/project-aether`
-4. `npm run build` — the Next.js production build
+5. `npm run build` — the Next.js production build
 
 A new push to the same branch cancels the run still in flight. The job's token is
 read-only and not kept in `.git/config` after checkout. `npm ci` runs with
@@ -129,7 +130,7 @@ run a second time. Outside CI, an unsuccessful post-install build fails the inst
 The release workflow repeats the language, package-path typecheck and build gates on
 purpose: it is the last gate before npm and must not assume CI has run on that commit.
 
-The Docker stats parser also has focused tests (`node scripts/test-docker-stats.mjs`), as do the
+`npm test` runs all of the focused tests below; each can also be run alone. The Docker stats parser has one (`node scripts/test-docker-stats.mjs`), as do the
 proxy metering (`node scripts/test-proxy-usage.mjs`) and the update state
 (`node scripts/test-update-state.mjs`), and the Subscriptions helpers
 (`node --no-warnings scripts/test-subscriptions.mjs`), the credential delivery (`npm run test:credentials`), Docker exec (`npm run test:docker-exec`)
@@ -146,6 +147,24 @@ version. npm 10 and 11 honor the shrinkwrap; npm 12 ignores it, so its global de
 tree is not fully locked. TypeScript and the `@types/*` packages used by `next build`
 belong in `dependencies`: npm global installs omit `devDependencies`, and Next's
 automatic type-package installer can select a different package manager and versions.
+
+## Before opening a PR: `npm run precheck`
+
+`npm run precheck` is the whole local gate in one command. It runs `npm test`,
+`npm run check:language`, `npm run typecheck` and `npm run check:package-types`, then scans the lines
+you added (staged, unstaged and untracked, against `origin/main`, or `HEAD` when it is not
+available) for secrets: well-known token shapes (OpenAI, GitHub, AWS, Slack), private-key headers, `password`, `token`,
+`secret` or `api_key` assigned to a quoted literal in code, and `*_PASSWORD`, `*_TOKEN`, `*_SECRET` or `*_API_KEY`
+set to a literal value in env or YAML-style lines. It runs every step even when one fails, lists what failed and
+changes nothing. A line that is a placeholder or a fixture can carry `secret-ok`.
+
+| Command | What it does |
+|---|---|
+| `npm test` | `scripts/run-tests.mjs`: runs every `scripts/test-*.mjs` and `test-*.sh` in its own process with a timeout, one line per file, a summary, non-zero on any failure. No Docker, no network. `node scripts/run-tests.mjs <part-of-name>` runs a subset. A test that cannot run in CI is listed with a reason in its `SKIP` table, never dropped silently. A new `scripts/test-*` file is picked up on its own. |
+| `npm run check:ui` | Runs every `scripts/ui-check*.mjs` (Playwright) against a **running** instance: needs `REV4A_BASE_URL` and usually `REV4A_COOKIE`. Not part of CI or `precheck`. |
+| `npm run precheck` | The pre-PR check described above. |
+
+The existing `npm run test:*` scripts still run a single test.
 
 ---
 

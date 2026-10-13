@@ -52,6 +52,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Every scripts/test-*.mjs and test-*.sh in its own process (scripts/run-tests.mjs).
+      # No Docker, no network, no running instance.
+      - name: Test
+        run: npm test
+
       - name: Typecheck the npm tarball under node_modules
         run: npm run check:package-types
 

@@ -166,6 +166,8 @@ re-tags agent images that lost their tags in 1.13.0, so the next recreate picks 
 - [ ] Are there new dependencies? Add them to the relevant docs.
 - [ ] Does `README.md` need updating? (New features, changed setup.)
 - [ ] Answered the five upgrade-safety questions (§2.2c) for this change?
+- [ ] Ran `npm run precheck` (tests, language, typecheck, package types, secret scan)? A new
+      `scripts/test-*` file is picked up by `npm test` on its own.
 - [ ] Ran `npm run check:language`? Then reread the diff and the commit message
       yourself — the script is a word list, it misses Italian syntax and never
       reads the message (see §2.1).
@@ -251,6 +253,9 @@ npm run dev          # Start Next.js dev server
 npm run build        # Build for production
 npm run typecheck    # tsc --noEmit (CI gate)
 npm run check:package-types  # Typecheck the packed app under node_modules
+npm test             # Every scripts/test-* in its own process (CI gate)
+npm run check:ui     # Browser checks against a RUNNING instance (REV4A_BASE_URL); not in CI
+npm run precheck     # Before a PR: tests + language + typecheck + package types + secret scan
 npm run check:language  # 100% English rule (CI gate)
 rev4a serve        # Start all services (dashboard + daemon + terminal)
 npm start            # Same as rev4a serve
