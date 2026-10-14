@@ -264,7 +264,7 @@ export default function UpdateSection({
             size="sm"
             loading={busy === 'rollback'}
             disabled={busy !== null}
-            onClick={() => setConfirming('rollback')}
+            onClick={() => { void load(); setConfirming('rollback'); }}
           >
             {busy === 'rollback' ? 'Starting…' : `Roll back to ${update.fromVersion}`}
           </Button>

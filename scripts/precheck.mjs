@@ -46,7 +46,7 @@ function scanSecrets() {
     const h = /^@@ -\S+ \+(\d+)/.exec(l);
     if (h) { line = Number(h[1]); continue; }
     if (l.startsWith('+') && !l.startsWith('+++')) {
-      if (SECRET.test(l) && !l.includes('secret-ok')) hits.push(`${file}:${line}: ${l.slice(1).trim().slice(0, 120)}`);
+      if (SECRET.test(l) && !l.includes('secret-ok')) hits.push(`${file}:${line}`);
       line++;
     }
   }
@@ -54,7 +54,7 @@ function scanSecrets() {
   const u = git(['ls-files', '--others', '--exclude-standard']);
   for (const f of u.stdout.split('\n').filter(Boolean)) {
     const c = spawnSync('grep', ['-nIE', SECRET.source, f], { cwd: root, encoding: 'utf8' });
-    for (const m of (c.stdout || '').split('\n').filter(Boolean)) if (!m.includes('secret-ok')) hits.push(`${f}:${m.slice(0, 140)}`);
+    for (const m of (c.stdout || '').split('\n').filter(Boolean)) if (!m.includes('secret-ok')) hits.push(`${f}:${m.split(':')[0]}`);
   }
   return { base, hits };
 }

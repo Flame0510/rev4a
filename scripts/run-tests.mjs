@@ -29,9 +29,13 @@ const VERBOSE = process.env.REV4A_TEST_VERBOSE === '1';
 /** file name -> reason it does not run. Empty on purpose: every test runs today. */
 const SKIP = {};
 
-// Some tests import lib/*.ts directly. Type stripping is on by default from Node 22.18, but
-// engines allows older 22.x, so the flag is passed explicitly (a no-op where it is the default).
-// Type stripping is on by default from Node 22.18; pass the flag only on releases that still need it.
+// Some tests import lib/*.ts directly. Type stripping is on by default from Node 22.18; older
+// releases get the flag, which exists from Node 22.6. Below that the tests cannot run at all.
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (!process.features?.typescript && (major < 22 || (major === 22 && minor < 6))) {
+  console.error(`npm test needs Node 22.6 or later (this is ${process.versions.node}): some tests import TypeScript files.`);
+  process.exit(1);
+}
 const NODE_FLAGS = process.features?.typescript ? ['--no-warnings'] : ['--experimental-strip-types', '--no-warnings'];
 
 const args = process.argv.slice(2);

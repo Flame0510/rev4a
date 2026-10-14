@@ -73,7 +73,8 @@ agent runs and, when a newer one is downloaded, **Update to <version>**. The upd
 the agent offline for a few minutes: it backs the agent up while stopped, starts it on the
 new version (which converts its data), and checks that no conversation history or cron job
 went missing. Afterwards **Roll back to <version>** puts back the backup taken just before
-the update, on the old version; anything the agent did after the update is lost. The agent
+the update, on the old version; anything the agent did after that backup is lost, including a
+recreate or restore done since (the confirmation names the backup date and any such job). The agent
 must be running to start an update.
 
 The agent base image banner above (not this update — an agent's own **Update to

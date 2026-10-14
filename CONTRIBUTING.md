@@ -156,7 +156,7 @@ you added (staged, unstaged and untracked, against `origin/main`, or `HEAD` when
 available) for secrets: well-known token shapes (OpenAI, GitHub, AWS, Slack), private-key headers, `password`, `token`,
 `secret` or `api_key` assigned to a quoted literal in code, and `*_PASSWORD`, `*_TOKEN`, `*_SECRET` or `*_API_KEY`
 set to a literal value in env or YAML-style lines. It runs every step even when one fails, lists what failed and
-changes nothing. A line that is a placeholder or a fixture can carry `secret-ok`.
+changes nothing. A possible secret is reported as `file:line` only, never with the line's text. A line that is a placeholder or a fixture can carry `secret-ok`. `npm test` needs Node 22.6 or later (some tests import TypeScript files) and says so on an older Node.
 
 | Command | What it does |
 |---|---|

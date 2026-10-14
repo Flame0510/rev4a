@@ -661,8 +661,8 @@ export default function CredentialsPageClient() {
                                     <span style={{ color: 'var(--text-dim)', flex: 1, ...dim }}>
                                       {label}
                                       {heldByOther && (
-                                        <span style={{ marginLeft: 6, color: 'var(--text-dim)', fontSize: 10 }}>
-                                          holds {heldByOther.label}
+                                        <span style={{ marginLeft: 6 }}>
+                                          <Pill tone="info">holds {heldByOther.label}</Pill>
                                         </span>
                                       )}
                                       {cliMissing && (
