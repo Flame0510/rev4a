@@ -35,6 +35,8 @@ interface UpdateView {
   error: string | null;
   startedAtMs: number;
   finishedAtMs: number | null;
+  /** A recreate or restore that finished after this failed or interrupted update: its rollback undoes it too. */
+  laterJob: { kind: 'recreate' | 'restore'; atMs: number } | null;
 }
 
 interface UpdateInfo {
@@ -59,6 +61,11 @@ const metaStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-dim)',
 
 function when(ms: number | null): string {
   return ms ? new Date(ms).toLocaleString() : '';
+}
+
+/** A recreate or restore after a failed update: the rollback undoes it too. */
+function laterJobText(job: NonNullable<UpdateView['laterJob']>): string {
+  return `The agent was ${job.kind === 'restore' ? 'restored' : 'recreated'} on ${when(job.atMs)}, after this update.`;
 }
 
 export default function UpdateSection({
@@ -214,6 +221,7 @@ export default function UpdateSection({
             </span>
           </Badge>
           {update.error && <div style={metaStyle}>{update.error}</div>}
+          {update.laterJob && <div style={metaStyle}>{laterJobText(update.laterJob)} A rollback undoes that too.</div>}
           {update.verification && update.verification.lostEvents.length > 0 && (
             <div style={metaStyle}>
               {update.verification.lostEvents.map((l) => `${l.session}: ${l.before} → ${l.after}`).join(' · ')}
@@ -289,7 +297,9 @@ export default function UpdateSection({
         title={update?.fromVersion ? `Roll back to OpenClaw ${update.fromVersion}?` : 'Roll back?'}
         message={
           `The agent goes offline, its volume is replaced by the pre-update backup ${update?.backupFile ?? ''} ` +
-          'and it starts again on the previous version. Everything the agent did after that backup is lost.'
+          `taken on ${when(update?.startedAtMs ?? null) || 'the day of the update'}, and it starts again on the previous version. ` +
+          `Everything the agent did since that backup is lost.` +
+          (update?.laterJob ? ` ${laterJobText(update.laterJob)} The rollback undoes that too.` : '')
         }
         confirmLabel="Roll back"
         cancelLabel="Cancel"

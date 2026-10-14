@@ -85,7 +85,7 @@ Rebuild an agent container on its own OpenClaw version while preserving the pers
 Replace an agent's persistent volume with a previously created backup. The container is stopped, the volume content is fully replaced, then the container is restarted.
 
 ## Rollback (Agent)
-Undo an agent's latest OpenClaw update: the backup taken just before the update is put back and the agent starts again on its previous version. Anything the agent did after the update is lost. Offered in the agent's OPENCLAW VERSION section while that backup exists.
+Undo an agent's latest OpenClaw update: the backup taken just before the update is put back and the agent starts again on its previous version. Anything the agent did after that backup is lost, including a recreate or restore done after a failed update; the confirmation names the backup date. Offered in the agent's OPENCLAW VERSION section while that backup exists.
 
 ## Session
 One instance of an agent doing work. Tracks: start/end time, tokens used, model, status, and task description; what a session cost is on the Costs page (most expensive sessions). A session starts when an agent receives a task and ends when it completes or fails.

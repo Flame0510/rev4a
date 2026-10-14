@@ -39,6 +39,9 @@ import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { latestRecreate } from '@/lib/agent-recreate-state';
+import { latestRestore } from '@/lib/agent-restore-state';
+import { laterJob, type LaterJob } from '@/lib/agent-update-later-job';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 
 /** A migration runs `doctor --fix` before the Gateway starts; allow for large state. */
@@ -450,12 +453,15 @@ export interface AgentUpdateView {
   error: string | null;
   startedAtMs: number;
   finishedAtMs: number | null;
+  /** A recreate or restore that finished after this failed or interrupted update: its rollback undoes it too. */
+  laterJob: LaterJob | null;
 }
 
 /** The latest update of an agent, with live backup progress. */
 export async function agentUpdateView(agentId: string): Promise<AgentUpdateView | null> {
   const row = latestUpdate(agentId);
   if (!row) return null;
+  const later = laterJob(row, latestRecreate(agentId), latestRestore(agentId));
   let backupPercent: number | null = null;
   if (row.status === 'backing_up') backupPercent = (await coldBackupStatus(agentId))?.percent ?? null;
   return {
@@ -470,5 +476,6 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
     error: row.error,
     startedAtMs: row.started_at,
     finishedAtMs: row.finished_at,
+    laterJob: later,
   };
 }

@@ -1332,7 +1332,8 @@ The agent's OpenClaw version, the update it could take, and its latest update
     "fromVersion": "2026.9.3", "toVersion": "2026.9.4",
     "backupFile": "agent-agent_9253eee3-preupdate-2026.9.3-2026-09-16_003512345.tar.gz",
     "backupPercent": 40, "verification": null, "error": null,
-    "startedAtMs": 1789524912000, "finishedAtMs": null
+    "startedAtMs": 1789524912000, "finishedAtMs": null,
+    "laterJob": null
   }
 }
 ```
@@ -1341,6 +1342,10 @@ The agent's OpenClaw version, the update it could take, and its latest update
 - `update.status`: `pending` → `backing_up` → `migrating` → `verifying` → `done` |
   `failed`; `interrupted` after a Rev4a restart cut it off; `rolling_back` →
   `rolled_back` | `rollback_failed` for a rollback.
+- `update.laterJob`: for a `failed` or `interrupted` update, the agent's latest recreate or latest restore when it
+  finished `done` strictly after the update ended (`finished_at`, else `updated_at`), the more recent of the
+  two: `{ "kind": "recreate" | "restore", "atMs": … }`; `null` otherwise. A rollback restores the
+  pre-update backup, so it undoes that job too; the panel says so. It never blocks the rollback.
 - `verification`: `{ sessions, lostEvents: [{ session, before, after }], missingCronJobs, ok }`.
 
 `503` when Docker cannot be reached.
