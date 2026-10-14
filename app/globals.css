@@ -152,6 +152,31 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   flex-direction: column;
   padding: 0;
   gap: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar__group + .sidebar__group {
+  border-top: 1px solid var(--color-border-700);
+  margin-top: 4px;
+}
+
+.sidebar__group-title {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 16px 0 18px; /* aligned with the link text: 2px left border + 16px */
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
 }
 
 .sidebar__item {
