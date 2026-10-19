@@ -47,6 +47,8 @@ export interface ProbeDigests {
   supabaseLegacy: string;
   trelloLegacy: string;
   notionLegacy: string;
+  /** Installed mongosh version ('' when absent). From its package.json under /root/.local. */
+  mongoshVersion: string;
   /** The secret store was read successfully (an empty store counts). False: its absence is unknown. */
   storeOk: boolean;
   /** The script ran to its last line. False: nothing it printed proves anything. */
@@ -56,7 +58,7 @@ export interface ProbeDigests {
 const EMPTY_DIGESTS: ProbeDigests = {
   store: [], githubProfileId: '', ghIdentityFound: false,
   ghIdentity: { hash: '', login: '' }, ghLegacy: { hash: '', login: '' },
-  vercel: '', supabaseLegacy: '', trelloLegacy: '', notionLegacy: '',
+  vercel: '', supabaseLegacy: '', trelloLegacy: '', notionLegacy: '', mongoshVersion: '',
   storeOk: false, digestOk: false,
 };
 
@@ -122,7 +124,7 @@ export interface ContainerProbe {
 /**
  * Runs inside the agent (node is in the image) and prints one tab-separated line per finding,
  * hashes only: `store<TAB>NAME<TAB>kind<TAB>hash`, `gh-profile<TAB>id`, `gh-identity<TAB>hash<TAB>login`,
- * `gh-legacy`, `vercel`, `supabase-legacy`, `trello-legacy`, `notion-legacy`, plus two completion
+ * `gh-legacy`, `vercel`, `supabase-legacy`, `trello-legacy`, `notion-legacy`, `mongosh<TAB>version` (empty when not installed), plus two completion
  * markers: `store-ok` after the secret store was read (including an older database without the
  * table; a locked or corrupt database or a missing node:sqlite prints none) and `digest-ok` as the
  * last line (the script ran to its end). The hash is exactly
@@ -154,6 +156,8 @@ export const DIGEST_SCRIPT = [
   'o("supabase-legacy",h(rd("/root/.supabase/access-token").split("\\n")[0]));',
   'o("trello-legacy",h(js("/root/.config/trello/config.json").token));',
   'o("notion-legacy",h(js("/root/.config/notion/config.json").token));',
+  // Same rule as the switch-on install check: a version counts only when the launcher is executable.
+  'try{fs.accessSync("/root/.local/bin/mongosh",fs.constants.X_OK);const v=js("/root/.local/lib/node_modules/mongosh/package.json").version;o("mongosh",typeof v==="string"?v:"")}catch(e){}',
   'o("digest-ok");',
   'process.stdout.write(out.join("\\n"))',
 ].join('');
@@ -257,6 +261,7 @@ export function parseDigests(raw: string): ProbeDigests {
       case 'supabase-legacy': d.supabaseLegacy = hashOrEmpty(a); break;
       case 'trello-legacy': d.trelloLegacy = hashOrEmpty(a); break;
       case 'notion-legacy': d.notionLegacy = hashOrEmpty(a); break;
+      case 'mongosh': d.mongoshVersion = /^\d+\.\d+\.\d+[\w.+-]{0,30}$/.test(a ?? '') ? a : ''; break;
     }
   }
   return d;
@@ -319,6 +324,7 @@ export const TOKEN_FIELD: Record<string, string> = {
   supabase: 'accessToken',
   trello: 'token',
   notion: 'token',
+  mongodb: 'uri',
 };
 
 /** Hash of a stored profile secret's token (empty when unavailable). */
@@ -375,6 +381,7 @@ const STORE_ENTRY: Record<string, string> = {
   supabase: 'SUPABASE_ACCESS_TOKEN',
   trello: 'TRELLO_TOKEN',
   notion: 'NOTION_API_TOKEN',
+  mongodb: 'REV4A_MONGODB_URI',
 };
 
 /** What the agent holds for one provider. Carries a hash, never the token. */

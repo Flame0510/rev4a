@@ -40,6 +40,8 @@ interface DetectedStatus {
   /** Legacy trello-cli probe; false on the 2026.9.9 image, whose bundled skill uses curl and jq. */
   trelloCliInstalled: boolean;
   notionLoggedIn: boolean;
+  /** Installed mongosh version in the agent ('' when none); shown on the MongoDB rows. */
+  mongoshVersion: string;
   /** The default model runs on the ChatGPT (Codex) runtime: env entries reach only OpenClaw-run commands. */
   codex: boolean;
   toolsMdHasMarkers: boolean;
@@ -137,6 +139,7 @@ function shape(container: string, agentId: string, probe: ContainerProbe, profil
     trelloLoggedIn: !!held('trello')?.present,
     trelloCliInstalled: probe.cli.trello,
     notionLoggedIn: !!held('notion')?.present,
+    mongoshVersion: probe.digests.mongoshVersion,
     codex,
     toolsMdHasMarkers: probe.toolsMdMarkers > 0,
     matchedProfiles: profiles

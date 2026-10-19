@@ -45,6 +45,7 @@ const SECRETS = {
   supabase: { accessToken: 'sbp_SECRETVALUE1234' },
   trello: { apiKey: 'trellokey_SECRET1234', token: 'ATTA_SECRETVALUE1234' },
   notion: { token: 'ntn_SECRETVALUE1234' },
+  mongodb: { uri: 'mongodb+srv://reader:p%40ss$w\'rd"@cluster0.example.mongodb.net/mydb?retryWrites=true&w=majority' },
 };
 
 test('provider -> env names', () => {
@@ -56,6 +57,8 @@ test('provider -> env names', () => {
   assert.deepEqual(names('supabase'), ['SUPABASE_ACCESS_TOKEN']);
   assert.deepEqual(names('trello'), ['TRELLO_API_KEY', 'TRELLO_TOKEN']);
   assert.deepEqual(names('notion'), ['NOTION_API_TOKEN']);
+  // Never MONGODB_URI: OpenClaw drops that name (and DATABASE_URL, REDIS_URL, AMQP_URL) from its exec tool.
+  assert.deepEqual(names('mongodb'), ['REV4A_MONGODB_URI']);
 });
 
 test('provider -> skill binding', () => {
@@ -175,6 +178,7 @@ test('version gate: 2026.9.x and newer only', () => {
 
 test('trello needs 2026.9.9; the others keep the base floor', () => {
   assert.equal(n.NATIVE_PROVIDERS.trello.minVersion, '2026.9.9');
+  assert.equal(n.NATIVE_PROVIDERS.mongodb.minVersion, '2026.9.9');
   for (const id of ['github-pat', 'vercel', 'supabase', 'notion']) {
     assert.equal(n.NATIVE_PROVIDERS[id].minVersion, undefined, id);
   }
@@ -321,6 +325,35 @@ test('the re-apply path never calls the check, the user-facing ones do', () => {
   assert.ok(!body('reapplyAssignments').includes('agentWriteRefusal'));
   assert.ok(body('enableAssignment').includes('agentWriteRefusal'));
   assert.ok(body('disableAssignment').includes('agentWriteRefusal'));
+});
+
+test('mongodb: skill binding, SecretRef patch, plan, and no value in any argv', () => {
+  assert.deepEqual(n.NATIVE_PROVIDERS.mongodb.skill, { name: 'rev4a-mongodb', via: 'apiKey' });
+  assert.deepEqual(n.enablePatch('mongodb', SECRETS.mongodb), {
+    skills: { entries: { 'rev4a-mongodb': { enabled: true, apiKey: { source: 'store', provider: 'default', id: 'REV4A_MONGODB_URI' } } } },
+  });
+  assert.ok(!JSON.stringify(n.enablePatch('mongodb', SECRETS.mongodb)).includes('reader'), 'no plaintext in the patch');
+  assert.deepEqual(n.enablePlan('mongodb').map((s) => s.kind), ['store-set', 'config-patch', 'reload']);
+  assert.deepEqual(n.disablePlan('mongodb').map((s) => s.kind), ['store-rm', 'config-patch', 'reload']);
+  assert.deepEqual(n.disablePatch('mongodb'), { skills: { entries: { 'rev4a-mongodb': null } } });
+  for (const step of [...n.enablePlan('mongodb'), ...n.disablePlan('mongodb')]) {
+    assert.ok(!step.argv.join(' ').includes('reader'));
+    assert.ok(!step.argv.includes('MONGODB_URI'));
+  }
+  // Odd characters survive untouched: trimmed only, never rewritten.
+  assert.equal(n.storeInputs('mongodb', { uri: '  ' + SECRETS.mongodb.uri + '\n' })[0].value, SECRETS.mongodb.uri);
+});
+
+test('mongodb: refused on 2026.9.8 before anything is written, accepted on 2026.9.9', async () => {
+  const old = fakeExec({ version: 'OpenClaw 2026.9.8 (abc)' });
+  await assert.rejects(n.runEnable(old, 'mongodb', SECRETS.mongodb), n.UnsupportedNativeVersionError);
+  assert.equal(old.calls.length, 1);
+  const ok = fakeExec({ version: 'OpenClaw 2026.9.9 (abc)' });
+  await n.runEnable(ok, 'mongodb', SECRETS.mongodb);
+  const store = ok.calls.find((c) => c.argv[1] === 'secrets' && c.argv[3] === 'set');
+  assert.deepEqual(store.argv.slice(-5), ['REV4A_MONGODB_URI', '--kind', 'env', '--value-file', '-']);
+  assert.equal(store.input, SECRETS.mongodb.uri, 'the value goes on stdin');
+  for (const c of ok.calls) if (c.argv) assert.ok(!c.argv.join(' ').includes(SECRETS.mongodb.uri));
 });
 
 await Promise.all(pending);

@@ -2796,6 +2796,8 @@ Create a new credential profile.
 
 **Response:** `{ id: string }` (201)
 
+A provider can check its fields on save: for `mongodb` the `uri` (trimmed) must start with `mongodb://` or `mongodb+srv://`, else **400** `{ error }` and nothing is stored (`validateSecret()` in `lib/credentials/providers.ts`).
+
 ### `GET /api/credentials/[id]`
 Get a single credential profile (no secret returned).
 
@@ -2807,6 +2809,8 @@ Update label and/or secret of a credential. A changed secret is re-delivered to 
 **Auth:** browser cookie or bearer token
 
 **Body:** `{ label: string, secret: Record<string, string> }`
+
+A filled-in field is checked like on create (400 on a bad value); a blank field keeps the stored one and is not checked.
 
 Re-delivery runs two agents at a time and the route declares `maxDuration = 300`.
 
@@ -2846,7 +2850,7 @@ Switch the credential on or off for agents.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
-Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello needs 2026.9.9, whose image ships the `jq` its skill requires); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello and MongoDB need 2026.9.9 (Trello: the image ships the `jq` its skill requires; MongoDB: the only release it was verified on)); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
 
 Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). Every Gateway CLI call of the delivery (reload, GitHub RPCs) runs through `lib/gateway-cli.ts`, which uses the token in `/root/.agent-token` when present (a rotated token) and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
 
@@ -2917,6 +2921,7 @@ refresh, not something to block a page render on.
       "trelloLoggedIn": false,
       "trelloCliInstalled": false,
       "notionLoggedIn": false,
+      "mongoshVersion": "2.13.0",
       "codex": false,
       "toolsMdHasMarkers": true,
       "matchedProfiles": [
@@ -2935,11 +2940,11 @@ refresh, not something to block a page render on.
 `credentials` has one entry per provider and is what the Credentials page's switches show (the container
 is the source of truth; the assignments table is only Rev4a's intent). `present` is true when the agent
 holds a credential of that provider by any method, `false` when the container was read and holds none,
-and `null` when it could not be read for that provider: the secret store failed to open (Trello, Notion, Supabase
+and `null` when it could not be read for that provider: the secret store failed to open (Trello, Notion, Supabase, MongoDB
 only: a locked or corrupt database or a read error) or the in-container script did not finish (every provider). An older database without `secret_store_entries` is a successful empty store read.
 A `null` is never "holds nothing": the page then shows Rev4a's own setting with a note. A managed GitHub
 profile id with no `hosts.yml` of its own is `present: false` (the identity cannot authenticate). `method` is `store` (OpenClaw secret store: Trello,
-Notion, Supabase), `github-identity` (the managed GitHub identity, read from its private profile),
+Notion, Supabase, MongoDB), `github-identity` (the managed GitHub identity, read from its private profile),
 `vercel-files` (the Vercel CLI files) or `legacy-files` (a file an earlier release wrote). `profileId`
 is the stored credential whose token hash equals the one the agent holds (`profileIds` lists every match);
 null with `present: true` means the agent holds a token no stored credential accounts for. `login` is
@@ -2964,7 +2969,7 @@ failure whose wording is unfamiliar still reads as not logged in.
 (one line, no spaces, not starting with `>`, `Error` or `Vercel CLI`); the hint a
 logged-out CLI prints ("> Run `vercel deploy --temporary` … `vercel login` to log
 in.") is not a user, and gives `vercelLoggedIn: false`, `vercelUser: ""`.
-`trelloLoggedIn` and `notionLoggedIn` come from the config files instead, and so
+`mongoshVersion` is the version in `/root/.local/lib/node_modules/mongosh/package.json` (`""` when mongosh is not installed or the file is unreadable); it comes from the same single in-container script, no extra `docker exec`. `trelloLoggedIn` and `notionLoggedIn` come from the config files instead, and so
 survive a probe cut short. The three calls reach the network from inside the
 container, so a completion sentinel is emitted before them: a probe cut short
 during them still yields valid token matching, with those display fields empty.
@@ -2975,7 +2980,7 @@ Credential files read: `~/.config/gh/hosts.yml`,
 `~/.openclaw/credentials/github/agents/*/<profileId>/hosts.yml` for the managed GitHub identity,
 `~/.local/share/com.vercel.cli/auth.json` and `config.json`,
 `~/.supabase/access-token` and `/data/supabase/config.toml`,
-`~/.config/trello/config.json`, `~/.config/notion/config.json`, plus TOOLS.md
+`~/.config/trello/config.json`, `~/.config/notion/config.json`, `~/.local/lib/node_modules/mongosh/package.json` (version only), plus TOOLS.md
 markers at `/root/.openclaw/workspace/TOOLS.md`. The managed GitHub identity and secret store contribute to `githubLoggedIn` and `matchedProfiles` when their tokens match stored profiles. `trelloCliInstalled` is a legacy CLI probe; it is false on the 2026.9.9 image, whose bundled Trello skill uses `curl` and `jq`. The detect route allows up to 300 seconds for its container probes.
 
 `matchedProfiles` is determined by SHA256-hashing the token installed in the container

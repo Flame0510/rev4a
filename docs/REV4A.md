@@ -111,7 +111,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/memory` | Agent memory browser |
 | `/gateway` (model rows) | Each model has a **Details** (`⋯`) action opening a modal with what is known about it: description, price and the provider it comes from, architecture and parameters (mixture of experts, layers, hidden size, attention heads, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with their sources, licence and popularity. The facts come from the model's card on Hugging Face and — for the vendor's own size claim and benchmarks — from hand-curated entries that always cite a source and a date; nothing is estimated. |
 | `/crons` | Scheduled cron jobs — auto-discovered from the host gateway and every running agent container (Docker containers with `AGENT_ID` label), on/off toggle, run history per job; agents are shown by display name |
-| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion) — SQLite vault; each credential has a switch per agent that delivers it through OpenClaw (environment entries and skill config for Trello, Notion and Supabase, the managed GitHub identity, the Vercel CLI's own files) |
+| `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion, MongoDB) — SQLite vault; each credential has a switch per agent that delivers it through OpenClaw (environment entries and skill config for Trello, Notion and Supabase, a connection string plus `mongosh` and a shared skill for MongoDB, the managed GitHub identity, the Vercel CLI's own files) |
 | `/subscriptions` | ChatGPT (Codex) accounts per agent: connect an agent by device code (Rev4a shows a link and a code, you enter the code on OpenAI), see until when each agent is connected, see the account's usage limits (5 hours and weekly, with reset times), see the model each agent uses (read-only, with a link to the agent panel where it is chosen), disconnect. The tokens stay in the agent's volume; Rev4a stores nothing |
 | `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |
 | `/plugins` | Plugin manager |
@@ -314,7 +314,7 @@ Store third-party service credentials and install them into agent containers.
   **unencrypted**; anything that can read the file has them in the clear.
 - **Provider keys** are a separate store — `provider-keys.json`, managed from the
   Gateway UI.
-- **Five providers.** GitHub, Trello, Vercel, Supabase and Notion. A credential reaches an
+- **Six providers.** GitHub, Trello, Vercel, Supabase, Notion and MongoDB. A credential reaches an
   agent the native OpenClaw way: the token is written to the agent's OpenClaw **secret
   store** as environment entries (`SUPABASE_ACCESS_TOKEN`, `TRELLO_API_KEY` and
   `TRELLO_TOKEN`, `NOTION_API_TOKEN`) and the matching bundled skill is configured
@@ -322,6 +322,7 @@ Store third-party service credentials and install them into agent containers.
   switch-on for GitHub) so it turns eligible by itself. Rev4a writes no TOOLS.md row; the
   agent finds the service available from its environment and its skills. `supabase` reads
   its variable natively.
+- **MongoDB is a connection string plus a CLI.** The string (`mongodb://` or `mongodb+srv://`, checked when it is saved) goes into the secret store as `REV4A_MONGODB_URI`: the usual name `MONGODB_URI` is dropped by OpenClaw's exec tool on purpose, so it would never reach a command. Switching it on, in this order: installs `mongosh` 2.13.0 under `/root/.local` in the agent (skipped when that version is already there; another version or a missing launcher is reinstalled; 5 minutes allowed; on failure nothing else is written), puts Rev4a's shared skill `rev4a-mongodb` in the host's shared skills directory, writes the store entry and the skill entry (SecretRef `apiKey`), reloads, and asks `openclaw skills info rev4a-mongodb --json` whether the skill is eligible. If it is not (or the answer cannot be read) the switch-on fails and the store and skill entries are removed again. The skill is hidden from the model on agents where the credential is off. Switching off removes the store entry and the skill entry; `mongosh` stays installed. Rev4a never tests the connection: the variable exists only inside commands run by OpenClaw's exec tool. Read-only access comes from the database user's built-in read role, not from Rev4a; the Credentials page says so. An agent row shows `mongosh <version>`, or "mongosh missing — switch MongoDB off and on" when the credential is held and no mongosh was found.
 - **GitHub and Vercel are special.** OpenClaw drops `GH_TOKEN` and `GITHUB_TOKEN` (they are
   reserved environment overrides), and the Vercel CLI ignores a token-only environment (for a
   `northstar` account it forces the account default team). GitHub is delivered as OpenClaw's
@@ -338,7 +339,7 @@ Store third-party service credentials and install them into agent containers.
   release wrote for that provider on that agent. Nothing is moved automatically on update.
   A `Protected` mode (secret kept out of the agent) is reserved and shown disabled,
   "coming later".
-- **Requirements.** OpenClaw 2026.9.0 or newer for delivery; an older agent is refused with a message and no new enabled assignment. Trello needs **2026.9.9** or newer: its bundled skill runs through `jq`, which entered the image with that release, so on an older agent the switch is refused and says to update the agent.
+- **Requirements.** OpenClaw 2026.9.0 or newer for delivery; an older agent is refused with a message and no new enabled assignment. Trello and MongoDB need **2026.9.9** or newer: Trello's bundled skill runs through `jq`, which entered the image with that release, and 2026.9.9 is the only release MongoDB was verified on, so on an older agent the switch is refused and says to update the agent.
   The assignments are re-applied whenever Rev4a creates, recreates, updates, edits, restores, rolls back, starts or restarts the
   agent; a failure is logged and kept as the assignment's error, and never blocks the
   operation. Editing a credential's secret re-delivers it to the agents it is on, two agents at a time (the request is allowed up to 300 s). A

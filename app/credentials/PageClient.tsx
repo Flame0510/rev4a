@@ -28,6 +28,7 @@ const PROVIDER_COLOR: Record<string, string> = {
   vercel: '#000000',
   supabase: '#3ecf8e',
   notion: '#050505',
+  mongodb: '#00684A',
 };
 
 /**
@@ -87,6 +88,8 @@ export default function CredentialsPageClient() {
     trelloLoggedIn: boolean;
     trelloCliInstalled: boolean;
     notionLoggedIn: boolean;
+    /** Installed mongosh version in the agent ('' when none). */
+    mongoshVersion?: string;
     /** The agent's default model runs on the ChatGPT (Codex) runtime. */
     codex?: boolean;
     matchedProfiles?: { profileId: string; providerId: string; label: string }[];
@@ -512,6 +515,12 @@ export default function CredentialsPageClient() {
                 </div>
               )}
 
+              {provider.note && (
+                <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)' }}>
+                  {provider.note}
+                </div>
+              )}
+
               {/* Configured credentials list */}
               {provProfiles.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -728,6 +737,14 @@ export default function CredentialsPageClient() {
                                       )}
                                     </div>
                                   </div>
+                                  {provider.switchOnNote && busy === `on:${key}` && (
+                                    <div style={{ marginLeft: 18, color: 'var(--text-dim)', fontSize: 10 }}>{provider.switchOnNote}</div>
+                                  )}
+                                  {p.providerId === 'mongodb' && native && (
+                                    <div style={{ marginLeft: 18, color: d.mongoshVersion ? 'var(--text-dim)' : 'var(--red)', fontSize: 10 }}>
+                                      {d.mongoshVersion ? `mongosh ${d.mongoshVersion}` : 'mongosh missing — switch MongoDB off and on'}
+                                    </div>
+                                  )}
                                   {missing && (
                                     <div style={{ marginLeft: 18, color: 'var(--red)', fontSize: 10 }}>
                                       {failed ? assignment?.lastError : 'Not found in the agent'}

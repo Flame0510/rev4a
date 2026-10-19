@@ -21,7 +21,7 @@
  */
 
 const { spawn, execSync, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync } = require('fs');
 const { join, dirname } = require('path');
 const crypto = require('crypto');
 const os = require('os');
@@ -340,6 +340,50 @@ function ensureRev4aRules() {
   }
 }
 
+// ── Rev4a shared skills ──────────────────────────────────────────────────
+
+/**
+ * Deploy every skill under rev4a-skills/ (the package's own shared skills, e.g. rev4a-mongodb)
+ * to the host's shared skills directory, when the text differs, so a Rev4a update with a new
+ * skill text reaches agents that already use it. Mirrors ensureRev4aSkill() in
+ * lib/rev4a-skills.ts (this file is CommonJS and cannot import lib/). Only the packaged
+ * skills are written; any other skill in that directory is left alone. Never fatal.
+ */
+function ensureRev4aSkills() {
+  const sourceRoot = join(ROOT, 'rev4a-skills');
+  if (!existsSync(sourceRoot)) return;
+  const targetRoot = join(CONFIG_DIR, 'shared', 'shared-skills');
+  let names = [];
+  try {
+    names = readdirSync(sourceRoot).filter((n) => /^rev4a-[a-z0-9][a-z0-9-]{0,60}$/.test(n));
+  } catch (err) {
+    log('SKILLS', `⚠ Could not read rev4a-skills: ${err.message}`);
+    return;
+  }
+  for (const name of names) {
+    try {
+      const source = join(sourceRoot, name, 'SKILL.md');
+      if (!existsSync(source)) continue;
+      const content = readFileSync(source, 'utf-8');
+      const dir = join(targetRoot, name);
+      const target = join(dir, 'SKILL.md');
+      let deployed = '';
+      try { deployed = existsSync(target) ? readFileSync(target, 'utf-8') : ''; } catch { /* written below */ }
+      if (content === deployed) {
+        log('SKILLS', `${name} up to date`);
+        continue;
+      }
+      mkdirSync(dir, { recursive: true });
+      const tmp = `${target}.tmp-${process.pid}`;
+      writeFileSync(tmp, content, 'utf-8');
+      renameSync(tmp, target);
+      log('SKILLS', `Deployed ${name} to ${dir}/`);
+    } catch (err) {
+      log('SKILLS', `⚠ Failed to deploy ${name}: ${err.message}`);
+    }
+  }
+}
+
 // ── .env setup ──────────────────────────────────────────────────────────────
 
 function loadEnv() {
@@ -499,6 +543,7 @@ function preflight() {
     log('PREFLIGHT', 'Skipping network and agent image checks: Docker daemon not reachable.');
   }
   ensureRev4aRules();
+  ensureRev4aSkills();
 
   if (!existsSync(join(NEXT_DIR, 'BUILD_ID'))) {
     log('PREFLIGHT', 'No complete build found — running build first…');

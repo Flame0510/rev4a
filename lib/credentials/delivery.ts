@@ -26,6 +26,8 @@ import {
   type AssignmentMode,
   type NativeExec,
 } from './native';
+import { enableMongodb } from './mongodb';
+import { ensureRev4aSkill } from '@/lib/rev4a-skills';
 import {
   discoverVercelTeam,
   githubDisable,
@@ -317,7 +319,7 @@ const NATIVE_TIMEOUT_MS = 30_000;
 
 function execFor(container: string): NativeExec {
   return {
-    run: (argv, env) => dockerExec(container, argv, { timeoutMs: NATIVE_TIMEOUT_MS, ...(env ? { env } : {}) }),
+    run: (argv, env, opts) => dockerExec(container, argv, { timeoutMs: opts?.timeoutMs ?? NATIVE_TIMEOUT_MS, ...(env ? { env } : {}) }),
     runWithInput: (argv, input) => dockerExecWithInput(container, argv, input, { timeoutMs: NATIVE_TIMEOUT_MS }),
   };
 }
@@ -351,6 +353,12 @@ async function applyEnable(exec: NativeExec, providerId: string, secret: Record<
     const team = await discoverVercelTeam(token);
     await vercelEnable(exec, token, team);
     await removeStoreEntries(exec, STALE_ENV_ENTRIES.vercel);
+    return;
+  }
+  if (providerId === 'mongodb') {
+    // mongosh, the shared skill, the store entry and the skill entry, then a check that the
+    // skill is really eligible (rolled back when it is not). See mongodb.ts.
+    await enableMongodb(exec, secret, { ensureSkill: (name) => ensureRev4aSkill(name).then(() => undefined) });
     return;
   }
   await runEnable(exec, providerId, secret);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getProfile, updateProfile, deleteProfile } from '@/lib/credentials/vault';
+import { validateSecret } from '@/lib/credentials/providers';
 import { listAssignments, deleteAssignments } from '@/lib/credentials/assignments';
 import { enableAssignment } from '@/lib/credentials/delivery';
 import { mapWithConcurrency } from '@/lib/docker-exec';
@@ -39,6 +40,11 @@ export async function PATCH(request: Request,
     if (!label) {
       return NextResponse.json({ error: 'label is required' }, { status: 400 });
     }
+
+    // A blank field means "keep the stored value", so only what was filled in is checked.
+    const existing = getProfile(id);
+    const invalid = existing ? validateSecret(existing.providerId, secret ?? {}, true) : null;
+    if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
 
     updateProfile(id, label, secret ?? {});
 

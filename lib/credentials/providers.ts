@@ -24,7 +24,14 @@ export interface CredentialProviderDef {
   fields: CredentialField[];
   deliveryMethod: string;
   docsUrl?: string;
+  /** A short note shown on the provider card (what the user must know before using it). */
+  note?: string;
+  /** A short note shown next to an agent's switch while this provider is being switched on. */
+  switchOnNote?: string;
 }
+
+const MONGODB_READ_ONLY_NOTE =
+  'Use a database user with the built-in read role: read-only depends on that role, not on Rev4a.';
 
 export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
   {
@@ -134,7 +141,57 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
     deliveryMethod: 'env NOTION_API_TOKEN + notion skill',
     docsUrl: 'https://www.notion.so/my-integrations',
   },
+  {
+    id: 'mongodb',
+    label: 'MongoDB',
+    category: 'db',
+    description: 'Connection string for a MongoDB database — the agent queries it through mongosh, and writes are refused when the database user only has the read role',
+    authType: 'static-token',
+    fields: [
+      {
+        key: 'uri',
+        label: 'Connection string',
+        placeholder: 'mongodb+srv://reader:…@cluster0.example.mongodb.net/mydb',
+        type: 'password',
+        hint: MONGODB_READ_ONLY_NOTE,
+        docsUrl: 'https://www.mongodb.com/docs/manual/reference/connection-string/',
+        docsLabel: 'Connection string format',
+      },
+    ],
+    deliveryMethod: 'env REV4A_MONGODB_URI + rev4a-mongodb skill (mongosh)',
+    docsUrl: 'https://www.mongodb.com/docs/manual/reference/connection-string/',
+    note: MONGODB_READ_ONLY_NOTE,
+    switchOnNote: 'The first switch-on installs mongosh (about 200 MB, up to a minute).',
+  },
 ];
+
+/** Checks on a field's value, run when a credential is saved. Return an error text, or null when the value is fine. */
+const FIELD_VALIDATORS: Record<string, Record<string, (value: string) => string | null>> = {
+  mongodb: {
+    uri: (v) => (/^mongodb(\+srv)?:\/\//.test(v) ? null : 'The connection string must start with mongodb:// or mongodb+srv://'),
+  },
+};
+
+/**
+ * The first problem with a secret about to be saved, or null. Values are checked trimmed (they
+ * are delivered trimmed). `partial` is for an edit, where a blank field means "keep the stored
+ * one" and is not checked; on a new credential a blank checked field is an error.
+ */
+export function validateSecret(providerId: string, secret: Record<string, string>, partial = false): string | null {
+  const validators = FIELD_VALIDATORS[providerId];
+  if (!validators) return null;
+  const provider = getProvider(providerId);
+  for (const [key, check] of Object.entries(validators)) {
+    const value = (secret[key] ?? '').trim();
+    if (!value) {
+      if (partial) continue;
+      return `${provider?.fields.find((f) => f.key === key)?.label ?? key} is required`;
+    }
+    const problem = check(value);
+    if (problem) return problem;
+  }
+  return null;
+}
 
 export function getProvider(id: string): CredentialProviderDef | undefined {
   return CREDENTIAL_PROVIDERS.find((p) => p.id === id);

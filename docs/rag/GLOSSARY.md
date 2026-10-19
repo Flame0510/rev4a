@@ -128,7 +128,7 @@ Optional reverse proxy an operator can put in front of the Rev4a dashboard or of
 Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. Undone with Rollback.
 
 ## Vault
-Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads) and a per-agent switch (on, off, or an error). Secrets are stored unencrypted.
+Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion, MongoDB). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads) and a per-agent switch (on, off, or an error). Secrets are stored unencrypted.
 
 ## Workspace
 The directory where an agent's operational files live (config, memory files, skills, plugins, scripts). The Workspace page lets you browse, view, and edit files across the host workspace, which appears as `Local`, and all agent containers.

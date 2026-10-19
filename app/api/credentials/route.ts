@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import { NextResponse } from 'next/server';
 import { listProfiles, createProfile } from '@/lib/credentials/vault';
-import { CREDENTIAL_PROVIDERS } from '@/lib/credentials/providers';
+import { CREDENTIAL_PROVIDERS, validateSecret } from '@/lib/credentials/providers';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
@@ -27,6 +27,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!providerId || !label || !secret) {
       return NextResponse.json({ error: 'providerId, label, and secret are required' }, { status: 400 });
     }
+
+    const invalid = validateSecret(providerId, secret);
+    if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
 
     const id = createProfile(providerId, label, secret);
     return NextResponse.json({ id }, { status: 201 });

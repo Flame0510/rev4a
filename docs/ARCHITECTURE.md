@@ -460,8 +460,8 @@ Two separate stores:
 - **Provider API keys** — `<data dir>/data/provider-keys.json`, used by the Rev4a
   provider proxy.
 - **Third-party service credentials** — `<data dir>/data/credentials.db` (SQLite),
-  managed from the Credentials page. Five providers: `github-pat`, `trello`,
-  `vercel`, `supabase`, `notion` (`lib/credentials/providers.ts`).
+  managed from the Credentials page. Six providers: `github-pat`, `trello`,
+  `vercel`, `supabase`, `notion`, `mongodb` (`lib/credentials/providers.ts`).
 
 **Secrets are stored unencrypted.** `credential_secrets.payload` holds raw JSON.
 Anything able to read that file, or to reach `POST /api/credentials/[id]/reveal`
@@ -643,6 +643,7 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 **Auto-configuration:**
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
 - Both create and recreate routes guarantee this via `applyRuntimeConfig()` from `lib/agent-setup.ts`.
+- Rev4a's own shared skills live in the package under `rev4a-skills/<name>/SKILL.md` (names start with `rev4a-`; today `rev4a-mongodb`). `rev4a serve` copies each one into this directory at start when its text differs (`ensureRev4aSkills()` in `bin/rev4a.js`), and a MongoDB switch-on does the same through `ensureRev4aSkill()` in `lib/rev4a-skills.ts`. Other skills in the directory are never touched; nothing is copied into a container.
 - No manual setup: `rev4a serve` creates both shared directories during
   preflight (`ensureRev4aRules()` in `bin/rev4a.js`). They live under
   `REV4A_DATA`, so a plain `mkdir` suffices — no `sudo`, no permission

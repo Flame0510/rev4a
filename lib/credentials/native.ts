@@ -73,6 +73,17 @@ export const NATIVE_PROVIDERS: Record<string, NativeProvider> = {
     env: [{ name: 'NOTION_API_TOKEN', field: 'token' }],
     skill: { name: 'notion', via: 'apiKey' },
   },
+  // The name is REV4A_MONGODB_URI, never MONGODB_URI: OpenClaw drops MONGODB_URI, DATABASE_URL,
+  // REDIS_URL and AMQP_URL from its exec tool on purpose (blockedOverrideOnlyKeys), so an entry
+  // with the common name would exist in the store and never reach a command. The skill is
+  // Rev4a's own shared skill (rev4a-skills/), not a bundled one; it is eligible only with the
+  // apiKey SecretRef, and mongosh is installed by mongodb.ts before the switch-on writes anything.
+  // 2026.9.9 is the only release this was verified on.
+  mongodb: {
+    env: [{ name: 'REV4A_MONGODB_URI', field: 'uri' }],
+    skill: { name: 'rev4a-mongodb', via: 'apiKey' },
+    minVersion: '2026.9.9',
+  },
 };
 
 export function nativeProvider(providerId: string): NativeProvider | undefined {
@@ -241,7 +252,8 @@ export function redact(message: string, values: readonly string[]): string {
 
 /** The two ways to run a command inside an agent. delivery.ts binds them to docker exec. */
 export interface NativeExec {
-  run(argv: string[], env?: Record<string, string>): Promise<string>;
+  /** `opts.timeoutMs` overrides the default deadline (the mongosh install takes minutes). */
+  run(argv: string[], env?: Record<string, string>, opts?: { timeoutMs?: number }): Promise<string>;
   runWithInput(argv: string[], input: string): Promise<string>;
 }
 

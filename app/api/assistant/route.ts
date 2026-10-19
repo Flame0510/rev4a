@@ -79,9 +79,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/credentials': {
     title: 'Credentials',
-    description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion) once and switch them on for the agents that need them. Secrets are stored unencrypted in credentials.db (and in the secret store of each agent they are on); provider API keys are managed on the Gateway page, not here.',
+    description: 'Store third-party service credentials (GitHub, Vercel, Supabase, Trello, Notion, MongoDB) once and switch them on for the agents that need them. Secrets are stored unencrypted in credentials.db (and in the secret store of each agent they are on); provider API keys are managed on the Gateway page, not here.',
     actions: ['Configure a provider, or "+ Add another" credential for one already configured', 'Edit or delete a stored credential', 'Use each agent row’s Switch to deliver or remove a credential; switching on re-delivers it the current way', 'See Not found in the agent with Redeliver and Remove actions, an unknown (?) read, or a disabled Switch with a reason when stopped or busy', 'Retry a failed delivery or removal'],
-    hints: 'A credential reaches an agent only when you switch it on for that agent (OpenClaw 2026.9.0 or newer; Trello needs 2026.9.9): most through the agent\'s OpenClaw secret store plus the matching skill, GitHub through OpenClaw\'s managed GitHub identity, Vercel through the CLI\'s own config files. Switching it off removes it. A credential that is on for an agent cannot be deleted. An agent on the ChatGPT subscription runtime gets the token only in commands run through OpenClaw.',
+    hints: 'A credential reaches an agent only when you switch it on for that agent (OpenClaw 2026.9.0 or newer; Trello and MongoDB need 2026.9.9): most through the agent\'s OpenClaw secret store plus the matching skill, GitHub through OpenClaw\'s managed GitHub identity, Vercel through the CLI\'s own config files. Switching it off removes it. A credential that is on for an agent cannot be deleted. An agent on the ChatGPT subscription runtime gets the token only in commands run through OpenClaw.',
   },
   '/config': {
     title: 'Config',

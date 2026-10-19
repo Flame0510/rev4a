@@ -323,7 +323,7 @@ test('resolveCredentials matches by hash, names every provider and returns no va
     { profileId: 'cred_vercel_other', providerId: 'vercel', tokenHash: hashToken('SENTINEL_NOT_HELD_llllllll') },
   ];
   const r = Object.fromEntries(d.resolveCredentials(d.detectHoldings(p), profiles).map((c) => [c.providerId, c]));
-  assert.deepEqual(Object.keys(r).sort(), ['github-pat', 'notion', 'supabase', 'trello', 'vercel']);
+  assert.deepEqual(Object.keys(r).sort(), ['github-pat', 'mongodb', 'notion', 'supabase', 'trello', 'vercel']);
   assert.equal(r.trello.profileId, 'cred_trello');
   assert.deepEqual(r.trello.profileIds, ['cred_trello']);
   assert.equal(r['github-pat'].profileId, 'cred_gh');
@@ -338,8 +338,72 @@ test('resolveCredentials matches by hash, names every provider and returns no va
 
 test('resolveCredentials: a container with nothing is present:false everywhere', () => {
   const r = d.resolveCredentials([], []);
-  assert.equal(r.length, 5);
+  assert.equal(r.length, 6);
   for (const c of r) assert.deepEqual({ ...c }, { providerId: c.providerId, present: false, profileId: null, profileIds: [], method: null });
+});
+
+const MONGO_URI = 'mongodb+srv://reader:SENTINEL_MONGO_PASSWORD_iiii@cluster0.example.mongodb.net/mydb';
+
+test('mongodb: held from the REV4A_MONGODB_URI store entry, matched to the profile by hash', () => {
+  assert.equal(d.TOKEN_FIELD.mongodb, 'uri');
+  const dg = d.parseDigests(['store-ok', `store\tREV4A_MONGODB_URI\tenv\t${H(MONGO_URI)}`, 'mongosh\t2.13.0', 'digest-ok'].join('\n'));
+  const h = d.detectHoldings({ digests: dg });
+  assert.deepEqual(h.map((x) => x.providerId), ['mongodb']);
+  assert.equal(h[0].method, 'store');
+  assert.equal(h[0].tokenHash, H(MONGO_URI));
+  const profiles = [{ profileId: 'cred_mongo', providerId: 'mongodb', tokenHash: d.profileTokenHash({ uri: '  ' + MONGO_URI + '\n' }, 'mongodb') }];
+  const r = Object.fromEntries(d.resolveCredentials(h, profiles, dg).map((c) => [c.providerId, c]));
+  assert.equal(r.mongodb.present, true);
+  assert.equal(r.mongodb.profileId, 'cred_mongo');
+  noSecrets(r);
+  assert.ok(!JSON.stringify(dg).includes('SENTINEL_MONGO_PASSWORD'));
+});
+
+test('mongodb: the common name MONGODB_URI is not a holding (OpenClaw drops it)', () => {
+  const dg = d.parseDigests(['store-ok', `store\tMONGODB_URI\tenv\t${H(MONGO_URI)}`, 'digest-ok'].join('\n'));
+  assert.deepEqual(d.detectHoldings({ digests: dg }), []);
+});
+
+test('mongodb: the mongosh version is parsed; absent or odd text gives an empty string', () => {
+  const v = (line) => d.parseDigests(line).mongoshVersion;
+  assert.equal(v('mongosh\t2.13.0'), '2.13.0');
+  assert.equal(v('mongosh\t2.12.0-rc.1'), '2.12.0-rc.1');
+  assert.equal(v('mongosh\t'), '');
+  assert.equal(v('mongosh'), '');
+  assert.equal(v('mongosh\t<script>alert(1)</script>'), '');
+  assert.equal(v('digest-ok'), '');
+  assert.equal(d.parseDigests('').mongoshVersion, '');
+});
+
+test('DIGEST_SCRIPT, run for real, prints the mongosh version (or nothing) from its package.json', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'rev4a-digest-mongo-'));
+  try {
+    const run = () => spawnSync(process.execPath, ['-e', d.DIGEST_SCRIPT.replaceAll('/root/', box + '/root/')], { encoding: 'utf8' });
+    const absent = run();
+    assert.equal(absent.status, 0, absent.stderr);
+    assert.equal(d.parseDigests(absent.stdout).mongoshVersion, '');
+    assert.ok(d.parseDigests(absent.stdout).digestOk);
+    const dir = path.join(box, 'root/.local/lib/node_modules/mongosh');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'mongosh', version: '2.13.0' }));
+    assert.equal(d.parseDigests(run().stdout).mongoshVersion, '', 'no launcher: not installed (same rule as the switch-on check)');
+    const bin = path.join(box, 'root/.local/bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'mongosh'), '#!/bin/sh\n');
+    assert.equal(d.parseDigests(run().stdout).mongoshVersion, '', 'a launcher that is not executable does not count');
+    fs.chmodSync(path.join(bin, 'mongosh'), 0o755);
+    const present = run();
+    assert.equal(present.status, 0, present.stderr);
+    assert.equal(d.parseDigests(present.stdout).mongoshVersion, '2.13.0');
+    fs.writeFileSync(path.join(dir, 'package.json'), '{ not json');
+    assert.equal(d.parseDigests(run().stdout).mongoshVersion, '', 'a broken package.json is not a version');
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
 });
 
 await Promise.all(pending);

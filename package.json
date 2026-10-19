@@ -34,6 +34,7 @@
     "docs/",
     "agent-templates/",
     "rev4a-rules/",
+    "rev4a-skills/",
     "daemon.js",
     "lineage.js",
     "terminal-ws-server.js",
@@ -71,7 +72,7 @@
     "test:agent-names": "node scripts/test-agent-names.mjs",
     "test:agent-config-lock": "node scripts/test-agent-config-lock.mjs",
     "test:gateway-cli": "node scripts/test-gateway-cli.mjs",
-    "test:credentials": "node scripts/test-gateway-cli.mjs && node scripts/test-credentials-mode.mjs && node scripts/test-credentials-native.mjs && node scripts/test-credentials-managed.mjs && node scripts/test-credentials-detect.mjs && node scripts/test-credentials-intent.mjs",
+    "test:credentials": "node scripts/test-gateway-cli.mjs && node scripts/test-credentials-mode.mjs && node scripts/test-credentials-native.mjs && node scripts/test-credentials-managed.mjs && node scripts/test-credentials-detect.mjs && node scripts/test-credentials-intent.mjs && node scripts/test-credentials-mongodb.mjs && node scripts/test-rev4a-skills.mjs",
     "info:suggest": "node scripts/model-info-suggest.mjs",
     "info:verify": "node scripts/model-info-verify.mjs"
   },
