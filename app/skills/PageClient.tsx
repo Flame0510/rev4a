@@ -56,6 +56,8 @@ interface Skill {
   containerName?: string;
   /** The agent's display name (AGENT_NAME); null when it has none. */
   agentName?: string | null;
+  /** Rev4a's own shared skill: read-only here. */
+  managed?: boolean;
 }
 
 export default function SkillsPage() {
@@ -383,8 +385,12 @@ export default function SkillsPage() {
                     </div>
                   )}
 
+                  {selected.managed && (
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 10 }}>Managed by Rev4a</div>
+                  )}
+
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {!editMode && selected.skillMdPath && selected.type !== 'bundled' && (
+                    {!editMode && selected.skillMdPath && selected.type !== 'bundled' && !selected.managed && (
                       <Button variant="secondary" size="sm" onClick={() => { setEditText(skillContent || ''); setEditMode(true); }}>
                         EDIT SKILL.MD
                       </Button>
@@ -402,7 +408,7 @@ export default function SkillsPage() {
                     {selected.type === 'bundled' && selected.skillMdPath && (
                       <Badge color="gray">read-only (bundled)</Badge>
                     )}
-                    {(selected.type === 'shared' || (selected.type === 'workspace' && selected.containerName)) && !editMode && (
+                    {(selected.type === 'shared' || (selected.type === 'workspace' && selected.containerName)) && !selected.managed && !editMode && (
                       <Button
                         variant="danger"
                         size="sm"

@@ -2605,7 +2605,7 @@ Skill discovery across three sources:
 - **Bundled:** skills shipped with OpenClaw (read-only)
 
 ### `GET /api/skills`
-List all available skills from all sources. Workspace skills carry `agentName`, the agent's display name (`AGENT_NAME`), or `null` when it has none; the page labels by it and shows `containerName` as a secondary detail.
+List all available skills from all sources. Shared skills whose name starts with `rev4a-` are Rev4a's own and carry `"managed": true`; the page shows them read-only. Workspace skills carry `agentName`, the agent's display name (`AGENT_NAME`), or `null` when it has none; the page labels by it and shows `containerName` as a secondary detail.
 
 **Auth:** browser cookie
 
@@ -2659,6 +2659,9 @@ Write a SKILL.md file. Supports shared directory and container workspaces.
 ```
 - `containerName` is required for container skills, omitted for shared/host skills
 - Bundled skills are read-only
+- A container skill is written with the content on stdin and the path as an argument (no shell string); `containerName` must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, else **400** `Invalid containerName`; the skill's directory is created when missing
+- A shared path under a `rev4a-*` directory is refused with **403** `Rev4a's own skills are managed by Rev4a and cannot be edited` (the check ignores case: `Rev4a-x` is refused too)
+- `skillPath` and `content` must be strings, else **400**
 
 **Response:** `{ "ok": true, "saved": "..." }`
 
@@ -2692,6 +2695,8 @@ Copy a skill from an agent's workspace to the shared skills directory, making it
 - `extraCopied`: number of additional files (beyond SKILL.md) copied from the skill directory
 - The skill name is validated against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`
 - Container must have an `AGENT_ID` Docker label
+- A `skillName` starting with `rev4a-` is refused with **403** `"rev4a-…" is reserved for Rev4a's own skills: rename the skill first`
+- `containerName` must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$` (promote, and delete when given), else **400** `Invalid containerName`
 
 ### `DELETE /api/skills/delete`
 Delete a skill from shared skills directory or from an agent's workspace.
@@ -2726,6 +2731,7 @@ Delete a skill from shared skills directory or from an agent's workspace.
 - `from` is either `"shared"` or `"workspace"`
 - Bundled skills cannot be deleted (read-only)
 - The skill name is validated against the same regex as promote
+- A shared `rev4a-*` skill (Rev4a's own) is refused with **403** `Rev4a's own skills are managed by Rev4a and cannot be deleted`; workspace skills are not affected
 
 ---
 
@@ -2796,7 +2802,7 @@ Create a new credential profile.
 
 **Response:** `{ id: string }` (201)
 
-A provider can check its fields on save: for `mongodb` the `uri` (trimmed) must start with `mongodb://` or `mongodb+srv://`, else **400** `{ error }` and nothing is stored (`validateSecret()` in `lib/credentials/providers.ts`).
+A provider can check its fields on save: for `mongodb` the `uri` (trimmed) must start with `mongodb://` or `mongodb+srv://`, else **400** `{ error }` and nothing is stored (`validateSecret()` in `lib/credentials/providers.ts`). A missing or blank `uri` is **400** `Connection string is required`; a `uri` that is not a string (a number, an object, `null`) is the same 400 as a bad value, never a server error.
 
 ### `GET /api/credentials/[id]`
 Get a single credential profile (no secret returned).
@@ -2810,7 +2816,7 @@ Update label and/or secret of a credential. A changed secret is re-delivered to 
 
 **Body:** `{ label: string, secret: Record<string, string> }`
 
-A filled-in field is checked like on create (400 on a bad value); a blank field keeps the stored one and is not checked.
+A filled-in field is checked like on create (400 on a bad value, including a `uri` that is not a string); a blank or `null` field keeps the stored one and is not checked.
 
 Re-delivery runs two agents at a time and the route declares `maxDuration = 300`.
 
@@ -2850,7 +2856,7 @@ Switch the credential on or off for agents.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
-Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello and MongoDB need 2026.9.9 (Trello: the image ships the `jq` its skill requires; MongoDB: the only release it was verified on)); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello and MongoDB need 2026.9.9: Trello's image ships the `jq` its skill requires, MongoDB is the only release it was verified on); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
 
 Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). Every Gateway CLI call of the delivery (reload, GitHub RPCs) runs through `lib/gateway-cli.ts`, which uses the token in `/root/.agent-token` when present (a rotated token) and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
 

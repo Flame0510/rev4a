@@ -128,7 +128,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/skills': {
     title: 'Skills',
     description: 'Agent skills available in the workspace — reusable prompt/tool bundles that agents can invoke on demand.',
-    actions: ['Browse all available skills', 'View skill name, description, and what it does', 'Understand which skills agents can use in conversations'],
+    actions: ['Browse all available skills', 'View skill name, description, and what it does', 'Understand which skills agents can use in conversations', 'Skills starting with rev4a- are Rev4a\'s own and are read-only'],
     hints: 'Skills are like pre-built capabilities. An agent can be told "use the weather skill" and it will know how to respond.',
   },
 };

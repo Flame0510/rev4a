@@ -5,6 +5,8 @@ import { execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
+import { isRev4aOwnedSkill } from '@/lib/rev4a-skills';
+import { CONTAINER_NAME_RE } from '@/lib/skill-files';
 
 
 /**
@@ -38,6 +40,9 @@ export async function DELETE(request) {
       );
     }
 
+    if (containerName && (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName))) {
+      return NextResponse.json({ error: 'Invalid containerName' }, { status: 400 });
+    }
     if (containerName) {
       // Delete from agent container workspace
       const skillDir = `/root/.openclaw/workspace/skills/${skillName}`;
@@ -74,6 +79,12 @@ export async function DELETE(request) {
     }
 
     // Delete from shared skills directory
+    if (isRev4aOwnedSkill(skillName)) {
+      return NextResponse.json(
+        { error: "Rev4a's own skills are managed by Rev4a and cannot be deleted" },
+        { status: 403 }
+      );
+    }
     const skillDir = path.join(SHARED_SKILLS_DIR, skillName);
 
     if (!fs.existsSync(skillDir)) {

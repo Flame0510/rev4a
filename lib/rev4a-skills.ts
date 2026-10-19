@@ -57,3 +57,13 @@ export async function ensureRev4aSkill(name: string, dirs: Rev4aSkillDirs = {}):
   }
   return 'written';
 }
+
+/**
+ * True for the skills Rev4a ships and manages (`rev4a-*`). The Skills routes treat them as
+ * read-only: the next start or switch-on would overwrite an edit, and deleting one breaks the
+ * credential that depends on it.
+ */
+export function isRev4aOwnedSkill(name: string): boolean {
+  // Case-insensitive: on a case-insensitive filesystem (macOS) Rev4a-x is the same directory as rev4a-x.
+  return /^rev4a-/i.test(name);
+}

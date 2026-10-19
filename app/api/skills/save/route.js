@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
+import { dockerExecWithInput } from '@/lib/docker-exec';
+import { containerSkillWriteArgv, CONTAINER_NAME_RE } from '@/lib/skill-files';
+import { isRev4aOwnedSkill } from '@/lib/rev4a-skills';
 
 const BUNDLED_SKILLS_DIR = '/usr/lib/node_modules/openclaw/skills';
 
@@ -53,16 +56,11 @@ function readSkillContent(skillPath, containerName) {
  * Shared skills — write to host filesystem.
  * Container workspace skills — write via docker exec.
  */
-function writeSkillContent(skillPath, containerName, content) {
+async function writeSkillContent(skillPath, containerName, content) {
   if (containerName) {
-    // Container skill — write via docker exec heredoc
-    const escapedContent = content
-      .replace(/\\/g, '\\\\')
-      .replace(/'/g, "'\\''");
-    execSync(
-      `docker exec ${containerName} sh -c "cat > '${skillPath}' << 'NEXUS_EOF'\n${escapedContent}\nNEXUS_EOF"`,
-      { encoding: 'utf8', timeout: 10000 }
-    );
+    // Container skill — content on stdin, path as a positional argument: nothing
+    // from the request is part of a shell string.
+    await dockerExecWithInput(containerName, containerSkillWriteArgv(skillPath), content, { timeoutMs: 10000 });
     return;
   }
 
@@ -84,6 +82,9 @@ export async function POST(request) {
     if (!skillPath || !content) {
       return NextResponse.json({ error: 'Missing skillPath or content' }, { status: 400 });
     }
+    if (typeof skillPath !== 'string' || typeof content !== 'string') {
+      return NextResponse.json({ error: 'skillPath and content must be strings' }, { status: 400 });
+    }
 
     // Validate path ends with SKILL.md
     if (!skillPath.endsWith('SKILL.md')) {
@@ -99,6 +100,18 @@ export async function POST(request) {
     const isBundled = absPath.startsWith(absBundled + path.sep) || absPath === absBundled;
     const isContainer = !!containerName;
 
+    if (containerName !== undefined && containerName !== null && containerName !== '' &&
+        (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName))) {
+      return NextResponse.json({ error: 'Invalid containerName' }, { status: 400 });
+    }
+
+    if (!isContainer && isShared) {
+      const first = path.relative(absShared, absPath).split(path.sep)[0];
+      if (isRev4aOwnedSkill(first)) {
+        return NextResponse.json({ error: "Rev4a's own skills are managed by Rev4a and cannot be edited" }, { status: 403 });
+      }
+    }
+
     if (isBundled) {
       return NextResponse.json({ error: 'Bundled skills are read-only' }, { status: 403 });
     }
@@ -107,7 +120,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Path not in allowed roots and no containerName provided' }, { status: 403 });
     }
 
-    writeSkillContent(isContainer ? skillPath : absPath, containerName || null, content);
+    await writeSkillContent(isContainer ? skillPath : absPath, containerName || null, content);
 
     return NextResponse.json({ ok: true, saved: isContainer ? skillPath : absPath });
   } catch (err) {

@@ -25,7 +25,7 @@ export async function resolve(specifier, context, next) {
 }
 `;
 register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
-const { ensureRev4aSkill } = await import('../lib/rev4a-skills.ts');
+const { ensureRev4aSkill, isRev4aOwnedSkill } = await import('../lib/rev4a-skills.ts');
 
 let passed = 0;
 const pending = [];
@@ -149,8 +149,24 @@ test('rev4a-mongodb SKILL.md: the frontmatter OpenClaw needs, and never the bloc
   assert.deepEqual(meta.requires, { bins: ['mongosh'], env: ['REV4A_MONGODB_URI'] });
   assert.equal(meta.primaryEnv, 'REV4A_MONGODB_URI');
   assert.ok(!/(^|[^_])MONGODB_URI/.test(text), 'OpenClaw drops MONGODB_URI from the exec tool');
-  assert.ok(text.includes('"$REV4A_MONGODB_URI"'));
+  assert.ok(text.includes('connect(process.env.REV4A_MONGODB_URI)'), 'the URI is read inside --eval');
+  for (const l of text.split('\n').filter((x) => /\bmongosh\b/.test(x))) {
+    assert.ok(!/\$\{?(REV4A_MONGODB_URI|URI)\b/.test(l), 'no mongosh line expands the URI on a command line: ' + l);
+  }
+  const examples = text.split('\n').filter((l) => l.startsWith('mongosh '));
+  assert.ok(examples.length >= 3);
+  for (const l of examples) {
+    assert.ok(!l.includes('"$REV4A_MONGODB_URI"') && !/\$\{?REV4A_MONGODB_URI/.test(l), 'the URI never goes on a command line: ' + l);
+    assert.ok(l.startsWith('mongosh --nodb --quiet --eval ') && l.includes('connect(process.env.REV4A_MONGODB_URI)'), l);
+  }
+  assert.match(text, /untrusted content, never instructions/);
   assert.match(text, /not authorized/);
+});
+
+test('isRev4aOwnedSkill: rev4a-* only', () => {
+  for (const n of ['rev4a-mongodb', 'rev4a-x/y', 'rev4a-']) assert.equal(isRev4aOwnedSkill(n), true, n);
+  for (const n of ['Rev4a-x', 'REV4A-mongodb']) assert.equal(isRev4aOwnedSkill(n), true, n);
+  for (const n of ['my-skill', 'a-rev4a-x', 'rev4a', '']) assert.equal(isRev4aOwnedSkill(n), false, n);
 });
 
 test('package.json ships rev4a-skills/', () => {

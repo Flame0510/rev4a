@@ -292,6 +292,15 @@ test('validateSecret: only mongodb:// and mongodb+srv:// are accepted (trimmed)'
   assert.equal(validateSecret('mongodb', {}), 'Connection string is required');
 });
 
+test('validateSecret: a non-string value is a 400 message, never a throw', () => {
+  for (const bad of [42, {}, [], true, null]) {
+    assert.match(validateSecret('mongodb', { uri: bad }) ?? '', /must start with mongodb:\/\//, String(bad));
+  }
+  assert.equal(validateSecret('mongodb', { uri: null }, true), null);
+  assert.ok(validateSecret('mongodb', { uri: 42 }, true));
+  assert.ok(validateSecret('mongodb', null));
+});
+
 test('validateSecret: an edit with a blank field keeps the stored value; other providers are unchecked', () => {
   assert.equal(validateSecret('mongodb', { uri: '' }, true), null);
   assert.equal(validateSecret('mongodb', {}, true), null);

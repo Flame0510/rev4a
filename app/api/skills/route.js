@@ -7,6 +7,7 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { getAgentDisplayNames } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 import { dockerExecShellNoFail, mapWithConcurrency } from '@/lib/docker-exec';
+import { isRev4aOwnedSkill } from '@/lib/rev4a-skills';
 
 const execFileAsync = promisify(execFile);
 
@@ -138,7 +139,9 @@ export async function GET(request) {
         if (!entry.isDirectory()) continue;
         const skillMd = path.join(SHARED_SKILLS_DIR, entry.name, 'SKILL.md');
         if (fs.existsSync(skillMd)) {
-          skills.push(readSkillMeta(SHARED_SKILLS_DIR, entry.name, 'shared', null));
+          const meta = readSkillMeta(SHARED_SKILLS_DIR, entry.name, 'shared', null);
+          if (isRev4aOwnedSkill(entry.name)) meta.managed = true;
+          skills.push(meta);
         }
       }
     }

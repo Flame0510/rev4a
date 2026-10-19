@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
+import { isRev4aOwnedSkill } from '@/lib/rev4a-skills';
+import { CONTAINER_NAME_RE } from '@/lib/skill-files';
 
 
 /**
@@ -31,12 +33,22 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+    if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) {
+      return NextResponse.json({ error: 'Invalid containerName' }, { status: 400 });
+    }
 
     // Sanitize: skill name must be a valid directory name
     if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(skillName)) {
       return NextResponse.json(
         { error: 'Invalid skill name format' },
         { status: 400 }
+      );
+    }
+
+    if (isRev4aOwnedSkill(skillName)) {
+      return NextResponse.json(
+        { error: `"rev4a-…" is reserved for Rev4a's own skills: rename the skill first` },
+        { status: 403 }
       );
     }
 

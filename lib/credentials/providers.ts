@@ -161,7 +161,7 @@ export const CREDENTIAL_PROVIDERS: CredentialProviderDef[] = [
     deliveryMethod: 'env REV4A_MONGODB_URI + rev4a-mongodb skill (mongosh)',
     docsUrl: 'https://www.mongodb.com/docs/manual/reference/connection-string/',
     note: MONGODB_READ_ONLY_NOTE,
-    switchOnNote: 'The first switch-on installs mongosh (about 200 MB, up to a minute).',
+    switchOnNote: 'The first switch-on installs mongosh (about 200 MB); it can take a few minutes.',
   },
 ];
 
@@ -182,7 +182,13 @@ export function validateSecret(providerId: string, secret: Record<string, string
   if (!validators) return null;
   const provider = getProvider(providerId);
   for (const [key, check] of Object.entries(validators)) {
-    const value = (secret[key] ?? '').trim();
+    const raw: unknown = secret?.[key];
+    // A number, object or null from a request body is a bad value, never a throw.
+    if (raw !== undefined && typeof raw !== 'string') {
+      if (raw === null && partial) continue;
+      return check('') ?? 'Invalid value';
+    }
+    const value = (raw ?? '').trim();
     if (!value) {
       if (partial) continue;
       return `${provider?.fields.find((f) => f.key === key)?.label ?? key} is required`;

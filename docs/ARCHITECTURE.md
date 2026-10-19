@@ -476,12 +476,14 @@ name); `mode` is `env` (implemented) or `protected` (reserved).
 Enabling an assignment (`lib/credentials/delivery.ts`, pure parts in
 `lib/credentials/native.ts`) runs, through `docker exec` with argv arrays:
 
-1. `openclaw --version` must be 2026.9.0 or newer (Trello requires 2026.9.9, whose image ships the `jq` its skill needs);
+1. `openclaw --version` must be 2026.9.0 or newer (Trello and MongoDB require 2026.9.9: Trello's image ships the `jq` its skill needs, MongoDB is the only release it was verified on);
 2. `openclaw secrets store set NAME --kind env --value-file -` per environment name, the
    value on stdin (never in argv);
 3. one `openclaw config patch --stdin` for `skills.entries.<skill>` (`apiKey` SecretRef
    when the skill declares a primary env, `env` map for Trello, plain `enabled` for GitHub);
 4. `openclaw secrets reload` with `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000` in the exec environment (the agent Gateway port; never `--url`/`--token` in argv). Every Gateway CLI call (the reload, the GitHub RPCs, cron list/edit, the subscription usage read, the devices and update paths) goes through `lib/gateway-cli.ts`, which exports the token from `/root/.agent-token` when that file exists (a token rotated from the dashboard), else keeps the container's `OPENCLAW_GATEWAY_TOKEN`, the entrypoint's precedence; the token is read inside the container.
+
+MongoDB (`lib/credentials/mongodb.ts`) adds steps around the same store write: before step 2 it checks for `mongosh` 2.13.0 under `/root/.local` in the agent and installs it when missing or another version (5 minutes allowed; a failure stops the switch-on before anything is written); it then deploys the shared skill `rev4a-mongodb` to the host's shared skills directory (`ensureRev4aSkill()`), writes the store entry `REV4A_MONGODB_URI` and the skill entry, reloads, and asks `openclaw skills info rev4a-mongodb --json` whether the skill is eligible (60 s). When it is not eligible, or the answer cannot be read, the switch-on fails and the store and skill entries are removed again. A check that times out also fails the switch-on but rolls nothing back, since the state is unknown; the next switch-on retries. A switch-off removes the entries and keeps `mongosh`.
 
 Two providers skip the environment entry, because it cannot work
 (`lib/credentials/managed.ts`):

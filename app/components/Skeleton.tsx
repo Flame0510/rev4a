@@ -210,7 +210,7 @@ export function CardRowSkeleton({ count = 3, height = 56 }: { count?: number; he
  * Credential provider cards.
  *
  * The credentials page renders one card per entry in CREDENTIAL_PROVIDERS,
- * which is a static array of five — so the card count here is known, not
+ * which is a static array of six — so the card count here is known, not
  * guessed, and the grid will not reflow when the data lands.
  *
  * Each shape mirrors the real text it stands in for: the label and category
@@ -222,17 +222,18 @@ export function CardRowSkeleton({ count = 3, height = 56 }: { count?: number; he
  * `configuredCards` is the one genuine unknown: whether a provider has stored
  * profiles is only known once /api/credentials answers. Cards with a profile
  * are markedly taller, so rendering none would guarantee a jump downward for
- * anyone who has set some up. Two of five is the middle of the realistic range
+ * anyone who has set some up. Two of six is the middle of the realistic range
  * and keeps the error small in both directions.
  */
 export function CredentialCardsSkeleton({ configuredCards = 2 }: { configuredCards?: number }) {
-  // Ordered as CREDENTIAL_PROVIDERS: GitHub, Trello, Vercel, Supabase, Notion.
+  // Ordered as CREDENTIAL_PROVIDERS: GitHub, Trello, Vercel, Supabase, Notion, MongoDB.
   const cards = [
     { label: 46, cat: 84, pill: 64, desc: ['100%', '58%'], delivery: '56%' },
     { label: 44, cat: 98, pill: 54, desc: ['92%'], delivery: '82%' },
     { label: 44, cat: 34, pill: 64, desc: ['100%', '64%'], delivery: '90%' },
     { label: 58, cat: 50, pill: 54, desc: ['100%', '86%'], delivery: '78%' },
     { label: 44, cat: 98, pill: 54, desc: ['100%', '92%'], delivery: '72%' },
+    { label: 66, cat: 56, pill: 54, desc: ['100%', '74%'], delivery: '76%' },
   ];
 
   return (
