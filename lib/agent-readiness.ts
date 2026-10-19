@@ -22,10 +22,15 @@
  * that as ready would let the create route configure an agent that is still
  * migrating.
  *
+ * **One rule, one place.** {@link probeGateway} is the single attempt that applies the
+ * rule above; {@link waitForGatewayReady} polls it, and the Agents page status
+ * (lib/gateway-status.ts) and the Open route call it once. Nothing else reads
+ * `/startupz` to decide readiness.
+ *
  * **Async.** A request path must not hold Node's single thread for up to a
  * minute; see docs/ARCHITECTURE.md §3.1.
  */
-import { dockerExecNoFail } from '@/lib/docker-exec';
+import { dockerExec } from '@/lib/docker-exec';
 
 /** Interval between attempts. The Gateway takes seconds to boot, not milliseconds. */
 const POLL_INTERVAL_MS = 2_000;
@@ -43,13 +48,24 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * `docker exec` can exit 0 on the SIGTERM (docs/ARCHITECTURE.md, "A timeout does
  * not reject"); either way a last line that is not a three-digit code counts as
  * no answer. The image has `curl`, not `wget`.
+ *
+ * curl runs under `sh -c '…; exit 0'` so a refused connection (the usual answer while
+ * the Gateway boots) exits 0 and is told apart from the exec itself failing. What
+ * rejects then is a deadline (it carries `partialStdout`: no answer) or Docker (the
+ * container is gone, exec not possible): that one is `error`.
  */
-async function probe(container: string, path: string): Promise<{ status: number; body: string }> {
-  const out = await dockerExecNoFail(
-    container,
-    ['curl', '-s', '-o', '-', '-w', '\n%{http_code}', `http://127.0.0.1:3000${path}`],
-    { timeoutMs: ATTEMPT_TIMEOUT_MS },
-  );
+async function probe(container: string, path: string, timeoutMs: number): Promise<{ status: number; body: string } | 'error'> {
+  let out: string;
+  try {
+    out = await dockerExec(
+      container,
+      ['sh', '-c', `curl -s --max-time ${Math.max(1, Math.ceil(timeoutMs / 1000))} -o - -w '\\n%{http_code}' http://127.0.0.1:3000${path}; exit 0`],
+      { timeoutMs },
+    );
+  } catch (e) {
+    if ((e as { partialStdout?: string }).partialStdout !== undefined) return { status: 0, body: '' };
+    return 'error';
+  }
   if (!out) return { status: 0, body: '' };
   const cut = out.lastIndexOf('\n');
   const tail = (cut === -1 ? out : out.slice(cut + 1)).trim();
@@ -65,6 +81,28 @@ function asJson(body: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The answer of one probe: `ready` only for 200 + `status: "started"`; `error` when the exec itself failed. */
+export type GatewayProbe = 'ready' | 'starting' | 'no_answer' | 'error';
+
+/**
+ * One attempt at `/startupz`. `ready` for HTTP 200 with JSON `status === "started"`,
+ * `starting` for a 503 (starting or draining), `no_answer` for anything else: no
+ * answer, a timeout, a truncated reply or any other code; `error` when `docker exec` itself
+ * fails (container gone, Docker error). Never throws.
+ */
+export async function probeGateway(container: string, timeoutMs = ATTEMPT_TIMEOUT_MS): Promise<GatewayProbe> {
+  const startupz = await probe(container, '/startupz', timeoutMs);
+  if (startupz === 'error') return 'error';
+  if (startupz.status === 200) {
+    const json = asJson(startupz.body);
+    // Accept only the answer that means startup finished. A 200 with any other body
+    // is not a ready Gateway.
+    return json && json.status === 'started' ? 'ready' : 'no_answer';
+  }
+  if (startupz.status === 503) return 'starting';
+  return 'no_answer';
 }
 
 /**
@@ -84,15 +122,8 @@ export async function waitForGatewayReady(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const startupz = await probe(container, '/startupz');
-
-    if (startupz.status === 200) {
-      const json = asJson(startupz.body);
-      // 9.x: accept only the answer that means startup finished. A 200 with any other
-      // body is not a ready Gateway.
-      if (json && json.status === 'started') return true;
-    }
-    // 503 (starting or draining), any other code, or no answer: not yet.
+    if ((await probeGateway(container)) === 'ready') return true;
+    // Starting, draining, any other code, or no answer: not yet.
 
     // Only sleep if there is still budget left to use afterwards.
     if (Date.now() + POLL_INTERVAL_MS >= deadline) break;

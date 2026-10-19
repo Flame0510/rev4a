@@ -855,6 +855,38 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 
 ---
 
+### `GET /api/agents/gateway`
+Whether each agent's Gateway has finished starting. Docker reports a container `running` at
+once; the Gateway inside needs seconds to minutes. The list route answers from Docker alone, so
+this one runs a readiness probe inside each running container.
+
+**Auth:** browser cookie
+
+**Response:**
+```json
+{
+  "agents": {
+    "prometheus": { "state": "ready", "startedAtMs": 1760000000000, "checkedAtMs": 1760000123456 },
+    "atlas": { "state": "starting", "startedAtMs": 1760000100000, "checkedAtMs": 1760000123456 },
+    "argus": { "state": "stopped", "startedAtMs": null, "checkedAtMs": 1760000123456 }
+  }
+}
+```
+
+**Notes:**
+- `state` is `stopped`, `starting`, `ready`, `not_ready` or `unknown` (`lib/gateway-state.ts`).
+  `ready` is the `/startupz` rule of `lib/agent-readiness.ts` (`probeGateway`): HTTP 200 with
+  `status: "started"`. A running agent that is not ready is `starting` for 10 minutes after
+  `State.StartedAt`, then `not_ready`. `unknown` means the exec, the probe or the inspect failed for that
+  agent (`probeGateway` answered `error`, which is never cached); the UI treats it like `ready`.
+- A stopped container is `stopped` and is never probed. Running containers are probed
+  asynchronously (`docker exec` through `execFile`, never a blocking call), at most 4 at a time, 3 s each.
+- Cached per container and `StartedAt` (a restart starts over): a `ready` answer for 60 s,
+  `starting` and no answer for 2 s; concurrent requests share one probe.
+- `{ "agents": {} }` when Docker is unavailable.
+
+---
+
 ### `GET /api/agents/ports`
 The host ports held by any container, running or stopped: the set the validators in
 `lib/agent-ports.ts` take, sorted ascending. Backed by the shared lookup
@@ -1685,11 +1717,17 @@ agent's published port — never a parameter, so the link cannot be sent to anot
   `http://<host>:<port>/#token=<token>`, with the token read inside the container
   (`/root/.agent-token`, then `OPENCLAW_GATEWAY_TOKEN`).
 
+Before resolving the link the route runs one readiness probe (`probeGateway`, 3 s). Only a Gateway that
+is `starting` (not ready, inside 10 minutes of the container's `StartedAt`) gets a `503` page
+instead of a redirect to a dead port; `ready`, `not_ready`, a failed probe or an unreadable
+`StartedAt` resolve the link as usual.
+
 A navigation, not a JSON call: the button opens this URL inside the click, so no tab
 is left blank after an `await` and no popup can be blocked.
 
 **Errors** (plain text, meant for the tab): `400` host not readable, `404` unknown agent,
-`409` agent not running or no published Control UI port, `503` Docker unreachable,
+`409` agent not running or no published Control UI port, `503` Docker unreachable or the
+agent's Gateway still starting ("The agent's Gateway is still starting. Try again in a moment."),
 `502` neither a one-time link nor a token available.
 
 ---

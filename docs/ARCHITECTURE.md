@@ -126,7 +126,13 @@ The central container, running the Next.js dashboard + orchestration API.
   session store and wants `doctor --fix` — answers 200 on `/health` while draining, so
   `/health` is never accepted as "ready": it would let callers configure an agent that
   is still migrating. Do not reimplement the wait in
-  a route.
+  a route. The single attempt is `probeGateway()` (`ready` / `starting` / `no_answer` / `error`; `error` = the `docker exec` itself failed, treated as "not yet" by the wait), the one
+  place the `/startupz` rule lives; `waitForGatewayReady()` polls it, `GET /api/agents/gateway`
+  (`lib/gateway-status.ts`) calls it once per running container for the Agents page (async, at most 4 probes at a time), and
+  `open-control-ui` calls it once before redirecting and refuses only while the state is `starting`. `lib/gateway-status.ts` keeps a
+  module-level cache keyed by container id and `StartedAt`: `ready` for 60 s, `starting` or no
+  answer for 2 s, `error` never, one shared in-flight probe per container. `lib/gateway-state.ts` is the pure
+  decision (`stopped` / `starting` / `ready` / `not_ready` / `unknown`; `not_ready` after 10 minutes).
 - **The model catalogue** is read only through `lib/model-catalogue.ts`:
   `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and

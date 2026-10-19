@@ -62,6 +62,29 @@ interface InviteLink {
   loopbackHost: boolean;
 }
 
+/** Mirrors `GatewayState` in lib/gateway-state.ts (that file stays out of the browser bundle's imports). */
+export type GatewayState = 'stopped' | 'starting' | 'ready' | 'not_ready' | 'unknown';
+
+/** Elapsed time as m:ss for the STARTING chip and the panel line. */
+export function formatElapsed(startedAtMs: number | null | undefined, nowMs: number = Date.now()): string {
+  if (!startedAtMs || startedAtMs > nowMs) return '0:00';
+  const total = Math.floor((nowMs - startedAtMs) / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Time since `startedAtMs`, ticking every second on its own: the clock runs in the browser,
+ * so the count is smooth without asking the server more often than the 3 s status poll.
+ */
+export function Elapsed({ startedAtMs }: { startedAtMs: number | null | undefined }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{formatElapsed(startedAtMs, now)}</>;
+}
+
 const POLL_MS = 5_000;
 /** A load slower than this (or a failed one) makes the next poll wait longer. */
 const SLOW_MS = 5_000;
@@ -121,27 +144,42 @@ const metaStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-dim)',
  * one-time link or to the plain token link. Resolving the target server-side keeps
  * this a plain navigation: no blank tab to fill in after an `await`, nothing for a
  * popup blocker to stop.
+ *
+ * `gateway` is the Gateway state from `/api/agents/gateway`: only `starting` disables the
+ * button (the route would answer a 503 page). `ready`, `not_ready`, `unknown` or no data
+ * yet leave it enabled: a wrong or failed probe never locks anyone out of the Control UI.
  */
 export function OpenControlUiButton({
   agentId,
   label = 'Open ↗',
   variant = 'primary',
   stopPropagation = false,
+  gateway,
 }: {
   agentId: string;
   label?: string;
   variant?: 'primary' | 'secondary';
   /** For buttons inside a clickable row. */
   stopPropagation?: boolean;
+  gateway?: GatewayState;
 }) {
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
     window.open(`/api/agents/${encodeURIComponent(agentId)}/open-control-ui`, '_blank', 'noopener');
   };
 
+  const starting = gateway === 'starting';
   return (
-    <Button variant={variant} size="sm" onClick={open} title="Open the agent Control UI">
-      {label}
+    <Button
+      variant={variant}
+      size="sm"
+      onClick={open}
+      disabled={starting}
+      title={starting ? "The agent's Gateway is still starting"
+        : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
+        : 'Open the agent Control UI'}
+    >
+      {starting ? 'Starting…' : label}
     </Button>
   );
 }

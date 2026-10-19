@@ -12,7 +12,7 @@ import CostSection from './CostSection';
 import ResourceSection from './ResourceSection';
 import PackagesSection from './PackagesSection';
 import CredentialsSection from './CredentialsSection';
-import BrowserAccessSection, { OpenControlUiButton } from './BrowserAccessSection';
+import BrowserAccessSection, { Elapsed, OpenControlUiButton, type GatewayState } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
 import { validatePortInput } from '@/lib/agent-ports';
 import {
@@ -177,6 +177,9 @@ function compactPorts(ports: string): string {
   return out.join(', ');
 }
 
+/** One agent's Gateway state from `/api/agents/gateway`. */
+type GatewayInfo = { state: GatewayState; startedAtMs: number | null };
+
 /** Shared agent list-item used in both mobile and desktop views. */
 function AgentListItem({
   agent,
@@ -186,6 +189,7 @@ function AgentListItem({
   modelSummary,
   deviceSummary,
   backupSummary,
+  gatewaySummary,
   busy,
   onClick,
   onLifecycle,
@@ -197,6 +201,8 @@ function AgentListItem({
   modelSummary: Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>;
   /** Browsers waiting for approval, per agent. */
   deviceSummary: Record<string, { pending: number }>;
+  /** Gateway readiness, per agent (STARTING / NOT READY chip, Open button). */
+  gatewaySummary: Record<string, GatewayInfo>;
   /** Cold backup currently running, per agent (chip on the card). */
   /** The long operation in progress, per agent (chip on the card). */
   backupSummary: Record<string, { kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit'; file?: string | null; version?: string | null; percent?: number | null }>;
@@ -259,10 +265,17 @@ function AgentListItem({
     : b.kind === 'recreate' ? 'RECREATING'
     : b.kind === 'edit' ? 'EDITING'
     : 'UPDATING';
-  const hasChips = !!b || channelSummary[agent.agentId]?.telegram || pending > 0 || agent.updateAvailable || agent.newBuildAvailable;
+  const gw = agent.state === 'running' ? gatewaySummary[agent.agentId] : undefined;
+  const hasChips = !!b || gw?.state === 'starting' || gw?.state === 'not_ready' || channelSummary[agent.agentId]?.telegram || pending > 0 || agent.updateAvailable || agent.newBuildAvailable;
   const chips = hasChips ? (
     <>
       {activity && <Badge tone="neutral"><span style={{ fontSize: 8, padding: '1px 6px' }}>{activity}</span></Badge>}
+      {gw?.state === 'starting' && (
+        <Badge tone="neutral"><span style={{ fontSize: 8, padding: '1px 6px' }}>STARTING <Elapsed startedAtMs={gw.startedAtMs} /></span></Badge>
+      )}
+      {gw?.state === 'not_ready' && (
+        <Badge tone="danger"><span style={{ fontSize: 8, padding: '1px 6px' }}>NOT READY</span></Badge>
+      )}
       {channelSummary[agent.agentId]?.telegram && (
         <Badge tone="success"><span style={{ fontSize: 8, padding: '1px 6px' }}>TG</span></Badge>
       )}
@@ -285,7 +298,7 @@ function AgentListItem({
       toggling={loading}
       toggleDisabled={agent.state === 'unknown' || !!busy}
       onToggle={() => { void onLifecycle(); }}
-      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation /> : undefined}
+      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation gateway={gw?.state} /> : undefined}
       meta={[
         imageLabel(agent),
         compactPorts(agent.ports),
@@ -314,6 +327,12 @@ export default function AgentsPageClient() {
   const [mdSummary, setMdSummary] = useState<Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }>>({});
   const [dvSummary, setDvSummary] = useState<Record<string, { pending: number }>>({});
   const [bkSummary, setBkSummary] = useState<Record<string, { kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit'; file?: string | null; version?: string | null; percent?: number | null }>>({});
+  const [gwSummary, setGwSummary] = useState<Record<string, GatewayInfo>>({});
+  /** Poll the Gateway state every 3 s until this time (an agent was just started here). */
+  const [gwBoostUntil, setGwBoostUntil] = useState(0);
+  const gwAbortRef = useRef<AbortController | null>(null);
+  /** Consecutive failed Gateway fetches: three clear the stored states, so a stale lock cannot linger. */
+  const gwFailures = useRef(0);
   const [imageReady, setImageReady] = useState(true);
   // null = not checked yet. Keeping "unknown" distinct from "none configured" is
   // the whole point: `false` as the initial value makes an unanswered check look
@@ -400,6 +419,7 @@ export default function AgentsPageClient() {
    */
   const notifyActivity = useCallback((agentId: string, kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit') => {
     setBkSummary((prev) => ({ ...prev, [agentId]: { kind } }));
+    setGwBoostUntil(Date.now() + 20000);
     void refreshBackupSummary();
   }, [refreshBackupSummary]);
 
@@ -417,6 +437,48 @@ export default function AgentsPageClient() {
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+
+  /**
+   * Gateway readiness per agent. Decorates the cards and the Open buttons, so a failure
+   * leaves the last answer in place and never blocks anything. A newer call aborts the
+   * one still in flight.
+   */
+  const refreshGateway = useCallback(async () => {
+    gwAbortRef.current?.abort();
+    const controller = new AbortController();
+    gwAbortRef.current = controller;
+    try {
+      const res = await fetch('/api/agents/gateway', { signal: controller.signal });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      if (!data || typeof data.agents !== 'object' || !data.agents) throw new Error('Invalid response');
+      gwFailures.current = 0;
+      setGwSummary(data.agents);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      if (++gwFailures.current >= 3) setGwSummary((prev) => (Object.keys(prev).length ? {} : prev));
+    }
+  }, []);
+
+  /** An agent was just (re)started from this page: poll fast for a while and look at once. */
+  const boostGateway = useCallback(() => {
+    setGwBoostUntil(Date.now() + 20000);
+    void refreshGateway();
+  }, [refreshGateway]);
+
+  const anyGatewayStarting = Object.values(gwSummary).some((g) => g.state === 'starting');
+  const gwFast = anyGatewayStarting || gwBoostUntil > 0;
+  useEffect(() => {
+    void refreshGateway();
+    const i = setInterval(() => { void refreshGateway(); }, gwFast ? 3000 : 30000);
+    return () => clearInterval(i);
+  }, [gwFast, refreshGateway]);
+  useEffect(() => () => gwAbortRef.current?.abort(), []);
+  useEffect(() => {
+    if (gwBoostUntil === 0) return;
+    const t = setTimeout(() => setGwBoostUntil(0), Math.max(0, gwBoostUntil - Date.now()));
+    return () => clearTimeout(t);
+  }, [gwBoostUntil]);
 
   const load = useCallback(async () => {
     try {
@@ -449,12 +511,13 @@ export default function AgentsPageClient() {
       void refreshModelSummary();
       void refreshDeviceSummary();
       void refreshBackupSummary();
+      void refreshGateway();
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshGateway]);
 
   useEffect(() => {
     load();
@@ -526,13 +589,14 @@ export default function AgentsPageClient() {
       }
       // Refresh agent list to pick up new state; skip the next polling cycle
       skipNextPoll.current = true;
+      if (action === 'start') boostGateway();
       await load();
     } catch (e: unknown) {
       console.error(`Lifecycle request failed:`, (e as Error).message);
     } finally {
       setLifecycleLoading(null);
     }
-  }, [load]);
+  }, [load, boostGateway]);
 
   async function saveToken() {
     setTokenSaving(true);
@@ -685,7 +749,7 @@ export default function AgentsPageClient() {
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', paddingBottom: FLOATING_CLEARANCE }} data-testid="agent-detail-scroll">
             <ImageDownloadBanner onImageReady={handleImageReady} />
             {providersConfigured === false && <NoProviderBanner />}
-            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} />
+            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} gateway={gwSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} onRestarted={boostGateway} />
           </div>
         </div>
       );
@@ -723,6 +787,7 @@ export default function AgentsPageClient() {
               modelSummary={mdSummary}
               deviceSummary={dvSummary}
               backupSummary={bkSummary}
+              gatewaySummary={gwSummary}
               busy={!!bkSummary[agent.agentId]}
               onClick={() => selectAgent(agent)}
               onLifecycle={() => handleLifecycle(agent)}
@@ -772,6 +837,7 @@ export default function AgentsPageClient() {
                 modelSummary={mdSummary}
                 deviceSummary={dvSummary}
                 backupSummary={bkSummary}
+                gatewaySummary={gwSummary}
                 busy={!!bkSummary[agent.agentId]}
                 selected={isSelected}
                 onClick={() => setSelectedId(agent.agentId)}
@@ -787,7 +853,7 @@ export default function AgentsPageClient() {
             // key: without it React reuses one DetailPanel instance across
             // selections, so in-flight state (deleting, recreating, restarting,
             // toasts, open confirms) leaks onto the next agent you click.
-            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} />
+            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} gateway={gwSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} onRestarted={boostGateway} />
           )}
         </div>
       </div>
@@ -1102,7 +1168,7 @@ function EditBanner({ agentId, onChanged, ping }: { agentId: string; onChanged: 
   );
 }
 
-function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccessChanged, onActivity }: {
+function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved, onAccessChanged, onActivity, onRestarted }: {
   agent: Agent;
   /** The agent is gone — the parent drops it from the list. */
   onDeleted: (agentId: string) => void;
@@ -1118,8 +1184,12 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
   onAccessChanged: () => void;
   /** A long job started here — show its chip at once (page-level notifyActivity). */
   onActivity: (agentId: string, kind: 'backup' | 'restore' | 'recreate' | 'update' | 'edit') => void;
+  /** The container was restarted from the panel — poll the Gateway state at once. */
+  onRestarted: () => void;
   /** This agent has a long operation running: its actions are disabled. */
   busy: boolean;
+  /** The Gateway state, once `/api/agents/gateway` has answered. */
+  gateway?: GatewayInfo;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -1213,7 +1283,13 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
         <div style={{ padding: '12px 14px' }}>
           {agent.state === 'running' && agent.controlPort && (
             <div style={{ marginBottom: 8 }}>
-              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" />
+              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" gateway={gateway?.state} />
+              {gateway?.state === 'starting' && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway starting… <Elapsed startedAtMs={gateway.startedAtMs} /></div>
+              )}
+              {gateway?.state === 'not_ready' && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway not ready after 10 minutes</div>
+              )}
             </div>
           )}
           <BrowserAccessSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onAccessChanged} />
@@ -1266,7 +1342,7 @@ function DetailPanel({ agent, busy, onDeleted, onChanged, onModelSaved, onAccess
       <IntegrationSection agentName={agent.name} />
 
       {/* Restart */}
-      <RestartSection agentName={agent.name} agentBusy={busy} />
+      <RestartSection agentName={agent.name} agentBusy={busy} onRestarted={onRestarted} />
 
       {/* Backup - persistent volume backup & restore */}
       <BackupSection agentName={agent.name} agentBusy={busy} onStarted={(kind) => onActivity(agent.agentId, kind)} />
@@ -1690,7 +1766,7 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
 
 /* ─── Restart section - simple container restart ─── */
 
-function RestartSection({ agentName, agentBusy }: { agentName: string; agentBusy?: boolean }) {
+function RestartSection({ agentName, agentBusy, onRestarted }: { agentName: string; agentBusy?: boolean; onRestarted: () => void }) {
   const [restarting, setRestarting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -1706,6 +1782,7 @@ function RestartSection({ agentName, agentBusy }: { agentName: string; agentBusy
       const data = await res.json();
       if (data.success) {
         showToast('Container restarted');
+        onRestarted();
       } else {
         showToast(data.error || 'Restart failed');
       }
