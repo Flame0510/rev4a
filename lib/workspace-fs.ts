@@ -63,9 +63,13 @@ export function realpathArgv(p: string): string[] {
   return ['realpath', '-m', '--', p];
 }
 
-/** `stat` of one path: `<kind>|<size>`, kind being `regular file`, `directory`, … */
+/**
+ * `stat` of one path: `<kind>|<size>|<mtime>`, kind being `regular file`, `directory`, … The mtime is
+ * `%Y`: whole seconds since the epoch (the precision `stat -c` gives on every coreutils), so `mtimeMs`
+ * is always a multiple of 1000.
+ */
 export function statArgv(p: string): string[] {
-  return ['stat', '-c', '%F|%s', '--', p];
+  return ['stat', '-c', '%F|%s|%Y', '--', p];
 }
 
 /** The recursive listing under `root`: one `relPath|type|size|mtime` record per entry, NUL-terminated. */
@@ -112,12 +116,17 @@ export function decodeReadOutput(base64Out: string): string | null {
 export const WRITE_EXIT_IS_DIR = 21;
 /** Exit code of WRITE_SCRIPT when the target exists and is not a regular file (fifo, device, socket). */
 export const WRITE_EXIT_NOT_FILE = 22;
+/** Exit code of WRITE_SCRIPT when an expected mtime was given and the target's mtime is different. Nothing is written. */
+export const WRITE_EXIT_CONFLICT = 23;
 
 /**
  * The save script: constant text, the target is "$1", the content comes on stdin. It writes a
  * temporary file next to the target, gives it the target's mode and owner when the target exists
  * (cp -p, which POSIX and GNU both have), and renames it over the target, so a reader never sees a
  * half-written file. The content is copied as is: no newline is added.
+ * An optional "$2" is the mtime (whole seconds) the caller saw when it opened the file: when the target
+ * exists with a different `stat -c %Y`, the script exits WRITE_EXIT_CONFLICT before the rename and writes
+ * nothing. The comparison is the last step before the rename, so the window left is the same second.
  * `${target%/*}` (not dirname) keeps a directory name that ends in a newline intact.
  */
 export const WRITE_SCRIPT = [
@@ -135,13 +144,25 @@ export const WRITE_SCRIPT = [
   // A new file gets the usual 0644 (mktemp creates 0600); an existing one keeps its mode and owner.
   'if [ -e "$target" ]; then cp -p -- "$target" "$tmp"; else chmod 644 "$tmp"; fi',
   'cat > "$tmp"',
+  'expected=${2-}',
+  // The agent deleted the file after it was opened: a conflict too, never a silent re-create.
+  'if [ -n "$expected" ] && [ ! -e "$target" ]; then exit ' + WRITE_EXIT_CONFLICT + '; fi',
+  'if [ -n "$expected" ] && [ -e "$target" ]; then',
+  '  current=$(stat -c %Y -- "$target")',
+  '  if [ "$current" != "$expected" ]; then exit ' + WRITE_EXIT_CONFLICT + '; fi',
+  'fi',
   'mv -f -- "$tmp" "$target"',
   'trap - EXIT HUP INT TERM',
 ].join('\n');
 
-/** The argv that saves stdin to `p`. Run with `dockerExecWithInput`. */
-export function writeArgv(p: string): string[] {
-  return ['sh', '-c', WRITE_SCRIPT, 'sh', p];
+/**
+ * The argv that saves stdin to `p`. Run with `dockerExecWithInput`. `expectedMtimeSeconds`, when given,
+ * turns on the conflict check (see WRITE_SCRIPT); it travels as a positional argument, never in the script.
+ */
+export function writeArgv(p: string, expectedMtimeSeconds?: number): string[] {
+  const argv = ['sh', '-c', WRITE_SCRIPT, 'sh', p];
+  if (expectedMtimeSeconds !== undefined) argv.push(String(expectedMtimeSeconds));
+  return argv;
 }
 
 // ── Parsers ──────────────────────────────────────────────────────────────────────────────────
@@ -155,23 +176,39 @@ export interface WorkspaceEntry {
   mtimeMs: number;
   isDirectory: boolean;
   isFile: boolean;
+  /** Set (true) only for an entry inside a read-only mount. */
+  readOnly?: boolean;
 }
 
-/** Output of `stat -c '%F|%s'`. */
-export function parseStat(out: string): { kind: 'file' | 'directory' | 'other'; size: number } | null {
-  const line = out.replace(/\n+$/, '');
-  const i = line.lastIndexOf('|');
-  if (i < 0) return null;
-  const kind = line.slice(0, i);
-  const size = Number(line.slice(i + 1));
+export interface StatResult {
+  kind: 'file' | 'directory' | 'other';
+  size: number;
+  /** Modification time in ms; a multiple of 1000 (the stat gives whole seconds). Absent for the old two-field output. */
+  mtimeMs?: number;
+}
+
+/** Output of `statArgv`: `<kind>|<size>|<mtime seconds>` (the old `<kind>|<size>` is read too). */
+export function parseStat(out: string): StatResult | null {
+  const parts = out.replace(/\n+$/, '').split('|');
+  if (parts.length < 2) return null;
+  // The kind never holds a "|"; neither do the numbers. Read from the right.
+  let mtimeMs: number | undefined;
+  if (parts.length >= 3) {
+    const sec = Number(parts.pop() as string);
+    if (!Number.isFinite(sec)) return null;
+    mtimeMs = Math.round(sec * 1000);
+  }
+  const size = Number(parts.pop() as string);
+  const kind = parts.join('|');
   if (!Number.isFinite(size)) return null;
-  if (kind === 'directory') return { kind: 'directory', size };
-  if (kind === 'regular file' || kind === 'regular empty file') return { kind: 'file', size };
-  return { kind: 'other', size };
+  const extra = mtimeMs === undefined ? {} : { mtimeMs };
+  if (kind === 'directory') return { kind: 'directory', size, ...extra };
+  if (kind === 'regular file' || kind === 'regular empty file') return { kind: 'file', size, ...extra };
+  return { kind: 'other', size, ...extra };
 }
 
 /** Output of `treeArgv` under `root`. Hidden top-level entries are left out, like the old listing. */
-export function parseTree(out: string, root: string): WorkspaceEntry[] {
+export function parseTree(out: string, root: string, readOnlyPaths: string[] = []): WorkspaceEntry[] {
   const entries: WorkspaceEntry[] = [];
   for (const rec of out.split('\0')) {
     if (!rec) continue;
@@ -184,15 +221,17 @@ export function parseTree(out: string, root: string): WorkspaceEntry[] {
     const relPath = parts.join('|');
     if (!relPath || relPath.startsWith('.')) continue;
     const isDirectory = rawType === 'd';
+    const entryPath = posix.join(root, relPath);
     entries.push({
       name: posix.basename(relPath),
-      path: posix.join(root, relPath),
+      path: entryPath,
       relPath,
       type: isDirectory ? 'directory' : 'file',
       size: isDirectory ? 0 : Number(rawSize || 0),
       mtimeMs: Math.round(Number(rawMtime || 0) * 1000),
       isDirectory,
       isFile: !isDirectory,
+      ...(readOnlyPaths.length > 0 && isInReadOnlyMount(entryPath, readOnlyPaths) ? { readOnly: true } : {}),
     });
   }
   entries.sort(compareWorkspaceEntries);
@@ -365,3 +404,165 @@ export function rawTimeoutMs(size: number): number {
 
 /** maxBuffer for a raw read: base64 is 4/3 of the bytes, plus headroom for growth between stat and read. */
 export const RAW_MAX_BUFFER = Math.ceil((MAX_RAW_BYTES * 4) / 3) + 1024 * 1024;
+
+// ── Download: the exact bytes of any regular file ────────────────────────────────────────────
+
+/** Headers of a download response: always an attachment of opaque bytes, never rendered by the browser. */
+export function downloadHeaders(p: string, size: number): Record<string, string> {
+  return {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': String(size),
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeRfc5987(posix.basename(p))}`,
+    'Cache-Control': 'no-store',
+  };
+}
+
+// ── Tail and range reads, file info ──────────────────────────────────────────────────────────
+
+/** Default size of a tail read. */
+export const DEFAULT_TAIL_BYTES = 256 * 1024;
+/** Largest tail or range read. */
+export const MAX_WINDOW_BYTES = MAX_READ_BYTES;
+/** How much of a file the info mode looks at. */
+export const INFO_BYTES = 4096;
+
+/** A missing file fails like cat would, so mapExecError answers 404 (base64 alone would exit 0 on nothing). */
+const REQUIRE_FILE = '[ -f "$2" ] || { echo "$2: No such file or directory" >&2; exit 4; }';
+
+/**
+ * The last bytes of a file. "$1" is the byte count, "$2" the file. Constant text. Prints the file size on
+ * the first line, then the base64 of exactly the last min(size, count) bytes OF THAT SIZE: size and bytes
+ * come from the same call, so a log the agent appends to meanwhile cannot shift the window (the bytes it
+ * appends after the stat are not shown; the next read shows them).
+ */
+export const TAIL_SCRIPT = [
+  REQUIRE_FILE,
+  's=$(stat -c %s -- "$2")',
+  'if [ "$s" -gt "$1" ]; then from=$((s - $1)); else from=0; fi',
+  'printf "%s\\n" "$s"',
+  'tail -c +$((from + 1)) -- "$2" | head -c $((s - from)) | base64 -w0',
+].join('\n');
+/** A byte range. "$1" is `+<offset + 1>` (tail -c from a position), "$2" the file, "$3" the length. Constant text. Size line first, as TAIL_SCRIPT. */
+export const RANGE_SCRIPT = [
+  REQUIRE_FILE,
+  'printf "%s\\n" "$(stat -c %s -- "$2")"',
+  'tail -c "$1" -- "$2" | head -c "$3" | base64 -w0',
+].join('\n');
+
+/** Splits the output of TAIL_SCRIPT / RANGE_SCRIPT into the file size at read time and the base64 bytes. */
+export function splitSizedOutput(out: string): { size: number; base64: string } | null {
+  const nl = out.indexOf('\n');
+  if (nl < 0) return null;
+  const size = Number(out.slice(0, nl));
+  if (!Number.isSafeInteger(size) || size < 0) return null;
+  return { size, base64: out.slice(nl + 1) };
+}
+
+/** The last `bytes` bytes of `p` (`bytes` a positive integer). */
+export function tailArgv(p: string, bytes: number): string[] {
+  return ['sh', '-c', TAIL_SCRIPT, 'sh', String(bytes), p];
+}
+
+/** `length` bytes of `p` from `offset` (both integers, `length` positive, `offset` not negative). */
+export function rangeArgv(p: string, offset: number, length: number): string[] {
+  return ['sh', '-c', RANGE_SCRIPT, 'sh', `+${offset + 1}`, p, String(length)];
+}
+
+/** A whole, non-negative integer written in decimal digits only, or null. */
+export function parseWholeNumber(v: string | null): number | null {
+  if (v === null || !/^\d{1,15}$/.test(v)) return null;
+  return Number(v);
+}
+
+export interface TextWindow {
+  content: string;
+  /** Byte offset of the first returned byte (after dropping a partial leading character). */
+  offset: number;
+  /** Byte length of what is returned. */
+  length: number;
+}
+
+/** How many bytes the UTF-8 sequence that starts with `lead` has (1 for ASCII and for a stray continuation byte). */
+function utf8SequenceLength(lead: number): number {
+  if (lead >= 0xf0) return 4;
+  if (lead >= 0xe0) return 3;
+  if (lead >= 0xc0) return 2;
+  return 1;
+}
+
+/**
+ * The text of a window read with {@link tailArgv} or {@link rangeArgv}, cut on character boundaries.
+ * `offset` is where the window starts in the file, or null for a tail read (the window then ends at the
+ * end of the file and starts at `fileSize - bytes read`). A partial character at the start (the window
+ * began inside it) is dropped when the window does not start the file; a partial one at the end is dropped
+ * when the window stops before the end of the file. A partial character at the very end of the file is not
+ * dropped: it is not valid UTF-8, so the result is null, like for a whole file. Null also for any invalid
+ * UTF-8 inside the window.
+ */
+export function decodeWindow(base64Out: string, offset: number | null, fileSize: number): TextWindow | null {
+  const all = Buffer.from(base64Out, 'base64');
+  const from = offset === null ? Math.max(0, fileSize - all.length) : offset;
+  let start = 0;
+  let end = all.length;
+  if (from > 0) {
+    while (start < end && start < 3 && (all[start] & 0xc0) === 0x80) start += 1;
+  }
+  if (from + all.length < fileSize) {
+    for (let back = 1; back <= 3 && end - back >= start; back += 1) {
+      const b = all[end - back];
+      if ((b & 0xc0) === 0x80) continue;
+      if (utf8SequenceLength(b) > back) end -= back;
+      break;
+    }
+  }
+  const slice = all.subarray(start, end);
+  try {
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(slice);
+    return { content, offset: from + start, length: end - start };
+  } catch {
+    return null;
+  }
+}
+
+export interface FileInfo {
+  kind: 'text' | 'binary' | 'empty';
+  label?: string;
+}
+
+const hasPrefix = (b: Uint8Array, bytes: number[], at = 0) => bytes.every((v, i) => b[at + i] === v);
+const ascii = (s: string) => Array.from(s, (c) => c.charCodeAt(0));
+
+/** A short description of a file from its first bytes (and its name for the ZIP-based Office formats), or undefined. */
+export function detectFileLabel(b: Uint8Array, name = ''): string | undefined {
+  if (hasPrefix(b, ascii('SQLite format 3\0'))) return 'SQLite database';
+  if (hasPrefix(b, [0x50, 0x4b, 0x03, 0x04]) || hasPrefix(b, [0x50, 0x4b, 0x05, 0x06]) || hasPrefix(b, [0x50, 0x4b, 0x07, 0x08])) {
+    return /\.(docx|xlsx|pptx)$/i.test(name) ? 'ZIP (Office document)' : 'ZIP archive';
+  }
+  if (hasPrefix(b, [0x1f, 0x8b])) return 'gzip archive';
+  if (hasPrefix(b, ascii('ustar'), 257)) return 'tar archive';
+  if (hasPrefix(b, ascii('%PDF-'))) return 'PDF document';
+  if (hasPrefix(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'PNG image';
+  if (hasPrefix(b, [0xff, 0xd8, 0xff])) return 'JPEG image';
+  if (hasPrefix(b, ascii('GIF87a')) || hasPrefix(b, ascii('GIF89a'))) return 'GIF image';
+  if (hasPrefix(b, ascii('RIFF')) && hasPrefix(b, ascii('WEBP'), 8)) return 'WebP image';
+  if (hasPrefix(b, [0x7f, 0x45, 0x4c, 0x46])) return 'ELF executable';
+  if (hasPrefix(b, [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])) return 'WebAssembly module';
+  if (hasPrefix(b, ascii('ftyp'), 4)) return 'MP4 video';
+  if (hasPrefix(b, ascii('ID3'))) return 'MP3 audio';
+  return undefined;
+}
+
+/**
+ * What the first {@link INFO_BYTES} of a file say about it. `base64Out` is the output of
+ * `rangeArgv(p, 0, INFO_BYTES)`. A NUL, or bytes that are not UTF-8 (a character cut by the end of the
+ * sample does not count), make it binary.
+ */
+export function describeFile(base64Out: string, name: string, size: number): FileInfo {
+  if (size === 0) return { kind: 'empty' };
+  const bytes = Buffer.from(base64Out, 'base64');
+  const label = detectFileLabel(bytes, name);
+  const win = decodeWindow(base64Out, 0, size);
+  const kind = win === null || win.content.includes('\0') ? 'binary' : 'text';
+  return label ? { kind, label } : { kind };
+}

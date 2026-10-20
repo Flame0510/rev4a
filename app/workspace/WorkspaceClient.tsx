@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, ConfirmModal, Select } from '../components/ui';
+import { Button, ConfirmModal, Modal, Select } from '../components/ui';
 import { Skeleton, TreeSkeleton, CodeSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { renderMarkdownSafe } from '@/lib/markdown-safe';
@@ -17,6 +17,8 @@ interface TreeEntry {
   type: 'file' | 'directory';
   size: number;
   mtimeMs: number;
+  /** True for an entry inside a read-only mount (the Rev4a rules). */
+  readOnly?: boolean;
 }
 
 interface WorkspaceInfo {
@@ -26,6 +28,8 @@ interface WorkspaceInfo {
   path: string;
   containerName: string;
   running: boolean;
+  /** Read-only mounts inside the workspace root (absolute paths in the container). */
+  readOnlyPaths?: string[];
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -41,6 +45,28 @@ type FileView =
 
 /** Files the browser shows with its own viewer or player, fetched as raw bytes. Never editable, never saveable. */
 type MediaKind = 'image' | 'svg' | 'pdf' | 'audio' | 'video';
+
+/** A log file opens on its last part, read-only; so does any text file the API refuses as too large (413). */
+const TAIL_BYTES = 256 * 1024;
+/** Most of a large or log file kept in memory by "Load earlier". */
+const TAIL_MAX_BYTES = 2 * 1024 * 1024;
+
+/** What the editor knows about a file opened on its last part (read-only). */
+interface TailState {
+  /** Size of the file when it was opened. */
+  size: number;
+  /** Byte offset of the first loaded byte; 0 when the whole start of the file is loaded. */
+  offset: number;
+  /** Bytes loaded so far. */
+  loaded: number;
+  loading: boolean;
+  error: string | null;
+}
+
+/** What the API says about a file the editor cannot open as text. */
+interface BinaryInfo { label?: string; size: number }
+
+function isLogName(name: string): boolean { return /\.(log|out)$/i.test(name); }
 
 const DEFAULT_ROOT = '/root/.openclaw/workspace/';
 const POLL_MS = 5000;
@@ -162,6 +188,7 @@ interface TreeNode {
   type: 'file' | 'directory';
   size: number;
   mtimeMs: number;
+  readOnly?: boolean;
   children: TreeNode[];
 }
 
@@ -170,7 +197,7 @@ function buildTree(entries: TreeEntry[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
 
   for (const e of entries) {
-    const node: TreeNode = { name: e.name, relPath: e.relPath, absPath: e.path, type: e.type, size: e.size, mtimeMs: e.mtimeMs, children: [] };
+    const node: TreeNode = { name: e.name, relPath: e.relPath, absPath: e.path, type: e.type, size: e.size, mtimeMs: e.mtimeMs, readOnly: e.readOnly, children: [] };
     map.set(e.relPath, node);
     const parentPath = e.relPath.includes('/') ? e.relPath.slice(0, e.relPath.lastIndexOf('/')) : null;
     if (parentPath && map.has(parentPath)) {
@@ -282,6 +309,14 @@ export default function WorkspaceClient() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
+  /** Set while the open file is shown on its last part only (a log, or a file over 2 MB): read-only. */
+  const [tail, setTail] = useState<TailState | null>(null);
+  const [binaryInfo, setBinaryInfo] = useState<BinaryInfo | null>(null);
+  /** The agent changed the file after it was opened: the user chooses between reloading and overwriting. */
+  /** A 409 on save: the agent changed the file, or deleted it, after it was opened. */
+  const [conflict, setConflict] = useState<false | 'changed' | 'deleted'>(false);
+  /** The file's mtime (ms) when it was last read or saved; sent with a save so a newer version is never overwritten blind. */
+  const fileMtimeRef = useRef<number | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
   const [mobileView, setMobileView] = useState<'tree' | 'editor'>('tree');
@@ -445,6 +480,10 @@ export default function WorkspaceClient() {
     const stale = () => reqId !== fileReqRef.current || controller.signal.aborted;
     fileWorkspaceRef.current = workspaceId;
     crlfRef.current = false;
+    fileMtimeRef.current = null;
+    setTail(null);
+    setBinaryInfo(null);
+    setConflict(false);
     releaseMedia();
     setMediaFit(true);
     setMediaDims(null);
@@ -457,8 +496,46 @@ export default function WorkspaceClient() {
     setEditContent('');
     setMobileView('editor');
     const mediaKind = mediaKindOf(node.name);
-    if (!mediaKind && isBinaryExt(node.name)) { setFileView({ status: 'binary' }); return; }
+    const enc = `workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}`;
+    // The binary panel: shown at once, then completed with what the API says about the file (type label, size).
+    const showBinary = () => {
+      setFileView({ status: 'binary' });
+      void (async () => {
+        try {
+          const res = await apiFetch(`/api/workspace?${enc}&info=1`, { signal: controller.signal });
+          if (stale() || !res.ok) return;
+          const info = await res.json() as { size?: unknown; label?: unknown };
+          if (stale() || typeof info.size !== 'number') return;
+          setBinaryInfo({ size: info.size, label: typeof info.label === 'string' ? info.label : undefined });
+        } catch { /* the panel stays as it is */ }
+      })();
+    };
+    if (!mediaKind && isBinaryExt(node.name)) { showBinary(); return; }
     setFileView({ status: 'loading' });
+    // The last part of the file, read-only: for logs, and for text the API refuses as too large.
+    const openTail = async () => {
+      const res = await apiFetch(`/api/workspace?${enc}&tail=${TAIL_BYTES}`, { signal: controller.signal });
+      if (stale()) return;
+      if (!res.ok) {
+        if (res.status === 415) { showBinary(); return; }
+        const message = await errorText(res);
+        if (!stale()) setFileView({ status: 'error', message });
+        return;
+      }
+      const data = await res.json() as { content?: unknown; size?: unknown; mtimeMs?: unknown; offset?: unknown; length?: unknown };
+      if (stale()) return;
+      if (typeof data.content !== 'string' || typeof data.size !== 'number' || typeof data.offset !== 'number') {
+        setFileView({ status: 'error', message: 'This path is not a file.' });
+        return;
+      }
+      if (hasNul(data.content)) { showBinary(); return; }
+      fileMtimeRef.current = typeof data.mtimeMs === 'number' ? data.mtimeMs : null;
+      setFileContent(data.content);
+      setEditContent(data.content);
+      setPreviewMode(false);
+      setTail({ size: data.size, offset: data.offset, loaded: typeof data.length === 'number' ? data.length : data.content.length, loading: false, error: null });
+      setFileView({ status: 'text' });
+    };
     try {
       if (mediaKind) {
         const rawUrl = `/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}&raw=1`;
@@ -484,19 +561,24 @@ export default function WorkspaceClient() {
         setFileView({ status: 'media', kind: mediaKind, url });
         return;
       }
-      const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}`, { signal: controller.signal });
+      // A log opens on its last part only when it is larger than that part: a small log is an ordinary file.
+      if (!mediaKind && isLogName(node.name) && node.size > TAIL_BYTES) { await openTail(); return; }
+      const res = await apiFetch(`/api/workspace?${enc}`, { signal: controller.signal });
       if (stale()) return;
       if (!res.ok) {
+        // 413: too large to edit; its last part opens read-only.
+        if (res.status === 413) { void res.body?.cancel(); await openTail(); return; }
         // 415: the server read the bytes and they are not UTF-8 text: a binary file, not a failure.
-        if (res.status === 415) { if (!stale()) setFileView({ status: 'binary' }); return; }
+        if (res.status === 415) { if (!stale()) showBinary(); return; }
         const message = await errorText(res);
         if (!stale()) setFileView({ status: 'error', message });
         return;
       }
-      const data = await res.json() as { content?: unknown };
+      const data = await res.json() as { content?: unknown; mtimeMs?: unknown };
       if (stale()) return;
       if (typeof data.content !== 'string') { setFileView({ status: 'error', message: 'This path is not a file.' }); return; }
-      if (hasNul(data.content)) { setFileView({ status: 'binary' }); return; }
+      if (hasNul(data.content)) { showBinary(); return; }
+      fileMtimeRef.current = typeof data.mtimeMs === 'number' ? data.mtimeMs : null;
       const crlf = /\r\n/.test(data.content) && !/(^|[^\r])\n/.test(data.content);
       crlfRef.current = crlf;
       const text = crlf ? data.content.replace(/\r\n/g, '\n') : data.content;
@@ -511,10 +593,13 @@ export default function WorkspaceClient() {
   }, [releaseMedia]);
 
   const dirty = fileView.status === 'text' && editContent !== fileContent;
-  const canSave = dirty && saveState !== 'saving';
+  // A file inside a read-only mount (the Rev4a rules) is shown, never saved: the API would answer 423.
+  const readOnlyRoots = current?.readOnlyPaths ?? [];
+  const rev4aReadOnly = selectedPath != null && (selectedNode?.readOnly === true || readOnlyRoots.some((d) => selectedPath === d || selectedPath.startsWith(`${d}/`)));
+  const canSave = dirty && saveState !== 'saving' && !rev4aReadOnly && tail === null;
 
-  const saveFile = useCallback(async () => {
-    if (!selectedPath || fileView.status !== 'text' || editContent === fileContent || saveBusyRef.current) return;
+  const saveFile = useCallback(async (overwrite = false) => {
+    if (!selectedPath || fileView.status !== 'text' || editContent === fileContent || saveBusyRef.current || tail !== null) return;
     saveBusyRef.current = true;
     const path = selectedPath;
     const workspaceId = fileWorkspaceRef.current;
@@ -525,13 +610,23 @@ export default function WorkspaceClient() {
     setSaveError(null);
     const stillHere = () => selectedPathRef.current === path && selectedWorkspaceRef.current === workspaceId;
     try {
-      const res = await apiFetch('/api/workspace', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: workspaceId, path, content: crlfRef.current ? content.replace(/\n/g, '\r\n') : content }) });
+      const res = await apiFetch('/api/workspace', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: workspaceId, path, content: crlfRef.current ? content.replace(/\n/g, '\r\n') : content, ...(!overwrite && fileMtimeRef.current !== null ? { expectedMtimeMs: fileMtimeRef.current } : {}) }) });
       if (!res.ok) {
+        // 409: the agent wrote the file after it was opened. Nothing was saved; the user chooses what to do.
+        if (res.status === 409) {
+          const info = await res.json().catch(() => ({})) as { deleted?: unknown };
+          if (stillHere()) { setSaveState('idle'); setConflict(info.deleted === true ? 'deleted' : 'changed'); }
+          return;
+        }
         const message = await errorText(res);
         if (stillHere()) { setSaveState('error'); setSaveError(message); }
         return;
       }
       if (!stillHere()) return;
+      let saved: { mtimeMs?: unknown } = {};
+      try { saved = await res.json() as { mtimeMs?: unknown }; } catch { /* an old server answers { ok: true } only */ }
+      if (!stillHere()) return;
+      fileMtimeRef.current = typeof saved.mtimeMs === 'number' ? saved.mtimeMs : null;
       setFileContent(content);
       setSaveState('saved');
       setTimeout(() => setSaveState((s) => (s === 'saved' ? 'idle' : s)), 1500);
@@ -540,7 +635,38 @@ export default function WorkspaceClient() {
     } finally {
       saveBusyRef.current = false;
     }
-  }, [selectedPath, selectedWorkspace, fileView.status, editContent, fileContent]);
+  }, [selectedPath, selectedWorkspace, fileView.status, editContent, fileContent, tail]);
+
+  // "Load earlier": the 256 KB before what is shown, up to 2 MB in all.
+  const loadEarlier = useCallback(async () => {
+    const workspaceId = fileWorkspaceRef.current;
+    if (!tail || tail.loading || tail.offset <= 0 || !selectedPath || !workspaceId) return;
+    const remaining = TAIL_MAX_BYTES - tail.loaded;
+    if (remaining < 4096) return;
+    const reqId = fileReqRef.current;
+    const stale = () => reqId !== fileReqRef.current;
+    const end = tail.offset;
+    const start = Math.max(0, end - Math.min(TAIL_BYTES, remaining));
+    setTail((t) => (t ? { ...t, loading: true, error: null } : t));
+    const failed = (message: string) => { if (!stale()) setTail((t) => (t ? { ...t, loading: false, error: message } : t)); };
+    try {
+      const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(selectedPath)}&offset=${start}&length=${end - start}`);
+      if (stale()) return;
+      if (!res.ok) { failed(await errorText(res)); return; }
+      const data = await res.json() as { content?: unknown; offset?: unknown; length?: unknown };
+      if (stale()) return;
+      if (typeof data.content !== 'string' || typeof data.offset !== 'number' || typeof data.length !== 'number' || data.offset >= end) {
+        failed('Could not load earlier lines.');
+        return;
+      }
+      const chunk = data.content;
+      setFileContent((c) => chunk + c);
+      setEditContent((c) => chunk + c);
+      setTail((t) => (t ? { ...t, offset: data.offset as number, loaded: t.loaded + (data.length as number), loading: false } : t));
+    } catch {
+      failed('Could not load earlier lines.');
+    }
+  }, [tail, selectedPath]);
 
   // Cmd/Ctrl+S saves when Save is enabled; the browser's own save dialog never opens on this page.
   const saveRef = useRef(saveFile);
@@ -591,6 +717,10 @@ export default function WorkspaceClient() {
     setFileView({ status: 'idle' });
     setFileContent('');
     setEditContent('');
+    setTail(null);
+    setBinaryInfo(null);
+    setConflict(false);
+    fileMtimeRef.current = null;
     setFocusedIndex(-1);
     setMobileView('tree');
     setSaveState('idle');
@@ -732,7 +862,11 @@ export default function WorkspaceClient() {
   }
 
   const selectedName = selectedNode?.name ?? '';
-  const showFileActions = selectedPath != null && fileView.status === 'text';
+  const showFileActions = selectedPath != null && fileView.status === 'text' && tail === null;
+  const downloadWorkspace = fileWorkspaceRef.current ?? selectedWorkspace;
+  const downloadUrl = selectedPath != null && downloadWorkspace
+    ? `/api/workspace?workspace=${encodeURIComponent(downloadWorkspace)}&path=${encodeURIComponent(selectedPath)}&download=1`
+    : null;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', overflow: 'hidden' }}>
@@ -870,13 +1004,33 @@ export default function WorkspaceClient() {
               <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
                 <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{displayPath(selectedPath, root)}</span>
                 {dirty && <span style={{ fontSize: 10, color: 'var(--yellow)', flexShrink: 0 }}>unsaved</span>}
+                {rev4aReadOnly && <span style={{ fontSize: 10, color: 'var(--yellow)', flexShrink: 0 }}>Read-only, managed by Rev4a</span>}
                 <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fileView.status === 'media' ? fileView.kind : lang}</span>
                 {fileView.status === 'media' && mediaDims && (
                   <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{mediaDims.w} x {mediaDims.h}</span>
                 )}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtSize(selectedNode.size)}</span>}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtDate(selectedNode.mtimeMs)}</span>}
+                {downloadUrl && (
+                  <a className="ui-btn ui-btn--secondary ui-btn--sm ws-download" href={downloadUrl} download>Download</a>
+                )}
               </div>
+              {fileView.status === 'text' && tail && (
+                <div role="status" className="ws-tail-banner">
+                  <span>
+                    {tail.offset > 0
+                      ? `Showing the last ${fmtSize(tail.size - tail.offset)} of ${fmtSize(tail.size)} \u2014 read-only`
+                      : `Showing all of ${fmtSize(tail.size)} \u2014 read-only`}
+                  </span>
+                  {tail.offset > 0 && TAIL_MAX_BYTES - tail.loaded >= 4096 && (
+                    <Button variant="secondary" size="sm" loading={tail.loading} onClick={() => void loadEarlier()}>Load earlier</Button>
+                  )}
+                  {tail.offset > 0 && TAIL_MAX_BYTES - tail.loaded < 4096 && (
+                    <span>2 MB are loaded: earlier lines stay on the agent. Download the file to read all of it.</span>
+                  )}
+                  {tail.error && <span style={{ color: 'var(--red)' }}>{tail.error}</span>}
+                </div>
+              )}
               {previewNotice && !previewMode && (
                 <div role="status" style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>
                   {previewNotice}
@@ -892,7 +1046,11 @@ export default function WorkspaceClient() {
               {fileView.status === 'loading' ? (
                 <CodeSkeleton lines={18} />
               ) : fileView.status === 'binary' ? (
-                <StatePanel title="Preview not available yet" message={`${selectedName}${selectedNode ? ` (${fmtSize(selectedNode.size)})` : ''} is not a text file, so it cannot be edited here.`} />
+                <StatePanel
+                  title="Preview not available yet"
+                  message={`${selectedName} is not a text file, so it cannot be edited here.`}
+                  action={<div className="ws-binary-info">{binaryInfo?.label ? `${binaryInfo.label} \u00b7 ` : ''}{fmtSize(binaryInfo?.size ?? selectedNode?.size ?? 0)}</div>}
+                />
               ) : fileView.status === 'media' ? (
                 <div className="ws-media-pane">
                   {(fileView.kind === 'image' || fileView.kind === 'svg') && (
@@ -954,6 +1112,7 @@ export default function WorkspaceClient() {
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   spellCheck={false}
+                  readOnly={tail !== null || rev4aReadOnly}
                   style={{ flex: 1, resize: 'none', background: 'var(--bg)', color: '#e0e0e0', border: 'none', outline: 'none', padding: '16px 20px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', lineHeight: 1.6, tabSize: 2 }}
                 />
               ) : null}
@@ -963,6 +1122,27 @@ export default function WorkspaceClient() {
         </>
         )}
       </div>
+
+      <Modal open={conflict !== false} onClose={() => setConflict(false)} title={conflict === 'deleted' ? 'The file was deleted on the agent' : 'The file changed on the agent'} tone="warning" maxWidth={460}>
+        <div className="ws-conflict-text">
+          {conflict === 'deleted' ? (
+            <>
+              {selectedPath ? displayPath(selectedPath, root) : 'This file'}{' '}was deleted by the agent after you opened it. Nothing was saved.
+              Overwrite creates it again with your version; Reload shows that it is gone (your edits are discarded).
+            </>
+          ) : (
+            <>
+              {selectedPath ? displayPath(selectedPath, root) : 'This file'}{' '}was changed by the agent after you opened it. Nothing was saved.
+              Reload to see the agent&apos;s version (your edits are discarded), or overwrite it with yours.
+            </>
+          )}
+        </div>
+        <div className="ws-conflict-actions">
+          <Button variant="secondary" size="sm" onClick={() => setConflict(false)}>Keep editing</Button>
+          <Button variant="secondary" size="sm" onClick={() => { setConflict(false); if (selectedNode) void loadFile(selectedNode); }}>Reload from the agent</Button>
+          <Button variant="primary" size="sm" onClick={() => { setConflict(false); void saveFile(true); }}>Overwrite</Button>
+        </div>
+      </Modal>
 
       <ConfirmModal
         open={pendingSwitch != null}

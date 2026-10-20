@@ -2388,11 +2388,13 @@ List the agent workspaces: every Docker container with an `AGENT_ID` label, runn
 {
   "workspaces": [
     { "id": "container-agent_8ba21f83", "label": "Giuanmuzzziins", "type": "container",
-      "path": "/root/.openclaw/workspace/", "containerName": "agent_8ba21f83", "running": true }
+      "path": "/root/.openclaw/workspace/", "containerName": "agent_8ba21f83", "running": true,
+      "readOnlyPaths": ["/root/.openclaw/workspace/.rev4a"] }
   ],
   "dockerAvailable": true
 }
 ```
+`readOnlyPaths` lists the read-only mounts inside the workspace root (`[]` when none or when the inspect fails).
 When Docker is not available the answer is still 200: `{ "workspaces": [], "dockerAvailable": false }`.
 
 ### `GET /api/workspace?workspace=<id>`
@@ -2416,11 +2418,20 @@ List files in a workspace, read a file, or return a recursive tree payload.
 }
 ```
 
-**Response (file):** same structure with `content` (the exact text, UTF-8, nothing trimmed) instead of `files`.
+**Response (file):** same structure with `content` (the exact text, UTF-8, nothing trimmed) instead of `files`, plus `size` and `mtimeMs` (whole seconds, as milliseconds). `tail`, `offset`/`length`, `info=1` and `download=1` are described next.
+
+**Additions (WS-3).** All are additive; every existing field and status is unchanged.
+
+- `stat` now reports the mtime too (`stat -c '%F|%s|%Y'`): whole seconds, so every `mtimeMs` below is a multiple of 1000. The text read response (`&path=<file>`) adds `size` and `mtimeMs` (taken from the stat just before the read, so a file that changes during the read shows up as a conflict, never as a false match).
+- **Tail:** `&path=<file>&tail=<bytes>` (empty value: 262144; 1 to 2097152) returns the last bytes. **Range:** `&offset=<n>&length=<m>` (`length` 1 to 2097152). Either answers `200 { workspace, label, path, type, content, size, mtimeMs, offset, length, truncated }` for any text file whatever its size (no 413 in these modes). The window is cut on UTF-8 boundaries: a partial character at the start (when `offset` > 0) and at the end (when the window stops before the end of the file) is dropped, and `offset`/`length` are the byte position and size of what is really returned; `truncated` is true when that is not the whole file. Invalid UTF-8 inside the window answers 415; a partial character at the very end of the file counts as invalid. Bad numbers, or `tail` together with `offset`/`length`, answer 400.
+- **Info:** `&path=<file>&info=1` answers `200 { path, size, mtimeMs, kind: "text" | "binary" | "empty", label? }` from the first 4 KiB: a NUL or invalid UTF-8 is `binary`; `label` names a format from its magic number (SQLite database, ZIP archive, ZIP (Office document) for docx/xlsx/pptx by extension, gzip archive, tar archive, PDF document, PNG, JPEG, GIF and WebP image, ELF executable, WebAssembly module, MP4 video, MP3 audio) and is left out for anything else. A directory or special file is 400.
+- **Download:** `&path=<file>&download=1` answers the exact bytes of any regular file up to 50 MiB with `Content-Type: application/octet-stream`, `Content-Disposition: attachment; filename*=UTF-8''<encoded basename>`, `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Same confinement, large-read limiter (503) and statuses as raw mode; 413 over 50 MiB. No extension check.
+- **Read-only roots:** `action=list` adds `readOnlyPaths: string[]` to each workspace (read-only bind mounts inside the workspace root, from `docker inspect`, e.g. `/root/.openclaw/workspace/.rev4a`; `[]` when the inspect fails), and the `tree=1` entries inside one carry `readOnly: true` (the key is absent elsewhere).
+- **Save conflict:** `PUT` accepts an optional `expectedMtimeMs` (the `mtimeMs` from the read). When the file exists and its mtime (whole seconds) differs, nothing is written and the answer is `409 { error: "The file changed on the agent since you opened it", mtimeMs }`. The comparison runs inside the container's write script as the last step before the rename, so the only window left is a change in the same second as the one the page saw (a precision of one second). A file that no longer exists is written as usual. Without `expectedMtimeMs` a save is exactly as before. A successful `PUT` answers `{ ok: true, mtimeMs }`.
 
 **Errors** are always `{ "error": "..." }` with a real status: `400` unknown workspace id or bad path ·
 `403` path outside the workspace root (after `..` and symlinks) · `404` file not found ·
-`413` file over 2 MiB (`File too large to open here (<size>, limit 2 MB)`) ·
+`409` save conflict (PUT with `expectedMtimeMs`) · `413` file over 2 MiB (`File too large to open here (<size>, limit 2 MB)`; not for tail, range, info or download) ·
 `415` not valid UTF-8 (`Not a UTF-8 text file: it cannot be opened or edited here`; the bytes are read exactly, as base64) ·
 `502` the agent is not running (`Agent <label> is not running`) or did not answer in time · `503` Docker not available.
 
@@ -2442,9 +2453,11 @@ Write content to a workspace file. Exactly `content` is written (no newline adde
 
 **Body:** `{ "workspace": "container-agent_8ba21f83", "path": "/root/.openclaw/workspace/test.md", "content": "hello" }`
 
-**Response:** `{ "ok": true }`
+**Optional field:** `expectedMtimeMs` (see the save conflict above).
 
-**Errors:** as above, plus `423` when the target is in a read-only mount (the Rev4a rules at `/root/.openclaw/workspace/.rev4a`)
+**Response:** `{ "ok": true, "mtimeMs": 1750000000000 }`
+
+**Errors:** as above, plus `409` (`expectedMtimeMs` given and the file changed, or was deleted: then `deleted: true`; nothing is written), `423` when the target is in a read-only mount (the Rev4a rules at `/root/.openclaw/workspace/.rev4a`)
 and `400` when the body is not valid JSON, `workspace`, `path` or `content` is not a string, or the path is a directory.
 
 ---

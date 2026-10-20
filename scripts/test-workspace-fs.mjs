@@ -184,6 +184,22 @@ await test('parseStat', () => {
   assert.equal(m.parseStat('garbage'), null);
 });
 
+await test('parseStat reads the mtime (whole seconds) when there is one', () => {
+  assert.deepEqual(m.parseStat('regular file|120|1750000000\n'), { kind: 'file', size: 120, mtimeMs: 1750000000000 });
+  assert.deepEqual(m.parseStat('directory|4096|1750000001'), { kind: 'directory', size: 4096, mtimeMs: 1750000001000 });
+  assert.equal(m.parseStat('regular file|1|abc'), null);
+  assert.deepEqual(m.statArgv('/x'), ['stat', '-c', '%F|%s|%Y', '--', '/x']);
+});
+
+await test('parseTree marks the entries under a read-only path', () => {
+  const out = ['sub|d|4096|1.0', 'sub/a.md|f|3|1.0', 'subway.md|f|3|1.0', 'other.md|f|1|1.0'].join('\0') + '\0';
+  const e = m.parseTree(out, ROOT, [ROOT + '/sub']);
+  const ro = e.filter((x) => x.readOnly).map((x) => x.relPath).sort();
+  assert.deepEqual(ro, ['sub', 'sub/a.md']);
+  assert.ok(!('readOnly' in e.find((x) => x.relPath === 'other.md')), 'no readOnly key on a writable entry');
+  assert.ok(m.parseTree(out, ROOT).every((x) => !('readOnly' in x)));
+});
+
 await test('parseTree: names, hidden top-level entries, a pipe in a name, sorting', () => {
   const out = [
     'b.md|f|10|1750000000.5000000000',
