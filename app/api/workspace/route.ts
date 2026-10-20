@@ -7,7 +7,9 @@ import { resolveDockerSocket } from '@/lib/docker-socket';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import {
   AGENT_PS_FORMAT,
+  MAX_RAW_BYTES,
   MAX_READ_BYTES,
+  RAW_MAX_BUFFER,
   WORKSPACE_ROOT,
   WRITE_EXIT_IS_DIR,
   WRITE_EXIT_NOT_FILE,
@@ -22,6 +24,9 @@ import {
   parseStat,
   parseTree,
   parseWorkspaceId,
+  rawContentType,
+  rawHeaders,
+  rawTimeoutMs,
   readArgv,
   decodeReadOutput,
   readOnlyMountDestinations,
@@ -143,6 +148,11 @@ function treeResponse(ws: Workspace, targetPath: string, entries: ReturnType<typ
   });
 }
 
+/** Raw reads above this size count against RAW_LARGE_CONCURRENCY. */
+const RAW_LARGE_BYTES = 8 * 1024 * 1024;
+const RAW_LARGE_CONCURRENCY = 2;
+let rawLargeInFlight = 0;
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const url = new URL(request.url);
@@ -150,6 +160,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let wsId = url.searchParams.get('workspace');
   const filePath = url.searchParams.get('path');
   const wantsTree = url.searchParams.get('tree') === '1';
+  const wantsRaw = url.searchParams.get('raw') === '1';
 
   try {
     // action=list → every agent container, running or stopped
@@ -188,8 +199,37 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const checked = checkPath(filePath);
     if (!checked.ok) return fail(checked.status, checked.error);
+    // Raw mode serves only the viewable types: refuse by extension before touching the container.
+    if (wantsRaw && !rawContentType(checked.path)) return fail(415, 'No preview for this file type');
     const real = await resolveTarget(ws, filePath);
     const st = await statTarget(ws, real);
+
+    if (wantsRaw) {
+      if (st.kind === 'directory') return fail(400, 'That path is a directory');
+      if (st.kind !== 'file') return fail(400, 'Not a regular file');
+      // A symlink named like an image must not hand out another file: the real path needs a served type too.
+      if (!rawContentType(real)) return fail(415, 'No preview for this file type');
+      if (st.size > MAX_RAW_BYTES) {
+        return fail(413, `File too large to open here (${formatBytes(st.size)}, limit 50 MB)`);
+      }
+      // A large read holds the base64 text, the bytes and the response copy at once (about 3.3x the file): at
+      // most RAW_LARGE_CONCURRENCY of them run together, so a few clicks cannot exhaust a small host.
+      const large = st.size > RAW_LARGE_BYTES;
+      if (large && rawLargeInFlight >= RAW_LARGE_CONCURRENCY) {
+        return fail(503, 'Another large file is being opened: try again in a moment');
+      }
+      if (large) rawLargeInFlight += 1;
+      try {
+        // A timed-out or failed exec throws (never partial bytes); the length check catches a file that changed.
+        // Buffer.from ignores the trailing newline of base64 output: no trim (it would copy the string).
+        const bytes = Buffer.from(await inContainer(ws, readArgv(real), rawTimeoutMs(st.size), RAW_MAX_BUFFER), 'base64');
+        if (bytes.length !== st.size) return fail(502, 'The file changed while it was read');
+        // A view over the same memory (the Response still copies the body once).
+        return new NextResponse(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length), { status: 200, headers: rawHeaders(checked.path, bytes.length) });
+      } finally {
+        if (large) rawLargeInFlight -= 1;
+      }
+    }
 
     if (st.kind === 'directory') {
       const out = await inContainer(ws, dirListArgv(real), 5000);

@@ -134,8 +134,17 @@ List files in a workspace, read a file, or return a recursive tree.
 
 **Response (file read):** `{ workspace, label, path, type: "container", content }`. `content` is
 the file's exact text (UTF-8): nothing is trimmed and no newline is added. Binary files are not
-served: the page decides by extension or a NUL character and never offers Save for them (raw
-bytes are a later card).
+served in this mode: the page decides by extension or a NUL character and never offers Save for
+them. Images, SVG, PDF, audio and video are read with `raw=1` (next section).
+
+### `GET /api/workspace?workspace=<id>&path=<file>&raw=1`
+
+Raw mode: `200` with the exact bytes and `Content-Type` from a fixed extension map (png, jpg, jpeg, gif, webp,
+avif, bmp, ico, svg, pdf, mp3, wav, ogg, oga, m4a, flac, aac, mp4, m4v, webm, mov, ogv), `Content-Length`,
+`X-Content-Type-Options: nosniff`, `Content-Disposition: inline; filename*=UTF-8''<encoded basename>`,
+`Cache-Control: no-store`, and for SVG `Content-Security-Policy: sandbox; default-src 'none'; img-src data:;
+style-src 'unsafe-inline'`. Other extensions answer 415 `No preview for this file type`; a directory is 400; over
+50 MiB is 413 `File too large to open here (<size>, limit 50 MB)`. At most two reads over 8 MiB run at once (a third gets 503, try again), because a large read holds about 3.3x the file in memory. Errors keep the statuses above. No Range support.
 
 ### `PUT /api/workspace`
 
@@ -176,6 +185,10 @@ filesystems). The comparator lives in `lib/workspace-fs.ts`.
 2. The path is normalised against the root (`..` out of the root is 403), then `realpath -m -- <path>` runs in the container and the result is checked again (a symlink pointing outside is 403).
 3. `stat -c '%F|%s'` gives the kind and size: a directory is listed, a file over 2 MiB is 413, a special file (device, fifo) is 400.
 4. `base64 -w0 -- <path>` returns the exact bytes; they must be valid UTF-8 (else 415, so a file in another encoding is never opened as text and saved back corrupted). A timeout or a failed read is an error, never an empty file.
+
+### Raw read (`raw=1`)
+
+Same steps 1 to 3 (confinement, `realpath -m`, `stat`), with two more checks: the extension of the requested path and of the real path (after symlinks) must be in the map (a link named `x.png` pointing at `.env` is 415), and the size must be at most 50 MiB. Then `base64 -w0 -- <path>` runs with a `maxBuffer` for 50 MiB of base64 and a deadline of 15 s plus 1 s per MiB (at most 90 s). A timeout or failed exec throws, so partial bytes are never served. The base64 is decoded with `Buffer.from`; if the decoded length differs from the `stat` size the answer is 502 `The file changed while it was read`. Helpers: `rawContentType`, `rawHeaders`, `rawTimeoutMs` in `lib/workspace-fs.ts`; tests in `scripts/test-workspace-media.mjs`.
 
 Listing a tree uses `find <root> ( -name node_modules -o -name .git -o -name .next -o -name .trash -o -name cache ) -prune -o -mindepth 1 -printf '%P|%y|%s|%T@\0'` as argv; hidden top-level entries are left out.
 

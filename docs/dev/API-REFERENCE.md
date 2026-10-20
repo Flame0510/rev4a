@@ -2424,6 +2424,17 @@ List files in a workspace, read a file, or return a recursive tree payload.
 `415` not valid UTF-8 (`Not a UTF-8 text file: it cannot be opened or edited here`; the bytes are read exactly, as base64) ·
 `502` the agent is not running (`Agent <label> is not running`) or did not answer in time · `503` Docker not available.
 
+### `GET /api/workspace?workspace=<id>&path=<file>&raw=1`
+Raw mode: the exact bytes of a file the browser can show with its own viewer or player (the Workspace page opens images, SVG, PDF, audio and video this way). Read-only; nothing here edits or saves.
+
+**Auth:** any auth method (the page's cookie also works for `<img>` and `<iframe>`).
+
+**Response:** `200` with the file's bytes and these headers: `Content-Type` from the extension map below (unknown: `application/octet-stream`), `Content-Length`, `X-Content-Type-Options: nosniff`, `Content-Disposition: inline; filename*=UTF-8''<encoded basename>`, `Cache-Control: no-store`, and for SVG also `Content-Security-Policy: sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'`.
+
+**Served types (lowercase extension):** png `image/png` · jpg, jpeg `image/jpeg` · gif `image/gif` · webp `image/webp` · avif `image/avif` · bmp `image/bmp` · ico `image/x-icon` · svg `image/svg+xml` · pdf `application/pdf` · mp3 `audio/mpeg` · wav `audio/wav` · ogg, oga `audio/ogg` · m4a `audio/mp4` · flac `audio/flac` · aac `audio/aac` · mp4, m4v `video/mp4` · webm `video/webm` · mov `video/quicktime` · ogv `video/ogg`. Any other extension answers `415` `No preview for this file type` (checked on the requested path and on the path after symlinks), so the mode cannot pull arbitrary files such as `.env`.
+
+**Errors** are JSON `{ "error": "..." }`, as above: `400` bad id or path, or the path is a directory or not a regular file · `403` outside the workspace root · `404` not found · `413` over 50 MiB (`File too large to open here (<size>, limit 50 MB)`) · `415` type not served · `502` the agent is not running, did not answer in time, or the file changed while it was read · `503` Docker not available, or two files over 8 MiB are already being opened (`Another large file is being opened: try again in a moment`; a large read holds about 3.3x the file in memory). There is no Range support.
+
 ### `PUT /api/workspace`
 Write content to a workspace file. Exactly `content` is written (no newline added), atomically, with the file's mode kept.
 

@@ -36,7 +36,11 @@ type FileView =
   | { status: 'loading' }
   | { status: 'text' }
   | { status: 'binary' }
+  | { status: 'media'; kind: MediaKind; url: string }
   | { status: 'error'; message: string };
+
+/** Files the browser shows with its own viewer or player, fetched as raw bytes. Never editable, never saveable. */
+type MediaKind = 'image' | 'svg' | 'pdf' | 'audio' | 'video';
 
 const DEFAULT_ROOT = '/root/.openclaw/workspace/';
 const POLL_MS = 5000;
@@ -57,11 +61,20 @@ const BINARY_EXTS = new Set([
   '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt', '.odt', '.ods', '.odp', '.bin', '.exe', '.so',
 ]);
 
+/** Same extensions as RAW_TYPES in lib/workspace-fs.ts (the raw mode answers 415 for anything else). */
+const MEDIA_KINDS: Record<string, MediaKind> = {
+  '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.gif': 'image', '.webp': 'image', '.avif': 'image',
+  '.bmp': 'image', '.ico': 'image', '.svg': 'svg', '.pdf': 'pdf',
+  '.mp3': 'audio', '.wav': 'audio', '.ogg': 'audio', '.oga': 'audio', '.m4a': 'audio', '.flac': 'audio', '.aac': 'audio',
+  '.mp4': 'video', '.m4v': 'video', '.webm': 'video', '.mov': 'video', '.ogv': 'video',
+};
+
 function extOf(name: string) {
   const i = name.lastIndexOf('.');
   return i < 0 ? '' : name.slice(i).toLowerCase();
 }
 function isMarkdown(name: string) { return extOf(name) === '.md'; }
+function mediaKindOf(name: string): MediaKind | null { return MEDIA_KINDS[extOf(name)] ?? null; }
 function isBinaryExt(name: string): boolean { return BINARY_EXTS.has(extOf(name)); }
 function hasNul(text: string): boolean { return text.indexOf('\u0000') !== -1; }
 
@@ -298,6 +311,15 @@ export default function WorkspaceClient() {
    */
   const crlfRef = useRef(false);
   const fileReqRef = useRef(0);
+  /** The Blob URL of the open media file: revoked on every switch and on unmount. */
+  const mediaUrlRef = useRef<string | null>(null);
+  const releaseMedia = useCallback(() => {
+    if (mediaUrlRef.current) { URL.revokeObjectURL(mediaUrlRef.current); mediaUrlRef.current = null; }
+  }, []);
+  useEffect(() => releaseMedia, [releaseMedia]);
+  /** Image viewer: fitted to the pane or at 1:1, and the natural size once the image has loaded. */
+  const [mediaFit, setMediaFit] = useState(true);
+  const [mediaDims, setMediaDims] = useState<{ w: number; h: number } | null>(null);
   const saveBusyRef = useRef(false);
   const selectedPathRef = useRef<string | null>(null);
   const selectedWorkspaceRef = useRef('');
@@ -423,6 +445,9 @@ export default function WorkspaceClient() {
     const stale = () => reqId !== fileReqRef.current || controller.signal.aborted;
     fileWorkspaceRef.current = workspaceId;
     crlfRef.current = false;
+    releaseMedia();
+    setMediaFit(true);
+    setMediaDims(null);
 
     setSelectedPath(node.absPath);
     setSelectedNode(node);
@@ -431,9 +456,34 @@ export default function WorkspaceClient() {
     setFileContent('');
     setEditContent('');
     setMobileView('editor');
-    if (isBinaryExt(node.name)) { setFileView({ status: 'binary' }); return; }
+    const mediaKind = mediaKindOf(node.name);
+    if (!mediaKind && isBinaryExt(node.name)) { setFileView({ status: 'binary' }); return; }
     setFileView({ status: 'loading' });
     try {
+      if (mediaKind) {
+        const rawUrl = `/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}&raw=1`;
+        const res = await apiFetch(rawUrl, { signal: controller.signal });
+        if (stale()) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (!stale()) setFileView({ status: 'error', message });
+          return;
+        }
+        // An SVG is shown from the API URL itself, never from a Blob URL: a Blob URL is same-origin with
+        // the dashboard and does not carry the server's CSP sandbox, so "Open image in new tab" would run a
+        // script inside the SVG with the dashboard's session. The API answer keeps the sandbox on a top-level open.
+        if (mediaKind === 'svg') {
+          void res.body?.cancel();
+          setFileView({ status: 'media', kind: mediaKind, url: rawUrl });
+          return;
+        }
+        const blob = await res.blob();
+        if (stale()) return;
+        const url = URL.createObjectURL(blob);
+        mediaUrlRef.current = url;
+        setFileView({ status: 'media', kind: mediaKind, url });
+        return;
+      }
       const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}`, { signal: controller.signal });
       if (stale()) return;
       if (!res.ok) {
@@ -458,7 +508,7 @@ export default function WorkspaceClient() {
       if (isAbort(e) || stale()) return;
       setFileView({ status: 'error', message: 'Could not load the file.' });
     }
-  }, []);
+  }, [releaseMedia]);
 
   const dirty = fileView.status === 'text' && editContent !== fileContent;
   const canSave = dirty && saveState !== 'saving';
@@ -530,6 +580,7 @@ export default function WorkspaceClient() {
     fileAbortRef.current?.abort();
     fileReqRef.current += 1;
     fileWorkspaceRef.current = null;
+    releaseMedia();
     setSelectedWorkspace(id);
     setTree([]);
     setTreeLoading(true);
@@ -544,7 +595,7 @@ export default function WorkspaceClient() {
     setMobileView('tree');
     setSaveState('idle');
     setSaveError(null);
-  }, []);
+  }, [releaseMedia]);
 
   // The list reload can move the selection to another agent (the old one is gone): drop the open file with it.
   useEffect(() => {
@@ -819,7 +870,10 @@ export default function WorkspaceClient() {
               <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
                 <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{displayPath(selectedPath, root)}</span>
                 {dirty && <span style={{ fontSize: 10, color: 'var(--yellow)', flexShrink: 0 }}>unsaved</span>}
-                <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{lang}</span>
+                <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fileView.status === 'media' ? fileView.kind : lang}</span>
+                {fileView.status === 'media' && mediaDims && (
+                  <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{mediaDims.w} x {mediaDims.h}</span>
+                )}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtSize(selectedNode.size)}</span>}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtDate(selectedNode.mtimeMs)}</span>}
               </div>
@@ -839,6 +893,49 @@ export default function WorkspaceClient() {
                 <CodeSkeleton lines={18} />
               ) : fileView.status === 'binary' ? (
                 <StatePanel title="Preview not available yet" message={`${selectedName}${selectedNode ? ` (${fmtSize(selectedNode.size)})` : ''} is not a text file, so it cannot be edited here.`} />
+              ) : fileView.status === 'media' ? (
+                <div className="ws-media-pane">
+                  {(fileView.kind === 'image' || fileView.kind === 'svg') && (
+                    <>
+                      <div className="ws-media-toolbar">
+                        <Button variant={mediaFit ? 'primary' : 'ghost'} size="sm" onClick={() => setMediaFit(true)}>Fit</Button>
+                        <Button variant={mediaFit ? 'ghost' : 'primary'} size="sm" onClick={() => setMediaFit(false)}>1:1</Button>
+                      </div>
+                      <div className={`ws-media-stage ws-media-checker${mediaFit ? ' is-fit' : ''}`}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          className={`ws-media-img${mediaFit ? ' is-fit' : ''}`}
+                          src={fileView.url}
+                          alt={selectedName}
+                          onClick={() => setMediaFit((v) => !v)}
+                          onLoad={(e) => setMediaDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+                          onError={() => setFileView({ status: 'error', message: 'The browser could not display this image.' })}
+                        />
+                      </div>
+                    </>
+                  )}
+                  {fileView.kind === 'pdf' && (
+                    <>
+                      {isMobile === 'phone' && (
+                        <div className="ws-media-toolbar">
+                          <a className="ws-media-link" href={fileView.url} target="_blank" rel="noopener noreferrer">Open in a new tab</a>
+                        </div>
+                      )}
+                      <iframe className="ws-media-frame" src={fileView.url} title={selectedName || 'PDF'} />
+                    </>
+                  )}
+                  {fileView.kind === 'audio' && (
+                    <div className="ws-media-stage ws-media-center">
+                      <div className="ws-media-name">{selectedName}</div>
+                      <audio className="ws-media-audio" controls src={fileView.url} />
+                    </div>
+                  )}
+                  {fileView.kind === 'video' && (
+                    <div className="ws-media-stage ws-media-center">
+                      <video className="ws-media-video" controls playsInline src={fileView.url} />
+                    </div>
+                  )}
+                </div>
               ) : fileView.status === 'error' ? (
                 <StatePanel
                   tone="error"

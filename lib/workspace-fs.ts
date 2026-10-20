@@ -295,3 +295,73 @@ export function formatBytes(n: number): string {
   if (n >= 1024) return `${Math.round(n / 1024)} KB`;
   return `${n} B`;
 }
+
+// ── Raw mode: the exact bytes of a file the browser can show with its own viewer ─────────────
+
+/** Largest file the raw mode serves; a bigger one answers 413. */
+export const MAX_RAW_BYTES = 50 * 1024 * 1024;
+
+/** The only types the raw mode serves, by lowercase extension (no dot). Anything else is 415. */
+export const RAW_TYPES: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  svg: 'image/svg+xml',
+  pdf: 'application/pdf',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  ogv: 'video/ogg',
+};
+
+/** The content type for a path's extension (case-insensitive), or null when raw mode does not serve it. */
+export function rawContentType(p: string): string | null {
+  const base = posix.basename(p);
+  const dot = base.lastIndexOf('.');
+  if (dot < 0) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(RAW_TYPES, ext) ? RAW_TYPES[ext] : null;
+}
+
+/** Headers of a raw response for a file of `size` bytes. */
+export function rawHeaders(p: string, size: number): Record<string, string> {
+  const type = rawContentType(p) ?? 'application/octet-stream';
+  const headers: Record<string, string> = {
+    'Content-Type': type,
+    'Content-Length': String(size),
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename*=UTF-8''${encodeRfc5987(posix.basename(p))}`,
+    'Cache-Control': 'no-store',
+  };
+  if (type === 'image/svg+xml') {
+    headers['Content-Security-Policy'] = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'";
+  }
+  return headers;
+}
+
+/** encodeURIComponent plus the characters it leaves alone that RFC 5987 does not allow in a value. */
+function encodeRfc5987(s: string): string {
+  return encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** Deadline of a raw read: 15 s plus 1 s per MiB, at most 90 s. */
+export function rawTimeoutMs(size: number): number {
+  const mib = Math.ceil(Math.max(0, size) / (1024 * 1024));
+  return Math.min(90_000, 15_000 + mib * 1000);
+}
+
+/** maxBuffer for a raw read: base64 is 4/3 of the bytes, plus headroom for growth between stat and read. */
+export const RAW_MAX_BUFFER = Math.ceil((MAX_RAW_BYTES * 4) / 3) + 1024 * 1024;

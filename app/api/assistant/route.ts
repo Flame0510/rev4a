@@ -109,8 +109,8 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/workspace': {
     title: 'Workspace',
-    description: 'File explorer and editor for the agents\' workspaces. Pick an agent (running or stopped) and browse its files, open a text file and edit it.',
-    actions: ['Pick an agent and browse its workspace tree', 'Open a text file (up to 2 MB) and edit it', 'Save changes (the .rev4a rules folder is read-only)'],
+    description: 'File explorer and editor for the agents\' workspaces. Pick an agent (running or stopped) and browse its files, open a text file and edit it. PDF, images, SVG, audio and video open read-only in the built-in viewer of the browser.',
+    actions: ['Pick an agent and browse its workspace tree', 'Open a text file (up to 2 MB) and edit it', 'View a PDF, image, SVG, audio or video file (up to 50 MB, read-only)', 'Save changes (the .rev4a rules folder is read-only)'],
     hints: 'Each agent has its own workspace inside its container: configuration files, skills, plugins and operational documents. A stopped agent shows as not running and cannot be opened until it is started.',
   },
   '/tools': {

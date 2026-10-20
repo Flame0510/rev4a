@@ -1870,3 +1870,25 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 @media (max-width: 767px) {
   .ws-md-preview { padding: 16px 16px 40px; font-size: 13.5px; }
 }
+
+/* Workspace: native viewers for images, SVG, PDF, audio and video (read-only). */
+.ws-media-pane { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.ws-media-toolbar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.ws-media-stage { flex: 1; min-height: 0; min-width: 0; overflow: auto; display: flex; }
+.ws-media-stage.is-fit { overflow: hidden; }
+.ws-media-checker {
+  background-color: var(--bg2);
+  background-image:
+    linear-gradient(45deg, var(--bg3) 25%, transparent 25%, transparent 75%, var(--bg3) 75%),
+    linear-gradient(45deg, var(--bg3) 25%, transparent 25%, transparent 75%, var(--bg3) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.ws-media-img { margin: auto; cursor: zoom-in; flex-shrink: 0; image-rendering: auto; }
+.ws-media-img.is-fit { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-out; flex-shrink: 1; }
+.ws-media-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: var(--bg2); }
+.ws-media-center { flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); padding: var(--space-4); }
+.ws-media-name { font-size: 12px; color: var(--text-dim); max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.ws-media-audio { width: min(480px, 100%); }
+.ws-media-video { max-width: 100%; max-height: 100%; background: var(--bg); }
+.ws-media-link { font-size: 12px; color: var(--violet); text-decoration: underline; }

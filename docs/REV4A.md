@@ -105,7 +105,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s); **Agents and containers**: what Docker holds on disk, and one row per container — CPU, memory, storage, processes — that opens to its own CPU / Memory / Storage charts (sampled every 60 s; a recently seen row without current statistics says "no data", and stale current figures are hidden; each agent's numbers are also in its panel, RESOURCES); and the recent alerts: the machine's CPU, memory and disks, plus a container with 1000 or more processes on two samples in a row or 90 % of Docker's memory on five (at most one alert per container and rule per hour) ; a **Memory limit** warning appears only when the running containers use 85 % or more of Docker's memory and a running agent has no limit or its limit could not be read; Recent alerts also lists `container_oom` (a process killed for lack of memory in an agent) |
 | `/config` (Agent defaults) | Besides the environment variables, a *Default memory limit for new agents* picker, **No limit by default**. It only prefills the create wizard's memory limit; it never changes an agent that exists (`agent-defaults.json`, `GET`/`PUT /api/agent-defaults`) |
 | `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
-| `/workspace` | File explorer with tree view + editor — agent container workspaces |
+| `/workspace` | File explorer with tree view + editor — agent container workspaces; PDF, images, SVG, audio and video open read-only |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
 | `/gateway` (model rows) | Each model has a **Details** (`⋯`) action opening a modal with what is known about it: description, price and the provider it comes from, architecture and parameters (mixture of experts, layers, hidden size, attention heads, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with their sources, licence and popularity. The facts come from the model's card on Hugging Face and — for the vendor's own size claim and benchmarks — from hand-curated entries that always cite a source and a date; nothing is estimated. |
@@ -284,9 +284,10 @@ The workspace feature provides a file tree explorer + editor for the agent conta
 | `GET` | `?workspace=container-<name>&tree=1` | Recursive tree of the agent's workspace |
 | `GET` | `?workspace=container-<name>&path=<dir>` | List files in a directory |
 | `GET` | `?workspace=container-<name>&path=<file>` | Read a text file (up to 2 MiB) |
+| `GET` | `?workspace=container-<name>&path=<file>&raw=1` | The exact bytes of a PDF, image, SVG, audio or video file (up to 50 MiB), for the browser's own viewer |
 | `PUT` | JSON `{workspace, path, content}` | Write/overwrite a file (exactly `content`) |
 
-Errors are JSON `{error}` with a real status: 400 bad id or path, 403 outside the workspace root, 404 not found, 413 over 2 MiB, 415 not UTF-8 text, 423 read-only location, 502 agent not running, 503 Docker not available.
+Errors are JSON `{error}` with a real status: 400 bad id or path, 403 outside the workspace root, 404 not found, 413 over 2 MiB (50 MiB in raw mode), 415 not UTF-8 text (raw mode: type not served), 423 read-only location, 502 agent not running, 503 Docker not available.
 
 ### Workspaces
 
