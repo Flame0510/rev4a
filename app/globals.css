@@ -1748,3 +1748,125 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   .agent-card__control .ui-btn { min-width: 44px; }
   .agent-card { padding: 6px 14px 10px; }
 }
+
+/* Workspace page: Markdown preview. The HTML comes from lib/markdown-safe.ts (plain formatting tags,
+   no attributes but href and class="language-*"), so the look is set by element, scoped to the preview.
+   Spacing follows the usual Markdown viewers. */
+.ws-md-preview {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 32px 48px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.ws-md-preview > :first-child { margin-top: 0; }
+.ws-md-preview > :last-child { margin-bottom: 0; }
+
+.ws-md-preview h1,
+.ws-md-preview h2,
+.ws-md-preview h3,
+.ws-md-preview h4,
+.ws-md-preview h5,
+.ws-md-preview h6 {
+  margin: 1.6em 0 0.6em;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text);
+}
+.ws-md-preview h1 { font-size: 1.75em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.ws-md-preview h2 { font-size: 1.4em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border); }
+.ws-md-preview h3 { font-size: 1.2em; }
+.ws-md-preview h4 { font-size: 1.05em; }
+.ws-md-preview h5,
+.ws-md-preview h6 { font-size: 0.95em; color: var(--text-dim); }
+
+.ws-md-preview p,
+.ws-md-preview ul,
+.ws-md-preview ol,
+.ws-md-preview blockquote,
+.ws-md-preview pre,
+.ws-md-preview table {
+  margin: 0 0 1em;
+}
+
+.ws-md-preview ul,
+.ws-md-preview ol { padding-left: 1.75em; }
+.ws-md-preview li { margin: 0.25em 0; }
+.ws-md-preview li > ul,
+.ws-md-preview li > ol { margin: 0.25em 0 0; }
+.ws-md-preview li > p { margin: 0.25em 0; }
+
+.ws-md-preview a { color: var(--violet); text-decoration: underline; text-underline-offset: 2px; }
+.ws-md-preview a:hover { color: var(--text); }
+
+.ws-md-preview strong { font-weight: 600; color: var(--text); }
+.ws-md-preview del { color: var(--text-dim); }
+
+.ws-md-preview hr {
+  height: 1px;
+  margin: 1.75em 0;
+  border: 0;
+  background: var(--border);
+}
+
+.ws-md-preview blockquote {
+  padding: 0.25em 1em;
+  border-left: 3px solid var(--violet-dim);
+  color: var(--text-dim);
+  background: var(--violet-bg);
+}
+.ws-md-preview blockquote > :last-child { margin-bottom: 0; }
+
+/* Inline code */
+.ws-md-preview code {
+  font-family: var(--font-mono-stack);
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+}
+
+/* Code blocks */
+.ws-md-preview pre {
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  line-height: 1.5;
+}
+.ws-md-preview pre code {
+  padding: 0;
+  font-size: 12.5px;
+  background: none;
+  border: 0;
+  white-space: pre;
+}
+
+/* Tables: horizontal scroll when wider than the pane, never squeezed */
+.ws-md-preview table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ws-md-preview th,
+.ws-md-preview td {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.ws-md-preview th {
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+}
+.ws-md-preview tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+
+@media (max-width: 767px) {
+  .ws-md-preview { padding: 16px 16px 40px; font-size: 13.5px; }
+}

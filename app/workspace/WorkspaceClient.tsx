@@ -1,9 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '../components/ui';
+import { Button, ConfirmModal, Select } from '../components/ui';
 import { Skeleton, TreeSkeleton, CodeSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
+import { renderMarkdownSafe } from '@/lib/markdown-safe';
+
+/** Above this the Markdown preview is not rendered (marked takes seconds on huge files): the source is shown. */
+const PREVIEW_MAX_CHARS = 256 * 1024;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface TreeEntry {
@@ -18,10 +22,25 @@ interface TreeEntry {
 interface WorkspaceInfo {
   id: string;
   label: string;
-  type: 'host' | 'container';
+  type: 'container';
+  path: string;
+  containerName: string;
+  running: boolean;
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+/** What the editor pane shows for the selected file. Only `text` has an editor and a Save button. */
+type FileView =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'text' }
+  | { status: 'binary' }
+  | { status: 'error'; message: string };
+
+const DEFAULT_ROOT = '/root/.openclaw/workspace/';
+const POLL_MS = 5000;
+const MAX_TREE_FAILURES = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const EXT_LANG: Record<string, string> = {
@@ -31,15 +50,38 @@ const EXT_LANG: Record<string, string> = {
   '.yaml': 'yaml', '.yml': 'yaml', '.txt': 'text', '.env': 'env',
 };
 
-function extOf(name: string) { return name.slice(name.lastIndexOf('.')).toLowerCase(); }
+/** Extensions the client never opens as text, never offers Save for (contract with the workspace API). */
+const BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.pdf', '.ico', '.sqlite', '.sqlite3', '.db',
+  '.zip', '.gz', '.tar', '.tgz', '.woff', '.woff2', '.ttf', '.otf', '.mp3', '.mp4', '.wav', '.mov',
+  '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt', '.odt', '.ods', '.odp', '.bin', '.exe', '.so',
+]);
+
+function extOf(name: string) {
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i).toLowerCase();
+}
 function isMarkdown(name: string) { return extOf(name) === '.md'; }
-function isPdfExt(name: string): boolean {
-  return name.slice(name.lastIndexOf('.')).toLowerCase() === '.pdf';
+function isBinaryExt(name: string): boolean { return BINARY_EXTS.has(extOf(name)); }
+function hasNul(text: string): boolean { return text.indexOf('\u0000') !== -1; }
+
+/** The path as shown to the user: relative to the workspace root, never the container-internal prefix. */
+function displayPath(absPath: string, root: string): string {
+  const base = root.endsWith('/') ? root : `${root}/`;
+  return absPath.startsWith(base) ? absPath.slice(base.length) : absPath;
 }
 
-function isBinaryExt(name: string): boolean {
-  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
-  return ['.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.ico'].includes(ext);
+/** The `error` text of a JSON error response, or a generic line when the body is not that. */
+async function errorText(res: Response): Promise<string> {
+  try {
+    const data = await res.json() as { error?: unknown };
+    if (typeof data.error === 'string' && data.error) return data.error;
+  } catch { /* not JSON */ }
+  return `Request failed (HTTP ${res.status})`;
+}
+
+function isAbort(e: unknown): boolean {
+  return (e as { name?: string } | null)?.name === 'AbortError';
 }
 
 function fmtSize(bytes: number) {
@@ -127,30 +169,6 @@ function buildTree(entries: TreeEntry[]): TreeNode[] {
   return root;
 }
 
-// ─── Markdown Renderer ────────────────────────────────────────────────────────
-function renderMarkdown(text: string): string {
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^#{6}\s+(.*)$/gm, '<h6>$1</h6>')
-    .replace(/^#{5}\s+(.*)$/gm, '<h5>$1</h5>')
-    .replace(/^#{4}\s+(.*)$/gm, '<h4>$1</h4>')
-    .replace(/^#{3}\s+(.*)$/gm, '<h3>$1</h3>')
-    .replace(/^#{2}\s+(.*)$/gm, '<h2>$1</h2>')
-    .replace(/^#{1}\s+(.*)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^```[\w]*\n?([\s\S]*?)```/gm, '<pre><code>$1</code></pre>')
-    .replace(/^---$/gm, '<hr/>')
-    .replace(/^\s*[-*]\s+(.*)$/gm, '<li>$1</li>')
-    .replace(/^\s*\d+\.\s+(.*)$/gm, '<li>$1</li>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(?!<[hHpPlLiIpPhRrC])/gm, '')
-    .split('\n').map(line => line.match(/^<(h[1-6]|li|pre|hr|\/p|p>)/) ? line : line || '').join('\n')
-    ;
-}
-
 // ─── Flatten tree into linear list for keyboard nav ───────────────────────────
 interface FlatItem {
   node: TreeNode;
@@ -223,17 +241,33 @@ function TreeNodeRow({
   );
 }
 
+// ─── Centered message panel (empty, error and "not available" states) ─────────
+function StatePanel({ title, message, action, tone = 'muted' }: { title: string; message?: string; action?: React.ReactNode; tone?: 'muted' | 'error' }) {
+  return (
+    <div role={tone === 'error' ? 'alert' : 'status'} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
+      <div style={{ fontSize: 13, color: tone === 'error' ? 'var(--red)' : '#aaa' }}>{title}</div>
+      {message && <div style={{ fontSize: 11, color: '#666', maxWidth: 420, lineHeight: 1.6, overflowWrap: 'anywhere' }}>{message}</div>}
+      {action}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function WorkspaceClient() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(true);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['workspace-ops', 'workspace-prometheus', 'workspace-atlas', 'workspace']));
+  const [treeError, setTreeError] = useState<string | null>(null);
+  const [treePaused, setTreePaused] = useState(false);
+  const [treeReload, setTreeReload] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
+  const [fileView, setFileView] = useState<FileView>({ status: 'idle' });
+  /** The text as last loaded or saved; the editor buffer is `editContent`. */
   const [fileContent, setFileContent] = useState('');
-  const [fileLoading, setFileLoading] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
@@ -245,113 +279,277 @@ export default function WorkspaceClient() {
   const flatItemsRef = useRef<FlatItem[]>([]);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [dockerAvailable, setDockerAvailable] = useState(true);
   const [wsLoading, setWsLoading] = useState(true);
+  const [wsError, setWsError] = useState<string | null>(null);
+  const [wsReload, setWsReload] = useState(0);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('');
+  /** An in-app switch waiting for the user to confirm discarding unsaved edits. */
+  const [pendingSwitch, setPendingSwitch] = useState<{ run: () => void } | null>(null);
 
-  // Load workspaces list on mount
+  // Races (AGENTS.md 2.2b.10): one controller + one request id per file load; only the latest may set state.
+  const fileAbortRef = useRef<AbortController | null>(null);
+  /** The workspace the open file was loaded from: a save always goes back there, never to a newer selection. */
+  const fileWorkspaceRef = useRef<string | null>(null);
+  /**
+   * True when the open file uses CRLF line endings throughout. A textarea gives back LF only, so the
+   * text is edited with LF and turned back into CRLF on save; otherwise one keystroke would rewrite
+   * every line ending of the file. (A file with mixed endings is edited as it comes.)
+   */
+  const crlfRef = useRef(false);
+  const fileReqRef = useRef(0);
+  const saveBusyRef = useRef(false);
+  const selectedPathRef = useRef<string | null>(null);
+  const selectedWorkspaceRef = useRef('');
+  selectedPathRef.current = selectedPath;
+  selectedWorkspaceRef.current = selectedWorkspace;
+
+  const current = workspaces.find((w) => w.id === selectedWorkspace) ?? null;
+  const root = current?.path ?? DEFAULT_ROOT;
+  const stopped = current != null && !current.running;
+  const canBrowse = dockerAvailable && current != null && current.running;
+
+  // Load the workspace list on mount, and again on "Check again".
   useEffect(() => {
+    const controller = new AbortController();
+    setWsLoading(true);
     void (async () => {
       try {
-        const res = await apiFetch('/api/workspace?action=list');
-        if (!res.ok) { setWorkspaces([]); return; }
-        const data = await res.json() as { workspaces: WorkspaceInfo[] };
-        if (data.workspaces && data.workspaces.length > 0) {
-          setWorkspaces(data.workspaces);
-          if (!data.workspaces.find((w) => w.id === selectedWorkspace)) {
-            setSelectedWorkspace(data.workspaces[0].id);
-          }
-        } else {
-          setWorkspaces([]);
+        const res = await apiFetch('/api/workspace?action=list', { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (controller.signal.aborted) return;
+          setWorkspaces([]); setWsError(message);
+          return;
         }
-      } catch {
-        setWorkspaces([]);
+        const data = await res.json() as { workspaces?: WorkspaceInfo[]; dockerAvailable?: boolean };
+        if (controller.signal.aborted) return;
+        const list = Array.isArray(data.workspaces) ? data.workspaces : [];
+        setWorkspaces(list);
+        setDockerAvailable(data.dockerAvailable !== false);
+        setWsError(null);
+        setSelectedWorkspace((prev) => (
+          list.some((w) => w.id === prev) ? prev : (list.find((w) => w.running) ?? list[0])?.id ?? ''
+        ));
+      } catch (e) {
+        if (isAbort(e) || controller.signal.aborted) return;
+        setWorkspaces([]); setWsError('Could not load the agent list.');
       } finally {
-        setWsLoading(false);
+        if (!controller.signal.aborted) setWsLoading(false);
       }
     })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => controller.abort();
+  }, [wsReload]);
 
-  // Load tree
+  // Load the tree, then poll it. No overlapping polls, and polling stops after repeated failures.
   useEffect(() => {
-    let mounted = true;
-    let pollTimer: ReturnType<typeof setTimeout>;
+    if (!selectedWorkspace || !canBrowse) { setTreeLoading(false); return; }
+    let active = true;
+    let stop = false;
+    let inFlight = false;
+    let failures = 0;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
 
     const load = async (showLoader: boolean) => {
+      if (inFlight) return;
+      inFlight = true;
       if (showLoader) setTreeLoading(true);
+      const fail = (message: string, status?: number) => {
+        failures += 1;
+        setTreeError(message);
+        // A stopped agent or a missing Docker will not fix itself in 5 s: stop at once.
+        if (failures >= MAX_TREE_FAILURES || status === 502 || status === 503 || status === 400) {
+          stop = true;
+          setTreePaused(true);
+        }
+      };
       try {
-        const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&tree=1`);
-        if (!res.ok || !mounted) return;
-        const data = await res.json() as { entries: TreeEntry[] };
-        setTree(buildTree(data.entries));
-      } catch { /* ignore */ }
-      finally { if (showLoader && mounted) setTreeLoading(false); }
+        const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&tree=1`, { signal: controller.signal });
+        if (!active) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (active) fail(message, res.status);
+          return;
+        }
+        const data = await res.json() as { entries?: TreeEntry[] };
+        if (!active) return;
+        failures = 0;
+        setTreeError(null);
+        setTreePaused(false);
+        setTree(buildTree(Array.isArray(data.entries) ? data.entries : []));
+      } catch (e) {
+        if (!active || isAbort(e)) return;
+        fail('Could not load the file list.');
+      } finally {
+        inFlight = false;
+        if (showLoader && active) setTreeLoading(false);
+      }
     };
 
     const scheduleNext = () => {
-      if (document.hidden) return; // don't poll when tab is hidden
+      clearTimeout(pollTimer);
+      if (document.hidden || stop || !active) return; // don't poll when tab is hidden or after repeated failures
       pollTimer = setTimeout(async () => {
         await load(false);
-        if (mounted) scheduleNext();
-      }, 5000);
+        if (active) scheduleNext();
+      }, POLL_MS);
     };
 
-    const onVisibility = () => {
-      if (!document.hidden) { clearTimeout(pollTimer); scheduleNext(); }
-    };
+    const onVisibility = () => { if (!document.hidden) scheduleNext(); };
     document.addEventListener('visibilitychange', onVisibility);
 
-    void load(true);
-    scheduleNext();
+    setTreeError(null);
+    setTreePaused(false);
+    void load(true).then(() => { if (active) scheduleNext(); });
 
     return () => {
-      mounted = false;
+      active = false;
+      controller.abort();
       clearTimeout(pollTimer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [selectedWorkspace]);
+  }, [selectedWorkspace, canBrowse, treeReload]);
 
-  // Load file
+  // Load file: the latest request wins; an older response (or an aborted one) never touches state.
   const loadFile = useCallback(async (node: TreeNode) => {
     if (node.type !== 'file') return;
+    fileAbortRef.current?.abort();
+    const controller = new AbortController();
+    fileAbortRef.current = controller;
+    const reqId = ++fileReqRef.current;
+    const workspaceId = selectedWorkspaceRef.current;
+    const stale = () => reqId !== fileReqRef.current || controller.signal.aborted;
+    fileWorkspaceRef.current = workspaceId;
+    crlfRef.current = false;
+
     setSelectedPath(node.absPath);
     setSelectedNode(node);
-    setFileLoading(true);
-    syncFocusToNode(node);
     setSaveState('idle');
+    setSaveError(null);
+    setFileContent('');
+    setEditContent('');
     setMobileView('editor');
+    if (isBinaryExt(node.name)) { setFileView({ status: 'binary' }); return; }
+    setFileView({ status: 'loading' });
     try {
-      const ext = extOf(node.name);
-      if (isBinaryExt(node.name)) {
-        if (isPdfExt(node.name)) {
-          setFileContent('__pdf__');
-        } else {
-          setFileContent(`[binary: ${node.name}]`);
-        }
-        setEditContent('');
-        setFileLoading(false);
+      const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}`, { signal: controller.signal });
+      if (stale()) return;
+      if (!res.ok) {
+        // 415: the server read the bytes and they are not UTF-8 text: a binary file, not a failure.
+        if (res.status === 415) { if (!stale()) setFileView({ status: 'binary' }); return; }
+        const message = await errorText(res);
+        if (!stale()) setFileView({ status: 'error', message });
         return;
       }
-      const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&path=${encodeURIComponent(node.absPath)}`);
-      if (!res.ok) { setFileContent('[error loading file]'); setEditContent(''); return; }
-      const data = await res.json() as { content: string };
-      setFileContent(data.content);
-      setEditContent(data.content);
-      setPreviewMode(isMarkdown(node.name));
-    } catch { setFileContent('[error loading file]'); setEditContent(''); }
-    finally { setFileLoading(false); }
-  }, [selectedWorkspace]);
+      const data = await res.json() as { content?: unknown };
+      if (stale()) return;
+      if (typeof data.content !== 'string') { setFileView({ status: 'error', message: 'This path is not a file.' }); return; }
+      if (hasNul(data.content)) { setFileView({ status: 'binary' }); return; }
+      const crlf = /\r\n/.test(data.content) && !/(^|[^\r])\n/.test(data.content);
+      crlfRef.current = crlf;
+      const text = crlf ? data.content.replace(/\r\n/g, '\n') : data.content;
+      setFileContent(text);
+      setEditContent(text);
+      setPreviewMode(isMarkdown(node.name) && text.length <= PREVIEW_MAX_CHARS);
+      setFileView({ status: 'text' });
+    } catch (e) {
+      if (isAbort(e) || stale()) return;
+      setFileView({ status: 'error', message: 'Could not load the file.' });
+    }
+  }, []);
+
+  const dirty = fileView.status === 'text' && editContent !== fileContent;
+  const canSave = dirty && saveState !== 'saving';
 
   const saveFile = useCallback(async () => {
-    if (!selectedPath) return;
+    if (!selectedPath || fileView.status !== 'text' || editContent === fileContent || saveBusyRef.current) return;
+    saveBusyRef.current = true;
+    const path = selectedPath;
+    const workspaceId = fileWorkspaceRef.current;
+    // The selection moved to another agent (its list was reloaded): never write this text there.
+    if (!workspaceId || workspaceId !== selectedWorkspace) { saveBusyRef.current = false; setSaveState('error'); setSaveError('The selected agent changed: reopen the file to save.'); return; }
+    const content = editContent;
     setSaveState('saving');
+    setSaveError(null);
+    const stillHere = () => selectedPathRef.current === path && selectedWorkspaceRef.current === workspaceId;
     try {
-      const res = await apiFetch('/api/workspace', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: selectedWorkspace, path: selectedPath, content: editContent }) });
-      if (!res.ok) { setSaveState('error'); return; }
-      setFileContent(editContent);
+      const res = await apiFetch('/api/workspace', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: workspaceId, path, content: crlfRef.current ? content.replace(/\n/g, '\r\n') : content }) });
+      if (!res.ok) {
+        const message = await errorText(res);
+        if (stillHere()) { setSaveState('error'); setSaveError(message); }
+        return;
+      }
+      if (!stillHere()) return;
+      setFileContent(content);
       setSaveState('saved');
-      setTimeout(() => setSaveState('idle'), 1500);
-    } catch { setSaveState('error'); }
-  }, [selectedPath, editContent, selectedWorkspace]);
+      setTimeout(() => setSaveState((s) => (s === 'saved' ? 'idle' : s)), 1500);
+    } catch {
+      if (stillHere()) { setSaveState('error'); setSaveError('Could not save the file.'); }
+    } finally {
+      saveBusyRef.current = false;
+    }
+  }, [selectedPath, selectedWorkspace, fileView.status, editContent, fileContent]);
+
+  // Cmd/Ctrl+S saves when Save is enabled; the browser's own save dialog never opens on this page.
+  const saveRef = useRef(saveFile);
+  saveRef.current = saveFile;
+  const canSaveRef = useRef(canSave);
+  canSaveRef.current = canSave;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (canSaveRef.current) void saveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Leaving the page (reload, close tab, address bar) with unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  /** Runs `run` now, or after the user confirms discarding unsaved edits. */
+  const guardUnsaved = useCallback((run: () => void) => {
+    if (dirty) setPendingSwitch({ run }); else run();
+  }, [dirty]);
+
+  const openNode = useCallback((node: TreeNode) => {
+    if (node.absPath === selectedPath && fileView.status !== 'error') return; // already open: keep the edits
+    guardUnsaved(() => { void loadFile(node); });
+  }, [selectedPath, fileView.status, guardUnsaved, loadFile]);
+
+  const switchWorkspace = useCallback((id: string) => {
+    fileAbortRef.current?.abort();
+    fileReqRef.current += 1;
+    fileWorkspaceRef.current = null;
+    setSelectedWorkspace(id);
+    setTree([]);
+    setTreeLoading(true);
+    setTreeError(null);
+    setExpanded(new Set());
+    setSelectedPath(null);
+    setSelectedNode(null);
+    setFileView({ status: 'idle' });
+    setFileContent('');
+    setEditContent('');
+    setFocusedIndex(-1);
+    setMobileView('tree');
+    setSaveState('idle');
+    setSaveError(null);
+  }, []);
+
+  // The list reload can move the selection to another agent (the old one is gone): drop the open file with it.
+  useEffect(() => {
+    if (fileWorkspaceRef.current && fileWorkspaceRef.current !== selectedWorkspace) switchWorkspace(selectedWorkspace);
+  }, [selectedWorkspace, switchWorkspace]);
 
   // Keyboard navigation
   const flatItems = useMemo(() => flattenTree(tree, expanded), [tree, expanded]);
@@ -391,9 +589,9 @@ export default function WorkspaceClient() {
       toggleDir(item.node.relPath, item.node);
     } else {
       syncFocusToNode(item.node);
-      loadFile(item.node);
+      openNode(item.node);
     }
-  }, [focusedIndex, toggleDir, loadFile, syncFocusToNode]);
+  }, [focusedIndex, toggleDir, openNode, syncFocusToNode]);
 
   const expandCurrent = useCallback(() => {
     const items = flatItemsRef.current;
@@ -432,8 +630,26 @@ export default function WorkspaceClient() {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
   }, [isDragging]);
 
-  const saveBtnLabel = saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Error ✗' : 'SAVE';
-  const dirty = editContent !== fileContent && !fileLoading && selectedPath != null;
+  // The preview HTML only ever comes from renderMarkdownSafe (allow-listed tags, no script, no unsafe URL).
+  // marked can throw (deep nesting overflows the stack) or take seconds on a very large file: a file
+  // over PREVIEW_MAX_CHARS, or one that fails to render, is shown as source instead of breaking the page.
+  const preview = useMemo(() => {
+    if (fileView.status !== 'text' || !previewMode) return { html: '', failed: null as string | null };
+    if (editContent.length > PREVIEW_MAX_CHARS) return { html: '', failed: 'This file is too large for the preview: showing the source.' };
+    try {
+      return { html: renderMarkdownSafe(editContent), failed: null };
+    } catch {
+      return { html: '', failed: 'The preview could not render this file: showing the source.' };
+    }
+  }, [fileView.status, previewMode, editContent]);
+  const previewHtml = preview.html;
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (preview.failed) { setPreviewNotice(preview.failed); setPreviewMode(false); }
+  }, [preview.failed]);
+  useEffect(() => { setPreviewNotice(null); }, [selectedPath]);
+
+  const saveBtnLabel = saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : 'SAVE';
   const lang = selectedNode ? (EXT_LANG[extOf(selectedNode.name)] ?? 'text') : 'text';
 
   // Responsive breakpoints
@@ -450,11 +666,28 @@ export default function WorkspaceClient() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
+  // One message for the whole body when there is nothing to browse.
+  let bodyState: React.ReactNode = null;
+  if (wsLoading) {
+    bodyState = null;
+  } else if (wsError) {
+    bodyState = <StatePanel tone="error" title="Could not load the agent list" message={wsError} action={<Button variant="secondary" size="sm" onClick={() => setWsReload((n) => n + 1)}>Retry</Button>} />;
+  } else if (!dockerAvailable) {
+    bodyState = <StatePanel tone="error" title="Docker is not running" message="Start Docker to browse agent workspaces." action={<Button variant="secondary" size="sm" onClick={() => setWsReload((n) => n + 1)}>Check again</Button>} />;
+  } else if (workspaces.length === 0) {
+    bodyState = <StatePanel title="No agents yet" message="Create an agent on the Agents page to browse its workspace here." />;
+  } else if (stopped) {
+    bodyState = <StatePanel title="This agent is not running. Start it from the Agents page." action={<Button variant="secondary" size="sm" onClick={() => setWsReload((n) => n + 1)}>Check again</Button>} />;
+  }
+
+  const selectedName = selectedNode?.name ?? '';
+  const showFileActions = selectedPath != null && fileView.status === 'text';
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        {isMobile === 'phone' && mobileView === 'editor' ? (
+        {isMobile === 'phone' && mobileView === 'editor' && !bodyState ? (
           <Button variant="ghost" size="sm" onClick={() => setMobileView('tree')}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 2L4 7l5 5"/></svg>
             BACK
@@ -464,52 +697,28 @@ export default function WorkspaceClient() {
             <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: 20, letterSpacing: '4px', color: 'var(--violet)' }}>WORKSPACE</span>
             {wsLoading ? (
               <Skeleton width={160} height={24} accent />
-            ) : workspaces.length === 0 ? (
-              <span style={{ fontSize: 11, color: '#555', fontFamily: 'var(--font-mono-stack)' }}>No workspaces</span>
-            ) : (
-              <select
+            ) : workspaces.length > 0 && (
+              <Select
+                aria-label="Agent workspace"
                 value={selectedWorkspace}
                 onChange={(e) => {
-                  const newWs = e.target.value;
-                  setSelectedWorkspace(newWs);
-                  setTree([]);
-                  setSelectedPath(null);
-                  setSelectedNode(null);
-                  setFileContent('');
-                  setEditContent('');
-                  setFocusedIndex(-1);
-                  setMobileView('tree');
-                  setSaveState('idle');
+                  const id = e.target.value;
+                  if (id === selectedWorkspace) return;
+                  guardUnsaved(() => switchWorkspace(id));
                 }}
-                className="ui-select-workspace"
-                style={{
-                  background: 'var(--bg3)',
-                  color: 'var(--violet)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 0,
-                  fontSize: 11,
-                  padding: '3px 8px',
-                  fontFamily: 'var(--font-mono-stack)',
-                  maxWidth: 220,
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
-              >
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>{w.label}</option>
-                ))}
-              </select>
+                options={workspaces.map((w) => ({ value: w.id, label: w.running ? w.label : `${w.label} (stopped)` }))}
+              />
             )}
           </div>
         )}
-        {selectedPath && (
+        {showFileActions && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {isMarkdown(selectedNode?.name ?? '') && (
+            {isMarkdown(selectedName) && (
               <Button variant={previewMode ? 'primary' : 'ghost'} size="sm" onClick={() => setPreviewMode(!previewMode)}>
                 {previewMode ? 'EDIT' : 'PREVIEW'}
               </Button>
             )}
-            <Button variant={saveState === 'saved' ? 'success' : 'primary'} size="sm" onClick={() => void saveFile()} disabled={!dirty || saveState === 'saving'} loading={saveState === 'saving'}>
+            <Button variant={saveState === 'saved' ? 'success' : 'primary'} size="sm" onClick={() => void saveFile()} disabled={!canSave} loading={saveState === 'saving'} title="Save (Cmd/Ctrl+S)">
               {saveBtnLabel}
             </Button>
           </div>
@@ -518,8 +727,25 @@ export default function WorkspaceClient() {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {wsLoading ? (
+          <div style={{ width: isMobile === 'phone' ? '100%' : sidebarWidth, borderRight: isMobile === 'phone' ? 'none' : '1px solid var(--border)', overflow: 'hidden' }}>
+            <TreeSkeleton rows={16} />
+          </div>
+        ) : bodyState ? bodyState : (
+        <>
         {/* Sidebar tree */}
         <div style={{ width: isMobile === 'phone' ? '100%' : isMobile === 'tablet' ? '40%' : sidebarWidth, minWidth: isMobile === 'phone' ? '100%' : isMobile === 'tablet' ? '200px' : sidebarWidth, borderRight: isMobile === 'phone' ? 'none' : '1px solid var(--border)', display: isMobile === 'phone' && mobileView === 'editor' ? 'none' : 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {treeError && (
+            <div role="alert" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--red)', display: 'flex', flexDirection: 'column', gap: 6, overflowWrap: 'anywhere' }}>
+              <span>{treeError}</span>
+              {treePaused && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888' }}>
+                  Updates paused.
+                  <Button variant="secondary" size="sm" onClick={() => setTreeReload((n) => n + 1)}>Retry</Button>
+                </span>
+              )}
+            </div>
+          )}
           <div
             ref={treeContainerRef}
             data-tree-container
@@ -548,7 +774,7 @@ export default function WorkspaceClient() {
             {treeLoading ? (
               <TreeSkeleton rows={16} />
             ) : tree.length === 0 ? (
-              <div style={{ padding: '20px 12px', color: '#555', fontSize: 11 }}>Empty workspace</div>
+              !treeError && <div style={{ padding: '20px 12px', color: '#555', fontSize: 11 }}>Empty workspace</div>
             ) : flatItems.map((item, index) => (
               <TreeNodeRow
                 key={item.node.relPath}
@@ -563,7 +789,7 @@ export default function WorkspaceClient() {
                 }}
                 onSelect={(node: TreeNode) => {
                   syncFocusToNode(node);
-                  loadFile(node);
+                  openNode(node);
                 }}
                 focused={index === focusedIndex}
               />
@@ -587,47 +813,70 @@ export default function WorkspaceClient() {
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: 12 }}>
               Select a file to view or edit
             </div>
-          ) : fileLoading ? (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
-                <div style={{ flex: 1 }} />
-              </div>
-              <CodeSkeleton lines={18} />
-            </div>
           ) : (
             <>
               {/* File meta bar */}
               <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'var(--bg2)' }}>
-                <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{selectedPath?.replace('/data/.openclaw/', '')}</span>
+                <span style={{ fontSize: 11, color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{displayPath(selectedPath, root)}</span>
+                {dirty && <span style={{ fontSize: 10, color: 'var(--yellow)', flexShrink: 0 }}>unsaved</span>}
                 <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{lang}</span>
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtSize(selectedNode.size)}</span>}
                 {selectedNode && <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{fmtDate(selectedNode.mtimeMs)}</span>}
               </div>
+              {previewNotice && !previewMode && (
+                <div role="status" style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>
+                  {previewNotice}
+                </div>
+              )}
+              {saveError && (
+                <div role="alert" style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--red)', flexShrink: 0, overflowWrap: 'anywhere' }}>
+                  {saveError}
+                </div>
+              )}
 
               {/* Content */}
-              {fileContent === '__pdf__' && selectedPath ? (
-                <iframe
-                  src={`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&path=${encodeURIComponent(selectedPath)}`}
-                  style={{ flex: 1, width: '100%', border: 'none', background: '#fff' }}
-                  title={selectedNode?.name ?? 'PDF'}
+              {fileView.status === 'loading' ? (
+                <CodeSkeleton lines={18} />
+              ) : fileView.status === 'binary' ? (
+                <StatePanel title="Preview not available yet" message={`${selectedName}${selectedNode ? ` (${fmtSize(selectedNode.size)})` : ''} is not a text file, so it cannot be edited here.`} />
+              ) : fileView.status === 'error' ? (
+                <StatePanel
+                  tone="error"
+                  title="Could not open this file"
+                  message={fileView.message}
+                  action={selectedNode && <Button variant="secondary" size="sm" onClick={() => { void loadFile(selectedNode); }}>Retry</Button>}
                 />
-              ) : previewMode ? (
+              ) : fileView.status === 'text' && previewMode ? (
                 <div
-                  style={{ flex: 1, overflow: 'auto', padding: '20px 28px', fontSize: 13, lineHeight: 1.7, color: '#d0d0d0' }}
-                  dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(editContent)}</p>` }}
+                  className="ws-md-preview"
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
-              ) : (
+              ) : fileView.status === 'text' ? (
                 <textarea
+                  aria-label="File content"
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   spellCheck={false}
                   style={{ flex: 1, resize: 'none', background: 'var(--bg)', color: '#e0e0e0', border: 'none', outline: 'none', padding: '16px 20px', fontSize: 12, fontFamily: 'var(--font-mono-stack)', lineHeight: 1.6, tabSize: 2 }}
                 />
-              )}
+              ) : null}
             </>
           )}
         </div>
+        </>
+        )}
       </div>
+
+      <ConfirmModal
+        open={pendingSwitch != null}
+        onClose={() => setPendingSwitch(null)}
+        onConfirm={() => { const p = pendingSwitch; setPendingSwitch(null); p?.run(); }}
+        title="Discard unsaved changes?"
+        message={`${selectedPath ? displayPath(selectedPath, root) : 'This file'} has changes that are not saved. Continuing discards them.`}
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        tone="warning"
+      />
     </div>
   );
 }
