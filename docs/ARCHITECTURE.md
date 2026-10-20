@@ -283,7 +283,8 @@ the rules for anything you touch, not as a description of the whole tree:
   `app/api/agents/channels-summary/route.ts`,
   `app/api/agents/devices-summary/route.ts`,
   `lib/openclaw-cron.ts`, `app/api/credentials/detect/route.ts`,
-  `lib/credentials/delivery.ts`.
+  `lib/credentials/delivery.ts`, `app/api/workspace/route.ts` (every read, listing and
+  save, including the write script fed on stdin).
 - **Never interpolate a secret into a command string.** Pass it through the `env`
   option and reference it as `"$KEY"`; command substitution inside an
   interpolated value would otherwise execute on the host. Only the *name* reaches
@@ -306,12 +307,16 @@ the rules for anything you touch, not as a description of the whole tree:
   "executable file not found"; Docker Desktop 29 prints that on **stdout**, so
   stdout and stderr are both checked) or a busybox that rejects `-k` (exit 1,
   `timeout: unrecognized option`) — fails once, is retried without the wrapper and
-  remembered per container in memory (`unwrappedContainers()`). The synchronous cron
+  remembered per container in memory (`unwrappedContainers()`). The wrapped command's own
+  output is never proof of that: it can hold any text (a file named `Usage: timeout`), so a
+  suspected miss is confirmed by one probe in the same container, run without the wrapper
+  (`timeout -k 1 5 true`); only if the probe fails the same way is the container
+  remembered, otherwise the original error is thrown. The synchronous cron
   paths in `lib/openclaw-cron.ts` and the daemon's two container reads
   (`containerExec` in `daemon.js`: the costs gateway calls and the packages status)
   use the same wrapper; the argv builder, exit-code mapping and fallback decision are
   one CommonJS module, `lib/exec-timeout.js` (with its `.d.ts`).
-  **Not yet covered** (card BUG-7): `app/api/workspace/route.ts`, `app/api/skills/`
+  **Not yet covered** (card BUG-7): `app/api/skills/`
   (save, delete, promote), `app/api/gateway/sync.ts` (including the `config patch`
   over stdin) and the gateway agent route, `app/api/agents/` (`config-json`, `token`,
   `create`), `app/api/agents-active/route.ts`, `lib/channelManager.ts`,

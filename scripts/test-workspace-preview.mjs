@@ -115,6 +115,34 @@ await test('previewKindOf: well-known names, env files, no match', () => {
   }
 });
 
+await test('env: a commented-out assignment masks its value', () => {
+  const text = ['# OPENAI_API_KEY=sk-live-commented', '#TOKEN=abc123', '; PASSWORD = hunter2', '#   export SECRET=xyz', '# just a note', '# see docs = later words', '', 'LIVE=1'].join('\n');
+  const masked = pv.maskEnvText(text);
+  for (const leak of ['sk-live', 'abc123', 'hunter2', 'xyz']) assert.ok(!masked.includes(leak), 'leaked ' + leak);
+  const lines = masked.split('\n');
+  assert.equal(lines[0], '# OPENAI_API_KEY=' + pv.ENV_MASK);
+  assert.equal(lines[1], '#TOKEN=' + pv.ENV_MASK);
+  assert.equal(lines[2], '; PASSWORD=' + pv.ENV_MASK);
+  assert.equal(lines[3], '#   export SECRET=' + pv.ENV_MASK);
+  assert.equal(lines[4], '# just a note');
+  assert.equal(lines[5], '# see docs = later words');
+  assert.equal(lines[7], 'LIVE=' + pv.ENV_MASK);
+});
+
+await test('env: more credential files, and keys masked whole', () => {
+  const k = pv.previewKindOf;
+  for (const n of ['.envrc', '.pypirc', '.my.cnf', '.htpasswd', '.dockercfg', 'credentials', 'home/.aws/credentials', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', 'ssh/id_rsa', 'server.pem', 'tls.key', 'x/Tls.KEY']) {
+    assert.equal(k(n), 'env', n);
+  }
+  for (const n of ['id_rsa.pub', 'credentials.json', 'keys.txt', 'monkey']) assert.notEqual(k(n), 'env', n);
+  for (const n of ['id_rsa', 'a.pem', 'b.key']) assert.equal(pv.isWholeFileSecret(n), true, n);
+  for (const n of ['.env', 'credentials', '.npmrc']) assert.equal(pv.isWholeFileSecret(n), false, n);
+  const pem = ['-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC', 'abc==', '', 'KEY=value', '-----END PRIVATE KEY-----', ''].join('\n');
+  const masked = pv.maskEnvText(pem, true);
+  for (const leak of ['BEGIN', 'MIIEv', 'abc', 'KEY', 'value', 'END']) assert.ok(!masked.includes(leak), 'leaked ' + leak);
+  assert.deepEqual(masked.split('\n'), [pv.ENV_MASK, pv.ENV_MASK, pv.ENV_MASK, '', pv.ENV_MASK, pv.ENV_MASK]);
+});
+
 await test('languageOf and fenceLanguage only return registered languages', () => {
   const names = new Set(pv.PREVIEW_LANGS);
   assert.equal(pv.languageOf('a.tsx'), 'typescript');

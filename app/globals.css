@@ -1541,18 +1541,6 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   font-size: 11px;
   text-align: center;
 }
-.ui-select-workspace {
-  background: var(--bg3);
-  color: var(--violet);
-  border: 1px solid var(--border);
-  border-radius: 0;
-  font-size: 11px;
-  padding: 3px 8px;
-  font-family: var(--font-mono-stack);
-  max-width: 220px;
-  cursor: pointer;
-  outline: none;
-}
 
 /* ── List item buttons (sidebar items, agent list, provider select) ─── */
 

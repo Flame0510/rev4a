@@ -38,6 +38,7 @@ register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(root
 
 const d = await import('../lib/exec-timeout.js');
 const det = await import('../lib/credentials/detect.ts');
+const dx = await import('../lib/docker-exec.ts');
 
 let passed = 0;
 function test(name, fn) {
@@ -125,6 +126,60 @@ test('the unwrapped Set is shared and per container', () => {
   assert.equal(d.unwrappedContainers().has('alpine-1'), true);
   assert.equal(d.unwrappedContainers().has('other'), false);
   s.delete('alpine-1');
+});
+
+async function atest(name, fn) {
+  try { await fn(); passed++; console.log(`ok   ${name}`); }
+  catch (e) { console.error(`FAIL ${name}\n${e?.stack || e}`); process.exit(1); }
+}
+
+const suspected = (original) => Object.assign(new Error('no timeout binary'), { wrapperMissing: true, original });
+
+await atest('a wrapped command whose output says "Usage: timeout" does not unwrap the container when the probe works', async () => {
+  const known = new Set();
+  const original = new Error("docker exec c1: exit 1 — stat: cannot statx '/w/Usage: timeout': No such file or directory");
+  let runs = [];
+  await assert.rejects(
+    dx.runWithWrapperFallback('c1', async (wrap) => { runs.push(wrap); throw suspected(original); }, async () => null, known),
+    (e) => e === original,
+  );
+  assert.deepEqual(runs, [true]);
+  assert.equal(known.has('c1'), false);
+});
+
+await atest('a probe that fails for another reason does not unwrap either', async () => {
+  const known = new Set();
+  const original = new Error('boom');
+  await assert.rejects(
+    dx.runWithWrapperFallback('c1', async () => { throw suspected(original); }, async () => ({ code: 1, output: 'Error response from daemon: No such container: c1' }), known),
+    (e) => e === original,
+  );
+  assert.equal(known.has('c1'), false);
+});
+
+await atest('a really missing wrapper still unwraps and runs the command plain', async () => {
+  const known = new Set();
+  const runs = [];
+  const oci = 'OCI runtime exec failed: exec: "timeout": executable file not found in $PATH: unknown';
+  const out = await dx.runWithWrapperFallback('c2', async (wrap) => { runs.push(wrap); if (wrap) throw suspected(new Error('x')); return 'done'; }, async () => ({ code: 127, output: oci }), known);
+  assert.equal(out, 'done');
+  assert.deepEqual(runs, [true, false]);
+  assert.equal(known.has('c2'), true);
+  // a later call skips the wrapper
+  runs.length = 0;
+  await dx.runWithWrapperFallback('c2', async (wrap) => { runs.push(wrap); return 'ok'; }, async () => { throw new Error('no probe expected'); }, known);
+  assert.deepEqual(runs, [false]);
+});
+
+await atest('a busybox timeout that rejects -k unwraps when the probe fails the same way', async () => {
+  const known = new Set();
+  await dx.runWithWrapperFallback('c3', async (wrap) => { if (wrap) throw suspected(new Error('x')); return 'ok'; }, async () => ({ code: 1, output: 'timeout: unrecognized option: k\nUsage: timeout [-s SIG] SECS PROG ARGS' }), known);
+  assert.equal(known.has('c3'), true);
+});
+
+await atest('an error that is not a wrapper suspicion passes straight through, no probe', async () => {
+  const err = new Error('plain failure');
+  await assert.rejects(dx.runWithWrapperFallback('c4', async () => { throw err; }, async () => { throw new Error('no probe expected'); }, new Set()), (e) => e === err);
 });
 
 const LOGGED_OUT = '> Run `vercel deploy --temporary` to create a temporary deployment you can claim later, or `vercel login` to log in.';

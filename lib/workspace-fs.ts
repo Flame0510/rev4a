@@ -72,10 +72,10 @@ export function statArgv(p: string): string[] {
   return ['stat', '-c', '%F|%s|%Y', '--', p];
 }
 
-/** The recursive listing under `root`: one `relPath|type|size|mtime` record per entry, NUL-terminated. */
 /** Runs find with its arguments as given and keeps what it printed when it exits non-zero. */
 export const TREE_SCRIPT = 'find "$@" 2>/dev/null; exit 0';
 
+/** The recursive listing under `root`: one `relPath|type|size|mtime` record per entry, NUL-terminated. */
 export function treeArgv(root: string): string[] {
   const pruned: string[] = [];
   for (const name of TREE_PRUNED) pruned.push(pruned.length ? '-o' : '(', '-name', name);
@@ -116,9 +116,8 @@ export function listArgv(dir: string): string[] {
   return ['sh', '-c', LIST_SCRIPT, 'sh', dir, '-mindepth', '1', '-maxdepth', '1', '-printf', '%y|%s|%T@|%f\\0'];
 }
 
-/** Print a file's bytes. */
 /**
- * Reads the file as base64 (coreutils), so the server gets the exact bytes: docker exec output is
+ * Prints a file's bytes as base64 (coreutils), so the server gets the exact bytes: docker exec output is
  * decoded as UTF-8, which would silently turn the bytes of a non-UTF-8 file into U+FFFD.
  */
 export function readArgv(p: string): string[] {
@@ -151,16 +150,27 @@ export const WRITE_EXIT_CONFLICT = 23;
  * (cp -p, which POSIX and GNU both have), and renames it over the target, so a reader never sees a
  * half-written file. The content is copied as is: no newline is added.
  * An optional "$2" is the mtime (whole seconds) the caller saw when it opened the file: when the target
- * exists with a different `stat -c %Y`, the script exits WRITE_EXIT_CONFLICT before the rename and writes
- * nothing. The comparison is the last step before the rename, so the window left is the same second.
+ * exists with a different `stat -c %Y`, or is gone, the script exits WRITE_EXIT_CONFLICT and writes nothing.
+ * The check runs first, before `mkdir -p` (a refused save creates nothing), and again as the last step before
+ * the rename, so the window left is the same second. After the rename it prints the target's new mtime
+ * (whole seconds) as its only stdout line, so the caller needs no second `stat`.
  * `${target%/*}` (not dirname) keeps a directory name that ends in a newline intact.
  */
 export const WRITE_SCRIPT = [
   'set -e',
   'target=$1',
+  'expected=${2-}',
   'if [ -d "$target" ]; then exit ' + WRITE_EXIT_IS_DIR + '; fi',
   // A fifo or a device would block cp and cat: only a regular file (or a new one) is written.
   'if [ -e "$target" ] && [ ! -f "$target" ]; then exit ' + WRITE_EXIT_NOT_FILE + '; fi',
+  // Without an expected mtime there is nothing to compare. A file the agent deleted is a conflict too, never a silent re-create.
+  'check() {',
+  '  [ -n "$expected" ] || return 0',
+  '  [ -e "$target" ] || exit ' + WRITE_EXIT_CONFLICT,
+  '  current=$(stat -c %Y -- "$target")',
+  '  [ "$current" = "$expected" ] || exit ' + WRITE_EXIT_CONFLICT,
+  '}',
+  'check',
   'dir=${target%/*}',
   'mkdir -p -- "$dir"',
   'tmp=$(mktemp "$dir/.rev4a-save.XXXXXX")',
@@ -170,15 +180,11 @@ export const WRITE_SCRIPT = [
   // A new file gets the usual 0644 (mktemp creates 0600); an existing one keeps its mode and owner.
   'if [ -e "$target" ]; then cp -p -- "$target" "$tmp"; else chmod 644 "$tmp"; fi',
   'cat > "$tmp"',
-  'expected=${2-}',
-  // The agent deleted the file after it was opened: a conflict too, never a silent re-create.
-  'if [ -n "$expected" ] && [ ! -e "$target" ]; then exit ' + WRITE_EXIT_CONFLICT + '; fi',
-  'if [ -n "$expected" ] && [ -e "$target" ]; then',
-  '  current=$(stat -c %Y -- "$target")',
-  '  if [ "$current" != "$expected" ]; then exit ' + WRITE_EXIT_CONFLICT + '; fi',
-  'fi',
+  'check',
   'mv -f -- "$tmp" "$target"',
   'trap - EXIT HUP INT TERM',
+  // The only stdout line: the new mtime. Never fatal: the file is saved either way.
+  'stat -c %Y -- "$target" || true',
 ].join('\n');
 
 /**
@@ -264,7 +270,7 @@ export function parseTree(out: string, root: string, readOnlyPaths: string[] = [
   return entries;
 }
 
-/** Output of `dirListArgv`: the visible entries, the same ones the old `ls` listing showed. */
+/** Output of `dirListArgv`: the visible entries, folders first and then by name (like the old `ls` listing). */
 export function parseDirList(out: string): { name: string; isDirectory: boolean; isFile: boolean }[] {
   const files: { name: string; isDirectory: boolean; isFile: boolean }[] = [];
   for (const rec of out.split('\0')) {
@@ -275,6 +281,11 @@ export function parseDirList(out: string): { name: string; isDirectory: boolean;
     const isDirectory = rec.slice(0, i) === 'd';
     files.push({ name, isDirectory, isFile: !isDirectory });
   }
+  files.sort((a, b) =>
+    compareWorkspaceEntries(
+      { relPath: a.name, type: a.isDirectory ? 'directory' : 'file' },
+      { relPath: b.name, type: b.isDirectory ? 'directory' : 'file' },
+    ));
   return files;
 }
 

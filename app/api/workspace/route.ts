@@ -183,7 +183,6 @@ async function readOnlyMounts(containerName: string): Promise<string[]> {
   }
 }
 
-
 /** The read-only mounts that lie inside the workspace root, by container ([] when docker inspect fails). */
 async function readOnlyPathsOf(containerName: string): Promise<string[]> {
   try {
@@ -404,8 +403,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return fail(413, `File too large to open here (${formatBytes(st.size)}, limit 2 MB)`);
     }
 
-    // maxBuffer has headroom over the limit: the file may grow between the stat and the read.
-    // base64 is 4/3 of the bytes; headroom because the file may grow between the stat and the read.
+    // maxBuffer has headroom over the limit: base64 is 4/3 of the bytes; headroom because the file may grow between the stat and the read.
     const content = decodeReadOutput(await inContainer(ws, readArgv(real), 10_000, MAX_READ_BYTES * 3));
     if (content === null) return fail(415, 'Not a UTF-8 text file: it cannot be opened or edited here');
     return NextResponse.json({ workspace: ws.id, label: ws.label, path: checked.path, type: 'container', content, size: st.size, mtimeMs: st.mtimeMs ?? 0 });
@@ -448,8 +446,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       return fail(423, 'This location is read-only: Rev4a manages it');
     }
 
+    let written: string;
     try {
-      await dockerExecWithInput(ws.containerName, writeArgv(real, expectedSeconds), content, { timeoutMs: 15_000 });
+      written = await dockerExecWithInput(ws.containerName, writeArgv(real, expectedSeconds), content, { timeoutMs: 15_000 });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       if (msg.includes(`exited with code ${WRITE_EXIT_IS_DIR}`)) {
@@ -473,10 +472,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       const m = mapExecError(e, ws.label);
       return fail(m.status === 404 ? 500 : m.status, m.error);
     }
-    // The new mtime, so the next save can check against it; the save itself succeeded either way.
-    let mtimeMs: number | undefined;
-    try { mtimeMs = (await statTarget(ws, real)).mtimeMs; } catch { /* ok without it */ }
-    return NextResponse.json({ ok: true, ...(mtimeMs !== undefined ? { mtimeMs } : {}) });
+    // The new mtime, printed by the save script after the rename (one exec, no race with the agent), so the
+    // next save can check against it. The save itself succeeded either way; without it the client says so.
+    const seconds = written.trim();
+    return NextResponse.json({ ok: true, ...(/^\d{1,15}$/.test(seconds) ? { mtimeMs: Number(seconds) * 1000 } : {}) });
   } catch (e) {
     return failFrom(e);
   }

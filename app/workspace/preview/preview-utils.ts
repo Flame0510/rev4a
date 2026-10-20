@@ -75,10 +75,25 @@ function extOf(base: string): string {
 }
 
 /** Credential files that are previewed like .env: values hidden until revealed. */
-const SECRET_FILES = new Set(['.npmrc', '.netrc', '.pgpass', '.git-credentials', '.gitconfig']);
+const SECRET_FILES = new Set([
+  '.npmrc', '.netrc', '.pgpass', '.git-credentials', '.gitconfig',
+  '.envrc', '.pypirc', '.my.cnf', '.htpasswd', '.dockercfg', 'credentials',
+]);
+
+/** Private keys by their usual names (no extension). */
+const KEY_FILES = new Set(['id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa']);
+
+/**
+ * Files that are secret from the first line to the last (private keys, PEM): the preview masks every
+ * non-blank line, with no key = value parsing, so no part of the key is ever shown.
+ */
+export function isWholeFileSecret(name: string): boolean {
+  const base = baseName(name);
+  return KEY_FILES.has(base) || base.endsWith('.pem') || base.endsWith('.key');
+}
 
 function isEnvName(base: string): boolean {
-  return base === '.env' || base.startsWith('.env.') || base.endsWith('.env') || SECRET_FILES.has(base);
+  return base === '.env' || base.startsWith('.env.') || base.endsWith('.env') || SECRET_FILES.has(base) || KEY_FILES.has(base) || base.endsWith('.pem') || base.endsWith('.key');
 }
 
 /**
@@ -301,6 +316,8 @@ export type EnvLine =
   | { type: 'raw'; text: string };
 
 const ENV_PAIR = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_.\-]*)\s*=(.*)$/;
+/** A commented-out assignment (`# KEY=value`, `#KEY=value`, `; KEY=value`): its value is masked like a live one. */
+const ENV_COMMENTED_PAIR = /^(\s*[#;]+\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_.\-]*)\s*=(.*)$/;
 const ENV_SECTION = /^\s*\[[^\]\n]*\]\s*$/;
 
 /** True when `rest` (text after an opening quote) contains the matching closing quote. */
@@ -316,14 +333,16 @@ function closesQuote(rest: string, quote: string): boolean {
  * Classify the lines of a .env-like file. A quoted value that does not close on its line runs
  * over the following lines (a PEM key, say): every line up to the closing quote is `raw`, even
  * one that starts with # or looks like KEY=. A value ending in a backslash continues too. When in
- * doubt a line is `raw`, and raw lines are masked.
+ * doubt a line is `raw`, and raw lines are masked. A commented-out assignment is a `pair` (its value is
+ * masked). `wholeFile` (private keys, PEM) makes every non-blank line `raw`.
  */
-export function parseEnvLines(text: string): EnvLine[] {
+export function parseEnvLines(text: string, wholeFile = false): EnvLine[] {
   const norm = text.replace(/\r\n?/g, '\n');
   const body = norm.endsWith('\n') ? norm.slice(0, -1) : norm;
   if (body === '') return norm === '' ? [] : [{ type: 'blank' }];
   let openQuote: string | null = null;
   let continued = false;
+  if (wholeFile) return body.split('\n').map((line): EnvLine => (line.trim() === '' ? { type: 'blank' } : { type: 'raw', text: line }));
   return body.split('\n').map((line): EnvLine => {
     if (openQuote) {
       if (closesQuote(line, openQuote)) openQuote = null;
@@ -338,6 +357,8 @@ export function parseEnvLines(text: string): EnvLine[] {
     // [url "https://x-access-token:TOKEN@github.com/"], [http "…"], [credential "…"]) can hold a
     // secret, so it is masked like a value.
     if (ENV_SECTION.test(line)) return /["'@]|:\/\//.test(line) ? { type: 'raw', text: line } : { type: 'comment', text: line };
+    const cm = ENV_COMMENTED_PAIR.exec(line);
+    if (cm) return { type: 'pair', prefix: cm[1], key: cm[2], value: cm[3] };
     if (line.trimStart().startsWith('#')) return { type: 'comment', text: line };
     const m = ENV_PAIR.exec(line);
     if (m) {
@@ -352,8 +373,8 @@ export function parseEnvLines(text: string): EnvLine[] {
 }
 
 /** The text of a .env file with every value replaced by the mask. Contains no value. */
-export function maskEnvText(text: string): string {
-  return parseEnvLines(text)
+export function maskEnvText(text: string, wholeFile = false): string {
+  return parseEnvLines(text, wholeFile)
     .map((l) => {
       if (l.type === 'blank') return '';
       if (l.type === 'comment') return l.text;

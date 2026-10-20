@@ -308,7 +308,7 @@ Container workspaces are discovered dynamically — any Docker container with an
 - **Container:** `docker exec` with argv arrays (`find`, `stat`, `realpath -m`, `cat`), never a host shell; saves send the content on stdin to a constant script that writes atomically. Helpers in `lib/workspace-fs.ts`.
 - **Confinement:** paths are checked against the workspace root after `..` and symlinks.
 - **Subdirectory expansion:** lazy-loaded via API when the user clicks a directory in the tree
-- **Binary files:** not served; the page does not open or save them
+- **Binary files:** never opened as text or saved. `raw=1` serves PDF, images, SVG, audio and video to the browser's own viewer (up to 50 MiB, read-only); `download=1` gives the exact bytes of any regular file (up to 50 MiB) as an attachment; `info=1` labels a file from its first 4 KiB (SQLite database, ZIP archive, PNG...). Any other binary file shows its type and size and a Download link.
 
 ---
 

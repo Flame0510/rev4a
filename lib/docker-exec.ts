@@ -109,8 +109,10 @@ async function execOnce(container: string, argv: string[], opts: DockerExecOptio
     return stdout;
   } catch (e) {
     const err = e as { code?: number; stderr?: string; stdout?: string };
-    if (wrap && isWrapperMissing(err.code, `${err.stdout ?? ''}\n${err.stderr ?? ''}`)) throw Object.assign(new Error('no timeout binary'), { wrapperMissing: true });
-    throw execFailure(e, container, wrap);
+    const failure = execFailure(e, container, wrap);
+    // Only a suspicion: the output of the wrapped command may hold any text (a path named "Usage: timeout").
+    if (wrap && isWrapperMissing(err.code, `${err.stdout ?? ''}\n${err.stderr ?? ''}`)) throw Object.assign(new Error('no timeout binary'), { wrapperMissing: true, original: failure });
+    throw failure;
   }
 }
 
@@ -132,16 +134,49 @@ export async function dockerExec(
 ): Promise<string> {
   if (!resolveDockerSocket()) throw new Error('Docker is not available');
 
-  if (!unwrapped().has(container)) {
+  return runWithWrapperFallback(container, (wrap) => execOnce(container, argv, opts, wrap));
+}
+
+/** Runs the wrapper probe in a container; resolves to the failure's exit code and output, or null when it worked. */
+export type WrapperProbe = (container: string) => Promise<{ code?: number; output: string } | null>;
+
+/** The probe: `timeout -k 1 5 true` in the container, without the wrapper's own command. */
+const defaultWrapperProbe: WrapperProbe = async (container) => {
+  try {
+    await execFileAsync('docker', ['exec', container, 'timeout', '-k', '1', '5', 'true'], { encoding: 'utf-8', timeout: 8_000, maxBuffer: 64 * 1024 });
+    return null;
+  } catch (e) {
+    const err = e as { code?: number | string; stdout?: string; stderr?: string };
+    return { code: typeof err.code === 'number' ? err.code : undefined, output: `${err.stdout ?? ''}\n${err.stderr ?? ''}` };
+  }
+};
+
+/**
+ * Runs `run(true)` (wrapped); when it fails in a way that looks like a missing `timeout`, a probe in the same
+ * container decides. The wrapped command's own output is never enough: it can hold any text, for example the
+ * name of a file that does not exist. Only when the probe fails the same way is the container remembered as
+ * unwrapped and the command run again as `run(false)`; otherwise the original error is thrown.
+ */
+export async function runWithWrapperFallback<T>(
+  container: string,
+  run: (wrap: boolean) => Promise<T>,
+  probe: WrapperProbe = defaultWrapperProbe,
+  known: Set<string> = unwrapped(),
+): Promise<T> {
+  if (!known.has(container)) {
     try {
-      return await execOnce(container, argv, opts, true);
+      return await run(true);
     } catch (e) {
-      if (!(e as { wrapperMissing?: boolean }).wrapperMissing) throw e;
+      const flagged = e as { wrapperMissing?: boolean; original?: Error };
+      if (!flagged.wrapperMissing) throw e;
+      let failed: { code?: number; output: string } | null = null;
+      try { failed = await probe(container); } catch { failed = null; }
+      if (!failed || !isWrapperMissing(failed.code, failed.output)) throw flagged.original ?? e;
       // An image without `timeout`: remember it and run the command as before.
-      unwrapped().add(container);
+      known.add(container);
     }
   }
-  return execOnce(container, argv, opts, false);
+  return run(false);
 }
 
 /**
@@ -204,15 +239,7 @@ export async function dockerExecWithInput(
 ): Promise<string> {
   if (!resolveDockerSocket()) throw new Error('Docker is not available');
 
-  if (!unwrapped().has(container)) {
-    try {
-      return await spawnOnce(container, argv, input, opts, true);
-    } catch (e) {
-      if (!(e as { wrapperMissing?: boolean }).wrapperMissing) throw e;
-      unwrapped().add(container);
-    }
-  }
-  return spawnOnce(container, argv, input, opts, false);
+  return runWithWrapperFallback(container, (wrap) => spawnOnce(container, argv, input, opts, wrap));
 }
 
 function spawnOnce(
@@ -245,7 +272,7 @@ function spawnOnce(
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(stdout);
-      else if (wrap && isWrapperMissing(code, `${stdout}\n${stderr}`)) reject(Object.assign(new Error('no timeout binary'), { wrapperMissing: true }));
+      else if (wrap && isWrapperMissing(code, `${stdout}\n${stderr}`)) reject(Object.assign(new Error('no timeout binary'), { wrapperMissing: true, original: new Error(stderr.trim() || `docker exec exited with code ${code}`) }));
       else if (wrap && isTimeoutExit(code)) reject(new Error(`docker exec ${timeoutCause(code)} after ${timeoutMs}ms`));
       else reject(new Error(stderr.trim() || `docker exec exited with code ${code}`));
     });

@@ -123,6 +123,41 @@ await test('the save script refuses a fifo, and a new file gets 0644', () => {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
+await test('the save script: prints the new mtime, and a refused save creates nothing', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-fs-'));
+  try {
+    // BSD stat (macOS) has no `-c`: a shim on PATH gives the script the GNU `stat -c %Y -- file` it runs in the containers.
+    const env = { ...process.env };
+    if (spawnSync('stat', ['-c', '%Y', '--', tmp]).status !== 0) {
+      const bin = path.join(tmp, 'bin');
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'stat'), '#!/bin/sh\nshift 3\nexec /usr/bin/stat -f %m "$1"\n', { mode: 0o755 });
+      env.PATH = bin + path.delimiter + process.env.PATH;
+    }
+    const run = (target, content, expected) => spawnSync('sh', m.writeArgv(target, expected).slice(1), { input: content, env });
+    const file = path.join(tmp, 'a.md');
+    fs.writeFileSync(file, 'old');
+    const seconds = Math.floor(fs.statSync(file).mtimeMs / 1000);
+    const ok = run(file, 'new', seconds);
+    assert.equal(ok.status, 0, String(ok.stderr));
+    const lines = String(ok.stdout).split('\n').filter(Boolean);
+    assert.equal(lines.length, 1, 'one stdout line');
+    assert.equal(Number(lines[0]), Math.floor(fs.statSync(file).mtimeMs / 1000));
+    // Another mtime: refused, file untouched.
+    const bad = run(file, 'x', seconds - 100);
+    assert.equal(bad.status, m.WRITE_EXIT_CONFLICT);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'new');
+    // The agent deleted the folder: refused, and the folder is not re-created.
+    const gone = path.join(tmp, 'deleted-dir', 'b.md');
+    const del = run(gone, 'x', 1000);
+    assert.equal(del.status, m.WRITE_EXIT_CONFLICT);
+    assert.ok(!fs.existsSync(path.join(tmp, 'deleted-dir')), 'no folder created');
+    // No expected mtime: a new file in a new folder is still created.
+    assert.equal(run(gone, 'x').status, 0);
+    assert.ok(fs.existsSync(gone));
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
 await test('the save script writes the bytes exactly, runs nothing, keeps the mode', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-fs-'));
   try {
@@ -227,6 +262,11 @@ await test('parseDirList hides dotfiles and pruned directories', () => {
     { name: 'skills', isDirectory: true, isFile: false },
     { name: 'SOUL.md', isDirectory: false, isFile: true },
   ]);
+});
+
+await test('parseDirList sorts folders first, then by name', () => {
+  const out = 'f|zeta.md\0d|skills\0f|Alpha.md\0d|memory\0';
+  assert.deepEqual(m.parseDirList(out).map((e) => e.name), ['memory', 'skills', 'Alpha.md', 'zeta.md']);
 });
 
 await test('parseAgentPs lists running and stopped agent containers', () => {

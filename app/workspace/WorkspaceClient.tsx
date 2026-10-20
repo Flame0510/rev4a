@@ -155,6 +155,8 @@ export default function WorkspaceClient() {
   const [editContent, setEditContent] = useState('');
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** Shown after a save that succeeded but came back without the new mtime: the conflict check is off for this file. */
+  const [saveNote, setSaveNote] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
   /** Set while the open file is shown on its last part only (a log, or a file over 2 MB): read-only. */
   const [tail, setTail] = useState<TailState | null>(null);
@@ -304,6 +306,7 @@ export default function WorkspaceClient() {
     setSelectedNode(node);
     setSaveState('idle');
     setSaveError(null);
+    setSaveNote(null);
     setFileContent('');
     setEditContent('');
     setMobileView('editor');
@@ -443,6 +446,12 @@ export default function WorkspaceClient() {
       const pathParam = rel === '' ? '' : `&path=${encodeURIComponent(`${WORKSPACE_DIR}/${rel}`)}`;
       const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}${pathParam}&list=1${showHidden ? '&hidden=1' : ''}`, { signal: controller.signal });
       if (!res.ok) {
+        // The workspace folder is not created yet (the agent has not written anything): an empty workspace, not an error.
+        if (rel === '' && res.status === 404) {
+          void res.body?.cancel();
+          if (live()) setDirs((d) => ({ ...d, [rel]: { status: 'ready', entries: [], truncated: false } }));
+          return { ok: true, entries: [] };
+        }
         const message = await errorText(res);
         fail(message);
         return { ok: false, status: res.status, message };
@@ -696,6 +705,7 @@ export default function WorkspaceClient() {
     const content = editContent;
     setSaveState('saving');
     setSaveError(null);
+    setSaveNote(null);
     const stillHere = () => selectedPathRef.current === path && selectedWorkspaceRef.current === workspaceId;
     try {
       const res = await apiFetch('/api/workspace', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: workspaceId, path, content: crlfRef.current ? content.replace(/\n/g, '\r\n') : content, ...(!overwrite && fileMtimeRef.current !== null ? { expectedMtimeMs: fileMtimeRef.current } : {}) }) });
@@ -715,6 +725,8 @@ export default function WorkspaceClient() {
       try { saved = await res.json() as { mtimeMs?: unknown }; } catch { /* an old server answers { ok: true } only */ }
       if (!stillHere()) return;
       fileMtimeRef.current = typeof saved.mtimeMs === 'number' ? saved.mtimeMs : null;
+      // Never silent: without the new mtime the next save cannot be checked against the agent's version.
+      if (fileMtimeRef.current === null) setSaveNote('Saved. The conflict check is off until the file is reopened.');
       setFileContent(content);
       setDiskChange(null);
       setSaveState('saved');
@@ -787,7 +799,7 @@ export default function WorkspaceClient() {
   }, [dirty]);
 
   const openNode = useCallback((node: TreeEntry) => {
-    if (node.path === selectedPath && fileView.status !== 'error') return; // already open: keep the edits
+    if (node.path === selectedPath && fileView.status !== 'error') { setMobileView('editor'); return; } // already open: keep the edits, show them again on a phone
     guardUnsaved(() => { void loadFile(node); });
   }, [selectedPath, fileView.status, guardUnsaved, loadFile]);
 
@@ -814,6 +826,7 @@ export default function WorkspaceClient() {
     setMobileView('tree');
     setSaveState('idle');
     setSaveError(null);
+    setSaveNote(null);
   }, [releaseMedia]);
 
   // The list reload can move the selection to another agent (the old one is gone): drop the open file with it.
@@ -894,7 +907,8 @@ export default function WorkspaceClient() {
   const selectedName = selectedNode?.name ?? '';
   const showFileActions = selectedPath != null && fileView.status === 'text' && tail === null;
   const downloadWorkspace = fileWorkspaceRef.current ?? selectedWorkspace;
-  const downloadUrl = selectedPath != null && downloadWorkspace
+  // Not on an error panel: the server would refuse it (403, 404, 413 over 50 MB, 415) and the browser would save that answer.
+  const downloadUrl = selectedPath != null && downloadWorkspace && (fileView.status === 'text' || fileView.status === 'media' || fileView.status === 'binary')
     ? `/api/workspace?workspace=${encodeURIComponent(downloadWorkspace)}&path=${encodeURIComponent(selectedPath)}&download=1`
     : null;
 
@@ -1021,6 +1035,7 @@ export default function WorkspaceClient() {
                   {tail.offset > 0 && TAIL_MAX_BYTES - tail.loaded < 4096 && (
                     <span>2 MB are loaded: earlier lines stay on the agent. Download the file to read all of it.</span>
                   )}
+                  <Button variant="secondary" size="sm" onClick={() => { if (selectedNode) void loadFile(selectedNode); }}>Reload</Button>
                   {tail.error && <span style={{ color: 'var(--red)' }}>{tail.error}</span>}
                 </div>
               )}
@@ -1041,6 +1056,11 @@ export default function WorkspaceClient() {
               {previewNotice && !previewMode && (
                 <div role="status" style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>
                   {previewNotice}
+                </div>
+              )}
+              {saveNote && !saveError && (
+                <div role="status" style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>
+                  {saveNote}
                 </div>
               )}
               {saveError && (

@@ -1,7 +1,7 @@
 # Workspace — Agent File Explorer
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-20 (WS-5)
+> **Last updated:** 2026-10-20 (WS-6, FIX-124)
 
 ---
 
@@ -15,7 +15,8 @@ from the Rev4a dashboard.
 configurations, project files) without needing to exec into containers.
 
 There is no host ("Local") workspace any more. `REV4A_WORKSPACE_ROOT` is ignored: when it is
-set, the server logs one line at start (`[workspace] REV4A_WORKSPACE_ROOT is no longer used`)
+set, the server logs one line when the workspace route module is first loaded (the first
+request to it, not the server start; `[workspace] REV4A_WORKSPACE_ROOT is no longer used`)
 and carries on.
 
 ---
@@ -99,11 +100,11 @@ List files in a workspace, read a file, or return a recursive tree.
 **Query params:**
 | Param | Default | Description |
 |---|---|---|
-| `workspace` | first running agent | Workspace ID |
+| `workspace` | first running agent | Workspace ID. Left out: the first running agent, else the first agent in the list (a stopped one answers 502); 400 `No agent workspace available` when there is no agent |
 | `path` | workspace root | Directory or file path to read; relative paths are read against the root |
 | `tree=1` | — | When set, returns a recursive flat list of all entries (kept for other callers; the page does not use it) |
 | `list=1` | — | One level of the folder `path` (default: the root), see "Folder listing and stat" below |
-| `hidden=1` | — | With `list=1`: also list dot-entries |
+| `hidden=1` | — | With `list=1`: also list dot-entries. Without it, dot-files are hidden in every folder, not only the root (a nested `skills/x/.env` needs "Show hidden files"; v1.19.0 hid only the top-level ones) |
 | `stat=1` | — | With a file `path`: `{ path, size, mtimeMs, kind }` and nothing else |
 
 **Response (directory listing):**
@@ -191,7 +192,7 @@ Helpers (`listArgv`, `parseList`, `LIST_MAX_ENTRIES`) are in `lib/workspace-fs.t
 - **Read-only roots:** `action=list` adds `readOnlyPaths: string[]` to each workspace (read-only bind mounts inside the workspace root, from `docker inspect`, e.g. `/root/.openclaw/workspace/.rev4a`; `[]` when the inspect fails), and the `tree=1` entries inside one carry `readOnly: true` (the key is absent elsewhere).
 - **Save conflict:** `PUT` accepts an optional `expectedMtimeMs` (the `mtimeMs` from the read). When the file exists and its mtime (whole seconds) differs, nothing is written and the answer is `409 { error: "The file changed on the agent since you opened it", mtimeMs }`. The comparison runs inside the container's write script as the last step before the rename, so the only window left is a change in the same second as the one the page saw (a precision of one second). A file the agent deleted meanwhile is a 409 too (`deleted: true`), never re-created silently; Overwrite (a save without `expectedMtimeMs`) creates it again. Without `expectedMtimeMs` a save is exactly as before. A successful `PUT` answers `{ ok: true, mtimeMs }`.
 
-Helpers (`tailArgv`, `rangeArgv`, `decodeWindow`, `describeFile`, `detectFileLabel`, `downloadHeaders`, `WRITE_SCRIPT`) are in `lib/workspace-fs.ts`; tests in `scripts/test-workspace-info.mjs`. The tail and range reads run constant scripts (`tail -c "$1" -- "$2" | base64 -w0`, and the same with `| head -c "$3"` for a range), with the path and numbers as positional arguments.
+Helpers (`tailArgv`, `rangeArgv`, `decodeWindow`, `describeFile`, `detectFileLabel`, `downloadHeaders`, `WRITE_SCRIPT`) are in `lib/workspace-fs.ts`; tests in `scripts/test-workspace-info.mjs`. The tail and range reads run constant scripts with the path and numbers as positional arguments. Both print the file size on the first line, then the base64 of the bytes. Tail: `s=$(stat -c %s -- "$2")`, `from` = `s - $1` (or 0), `printf "%s\n" "$s"`, then `tail -c +$((from + 1)) -- "$2" | head -c $((s - from)) | base64 -w0`. Range: the size line, then `tail -c +<offset + 1> -- "$2" | head -c "$3" | base64 -w0` (`$1` is `+<offset + 1>`).
 
 ### `PUT /api/workspace`
 
@@ -216,7 +217,7 @@ Write content to a workspace file.
 
 ## 5. Entry Sorting (Consistency Rule)
 
-All directory listings and trees are sorted server-side by `compareWorkspaceEntries()`:
+All directory listings and trees are sorted server-side by `compareWorkspaceEntries()` (the plain directory listing, `files`, included: folders first, then by name, like the `ls` order of v1.19.0):
 
 1. **Directories before files** — at every level of a nested path
 2. **Alphabetical within each group** — directories sorted by name, then files sorted by name
@@ -266,5 +267,8 @@ Listing a tree uses `find <root> ( -name node_modules -o -name .git -o -name .ne
 | Real-time file reads (no caching) | Workspace files change frequently (agents write MEMORY.md, logs). Caching would require invalidation logic with little benefit — file reads are fast. |
 | Lazy tree, 15 s re-list | The page lists one folder at a time: the root at the start, a folder when it is first expanded. Each expanded folder (and the root) is listed again every 15 s while the tab is visible (recursive `setTimeout`, never overlapping; paused for a hidden tab), so an agent editing its own files, a restore or a manual edit appears without a reload. A workspace with tens of thousands of files opens at once because nothing walks the whole tree. The open text file is checked with `stat=1` every 10 s (visible tab only): if its mtime differs from the loaded one, a banner offers Reload (or, when the user has unsaved edits, says that saving will ask what to do: the 409 dialog of WS-3). The file's content is never replaced on its own. |
 | URL state | `?agent=<container>&file=<path>&hidden=1` keeps the agent, the open file and the hidden-files switch (`router.replace`, no history entries). On load the page selects that agent, lists the folders down to the file and opens it; an unknown agent, a path outside the workspace root or a file that is not there is ignored quietly. |
+| Missing workspace folder | When the workspace root itself answers 404 (the agent has not created `/root/.openclaw/workspace` yet), the page shows "Empty workspace", not an error, and keeps polling normally. |
+| Tail banner, Download | The banner of a log or large file offers Load earlier and Reload (re-reads the last 256 KB and drops the earlier chunks loaded so far). The Download link is shown only for a file open as text, tail, media or binary panel, never on an error panel (403, 404, 413 over 50 MB, 415). |
+| Save result | The write script prints the target's new mtime (`stat -c %Y`, after the rename) as its only stdout line and the route answers `{ ok, mtimeMs }` from it, with no second stat. If it is missing, the answer is `{ ok: true }` and the page shows "Saved. The conflict check is off until the file is reopened." The conflict check runs before `mkdir -p`, so a refused save creates nothing. |
 | Hidden files, read-only badge | Dot-entries are hidden unless the "Show hidden files" switch (shared `Switch`) is on, except the read-only `.rev4a` mount, which is always shown. Entries inside a read-only mount carry a lock badge with the title "Read-only, managed by Rev4a"; Save is disabled there. |
 | Flat tree with aliases (`entries`, `tree`, `files`) | Backward compatibility: older UI components expect `files` or `tree` keys; `entries` is the canonical name in the current codebase. |

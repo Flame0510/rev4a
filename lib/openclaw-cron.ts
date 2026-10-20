@@ -26,8 +26,22 @@ function dockerExecSync(containerName: string, gwUrl: string, argv: string[], ti
   } catch (e) {
     const err = e as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
     if (!isWrapperMissing(err.status, `${err.stdout ?? ''}\n${err.stderr ?? ''}`)) throw e;
+    // The command's own output is never enough (a job id echoed in an error can hold "Usage: timeout"):
+    // a probe of the wrapper itself decides, as in runWithWrapperFallback (lib/docker-exec.ts).
+    if (!wrapperReallyMissingSync(containerName)) throw e;
     unwrapped.add(containerName);
     return run(false);
+  }
+}
+
+/** True only when `timeout -k 1 5 true` itself fails in the container the way a missing wrapper does. */
+function wrapperReallyMissingSync(containerName: string): boolean {
+  try {
+    execFileSync('docker', ['exec', containerName, 'timeout', '-k', '1', '5', 'true'], { encoding: 'utf8', timeout: 8000 });
+    return false;
+  } catch (e) {
+    const err = e as { status?: number | null; stdout?: string | Buffer; stderr?: string | Buffer };
+    return typeof err.status === 'number' && isWrapperMissing(err.status, `${err.stdout ?? ''}\n${err.stderr ?? ''}`);
   }
 }
 

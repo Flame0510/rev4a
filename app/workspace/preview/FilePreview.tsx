@@ -2,7 +2,7 @@
 
 /**
  * Read-only previews for the Workspace page: highlighted code, pretty JSON, YAML, CSV/TSV tables
- * and .env files with masked values. See docs/FRONTEND-ARCHITECTURE.md (Workspace previews).
+ * and .env files with masked values. See docs/FRONTEND-ARCHITECTURE.md (Workspace page, "Typed previews").
  *
  *   previewKindOf(name)      which preview a file gets, or null (the page keeps its textarea)
  *   <FilePreview name text/> the preview; renders nothing when the kind is null
@@ -20,6 +20,7 @@ import {
   capLines,
   jsonMaxDepth,
   isJsonLines,
+  isWholeFileSecret,
   jsonErrorInfo,
   languageOf,
   numberedLinesHtml,
@@ -48,7 +49,7 @@ export default function FilePreview({ name, text }: FilePreviewProps) {
   const kind = previewKindOf(name);
   if (kind === null) return null;
   if (kind === 'csv' || kind === 'tsv') return <CsvPreview text={text} tsv={kind === 'tsv'} />;
-  if (kind === 'env') return <EnvPreview text={text} />;
+  if (kind === 'env') return <EnvPreview text={text} wholeFile={isWholeFileSecret(name)} />;
   if (kind === 'json') return <JsonPreview name={name} text={text} />;
   if (kind === 'yaml') return <CodePreview text={text} lang="yaml" />;
   return <CodePreview text={text} lang={languageOf(name)} />;
@@ -220,10 +221,10 @@ function CsvPreview({ text, tsv }: { text: string; tsv: boolean }) {
 // ---------------------------------------------------------------------------------------------
 // .env
 
-function EnvPreview({ text }: { text: string }) {
+function EnvPreview({ text, wholeFile }: { text: string; wholeFile: boolean }) {
   const [reveal, setReveal] = useState(false);
   const capped = useMemo(() => capLines(text), [text]);
-  const lines = useMemo(() => parseEnvLines(capped.text), [capped]);
+  const lines = useMemo(() => parseEnvLines(capped.text, wholeFile), [capped, wholeFile]);
 
   return (
     <div className="ws-pv">
