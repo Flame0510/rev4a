@@ -16,7 +16,7 @@
 - **Model details** — Every model row opens a modal with its description, price and provider, architecture and parameter count (mixture of experts, context, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with sources and licence. Numbers come from the model card on Hugging Face plus curated entries that cite a source; nothing is estimated
 - **Shared gateway token** — One token to rule all agents. Manage from the dashboard, sync to all containers
 - **Live event stream** — Real-time session lineage, agent spawning, cost reporting
-- **Workspace browser** — Browse and edit agent files live from the dashboard
+- **Workspace browser** — Browse, preview and edit agent files live from the dashboard (Markdown, highlighted code, JSON, CSV tables, PDF, images, audio and video)
 - **Provider proxy** — OpenAI-compatible chat completions proxy that routes through a shared key vault
 - **System health** — runtime sessions, daemon heartbeat and failed runs, cron jobs and what the agents spent today, with recommendations
 - **System** — the host machine's CPU, memory, swap and storage, now and over 1h / 24h / 7d / 30d (sampled every 30 s, kept 30 days); what each agent and container consumes (CPU, memory, storage, processes — charts per container) and what Docker holds on disk; recent alerts for the machine and its containers

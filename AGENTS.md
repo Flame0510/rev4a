@@ -235,14 +235,13 @@ When the user asks you to do something on this repository:
 5. **Ask for commit approval** — never push without asking
 6. **Commit & push** — only after user confirms
 
-### If you are a Nexus-level agent (infra access)
+### If you have host access (operating an install)
 
-- You have `docker`, `systemctl`, and filesystem access on the VPS
+- On a Linux host Rev4a runs as the `rev4a` systemd service
 - Use `sudo systemctl restart rev4a.service` after builds
 - Use `sudo journalctl -u rev4a -f` to view the logs (Next.js, daemon and terminal share the unit)
 - Use `npm run build` for Next.js builds
 - Never expose secrets in responses
-- Monitor `docs/MEMORY.md` is NOT part of this repo — it's a private workspace file
 
 ---
 
@@ -272,7 +271,6 @@ sudo journalctl -u rev4a -f         # Production: logs of all three processes
 | **Rev4a** | This project — monitoring dashboard + orchestrator |
 | **PULSE** | Embedded AI assistant in the UI |
 | **OpenClaw** | The agent runtime that Rev4a monitors |
-| **Nexus** | Host-level agent on the VPS (ops context) |
 | **Traefik** | The reverse proxy the original deployment used; Rev4a works behind any proxy, or none |
 | **node-pty** | Node.js PTY library for interactive terminal sessions |
 | **AGENT_ID** | Docker label used to identify agent containers |

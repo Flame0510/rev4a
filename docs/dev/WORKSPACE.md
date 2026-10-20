@@ -26,6 +26,8 @@ The dashboard includes a **workspace selector** — a dropdown that lists every 
 Selecting one loads its root folder into the tree. A stopped agent is listed too
 (`running: false`), greyed with "(stopped)"; selecting it shows "This agent is not running" and sends no request, because a stopped container cannot be browsed (`docker exec` needs it running).
 
+How a file opens on the page: Markdown, code, YAML, JSON, CSV/TSV and .env-like files open on a read-only **preview** (the PREVIEW/EDIT toggle switches to the source textarea); PDF, images, SVG, audio and video open in the browser's own viewer (`raw=1`); other binaries show their format and size; logs over 256 KB and text over 2 MiB open on their last 256 KB (`tail=`). The client side is described in [FRONTEND-ARCHITECTURE.md](../FRONTEND-ARCHITECTURE.md) ("Workspace page").
+
 ---
 
 ## 3. Available Workspaces

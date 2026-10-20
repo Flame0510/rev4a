@@ -47,7 +47,7 @@ test('the content is not part of the argv (the function does not take it)', () =
 test('run with sh: the content lands byte for byte at the odd path, nothing else runs', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-files-'));
   try {
-    const content = "# s\n$(touch " + root + "/pwned)\n`touch " + root + "/pwned2`\n'q' \"d\" \\ NEXUS_EOF\nend";
+    const content = "# s\n$(touch " + root + "/pwned)\n`touch " + root + "/pwned2`\n'q' \"d\" \\\nEOF\nend";
     for (const rel of NASTY) {
       const p = path.join(root, rel);
       const r = spawnSync(containerSkillWriteArgv(p)[0], containerSkillWriteArgv(p).slice(1), { input: content, encoding: 'utf8' });
