@@ -74,7 +74,7 @@
 
 **Container management UI:** The `/containers` page lists all Docker containers, running or stopped, with status, image, IP and ports, and opens a web terminal into any running one. Fully functional. Each running container's CPU, memory and processes are on its row, with a link to its charts on `/system`, which also shows the machine's CPU, RAM and disk.
 
-**Workspace API:** Lazy-loaded file tree explorer with real-time reads (no caching), supports both host and container workspaces via `docker exec`.
+**Workspace API:** File tree explorer and editor for the agent containers with real-time reads (no caching), via `docker exec` with argv arrays (no host shell). Paths are confined to `/root/.openclaw/workspace` after `..` and symlinks, saves are atomic and exact, errors carry real HTTP statuses. The pure helpers (id and path checks, argv builders, the save script, parsers) are `lib/workspace-fs.ts`. The host ("Local") workspace is gone and `REV4A_WORKSPACE_ROOT` is ignored.
 
 ### What's in place but needs refinement
 

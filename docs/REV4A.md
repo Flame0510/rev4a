@@ -49,7 +49,6 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_DATA_DIR` | No | Root of all persistent data (default: `~/.config/rev4a`) |
 | `REV4A_DB` | No | Path to the events database (default: `<data dir>/data/events.db`) |
 | `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
-| `REV4A_WORKSPACE_ROOT` | No | Filesystem path for the local file explorer |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_TIMEZONE` | No | IANA timezone used for scheduling and timestamps |
 | `REV4A_FORCE_INSECURE_COOKIE` | No | `1` allows a non-Secure session cookie — plain-HTTP deployments only (any other value, `true` included, does nothing) |
@@ -106,7 +105,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s); **Agents and containers**: what Docker holds on disk, and one row per container — CPU, memory, storage, processes — that opens to its own CPU / Memory / Storage charts (sampled every 60 s; a recently seen row without current statistics says "no data", and stale current figures are hidden; each agent's numbers are also in its panel, RESOURCES); and the recent alerts: the machine's CPU, memory and disks, plus a container with 1000 or more processes on two samples in a row or 90 % of Docker's memory on five (at most one alert per container and rule per hour) ; a **Memory limit** warning appears only when the running containers use 85 % or more of Docker's memory and a running agent has no limit or its limit could not be read; Recent alerts also lists `container_oom` (a process killed for lack of memory in an agent) |
 | `/config` (Agent defaults) | Besides the environment variables, a *Default memory limit for new agents* picker, **No limit by default**. It only prefills the create wizard's memory limit; it never changes an agent that exists (`agent-defaults.json`, `GET`/`PUT /api/agent-defaults`) |
 | `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
-| `/workspace` | File explorer with tree view + editor — VPS host or container workspaces |
+| `/workspace` | File explorer with tree view + editor — agent container workspaces |
 | `/lineage` | Agent lineage / orchestration tree |
 | `/memory` | Agent memory browser |
 | `/gateway` (model rows) | Each model has a **Details** (`⋯`) action opening a modal with what is known about it: description, price and the provider it comes from, architecture and parameters (mixture of experts, layers, hidden size, attention heads, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with their sources, licence and popularity. The facts come from the model's card on Hugging Face and — for the vendor's own size claim and benchmarks — from hand-curated entries that always cite a source and a date; nothing is estimated. |
@@ -275,33 +274,34 @@ sudo systemctl start rev4a.service
 
 ## Workspace API (`/api/workspace`)
 
-The workspace feature provides a file tree explorer + editor for both the VPS host and container workspaces.
+The workspace feature provides a file tree explorer + editor for the agent containers' workspaces. There is no host ("Local") workspace; `REV4A_WORKSPACE_ROOT` is ignored. Full detail in [dev/WORKSPACE.md](dev/WORKSPACE.md).
 
 ### Parameters
 
 | Method | Parameters | Description |
 |---|---|---|
-| `GET` | `?action=list` | List available workspaces |
-| `GET` | `?workspace=vps` | List root files in VPS host workspace |
-| `GET` | `?workspace=vps&path=<dir>` | List files in a directory |
-| `GET` | `?workspace=vps&path=<file>` | Read file content |
-| `PUT` | JSON `{workspace, path, content}` | Write/overwrite file |
+| `GET` | `?action=list` | List agent workspaces (running and stopped) and `dockerAvailable` |
+| `GET` | `?workspace=container-<name>&tree=1` | Recursive tree of the agent's workspace |
+| `GET` | `?workspace=container-<name>&path=<dir>` | List files in a directory |
+| `GET` | `?workspace=container-<name>&path=<file>` | Read a text file (up to 2 MiB) |
+| `PUT` | JSON `{workspace, path, content}` | Write/overwrite a file (exactly `content`) |
+
+Errors are JSON `{error}` with a real status: 400 bad id or path, 403 outside the workspace root, 404 not found, 413 over 2 MiB, 415 not UTF-8 text, 423 read-only location, 502 agent not running, 503 Docker not available.
 
 ### Workspaces
 
 | ID | Label | Type | Path |
 |---|---|---|---|
-| `vps` | VPS Host (Nexus) | host | `/path/to/workspace/` |
-| `container-<name>` | `<agent_id> (<name>)` | container | `/root/.openclaw/` inside container |
+| `container-<name>` | the agent's name, else `<agent_id> (<name>)` | container | `/root/.openclaw/workspace/` inside the container |
 
 Container workspaces are discovered dynamically — any Docker container with an `AGENT_ID` label is listed.
 
 ### Implementation notes
 
-- **Host:** uses `fs.readdirSync`, `fs.readFileSync`, `fs.writeFileSync` — real-time, no caching
-- **Container:** uses `docker exec` with `ls -1Ap`, `test -d`, `cat`, and heredoc writes
+- **Container:** `docker exec` with argv arrays (`find`, `stat`, `realpath -m`, `cat`), never a host shell; saves send the content on stdin to a constant script that writes atomically. Helpers in `lib/workspace-fs.ts`.
+- **Confinement:** paths are checked against the workspace root after `..` and symlinks.
 - **Subdirectory expansion:** lazy-loaded via API when the user clicks a directory in the tree
-- **Binary files (images, PDFs):** detected by extension, served as-is or displayed inline
+- **Binary files:** not served; the page does not open or save them
 
 ---
 
@@ -649,11 +649,10 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 ### Workspace shows old files
 1. Hard refresh (Ctrl/Cmd+Shift+R)
 2. Open incognito/private tab
-3. Check API directly: `curl -H "authorization: Bearer <token>" 'http://127.0.0.1:3740/api/workspace?workspace=vps'`
+3. Check API directly: `curl -H "authorization: Bearer <token>" 'http://127.0.0.1:3740/api/workspace?action=list'`
 
 ### API returns 500
-- For VPS: check file permissions on the workspace path
-- For containers: `docker exec` may fail on certain directories
+- `docker exec` may fail on certain directories; the error text says why. 502 means the agent is stopped, 503 that Docker is down
 
 ### "Empty workspace"
 - Verify the API returns files (test with curl)
@@ -678,19 +677,16 @@ curl -c /tmp/cookies.txt -X POST http://localhost:3740/api/auth/login \
 # List workspaces
 curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?action=list'
 
-# List VPS workspace files
-curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=vps'
-
 # List Atlas container files
 curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=container-openclaw-atlas'
 
 # Read a file
-curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=vps&path=/path/to/workspace/SOUL.md'
+curl -b /tmp/cookies.txt 'http://localhost:3740/api/workspace?workspace=container-openclaw-atlas&path=/root/.openclaw/workspace/SOUL.md'
 
 # Write a file
 curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
   -H 'Content-Type: application/json' \
-  -d '{"workspace":"vps","path":"/path/to/workspace/test.md","content":"hello"}'
+  -d '{"workspace":"container-openclaw-atlas","path":"/root/.openclaw/workspace/test.md","content":"hello"}'
 ```
 
 ---

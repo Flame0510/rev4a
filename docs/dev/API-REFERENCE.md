@@ -760,53 +760,6 @@ data: {"type":"costs","data":{"today":0.0112}}
 
 Use `EventSource` in the browser or `curl -N` for testing.
 
-### `GET /api/workspace/stream`
-Workspace filesystem change stream for the editor.
-
-**Auth:** browser cookie
-
-**Response:** `text/event-stream`
-
-**Event types:**
-- `workspace_ready` — initial snapshot metadata
-- `workspace_changed` — added, modified, or removed files/directories
-- `heartbeat` — emitted when no changes are detected
-- `workspace_error` — emitted if a scan cycle fails
-
-**Initial payload example:**
-```json
-{
-  "type": "workspace_ready",
-  "ts": 1751270000000,
-  "root": "/path/to/workspace",
-  "count": 42
-}
-```
-
-**Change payload example:**
-```json
-{
-  "type": "workspace_changed",
-  "ts": 1751270003000,
-  "changed": [
-    {
-      "path": "/path/to/workspace/rev4a/README.md",
-      "rel_path": "rev4a/README.md",
-      "type": "file",
-      "size": 2048,
-      "mtimeMs": 1751270002999,
-      "change": "modified"
-    }
-  ],
-  "truncated": false
-}
-```
-
-**Notes:**
-- The stream polls every 3 seconds.
-- Hidden paths and directories such as `.trash` and `node_modules` are ignored.
-- Only a fixed allowlist of file extensions is included.
-
 ---
 
 ## Agents
@@ -2426,7 +2379,7 @@ Memory context snapshot for the current agent workspace.
 Full design, decisions, and usage guide at [WORKSPACE.md](WORKSPACE.md).
 
 ### `GET /api/workspace?action=list`
-List available workspaces (VPS host + Docker containers with `AGENT_ID` label).
+List the agent workspaces: every Docker container with an `AGENT_ID` label, running or stopped. There is no host workspace.
 
 **Auth:** Bearer token or the `rev4a_token` browser cookie
 
@@ -2434,43 +2387,54 @@ List available workspaces (VPS host + Docker containers with `AGENT_ID` label).
 ```json
 {
   "workspaces": [
-    { "id": "vps", "label": "VPS Host (Nexus)", "type": "host" },
-    { "id": "container-agent_8ba21f83", "label": "Giuanmuzzziins", "type": "container" }
-  ]
+    { "id": "container-agent_8ba21f83", "label": "Giuanmuzzziins", "type": "container",
+      "path": "/root/.openclaw/workspace/", "containerName": "agent_8ba21f83", "running": true }
+  ],
+  "dockerAvailable": true
 }
 ```
+When Docker is not available the answer is still 200: `{ "workspaces": [], "dockerAvailable": false }`.
 
 ### `GET /api/workspace?workspace=<id>`
 List files in a workspace, read a file, or return a recursive tree payload.
 
 **Auth:** any auth method
 
-**Query params:** `workspace` (optional, defaults to `vps`), `path` (optional), `tree=1` (optional)
+**Query params:** `workspace` (optional, defaults to the first running agent), `path` (optional, inside `/root/.openclaw/workspace`), `tree=1` (optional)
 
 **Response (directory):**
 ```json
 {
-  "workspace": "vps",
-  "label": "VPS Host (Nexus)",
-  "path": "/path/to/workspace",
-  "type": "host",
+  "workspace": "container-agent_8ba21f83",
+  "label": "Giuanmuzzziins",
+  "path": "/root/.openclaw/workspace",
+  "type": "container",
   "files": [
-    { "name": "config", "isDirectory": true, "isFile": false, "path": "..." },
-    { "name": "SOUL.md", "isDirectory": false, "isFile": true, "path": "..." }
+    { "name": "skills", "isDirectory": true, "isFile": false },
+    { "name": "SOUL.md", "isDirectory": false, "isFile": true }
   ]
 }
 ```
 
-**Response (file):** Same structure with `content` field instead of `files`.
+**Response (file):** same structure with `content` (the exact text, UTF-8, nothing trimmed) instead of `files`.
+
+**Errors** are always `{ "error": "..." }` with a real status: `400` unknown workspace id or bad path ·
+`403` path outside the workspace root (after `..` and symlinks) · `404` file not found ·
+`413` file over 2 MiB (`File too large to open here (<size>, limit 2 MB)`) ·
+`415` not valid UTF-8 (`Not a UTF-8 text file: it cannot be opened or edited here`; the bytes are read exactly, as base64) ·
+`502` the agent is not running (`Agent <label> is not running`) or did not answer in time · `503` Docker not available.
 
 ### `PUT /api/workspace`
-Write content to a workspace file.
+Write content to a workspace file. Exactly `content` is written (no newline added), atomically, with the file's mode kept.
 
 **Auth:** any auth method
 
-**Body:** `{ "workspace": "vps", "path": "/path/to/workspace/test.md", "content": "hello" }`
+**Body:** `{ "workspace": "container-agent_8ba21f83", "path": "/root/.openclaw/workspace/test.md", "content": "hello" }`
 
 **Response:** `{ "ok": true }`
+
+**Errors:** as above, plus `423` when the target is in a read-only mount (the Rev4a rules at `/root/.openclaw/workspace/.rev4a`)
+and `400` when the body is not valid JSON, `workspace`, `path` or `content` is not a string, or the path is a directory.
 
 ---
 
@@ -3064,7 +3028,7 @@ no value, masked or otherwise, is returned.
 
 ### `GET /api/envcheck`
 A fixed list of environment keys, for diagnostics: `REV4A_PASSWORD`, `REV4A_TOKEN`,
-`REV4A_JWT_SECRET`, `REV4A_ALERTS_ENABLED`, `REV4A_DB`, `REV4A_WORKSPACE_ROOT`,
+`REV4A_JWT_SECRET`, `REV4A_ALERTS_ENABLED`, `REV4A_DB`,
 `PROVIDER_DEEPSEEK_API_KEY`, `NODE_ENV`. It is not a dump of the process environment:
 keys outside that list are never returned.
 
@@ -3083,7 +3047,6 @@ when missing or empty.
   "REV4A_JWT_SECRET": "set",
   "REV4A_ALERTS_ENABLED": "1",
   "REV4A_DB": "(not set)",
-  "REV4A_WORKSPACE_ROOT": "/workspace",
   "PROVIDER_DEEPSEEK_API_KEY": "set",
   "NODE_ENV": "production"
 }

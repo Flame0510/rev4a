@@ -37,12 +37,6 @@ const ENV_METADATA: Record<
     placeholder: 'At least 32 characters',
     sensitive: true,
   },
-  REV4A_WORKSPACE_ROOT: {
-    label: 'Workspace root',
-    description: 'Filesystem path for the local file explorer (e.g. /home/user/projects/rev4a). Leave empty to disable the Local workspace.',
-    placeholder: '/path/to/workspace',
-    sensitive: false,
-  },
 };
 
 type SaveStatus = 'idle' | 'saving' | 'ok' | 'error';

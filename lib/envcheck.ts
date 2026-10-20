@@ -14,7 +14,6 @@ export const ENVCHECK_KEYS: readonly string[] = Object.freeze([
   'REV4A_JWT_SECRET',
   'REV4A_ALERTS_ENABLED',
   'REV4A_DB',
-  'REV4A_WORKSPACE_ROOT',
   'PROVIDER_DEEPSEEK_API_KEY',
   'NODE_ENV',
 ]);

@@ -55,7 +55,6 @@ test('the fixed key list and the sensitive list are exactly the ones the endpoin
     'REV4A_JWT_SECRET',
     'REV4A_ALERTS_ENABLED',
     'REV4A_DB',
-    'REV4A_WORKSPACE_ROOT',
     'PROVIDER_DEEPSEEK_API_KEY',
     'NODE_ENV',
   ]);
@@ -83,7 +82,6 @@ test('a non-sensitive key passes its value through, missing or empty is "(not se
   assert.equal(result.REV4A_ALERTS_ENABLED, '1');
   assert.equal(result.NODE_ENV, 'test');
   assert.equal(result.REV4A_DB, '/data/events.db');
-  assert.equal(result.REV4A_WORKSPACE_ROOT, '(not set)', 'missing key');
   assert.equal(describeEnv({ REV4A_DB: '' }).REV4A_DB, '(not set)', 'empty key');
 });
 

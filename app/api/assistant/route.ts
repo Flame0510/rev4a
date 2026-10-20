@@ -109,9 +109,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/workspace': {
     title: 'Workspace',
-    description: 'File explorer for the OpenClaw workspace directory. Browse, view, and download files that agents use.',
-    actions: ['Browse the workspace directory tree', 'View file contents', 'Download files to your machine'],
-    hints: 'The workspace contains all agent configuration files, skills, plugins, and operational documents.',
+    description: 'File explorer and editor for the agents\' workspaces. Pick an agent (running or stopped) and browse its files, open a text file and edit it.',
+    actions: ['Pick an agent and browse its workspace tree', 'Open a text file (up to 2 MB) and edit it', 'Save changes (the .rev4a rules folder is read-only)'],
+    hints: 'Each agent has its own workspace inside its container: configuration files, skills, plugins and operational documents. A stopped agent shows as not running and cannot be opened until it is started.',
   },
   '/tools': {
     title: 'Tools',

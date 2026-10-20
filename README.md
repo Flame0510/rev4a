@@ -90,7 +90,6 @@ already filled in — you normally never set these by hand. See
 | `GATEWAY_TOKEN` | auto-generated | No | Shared token handed to agent containers |
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
-| `REV4A_WORKSPACE_ROOT` | — | No | Root exposed by the local file explorer |
 | `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated hostnames or IPs allowed to reach `next dev` (e.g. a LAN address, without scheme or port); no effect on a production build |
 | `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Outside CI, a failed post-install build fails the installation. Any non-empty value skips it, `0` included |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
