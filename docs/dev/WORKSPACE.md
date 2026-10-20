@@ -1,14 +1,14 @@
 # Workspace — Agent File Explorer
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-20
+> **Last updated:** 2026-10-20 (WS-5)
 
 ---
 
 ## 1. Overview
 
 The Workspace feature is a file explorer and editor for the OpenClaw workspace of every
-agent container. Users can browse a recursive tree, read text files and write them back, all
+agent container. Users can browse the folders one level at a time, read text files and write them back, all
 from the Rev4a dashboard.
 
 **Purpose:** Give operators direct access to agent workspace files (MEMORY.md, logs,
@@ -23,8 +23,8 @@ and carries on.
 ## 2. Workspace Selector (UI)
 
 The dashboard includes a **workspace selector** — a dropdown that lists every agent.
-Selecting one loads its file tree into the editor panel. A stopped agent is listed too
-(`running: false`) but its files cannot be opened until it is started.
+Selecting one loads its root folder into the tree. A stopped agent is listed too
+(`running: false`), greyed with "(stopped)"; selecting it shows "This agent is not running" and sends no request, because a stopped container cannot be browsed (`docker exec` needs it running).
 
 ---
 
@@ -88,7 +88,7 @@ List the agent workspaces.
 ```
 When Docker is down: `{ "workspaces": [], "dockerAvailable": false }` (still 200).
 
-### `GET /api/workspace?workspace=<id>[&path=<path>][&tree=1]`
+### `GET /api/workspace?workspace=<id>[&path=<path>][&tree=1][&list=1][&hidden=1][&stat=1]`
 
 List files in a workspace, read a file, or return a recursive tree.
 
@@ -99,7 +99,10 @@ List files in a workspace, read a file, or return a recursive tree.
 |---|---|---|
 | `workspace` | first running agent | Workspace ID |
 | `path` | workspace root | Directory or file path to read; relative paths are read against the root |
-| `tree=1` | — | When set, returns a recursive flat list of all entries |
+| `tree=1` | — | When set, returns a recursive flat list of all entries (kept for other callers; the page does not use it) |
+| `list=1` | — | One level of the folder `path` (default: the root), see "Folder listing and stat" below |
+| `hidden=1` | — | With `list=1`: also list dot-entries |
+| `stat=1` | — | With a file `path`: `{ path, size, mtimeMs, kind }` and nothing else |
 
 **Response (directory listing):**
 ```json
@@ -147,6 +150,33 @@ avif, bmp, ico, svg, pdf, mp3, wav, ogg, oga, m4a, flac, aac, mp4, m4v, webm, mo
 `Cache-Control: no-store`, and for SVG `Content-Security-Policy: sandbox; default-src 'none'; img-src data:;
 style-src 'unsafe-inline'`. Other extensions answer 415 `No preview for this file type`; a directory is 400; over
 50 MiB is 413 `File too large to open here (<size>, limit 50 MB)`. At most two reads over 8 MiB run at once (a third gets 503, try again), because a large read holds about 3.3x the file in memory. Errors keep the statuses above. No Range support.
+
+### Folder listing and stat (WS-5)
+
+**Additions (WS-5).** Both are additive; `tree=1` and every existing field and status are unchanged. The Workspace page no longer uses `tree=1`:
+it lists the root with `list=1`, a folder when it is first expanded, and the expanded folders again every 15 s.
+
+- **Folder listing:** `&list=1[&path=<dir>][&hidden=1]` answers `200 { workspace, label, path, type, entries, truncated }` for ONE level of a folder (the root when `path` is left out). `entries` are `{ name, path, relPath, type: "file" | "directory", size, mtimeMs, isDirectory, isFile, readOnly? }` (`relPath` is relative to the workspace root; `size` is 0 for a folder; `readOnly: true` only inside a read-only mount), folders first, then by name (the tree's comparator). Dot-entries are left out unless `hidden=1`, except the root of a read-only mount (`.rev4a`), which is always listed. `node_modules`, `.git` and the like are listed as folders. At most 5,000 entries (cut after sorting, so folders come first); `truncated` is `true` when there were more. The folder goes through the same confinement as every path (400 / 403); a missing folder is 404 and a file is 400 `That path is not a directory`. The listing is one constant `find` (`-mindepth 1 -maxdepth 1 -printf '%y|%s|%T@|%f\0'`) with the folder as an argument.
+- **Stat:** `&path=<file>&stat=1` answers `200 { path, size, mtimeMs, kind: "file" | "directory" | "other" }` from one `stat`, with no content read. The page polls it every 10 s to notice a file the agent changed.
+
+**Response (`list=1`):**
+```json
+{
+  "workspace": "container-agent_8ba21f83",
+  "label": "Giuanmuzzziins",
+  "path": "/root/.openclaw/workspace/",
+  "type": "container",
+  "truncated": false,
+  "entries": [
+    { "name": ".rev4a", "path": "/root/.openclaw/workspace/.rev4a", "relPath": ".rev4a", "type": "directory",
+      "size": 0, "mtimeMs": 1750000000000, "isDirectory": true, "isFile": false, "readOnly": true },
+    { "name": "SOUL.md", "path": "/root/.openclaw/workspace/SOUL.md", "relPath": "SOUL.md", "type": "file",
+      "size": 1204, "mtimeMs": 1750000000000, "isDirectory": false, "isFile": true }
+  ]
+}
+```
+
+Helpers (`listArgv`, `parseList`, `LIST_MAX_ENTRIES`) are in `lib/workspace-fs.ts`, the URL helpers in `app/workspace/url-state.ts`; tests in `scripts/test-workspace-list.mjs`.
 
 ### Tail, range, info and download (WS-3)
 
@@ -207,6 +237,8 @@ filesystems). The comparator lives in `lib/workspace-fs.ts`.
 
 Same steps 1 to 3 (confinement, `realpath -m`, `stat`), with two more checks: the extension of the requested path and of the real path (after symlinks) must be in the map (a link named `x.png` pointing at `.env` is 415), and the size must be at most 50 MiB. Then `base64 -w0 -- <path>` runs with a `maxBuffer` for 50 MiB of base64 and a deadline of 15 s plus 1 s per MiB (at most 90 s). A timeout or failed exec throws, so partial bytes are never served. The base64 is decoded with `Buffer.from`; if the decoded length differs from the `stat` size the answer is 502 `The file changed while it was read`. Helpers: `rawContentType`, `rawHeaders`, `rawTimeoutMs` in `lib/workspace-fs.ts`; tests in `scripts/test-workspace-media.mjs`.
 
+Listing one folder (`list=1`) runs `find <dir> -mindepth 1 -maxdepth 1 -printf '%y|%s|%T@|%f\0'` through a constant `sh -c` script (`LIST_SCRIPT`) that first checks the folder (`[ -d "$1" ]` fails with `No such file or directory` and exit 4, mapped to 404; a folder that cannot be read fails with `Permission denied` and exit 5, mapped to 500), then runs `find "$@" 2>/dev/null; exit 0` as the tree does. The page shows such a failure as an error row with Retry on that folder, not as "Empty folder". The name is the last field, so it may hold `|` or a newline.
+
 Listing a tree uses `find <root> ( -name node_modules -o -name .git -o -name .next -o -name .trash -o -name cache ) -prune -o -mindepth 1 -printf '%P|%y|%s|%T@\0'` as argv; hidden top-level entries are left out.
 
 ---
@@ -230,5 +262,7 @@ Listing a tree uses `find <root> ( -name node_modules -o -name .git -o -name .ne
 | Container root at `/root/.openclaw/workspace/` | Prevents operators from accidentally reading/writing system files inside the container. A path is confined to the root after `..` and after symlinks are resolved with `realpath -m` in the container; a sibling such as `workspace-evil` is refused too. |
 | Local workspace removed | The host workspace read the Rev4a host's own disk through `REV4A_WORKSPACE_ROOT`. It was never the agents' files and was a way out of the sandbox; the page now shows agent containers only (2026-10-20). |
 | Real-time file reads (no caching) | Workspace files change frequently (agents write MEMORY.md, logs). Caching would require invalidation logic with little benefit — file reads are fast. |
-| UI tree auto-refresh (5s polling) | The file tree re-fetches every 5s (recursive `setTimeout`, not `setInterval`, to avoid overlapping requests) so external changes — an agent editing its own `TOOLS.md`, a restore, a manual edit inside the container — appear without a manual page reload. Only the tree is refreshed; the currently open file is left untouched to avoid clobbering an in-progress edit. Cleaned up on unmount via a `mounted` flag + `clearTimeout`. |
+| Lazy tree, 15 s re-list | The page lists one folder at a time: the root at the start, a folder when it is first expanded. Each expanded folder (and the root) is listed again every 15 s while the tab is visible (recursive `setTimeout`, never overlapping; paused for a hidden tab), so an agent editing its own files, a restore or a manual edit appears without a reload. A workspace with tens of thousands of files opens at once because nothing walks the whole tree. The open text file is checked with `stat=1` every 10 s (visible tab only): if its mtime differs from the loaded one, a banner offers Reload (or, when the user has unsaved edits, says that saving will ask what to do: the 409 dialog of WS-3). The file's content is never replaced on its own. |
+| URL state | `?agent=<container>&file=<path>&hidden=1` keeps the agent, the open file and the hidden-files switch (`router.replace`, no history entries). On load the page selects that agent, lists the folders down to the file and opens it; an unknown agent, a path outside the workspace root or a file that is not there is ignored quietly. |
+| Hidden files, read-only badge | Dot-entries are hidden unless the "Show hidden files" switch (shared `Switch`) is on, except the read-only `.rev4a` mount, which is always shown. Entries inside a read-only mount carry a lock badge with the title "Read-only, managed by Rev4a"; Save is disabled there. |
 | Flat tree with aliases (`entries`, `tree`, `files`) | Backward compatibility: older UI components expect `files` or `tree` keys; `entries` is the canonical name in the current codebase. |

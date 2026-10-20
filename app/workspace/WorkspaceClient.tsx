@@ -1,26 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, ConfirmModal, Modal, Select } from '../components/ui';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { Button, ConfirmModal, Modal, Select, Switch } from '../components/ui';
 import { Skeleton, TreeSkeleton, CodeSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { renderMarkdownSafe } from '@/lib/markdown-safe';
+import FilePreview, { previewKindOf, highlightCodeBlocks } from './preview/FilePreview';
+import { ancestorDirs, buildBrowseQuery, parseBrowseState, restoreTarget, visibleExpanded, type PendingRestore } from './url-state';
+import { Tree, fmtSize, type DirState, type TreeEntry } from './Tree';
 
 /** Above this the Markdown preview is not rendered (marked takes seconds on huge files): the source is shown. */
 const PREVIEW_MAX_CHARS = 256 * 1024;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface TreeEntry {
-  path: string;
-  relPath: string;
-  name: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtimeMs: number;
-  /** True for an entry inside a read-only mount (the Rev4a rules). */
-  readOnly?: boolean;
-}
-
 interface WorkspaceInfo {
   id: string;
   label: string;
@@ -68,9 +61,13 @@ interface BinaryInfo { label?: string; size: number }
 
 function isLogName(name: string): boolean { return /\.(log|out)$/i.test(name); }
 
-const DEFAULT_ROOT = '/root/.openclaw/workspace/';
-const POLL_MS = 5000;
+const WORKSPACE_DIR = '/root/.openclaw/workspace';
+const DEFAULT_ROOT = `${WORKSPACE_DIR}/`;
+/** An expanded folder is listed again at most this often while the tab is visible. */
+const REFRESH_MS = 15_000;
 const MAX_TREE_FAILURES = 3;
+/** The open text file is checked for a change on the agent this often while the tab is visible. */
+const STAT_MS = 10_000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const EXT_LANG: Record<string, string> = {
@@ -123,162 +120,9 @@ function isAbort(e: unknown): boolean {
   return (e as { name?: string } | null)?.name === 'AbortError';
 }
 
-function fmtSize(bytes: number) {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1048576).toFixed(1)}MB`;
-}
 function fmtDate(ms: number) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-
-// ─── File type icon SVGs ──────────────────────────────────────────────────────
-const COPPER = 'var(--violet)'; // #b8860b-ish
-
-function FolderIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
-      {expanded ? (
-        <>
-          <path d="M1.6 4a1.2 1.2 0 0 1 1.2-1.2H6l.8 1h4.4a1.2 1.2 0 0 1 1.2 1.2v5.8a1.2 1.2 0 0 1-1.2 1.2H2.8A1.2 1.2 0 0 1 1.6 10V4Z" fill={COPPER} stroke={COPPER} strokeWidth="0.3" strokeLinejoin="round" opacity="0.85"/>
-          <line x1="1.6" y1="5.5" x2="12.4" y2="5.5" stroke="#0A0A0B" strokeWidth="0.8"/>
-        </>
-      ) : (
-        <>
-          <path d="M1.6 4a1.2 1.2 0 0 1 1.2-1.2H6l.8 1h4.4a1.2 1.2 0 0 1 1.2 1.2v5.8a1.2 1.2 0 0 1-1.2 1.2H2.8A1.2 1.2 0 0 1 1.6 10V4Z" fill={COPPER} stroke={COPPER} strokeWidth="0.3" strokeLinejoin="round" opacity="0.85"/>
-        </>
-      )}
-    </svg>
-  );
-}
-
-function FileIcon({ name, size }: { name: string; size?: number }) {
-  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
-  const s = size ?? 12;
-  const color = '#888';
-  const mono = (p: string) => <path d={p} stroke={color} strokeWidth="1.2" fill="none" strokeLinejoin="round"/>;
-  const dim = { width: s, height: s, viewBox: `0 0 ${s} ${s}`, fill: 'none', stroke: color, strokeWidth: '1.2', style: { flexShrink: 0, opacity: 0.5 } as React.CSSProperties };
-  const doc = <svg {...dim}><path d="M1 1h7L11 4v9H1z" strokeLinejoin="round"/><path d="M8 1v3h3" strokeLinejoin="round"/></svg>;
-  switch (ext) {
-    case '.md': return <svg {...dim}><path d="M1 1h7L11 4v9H1z" strokeLinejoin="round"/><path d="M8 1v3h3" strokeLinejoin="round"/><path d="M3 7h5M3 9h3" strokeLinecap="round"/></svg>;
-    case '.ts':
-    case '.tsx': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<text x="2.5" y="9" fontSize="5" fill="#3178c6" stroke="none" fontWeight="bold">TS</text></svg>;
-    case '.js': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<text x="2.5" y="9" fontSize="5" fill="#f7df1e" stroke="none" fontWeight="bold">JS</text></svg>;
-    case '.json': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<text x="2" y="9" fontSize="5" fill="#ecc" stroke="none">{'{ }'}</text></svg>;
-    case '.sh': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<line x1="4" y1="5" x2="7" y2="10" stroke={color} strokeWidth="1"/><line x1="7" y1="5" x2="4" y2="10" stroke={color} strokeWidth="1"/></svg>;
-    case '.py': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<rect x="3" y="6" width="5" height="4" rx="0.5" stroke={color} strokeWidth="0.8" fill="none"/></svg>;
-    case '.css': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<path d="M9 9l2-3H4l1 3z" fill="#264de4" stroke="none"/></svg>;
-    case '.html': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<path d="M3 7l1 3 1-3" stroke={color} strokeWidth="0.8" fill="none"/></svg>;
-    case '.pdf': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<rect x="2.5" y="6" width="6" height="4.5" rx="0.3" fill="#ef4444" stroke="none" opacity="0.6"/></svg>;
-    case '.png': case '.jpg': case '.jpeg': case '.gif': case '.webp': case '.svg':
-      return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<circle cx="5" cy="7" r="2" fill={color} opacity="0.4" stroke="none"/><path d="M3 11l3-3 3 3" stroke={color} strokeWidth="0.8" fill="none"/></svg>;
-    case '.yaml': case '.yml': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<line x1="3" y1="7" x2="8" y2="7" stroke={color} strokeWidth="0.8"/><line x1="3" y1="9" x2="6" y2="9" stroke={color} strokeWidth="0.8"/></svg>;
-    case '.env': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<text x="3" y="9" fontSize="5" fill="#ffa" stroke="none">.env</text></svg>;
-    case '.txt': return <svg {...dim}>{mono('M1 1h7L11 4v9H1z')}{mono('M8 1v3h3')}<rect x="3" y="7" width="5" height="0.8" fill={color} opacity="0.5" stroke="none"/><rect x="3" y="9" width="5" height="0.8" fill={color} opacity="0.5" stroke="none"/></svg>;
-    default: return doc;
-  }
-}
-
-// ─── Tree helpers ─────────────────────────────────────────────────────────────
-interface TreeNode {
-  name: string;
-  relPath: string;
-  absPath: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtimeMs: number;
-  readOnly?: boolean;
-  children: TreeNode[];
-}
-
-function buildTree(entries: TreeEntry[]): TreeNode[] {
-  const root: TreeNode[] = [];
-  const map = new Map<string, TreeNode>();
-
-  for (const e of entries) {
-    const node: TreeNode = { name: e.name, relPath: e.relPath, absPath: e.path, type: e.type, size: e.size, mtimeMs: e.mtimeMs, readOnly: e.readOnly, children: [] };
-    map.set(e.relPath, node);
-    const parentPath = e.relPath.includes('/') ? e.relPath.slice(0, e.relPath.lastIndexOf('/')) : null;
-    if (parentPath && map.has(parentPath)) {
-      map.get(parentPath)!.children.push(node);
-    } else {
-      root.push(node);
-    }
-  }
-  return root;
-}
-
-// ─── Flatten tree into linear list for keyboard nav ───────────────────────────
-interface FlatItem {
-  node: TreeNode;
-  depth: number;
-  visible: boolean;
-}
-
-function flattenTree(tree: TreeNode[], expanded: Set<string>): FlatItem[] {
-  const result: FlatItem[] = [];
-  function walk(nodes: TreeNode[], depth: number) {
-    for (const n of nodes) {
-      result.push({ node: n, depth, visible: true });
-      if (n.type === 'directory' && expanded.has(n.relPath)) {
-        walk(n.children, depth + 1);
-      }
-    }
-  }
-  walk(tree, 0);
-  return result;
-}
-
-// ─── TreeNodeRow ──────────────────────────────────────────────────────────────
-function TreeNodeRow({
-  node, depth, selected, expanded, onToggle, onSelect,
-  id, focused,
-}: {
-  node: TreeNode; depth: number; selected: string | null;
-  expanded: Set<string>; onToggle: (path: string, node?: TreeNode) => void; onSelect: (node: TreeNode) => void;
-  id?: string; focused?: boolean;
-}) {
-  const isDir = node.type === 'directory';
-  const isExp = expanded.has(node.relPath);
-  const isSelected = selected === node.absPath;
-  const indent = depth * 14;
-
-  return (
-    <div
-      id={id}
-      tabIndex={-1}
-      onClick={() => isDir ? onToggle(node.relPath, node) : onSelect(node)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: `3px 8px 3px ${8 + indent}px`,
-        cursor: 'pointer', userSelect: 'none', outline: 'none',
-        background: isSelected ? '#1a1030' : 'transparent',
-        color: isSelected ? 'var(--violet)' : isDir ? '#aaa' : '#ccc',
-        fontSize: 11, fontFamily: 'var(--font-mono-stack)',
-        borderLeft: isSelected ? '2px solid var(--violet)' : focused ? '2px solid #555' : '2px solid transparent',
-        transition: 'background 0.1s',
-      }}
-      onMouseEnter={(e) => { if (!isSelected && !focused) (e.currentTarget as HTMLElement).style.background = '#111'; }}
-      onMouseLeave={(e) => { if (!isSelected && !focused) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-    >
-      {isDir ? (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill={COPPER} style={{ flexShrink: 0, transition: 'transform 0.15s', transform: isExp ? 'rotate(90deg)' : 'none', opacity: 0.7 }}>
-          <path d="M3 2l4 3-4 3z"/>
-        </svg>
-      ) : (
-        <span style={{ width: 10, flexShrink: 0 }} />
-      )}
-      {isDir ? (
-        <FolderIcon expanded={isExp} />
-      ) : (
-        <FileIcon name={node.name} />
-      )}
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</span>
-      {!isDir && node.size > 0 && (
-        <span style={{ marginLeft: 'auto', color: '#555', fontSize: 10, flexShrink: 0 }}>{fmtSize(node.size)}</span>
-      )}
-    </div>
-  );
 }
 
 // ─── Centered message panel (empty, error and "not available" states) ─────────
@@ -294,14 +138,17 @@ function StatePanel({ title, message, action, tone = 'muted' }: { title: string;
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function WorkspaceClient() {
-  const [tree, setTree] = useState<TreeNode[]>([]);
-  const [treeLoading, setTreeLoading] = useState(true);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  /** What each folder holds, by path relative to the workspace root (the root is `''`). Loaded one folder at a time. */
+  const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [treeError, setTreeError] = useState<string | null>(null);
   const [treePaused, setTreePaused] = useState(false);
   const [treeReload, setTreeReload] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
+  const [selectedNode, setSelectedNode] = useState<TreeEntry | null>(null);
   const [fileView, setFileView] = useState<FileView>({ status: 'idle' });
   /** The text as last loaded or saved; the editor buffer is `editContent`. */
   const [fileContent, setFileContent] = useState('');
@@ -312,7 +159,6 @@ export default function WorkspaceClient() {
   /** Set while the open file is shown on its last part only (a log, or a file over 2 MB): read-only. */
   const [tail, setTail] = useState<TailState | null>(null);
   const [binaryInfo, setBinaryInfo] = useState<BinaryInfo | null>(null);
-  /** The agent changed the file after it was opened: the user chooses between reloading and overwriting. */
   /** A 409 on save: the agent changed the file, or deleted it, after it was opened. */
   const [conflict, setConflict] = useState<false | 'changed' | 'deleted'>(false);
   /** The file's mtime (ms) when it was last read or saved; sent with a save so a newer version is never overwritten blind. */
@@ -322,9 +168,12 @@ export default function WorkspaceClient() {
   const [mobileView, setMobileView] = useState<'tree' | 'editor'>('tree');
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
-  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
-  const treeContainerRef = useRef<HTMLDivElement>(null);
-  const flatItemsRef = useRef<FlatItem[]>([]);
+  /** "Show hidden files": kept in the URL (`hidden=1`). */
+  const [hidden, setHidden] = useState(() => searchParams.get('hidden') === '1');
+  /** The agent changed the open file on disk after it was loaded (found by the 10 s stat), or deleted it. */
+  const [diskChange, setDiskChange] = useState<null | { deleted: boolean; size: number; mtimeMs: number }>(null);
+  /** The URL had a valid agent and file to restore, or there was nothing to restore: from then on the URL follows the page. */
+  const [urlReady, setUrlReady] = useState(false);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [dockerAvailable, setDockerAvailable] = useState(true);
@@ -361,6 +210,25 @@ export default function WorkspaceClient() {
   selectedPathRef.current = selectedPath;
   selectedWorkspaceRef.current = selectedWorkspace;
 
+  // Lazy tree bookkeeping. A generation per tree session (workspace, retry), one request sequence per folder.
+  const dirsRef = useRef(dirs);
+  dirsRef.current = dirs;
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const treeGenRef = useRef(0);
+  const treeAbortRef = useRef<AbortController | null>(null);
+  const dirSeqRef = useRef<Record<string, number>>({});
+  const inFlightRef = useRef(new Map<string, { hidden: boolean }>());
+  /** The workspace the `dirs` belong to: another one starts from an empty tree. */
+  const dirsWorkspaceRef = useRef('');
+  /** The initial URL parameters, read once; the agent list decides which of them are valid. */
+  const initialParamsRef = useRef({ agent: searchParams.get('agent'), file: searchParams.get('file') });
+  const urlResolvedRef = useRef(false);
+  /** The file to open once its folders are listed (from the URL). */
+  const pendingFileRef = useRef<PendingRestore | null>(null);
+
   const current = workspaces.find((w) => w.id === selectedWorkspace) ?? null;
   const root = current?.path ?? DEFAULT_ROOT;
   const stopped = current != null && !current.running;
@@ -386,8 +254,21 @@ export default function WorkspaceClient() {
         setWorkspaces(list);
         setDockerAvailable(data.dockerAvailable !== false);
         setWsError(null);
+        // The first time: the agent (and file) the URL asks for, when they exist. Invalid values are ignored.
+        let preferred = '';
+        if (!urlResolvedRef.current) {
+          urlResolvedRef.current = true;
+          const wanted = parseBrowseState({ agent: initialParamsRef.current.agent, file: initialParamsRef.current.file }, list.map((w) => w.containerName));
+          const match = wanted.agent ? list.find((w) => w.containerName === wanted.agent) : undefined;
+          if (match) {
+            preferred = match.id;
+            // A stopped agent cannot be browsed: nothing to restore.
+            pendingFileRef.current = match.running && wanted.file ? { workspace: match.id, file: wanted.file } : null;
+          }
+          if (!pendingFileRef.current) setUrlReady(true);
+        }
         setSelectedWorkspace((prev) => (
-          list.some((w) => w.id === prev) ? prev : (list.find((w) => w.running) ?? list[0])?.id ?? ''
+          list.some((w) => w.id === prev) ? prev : (preferred || (list.find((w) => w.running) ?? list[0])?.id) || ''
         ));
       } catch (e) {
         if (isAbort(e) || controller.signal.aborted) return;
@@ -399,78 +280,8 @@ export default function WorkspaceClient() {
     return () => controller.abort();
   }, [wsReload]);
 
-  // Load the tree, then poll it. No overlapping polls, and polling stops after repeated failures.
-  useEffect(() => {
-    if (!selectedWorkspace || !canBrowse) { setTreeLoading(false); return; }
-    let active = true;
-    let stop = false;
-    let inFlight = false;
-    let failures = 0;
-    let pollTimer: ReturnType<typeof setTimeout> | undefined;
-    const controller = new AbortController();
-
-    const load = async (showLoader: boolean) => {
-      if (inFlight) return;
-      inFlight = true;
-      if (showLoader) setTreeLoading(true);
-      const fail = (message: string, status?: number) => {
-        failures += 1;
-        setTreeError(message);
-        // A stopped agent or a missing Docker will not fix itself in 5 s: stop at once.
-        if (failures >= MAX_TREE_FAILURES || status === 502 || status === 503 || status === 400) {
-          stop = true;
-          setTreePaused(true);
-        }
-      };
-      try {
-        const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(selectedWorkspace)}&tree=1`, { signal: controller.signal });
-        if (!active) return;
-        if (!res.ok) {
-          const message = await errorText(res);
-          if (active) fail(message, res.status);
-          return;
-        }
-        const data = await res.json() as { entries?: TreeEntry[] };
-        if (!active) return;
-        failures = 0;
-        setTreeError(null);
-        setTreePaused(false);
-        setTree(buildTree(Array.isArray(data.entries) ? data.entries : []));
-      } catch (e) {
-        if (!active || isAbort(e)) return;
-        fail('Could not load the file list.');
-      } finally {
-        inFlight = false;
-        if (showLoader && active) setTreeLoading(false);
-      }
-    };
-
-    const scheduleNext = () => {
-      clearTimeout(pollTimer);
-      if (document.hidden || stop || !active) return; // don't poll when tab is hidden or after repeated failures
-      pollTimer = setTimeout(async () => {
-        await load(false);
-        if (active) scheduleNext();
-      }, POLL_MS);
-    };
-
-    const onVisibility = () => { if (!document.hidden) scheduleNext(); };
-    document.addEventListener('visibilitychange', onVisibility);
-
-    setTreeError(null);
-    setTreePaused(false);
-    void load(true).then(() => { if (active) scheduleNext(); });
-
-    return () => {
-      active = false;
-      controller.abort();
-      clearTimeout(pollTimer);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [selectedWorkspace, canBrowse, treeReload]);
-
   // Load file: the latest request wins; an older response (or an aborted one) never touches state.
-  const loadFile = useCallback(async (node: TreeNode) => {
+  const loadFile = useCallback(async (node: TreeEntry) => {
     if (node.type !== 'file') return;
     fileAbortRef.current?.abort();
     const controller = new AbortController();
@@ -484,11 +295,12 @@ export default function WorkspaceClient() {
     setTail(null);
     setBinaryInfo(null);
     setConflict(false);
+    setDiskChange(null);
     releaseMedia();
     setMediaFit(true);
     setMediaDims(null);
 
-    setSelectedPath(node.absPath);
+    setSelectedPath(node.path);
     setSelectedNode(node);
     setSaveState('idle');
     setSaveError(null);
@@ -496,7 +308,7 @@ export default function WorkspaceClient() {
     setEditContent('');
     setMobileView('editor');
     const mediaKind = mediaKindOf(node.name);
-    const enc = `workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}`;
+    const enc = `workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.path)}`;
     // The binary panel: shown at once, then completed with what the API says about the file (type label, size).
     const showBinary = () => {
       setFileView({ status: 'binary' });
@@ -538,7 +350,7 @@ export default function WorkspaceClient() {
     };
     try {
       if (mediaKind) {
-        const rawUrl = `/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.absPath)}&raw=1`;
+        const rawUrl = `/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(node.path)}&raw=1`;
         const res = await apiFetch(rawUrl, { signal: controller.signal });
         if (stale()) return;
         if (!res.ok) {
@@ -584,13 +396,289 @@ export default function WorkspaceClient() {
       const text = crlf ? data.content.replace(/\r\n/g, '\n') : data.content;
       setFileContent(text);
       setEditContent(text);
-      setPreviewMode(isMarkdown(node.name) && text.length <= PREVIEW_MAX_CHARS);
+      // Markdown and the typed previews (code, JSON, YAML, CSV, .env masked) open on the preview; Edit shows the source.
+      setPreviewMode((isMarkdown(node.name) && text.length <= PREVIEW_MAX_CHARS) || previewKindOf(node.name) !== null);
       setFileView({ status: 'text' });
     } catch (e) {
       if (isAbort(e) || stale()) return;
       setFileView({ status: 'error', message: 'Could not load the file.' });
     }
   }, [releaseMedia]);
+
+  const loadFileRef = useRef(loadFile);
+  loadFileRef.current = loadFile;
+
+  type ListResult =
+    | { ok: true; entries: TreeEntry[]; skipped?: boolean }
+    | { ok: false; status?: number; message: string; aborted?: boolean };
+
+  /**
+   * List one folder (`''` is the root) and store it in `dirs`. `open` shows the spinner row; `refresh` swaps the
+   * entries quietly and keeps the old ones when it fails. A folder that is already being listed is skipped, so
+   * requests never overlap; an older answer never replaces a newer one.
+   */
+  const listDir = useCallback(async (rel: string, mode: 'open' | 'refresh'): Promise<ListResult> => {
+    const workspaceId = selectedWorkspaceRef.current;
+    const controller = treeAbortRef.current;
+    if (!workspaceId || !controller || controller.signal.aborted) return { ok: false, message: '', aborted: true };
+    const showHidden = hiddenRef.current;
+    const flight = inFlightRef.current.get(rel);
+    if (flight && flight.hidden === showHidden) return { ok: true, entries: [], skipped: true };
+    const gen = treeGenRef.current;
+    const seq = (dirSeqRef.current[rel] = (dirSeqRef.current[rel] ?? 0) + 1);
+    inFlightRef.current.set(rel, { hidden: showHidden });
+    const live = () => gen === treeGenRef.current && seq === dirSeqRef.current[rel] && !controller.signal.aborted;
+    const fail = (message: string) => {
+      if (!live()) return;
+      setDirs((d) => {
+        // The entries it showed stay; the folder gets its own error row, the others are not affected.
+        const old = d[rel];
+        return { ...d, [rel]: { status: 'error', entries: old?.entries ?? [], truncated: old?.truncated, error: message } };
+      });
+    };
+    if (mode === 'open') {
+      setDirs((d) => ({ ...d, [rel]: { status: 'loading', entries: d[rel]?.entries ?? [], truncated: d[rel]?.truncated } }));
+    }
+    try {
+      const pathParam = rel === '' ? '' : `&path=${encodeURIComponent(`${WORKSPACE_DIR}/${rel}`)}`;
+      const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}${pathParam}&list=1${showHidden ? '&hidden=1' : ''}`, { signal: controller.signal });
+      if (!res.ok) {
+        const message = await errorText(res);
+        fail(message);
+        return { ok: false, status: res.status, message };
+      }
+      const data = await res.json() as { entries?: unknown; truncated?: unknown };
+      const entries = (Array.isArray(data.entries) ? data.entries : []).filter(
+        (e): e is TreeEntry => !!e && typeof (e as TreeEntry).path === 'string' && typeof (e as TreeEntry).relPath === 'string' && typeof (e as TreeEntry).name === 'string',
+      );
+      if (live()) setDirs((d) => ({ ...d, [rel]: { status: 'ready', entries, truncated: data.truncated === true } }));
+      return { ok: true, entries };
+    } catch (e) {
+      if (isAbort(e) || controller.signal.aborted) return { ok: false, message: '', aborted: true };
+      fail('Could not load this folder.');
+      return { ok: false, message: 'Could not load this folder.' };
+    } finally {
+      const f = inFlightRef.current.get(rel);
+      if (f && f.hidden === showHidden && seq === dirSeqRef.current[rel]) inFlightRef.current.delete(rel);
+    }
+  }, []);
+
+  /**
+   * Lists the root and every expanded, visible folder again, one after the other. Returns the failure that should
+   * pause the updates (the root, or the agent/Docker being down); a failure of another folder only marks that folder.
+   */
+  const relistAll = useCallback(async (): Promise<{ status?: number; message: string } | null> => {
+    let failure: { status?: number; message: string } | null = null;
+    const gen = treeGenRef.current;
+    for (const rel of ['', ...visibleExpanded(expandedRef.current)]) {
+      if (gen !== treeGenRef.current) return null;
+      const r = await listDir(rel, 'refresh');
+      if (r.ok || r.aborted || failure) continue;
+      if (rel === '' || r.status === 502 || r.status === 503) failure = { status: r.status, message: r.message };
+    }
+    return failure;
+  }, [listDir]);
+
+  // The lazy tree: list the root, restore the folders and the file of the URL, then re-list the expanded folders
+  // every REFRESH_MS while the tab is visible. Nothing else asks for the tree.
+  useEffect(() => {
+    if (!selectedWorkspace || !canBrowse) {
+      // An agent that cannot be browsed (stopped, Docker down): nothing to restore, the URL follows the page.
+      if (selectedWorkspace) { pendingFileRef.current = null; setUrlReady(true); }
+      return;
+    }
+    // A file from the URL belongs to its own agent: after a switch it is dropped, never opened in another one.
+    if (pendingFileRef.current && !restoreTarget(pendingFileRef.current, selectedWorkspace)) {
+      pendingFileRef.current = null;
+      setUrlReady(true);
+    }
+    let active = true;
+    let stop = false;
+    let rootOk = false;
+    let running = false;
+    let failures = 0;
+    let lastRun = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    treeAbortRef.current = controller;
+    treeGenRef.current += 1;
+    const gen = treeGenRef.current;
+    inFlightRef.current.clear();
+    dirSeqRef.current = {};
+    if (dirsWorkspaceRef.current !== selectedWorkspace) {
+      dirsWorkspaceRef.current = selectedWorkspace;
+      setDirs({});
+      setExpanded(new Set());
+    }
+    setTreeError(null);
+    setTreePaused(false);
+
+    const schedule = () => {
+      clearTimeout(timer);
+      if (!active || stop) return;
+      timer = setTimeout(() => { void tick(); }, REFRESH_MS);
+    };
+    const tick = async () => {
+      if (!active || stop || running) return;
+      if (document.hidden) { schedule(); return; }
+      running = true;
+      lastRun = Date.now();
+      let failure: { status?: number; message: string } | null = null;
+      if (!rootOk) {
+        // The root never loaded (or Retry is pending): try again, and restore the open folders and the URL's file once it does.
+        const r = await listDir('', 'refresh');
+        if (r.ok) await afterRoot(r.entries);
+        else if (!r.aborted) failure = { status: r.status, message: r.message };
+      } else {
+        failure = await relistAll();
+      }
+      running = false;
+      if (!active) return;
+      if (failure) {
+        failures += 1;
+        setTreeError(failure.message);
+        // A stopped agent or a missing Docker will not fix itself in 15 s: stop at once.
+        if (failures >= MAX_TREE_FAILURES || failure.status === 502 || failure.status === 503 || failure.status === 400) {
+          stop = true;
+          setTreePaused(true);
+          pendingFileRef.current = null;
+          setUrlReady(true);
+          return;
+        }
+      } else if (failures > 0) {
+        failures = 0;
+        setTreeError(null);
+      }
+      schedule();
+    };
+    const onVisibility = () => {
+      if (!document.hidden && active && !stop && !running && Date.now() - lastRun >= REFRESH_MS) {
+        clearTimeout(timer);
+        void tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    // After the first successful root listing: the folders that were open come back (Retry), then the file of the URL.
+    // Anything that fails is dropped quietly. The restore stops at once when the agent changes.
+    const afterRoot = async (rootEntries: TreeEntry[]) => {
+      rootOk = true;
+      for (const rel of visibleExpanded(expandedRef.current)) {
+        if (!active) return;
+        await listDir(rel, 'open');
+      }
+      const target = restoreTarget(pendingFileRef.current, selectedWorkspace);
+      pendingFileRef.current = null;
+      if (target) {
+        let entries = rootEntries;
+        let ok = true;
+        for (const rel of ancestorDirs(target)) {
+          const r = await listDir(rel, 'open');
+          if (!active || selectedWorkspaceRef.current !== selectedWorkspace) return;
+          if (!r.ok) { ok = false; break; }
+          entries = r.entries;
+          setExpanded((prev) => new Set(prev).add(rel));
+        }
+        const file = ok ? entries.find((e) => e.path === target && e.type === 'file') : undefined;
+        if (file && active && selectedWorkspaceRef.current === selectedWorkspace) void loadFileRef.current(file);
+      }
+      if (active) setUrlReady(true);
+    };
+
+    void (async () => {
+      const rootRes = await listDir('', 'open');
+      if (!active || gen !== treeGenRef.current) return;
+      if (rootRes.ok) {
+        await afterRoot(rootRes.entries);
+      } else {
+        // The root could not be listed: the tree shows the error and Retry. A stopped agent or Docker down: no polling.
+        // Any other failure is tried again by the next tick, which also restores the URL's file once the root loads.
+        if (rootRes.status === 502 || rootRes.status === 503 || rootRes.status === 400) {
+          stop = true;
+          pendingFileRef.current = null;
+          setUrlReady(true);
+        }
+      }
+      if (!active) return;
+      lastRun = Date.now();
+      schedule();
+    })();
+
+    return () => {
+      active = false;
+      controller.abort();
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [selectedWorkspace, canBrowse, treeReload, listDir, relistAll]);
+
+  // "Show hidden files" changed: the open folders are listed again with the new setting.
+  const lastHiddenRef = useRef(hidden);
+  useEffect(() => {
+    if (lastHiddenRef.current === hidden) return;
+    lastHiddenRef.current = hidden;
+    if (canBrowse) void relistAll();
+  }, [hidden, canBrowse, relistAll]);
+
+  const toggleDir = useCallback((entry: TreeEntry) => {
+    const isOpen = expandedRef.current.has(entry.relPath);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(entry.relPath); else next.add(entry.relPath);
+      return next;
+    });
+    if (isOpen) return;
+    // First time (or after a failure): spinner row. Opened again later: the old entries stay while it refreshes.
+    const st = dirsRef.current[entry.relPath];
+    void listDir(entry.relPath, !st || st.status === 'error' ? 'open' : 'refresh');
+  }, [listDir]);
+
+  // The URL follows the page: agent, open file and hidden switch, with no history entry per click.
+  useEffect(() => {
+    if (!urlReady || wsLoading || !current) return;
+    const qs = buildBrowseQuery({ agent: current.containerName, file: selectedPath, hidden });
+    if (window.location.search === qs) return;
+    router.replace(`${pathname}${qs}`, { scroll: false });
+  }, [urlReady, wsLoading, current, selectedPath, hidden, pathname, router]);
+
+  // The open text file is checked on the agent every STAT_MS (visible tab only): a different mtime shows a banner.
+  useEffect(() => {
+    if (fileView.status !== 'text' || tail !== null || !selectedPath) return;
+    const workspaceId = fileWorkspaceRef.current;
+    if (!workspaceId) return;
+    const reqId = fileReqRef.current;
+    const path = selectedPath;
+    let active = true;
+    let busy = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const poll = async () => {
+      if (!active) return;
+      if (!document.hidden && !busy && !saveBusyRef.current) {
+        busy = true;
+        const base = fileMtimeRef.current;
+        try {
+          const res = await apiFetch(`/api/workspace?workspace=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(path)}&stat=1`, { signal: controller.signal });
+          type StatInfo = { mtimeMs?: unknown; size?: unknown; kind?: unknown };
+          let info: StatInfo | null = null;
+          if (res.ok) info = await res.json().catch(() => null) as StatInfo | null;
+          // Drop the answer when the file was reloaded or saved meanwhile.
+          if (active && reqId === fileReqRef.current && !saveBusyRef.current && base !== null && base === fileMtimeRef.current) {
+            if (info && typeof info.mtimeMs === 'number' && info.kind === 'file') {
+              setDiskChange(info.mtimeMs !== base ? { deleted: false, size: typeof info.size === 'number' ? info.size : 0, mtimeMs: info.mtimeMs } : null);
+            } else if (res.status === 404) {
+              setDiskChange({ deleted: true, size: 0, mtimeMs: 0 });
+            }
+          }
+        } catch { /* the next poll tries again */ } finally {
+          busy = false;
+        }
+      }
+      if (active) timer = setTimeout(() => { void poll(); }, STAT_MS);
+    };
+    timer = setTimeout(() => { void poll(); }, STAT_MS);
+    return () => { active = false; controller.abort(); clearTimeout(timer); };
+  }, [fileView.status, tail, selectedPath]);
 
   const dirty = fileView.status === 'text' && editContent !== fileContent;
   // A file inside a read-only mount (the Rev4a rules) is shown, never saved: the API would answer 423.
@@ -628,6 +716,7 @@ export default function WorkspaceClient() {
       if (!stillHere()) return;
       fileMtimeRef.current = typeof saved.mtimeMs === 'number' ? saved.mtimeMs : null;
       setFileContent(content);
+      setDiskChange(null);
       setSaveState('saved');
       setTimeout(() => setSaveState((s) => (s === 'saved' ? 'idle' : s)), 1500);
     } catch {
@@ -697,8 +786,8 @@ export default function WorkspaceClient() {
     if (dirty) setPendingSwitch({ run }); else run();
   }, [dirty]);
 
-  const openNode = useCallback((node: TreeNode) => {
-    if (node.absPath === selectedPath && fileView.status !== 'error') return; // already open: keep the edits
+  const openNode = useCallback((node: TreeEntry) => {
+    if (node.path === selectedPath && fileView.status !== 'error') return; // already open: keep the edits
     guardUnsaved(() => { void loadFile(node); });
   }, [selectedPath, fileView.status, guardUnsaved, loadFile]);
 
@@ -708,10 +797,11 @@ export default function WorkspaceClient() {
     fileWorkspaceRef.current = null;
     releaseMedia();
     setSelectedWorkspace(id);
-    setTree([]);
-    setTreeLoading(true);
+    setDirs({});
     setTreeError(null);
+    setTreePaused(false);
     setExpanded(new Set());
+    setDiskChange(null);
     setSelectedPath(null);
     setSelectedNode(null);
     setFileView({ status: 'idle' });
@@ -721,7 +811,6 @@ export default function WorkspaceClient() {
     setBinaryInfo(null);
     setConflict(false);
     fileMtimeRef.current = null;
-    setFocusedIndex(-1);
     setMobileView('tree');
     setSaveState('idle');
     setSaveError(null);
@@ -731,71 +820,6 @@ export default function WorkspaceClient() {
   useEffect(() => {
     if (fileWorkspaceRef.current && fileWorkspaceRef.current !== selectedWorkspace) switchWorkspace(selectedWorkspace);
   }, [selectedWorkspace, switchWorkspace]);
-
-  // Keyboard navigation
-  const flatItems = useMemo(() => flattenTree(tree, expanded), [tree, expanded]);
-  flatItemsRef.current = flatItems;
-
-  const syncFocusToNode = useCallback((node: TreeNode) => {
-    const idx = flatItemsRef.current.findIndex((f) => f.node.relPath === node.relPath);
-    if (idx >= 0) {
-      setFocusedIndex(idx);
-      const el = document.getElementById(`tree-item-${node.relPath.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
-      el?.scrollIntoView({ block: 'nearest' });
-      // Re-focus the tree container so keyboard nav works
-      treeContainerRef.current?.focus();
-    }
-  }, []);
-
-  const toggleDir = useCallback((relPath: string, node?: TreeNode) => {
-    setExpanded((prev) => { const next = new Set(prev); next.has(relPath) ? next.delete(relPath) : next.add(relPath); return next; });
-    if (node) syncFocusToNode(node);
-  }, [syncFocusToNode]);
-
-  const moveFocus = useCallback((direction: -1 | 1) => {
-    const items = flatItemsRef.current;
-    if (items.length === 0) return;
-    const current = focusedIndex < 0 ? (direction === 1 ? -1 : 0) : focusedIndex;
-    const next = Math.max(0, Math.min(current + direction, items.length - 1));
-    setFocusedIndex(next);
-    const el = document.getElementById(`tree-item-${items[next].node.relPath.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [focusedIndex]);
-
-  const activateCurrent = useCallback(() => {
-    const items = flatItemsRef.current;
-    if (focusedIndex < 0 || focusedIndex >= items.length) return;
-    const item = items[focusedIndex];
-    if (item.node.type === 'directory') {
-      toggleDir(item.node.relPath, item.node);
-    } else {
-      syncFocusToNode(item.node);
-      openNode(item.node);
-    }
-  }, [focusedIndex, toggleDir, openNode, syncFocusToNode]);
-
-  const expandCurrent = useCallback(() => {
-    const items = flatItemsRef.current;
-    if (focusedIndex < 0 || focusedIndex >= items.length) return;
-    const item = items[focusedIndex];
-    if (item.node.type === 'directory' && !expanded.has(item.node.relPath)) {
-      toggleDir(item.node.relPath, item.node);
-    }
-  }, [focusedIndex, expanded, toggleDir]);
-
-  const collapseCurrent = useCallback(() => {
-    const items = flatItemsRef.current;
-    if (focusedIndex < 0 || focusedIndex >= items.length) return;
-    const item = items[focusedIndex];
-    if (item.node.type === 'directory' && expanded.has(item.node.relPath)) {
-      toggleDir(item.node.relPath, item.node);
-    }
-  }, [focusedIndex, expanded, toggleDir]);
-
-  // Click on tree container focuses it for keyboard
-  const handleTreeContainerClick = useCallback(() => {
-    treeContainerRef.current?.focus();
-  }, []);
 
   // Resize drag
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -815,15 +839,21 @@ export default function WorkspaceClient() {
   // marked can throw (deep nesting overflows the stack) or take seconds on a very large file: a file
   // over PREVIEW_MAX_CHARS, or one that fails to render, is shown as source instead of breaking the page.
   const preview = useMemo(() => {
-    if (fileView.status !== 'text' || !previewMode) return { html: '', failed: null as string | null };
+    // Only a Markdown file renders as Markdown: the typed previews have their own component.
+    if (fileView.status !== 'text' || !previewMode || !isMarkdown(selectedNode?.name ?? '')) return { html: '', failed: null as string | null };
     if (editContent.length > PREVIEW_MAX_CHARS) return { html: '', failed: 'This file is too large for the preview: showing the source.' };
     try {
       return { html: renderMarkdownSafe(editContent), failed: null };
     } catch {
       return { html: '', failed: 'The preview could not render this file: showing the source.' };
     }
-  }, [fileView.status, previewMode, editContent]);
+  }, [fileView.status, previewMode, editContent, selectedNode?.name]);
   const previewHtml = preview.html;
+  // Code blocks inside the Markdown preview are highlighted after the HTML is set (idempotent, size-limited).
+  const mdPreviewRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (previewHtml && previewMode && mdPreviewRef.current) void highlightCodeBlocks(mdPreviewRef.current);
+  }, [previewHtml, previewMode]);
   const [previewNotice, setPreviewNotice] = useState<string | null>(null);
   useEffect(() => {
     if (preview.failed) { setPreviewNotice(preview.failed); setPreviewMode(false); }
@@ -898,7 +928,7 @@ export default function WorkspaceClient() {
         )}
         {showFileActions && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {isMarkdown(selectedName) && (
+            {(isMarkdown(selectedName) || previewKindOf(selectedName) !== null) && (
               <Button variant={previewMode ? 'primary' : 'ghost'} size="sm" onClick={() => setPreviewMode(!previewMode)}>
                 {previewMode ? 'EDIT' : 'PREVIEW'}
               </Button>
@@ -931,55 +961,18 @@ export default function WorkspaceClient() {
               )}
             </div>
           )}
-          <div
-            ref={treeContainerRef}
-            data-tree-container
-            tabIndex={0}
-            onClick={handleTreeContainerClick}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                moveFocus(1);
-              } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                moveFocus(-1);
-              } else if (e.key === 'Enter') {
-                e.preventDefault();
-                activateCurrent();
-              } else if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                expandCurrent();
-              } else if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                collapseCurrent();
-              }
-            }}
-            style={{ flex: 1, overflowY: 'auto', paddingTop: 6, paddingBottom: 24, outline: 'none' }}
-          >
-            {treeLoading ? (
-              <TreeSkeleton rows={16} />
-            ) : tree.length === 0 ? (
-              !treeError && <div style={{ padding: '20px 12px', color: '#555', fontSize: 11 }}>Empty workspace</div>
-            ) : flatItems.map((item, index) => (
-              <TreeNodeRow
-                key={item.node.relPath}
-                id={`tree-item-${item.node.relPath.replace(/[^a-zA-Z0-9_-]/g, '_')}`}
-                node={item.node}
-                depth={item.depth}
-                selected={selectedPath}
-                expanded={expanded}
-                onToggle={(relPath: string) => {
-                  const item = flatItems.find(f => f.node.relPath === relPath);
-                  toggleDir(relPath, item?.node);
-                }}
-                onSelect={(node: TreeNode) => {
-                  syncFocusToNode(node);
-                  openNode(node);
-                }}
-                focused={index === focusedIndex}
-              />
-            ))}
+          <div className="ws-tree-head">
+            <Switch size="sm" checked={hidden} onChange={setHidden} label="Show hidden files" />
           </div>
+          <Tree
+            dirs={dirs}
+            expanded={expanded}
+            selectedPath={selectedPath}
+            readOnlyRoots={readOnlyRoots}
+            onToggle={toggleDir}
+            onOpen={openNode}
+            onRetry={(rel) => { if (rel === '') setTreeReload((n) => n + 1); else void listDir(rel, 'open'); }}
+          />
         </div>
 
         {/* Resize handle — desktop only */}
@@ -1029,6 +1022,20 @@ export default function WorkspaceClient() {
                     <span>2 MB are loaded: earlier lines stay on the agent. Download the file to read all of it.</span>
                   )}
                   {tail.error && <span style={{ color: 'var(--red)' }}>{tail.error}</span>}
+                </div>
+              )}
+              {diskChange && fileView.status === 'text' && tail === null && (
+                <div role="status" className="ws-disk-banner">
+                  {diskChange.deleted ? (
+                    <span>The agent deleted this file.{dirty ? ' Saving will ask what to do.' : ''}</span>
+                  ) : dirty ? (
+                    <span>The agent changed this file while you were editing. Saving will ask what to do.</span>
+                  ) : (
+                    <>
+                      <span>The agent changed this file.</span>
+                      <Button variant="secondary" size="sm" onClick={() => { if (selectedNode) void loadFile({ ...selectedNode, size: diskChange.size, mtimeMs: diskChange.mtimeMs }); }}>Reload</Button>
+                    </>
+                  )}
                 </div>
               )}
               {previewNotice && !previewMode && (
@@ -1101,11 +1108,14 @@ export default function WorkspaceClient() {
                   message={fileView.message}
                   action={selectedNode && <Button variant="secondary" size="sm" onClick={() => { void loadFile(selectedNode); }}>Retry</Button>}
                 />
-              ) : fileView.status === 'text' && previewMode ? (
+              ) : fileView.status === 'text' && previewMode && isMarkdown(selectedName) ? (
                 <div
+                  ref={mdPreviewRef}
                   className="ws-md-preview"
                   dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
+              ) : fileView.status === 'text' && previewMode && tail === null && previewKindOf(selectedName) !== null ? (
+                <FilePreview name={selectedName} text={editContent} />
               ) : fileView.status === 'text' ? (
                 <textarea
                   aria-label="File content"

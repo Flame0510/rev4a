@@ -10,6 +10,7 @@ import {
   AGENT_PS_FORMAT,
   DEFAULT_TAIL_BYTES,
   INFO_BYTES,
+  LIST_MAX_BUFFER,
   MAX_RAW_BYTES,
   MAX_WINDOW_BYTES,
   MAX_READ_BYTES,
@@ -26,9 +27,11 @@ import {
   formatBytes,
   isInReadOnlyMount,
   isInside,
+  listArgv,
   mapExecError,
   parseAgentPs,
   parseDirList,
+  parseList,
   parseStat,
   parseTree,
   parseWholeNumber,
@@ -190,7 +193,7 @@ async function readOnlyPathsOf(containerName: string): Promise<string[]> {
   }
 }
 
-/** {@link readOnlyPathsOf} remembered for a few seconds: the tree is polled every 5 s and the mounts do not change. */
+/** {@link readOnlyPathsOf} remembered for a few seconds: the page lists folders often and the mounts do not change. */
 const RO_CACHE_MS = 15_000;
 const roCache = new Map<string, { at: number; paths: string[] }>();
 async function cachedReadOnlyPaths(containerName: string): Promise<string[]> {
@@ -239,6 +242,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const wantsRaw = url.searchParams.get('raw') === '1';
   const wantsDownload = url.searchParams.get('download') === '1';
   const wantsInfo = url.searchParams.get('info') === '1';
+  const wantsList = url.searchParams.get('list') === '1';
+  const wantsStat = url.searchParams.get('stat') === '1';
+  const wantsHidden = url.searchParams.get('hidden') === '1';
   const tailParam = url.searchParams.get('tail');
   const offsetParam = url.searchParams.get('offset');
   const lengthParam = url.searchParams.get('length');
@@ -276,6 +282,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return treeResponse(ws, shown, parseTree(out, root, await cachedReadOnlyPaths(ws.containerName)));
     }
 
+    // One folder, one level (the page loads a folder when it is opened; `tree=1` stays for other callers).
+    if (wantsList) {
+      const checkedDir = filePath ? checkPath(filePath) : { ok: true as const, path: WORKSPACE_ROOT };
+      if (!checkedDir.ok) return fail(checkedDir.status, checkedDir.error);
+      let real = WORKSPACE_ROOT;
+      if (filePath) {
+        real = await resolveTarget(ws, filePath);
+        const st = await statTarget(ws, real);
+        if (st.kind !== 'directory') return fail(400, 'That path is not a directory');
+      }
+      const readOnly = await cachedReadOnlyPaths(ws.containerName);
+      const out = await inContainer(ws, listArgv(real), 10_000, LIST_MAX_BUFFER);
+      const { entries, truncated } = parseList(out, checkedDir.path, {
+        hidden: wantsHidden,
+        readOnlyPaths: readOnly,
+        forceReadOnly: isInReadOnlyMount(real, readOnly),
+      });
+      return NextResponse.json({
+        workspace: ws.id,
+        label: ws.label,
+        path: checkedDir.path === WORKSPACE_ROOT ? WORKSPACE_PATH : checkedDir.path,
+        type: 'container',
+        entries,
+        truncated,
+      });
+    }
+
     if (!filePath) {
       const out = await inContainer(ws, dirListArgv(WORKSPACE_ROOT), 5000);
       return NextResponse.json({ workspace: ws.id, label: ws.label, path: WORKSPACE_PATH, type: 'container', files: parseDirList(out) });
@@ -301,6 +334,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const real = await resolveTarget(ws, filePath);
     const st = await statTarget(ws, real);
+
+    // The cheap check the page polls to notice a file the agent changed: no content is read.
+    if (wantsStat) {
+      return NextResponse.json({ path: checked.path, size: st.size, mtimeMs: st.mtimeMs ?? 0, kind: st.kind });
+    }
 
     if (wantsDownload) {
       if (st.kind === 'directory') return fail(400, 'That path is a directory');

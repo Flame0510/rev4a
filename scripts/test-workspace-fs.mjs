@@ -78,7 +78,7 @@ await test('odd characters survive confinement as plain text', () => {
 
 await test('argv builders keep a nasty path as one element and never hold the content', () => {
   const nasty = `${ROOT}/a $(touch /tmp/pwn) 'q' "d"\nx;rm -rf.md`;
-  for (const argv of [m.realpathArgv(nasty), m.statArgv(nasty), m.readArgv(nasty), m.treeArgv(nasty), m.dirListArgv(nasty), m.writeArgv(nasty)]) {
+  for (const argv of [m.realpathArgv(nasty), m.statArgv(nasty), m.readArgv(nasty), m.treeArgv(nasty), m.dirListArgv(nasty), m.listArgv(nasty), m.writeArgv(nasty)]) {
     assert.ok(Array.isArray(argv));
     assert.equal(argv.filter((a) => a === nasty).length, 1, JSON.stringify(argv));
     for (const a of argv) if (a !== nasty) assert.ok(!a.includes('pwn'), a);

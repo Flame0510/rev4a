@@ -90,6 +90,32 @@ export function dirListArgv(dir: string): string[] {
   return ['find', dir, '-mindepth', '1', '-maxdepth', '1', '-printf', '%y|%f\\0'];
 }
 
+/** Most entries one folder listing returns (`list=1`); a bigger folder answers the first ones and `truncated: true`. */
+export const LIST_MAX_ENTRIES = 5000;
+/** maxBuffer of a folder listing: well above what {@link LIST_MAX_ENTRIES} entries take, so a huge folder is cut by the parser, not by an exec error. */
+export const LIST_MAX_BUFFER = 32 * 1024 * 1024;
+
+/**
+ * The folder listing script: constant text, the folder is "$1" and the find arguments follow. A folder that is
+ * gone or cannot be read fails like cat would (stderr names it, exit non-zero), so the route answers 404 or an
+ * error and the page shows an error row instead of "Empty folder". Once the folder is readable, find runs as in
+ * {@link TREE_SCRIPT}: an entry that vanishes mid-walk keeps the rest.
+ */
+export const LIST_SCRIPT = [
+  '[ -d "$1" ] || { echo "$1: No such file or directory" >&2; exit 4; }',
+  '[ -r "$1" ] && [ -x "$1" ] || { echo "$1: Permission denied" >&2; exit 5; }',
+  'find "$@" 2>/dev/null; exit 0',
+].join('\n');
+
+/**
+ * One folder, one level: `type|size|mtime|name` records, NUL-terminated (the name comes last, so it may hold
+ * a `|` or a newline). Runs the same constant script as the tree (`find "$@"`, exit 0 when an entry vanishes);
+ * the folder and every find argument go through "$@".
+ */
+export function listArgv(dir: string): string[] {
+  return ['sh', '-c', LIST_SCRIPT, 'sh', dir, '-mindepth', '1', '-maxdepth', '1', '-printf', '%y|%s|%T@|%f\\0'];
+}
+
 /** Print a file's bytes. */
 /**
  * Reads the file as base64 (coreutils), so the server gets the exact bytes: docker exec output is
@@ -250,6 +276,58 @@ export function parseDirList(out: string): { name: string; isDirectory: boolean;
     files.push({ name, isDirectory, isFile: !isDirectory });
   }
   return files;
+}
+
+export interface ParsedList {
+  entries: WorkspaceEntry[];
+  /** True when the folder holds more than {@link LIST_MAX_ENTRIES} shown entries: only the first ones are returned. */
+  truncated: boolean;
+}
+
+/**
+ * Output of {@link listArgv} for the folder `dir` (an absolute path inside the workspace root).
+ * `relPath` is relative to the workspace root. Dot-entries are left out unless `hidden`, except the
+ * root of a read-only mount (the `.rev4a` rules), which is always listed. Folders first, then by name;
+ * cut at {@link LIST_MAX_ENTRIES}. `forceReadOnly` marks every entry (the folder itself is read-only).
+ */
+export function parseList(
+  out: string,
+  dir: string,
+  opts: { hidden?: boolean; readOnlyPaths?: string[]; forceReadOnly?: boolean; limit?: number } = {},
+): ParsedList {
+  const readOnlyPaths = opts.readOnlyPaths ?? [];
+  const limit = opts.limit ?? LIST_MAX_ENTRIES;
+  const entries: WorkspaceEntry[] = [];
+  for (const rec of out.split('\0')) {
+    if (!rec) continue;
+    // type, size and mtime never hold a `|`; the name (last) may.
+    const a = rec.indexOf('|');
+    const b = a < 0 ? -1 : rec.indexOf('|', a + 1);
+    const c = b < 0 ? -1 : rec.indexOf('|', b + 1);
+    if (c < 0) continue;
+    const name = rec.slice(c + 1);
+    if (!name || name.includes('/')) continue;
+    const entryPath = posix.join(dir, name);
+    const readOnlyRoot = readOnlyPaths.includes(entryPath);
+    if (name.startsWith('.') && !opts.hidden && !readOnlyRoot) continue;
+    const isDirectory = rec.slice(0, a) === 'd';
+    const size = Number(rec.slice(a + 1, b));
+    const mtime = Number(rec.slice(b + 1, c));
+    entries.push({
+      name,
+      path: entryPath,
+      relPath: posix.relative(WORKSPACE_ROOT, entryPath),
+      type: isDirectory ? 'directory' : 'file',
+      size: isDirectory || !Number.isFinite(size) ? 0 : size,
+      mtimeMs: Number.isFinite(mtime) ? Math.round(mtime * 1000) : 0,
+      isDirectory,
+      isFile: !isDirectory,
+      ...(opts.forceReadOnly || (readOnlyPaths.length > 0 && isInReadOnlyMount(entryPath, readOnlyPaths)) ? { readOnly: true } : {}),
+    });
+  }
+  entries.sort(compareWorkspaceEntries);
+  const truncated = entries.length > limit;
+  return { entries: truncated ? entries.slice(0, limit) : entries, truncated };
 }
 
 /** Directories first at every level, then by name. */

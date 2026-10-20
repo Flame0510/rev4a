@@ -2402,7 +2402,7 @@ List files in a workspace, read a file, or return a recursive tree payload.
 
 **Auth:** any auth method
 
-**Query params:** `workspace` (optional, defaults to the first running agent), `path` (optional, inside `/root/.openclaw/workspace`), `tree=1` (optional)
+**Query params:** `workspace` (optional, defaults to the first running agent), `path` (optional, inside `/root/.openclaw/workspace`), `tree=1`, `list=1`, `hidden=1`, `stat=1` (optional)
 
 **Response (directory):**
 ```json
@@ -2428,6 +2428,11 @@ List files in a workspace, read a file, or return a recursive tree payload.
 - **Download:** `&path=<file>&download=1` answers the exact bytes of any regular file up to 50 MiB with `Content-Type: application/octet-stream`, `Content-Disposition: attachment; filename*=UTF-8''<encoded basename>`, `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Same confinement, large-read limiter (503) and statuses as raw mode; 413 over 50 MiB. No extension check.
 - **Read-only roots:** `action=list` adds `readOnlyPaths: string[]` to each workspace (read-only bind mounts inside the workspace root, from `docker inspect`, e.g. `/root/.openclaw/workspace/.rev4a`; `[]` when the inspect fails), and the `tree=1` entries inside one carry `readOnly: true` (the key is absent elsewhere).
 - **Save conflict:** `PUT` accepts an optional `expectedMtimeMs` (the `mtimeMs` from the read). When the file exists and its mtime (whole seconds) differs, nothing is written and the answer is `409 { error: "The file changed on the agent since you opened it", mtimeMs }`. The comparison runs inside the container's write script as the last step before the rename, so the only window left is a change in the same second as the one the page saw (a precision of one second). A file that no longer exists is written as usual. Without `expectedMtimeMs` a save is exactly as before. A successful `PUT` answers `{ ok: true, mtimeMs }`.
+
+**Additions (WS-5).** Both are additive; `tree=1` and every existing field and status are unchanged. The Workspace page no longer uses `tree=1`.
+
+- **Folder listing:** `&list=1[&path=<dir>][&hidden=1]` answers `200 { workspace, label, path, type, entries, truncated }` for ONE level of a folder (the root when `path` is left out). `entries` are `{ name, path, relPath, type: "file" | "directory", size, mtimeMs, isDirectory, isFile, readOnly? }` (`relPath` is relative to the workspace root; `size` is 0 for a folder; `readOnly: true` only inside a read-only mount), folders first, then by name (the tree's comparator). Dot-entries are left out unless `hidden=1`, except the root of a read-only mount (`.rev4a`), which is always listed. `node_modules`, `.git` and the like are listed as folders. At most 5,000 entries (cut after sorting, so folders come first); `truncated` is `true` when there were more. The folder goes through the same confinement as every path (400 / 403); a missing folder is 404 and a file is 400 `That path is not a directory`. The listing is one constant `find` (`-mindepth 1 -maxdepth 1 -printf '%y|%s|%T@|%f\0'`) with the folder as an argument.
+- **Stat:** `&path=<file>&stat=1` answers `200 { path, size, mtimeMs, kind: "file" | "directory" | "other" }` from one `stat`, with no content read. The page polls it every 10 s to notice a file the agent changed.
 
 **Errors** are always `{ "error": "..." }` with a real status: `400` unknown workspace id or bad path ·
 `403` path outside the workspace root (after `..` and symlinks) · `404` file not found ·
