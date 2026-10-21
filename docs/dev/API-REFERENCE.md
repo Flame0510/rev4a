@@ -2372,24 +2372,6 @@ operations on agent containers go through `/api/agents/[id]/lifecycle`.
 ---
 
 
-## Tools
-
-### `GET /api/tools-config`
-Read audio/TTS and timezone tool configuration.
-
-**Auth:** browser cookie
-
-**Response:** `{ "audio": { ... }, "timezone": "Europe/Rome" }`
-
-### `POST /api/tools-config`
-Update audio or timezone config in `openclaw.json`.
-
-**Body:** `{ "timezone": "America/New_York" }` or `{ "audio": { ... } }`
-
-**Response:** `{ "ok": true, "timezone": "America/New_York", "audio": { ... } }`
-
----
-
 ## Version & WebSocket
 
 ### `GET /api/version`

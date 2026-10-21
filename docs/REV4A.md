@@ -116,7 +116,6 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |
 | `/plugins` | Plugins of each agent, read from its container (read-only; agent selector, search, enabled filter) |
 | `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. Rev4a's own skills (`rev4a-*`) show "Managed by Rev4a" and are read-only. |
-| `/tools` | Tool configuration |
 | `/gateway` | LLM provider keys, model catalogue and sync — see [GATEWAY.md](dev/GATEWAY.md) |
 | `/config` | Environment management and server restart |
 | `/login` | Authentication page |

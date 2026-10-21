@@ -135,9 +135,6 @@ Blank files are skipped and a missing file shows as "missing". A linked (symlink
 ### Config (`/config`)
 Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
 
-### Tools (`/tools`)
-Catalog of the OpenClaw built-in tools available to agents, grouped by area: file and code, shell, web, messaging, sessions, media, and others. The list is curated in the app, not discovered at runtime, so it covers built-ins only and does not enumerate MCP servers or plugin tools. The page also holds audio/TTS settings. The dashboard time zone is set in Config, not here.
-
 ### Plugins (`/plugins`)
 Browse the OpenClaw plugins of one agent, read from its container (pick the agent at the top; a stopped agent must be started first). Search by name, id or description and filter enabled or disabled. Each row shows the version, whether it is enabled, and how many tools and hooks it adds. The page is read-only for now: turning plugins on or off is not available yet. The list is cached for about a minute and Reload refreshes it.
 

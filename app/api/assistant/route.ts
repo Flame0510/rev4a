@@ -113,12 +113,6 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     actions: ['Pick an agent and browse its workspace tree (folders load when opened; "Show hidden files" shows dot-files; the address keeps the agent and the open file)', 'Open a text file (up to 2 MB) on its preview (Markdown, highlighted code, JSON, YAML, CSV/TSV table, .env with hidden values) and switch to EDIT to change it', 'View a PDF, image, SVG, audio or video file (up to 50 MB, read-only)', 'Download any file (up to 50 MB)', 'Open a log over 256 KB or a text file over 2 MB on its last 256 KB (read-only, load earlier on demand)', 'See a banner when the agent changes the open file', 'Save changes (the .rev4a rules folder is read-only; if the agent changed the file meanwhile you are asked before anything is overwritten)'],
     hints: 'Each agent has its own workspace inside its container: configuration files, skills, plugins and operational documents. A stopped agent shows as not running and cannot be opened until it is started.',
   },
-  '/tools': {
-    title: 'Tools',
-    description: 'Curated catalog of the OpenClaw built-in tools available to agents, grouped by area, plus audio and timezone settings. It does not list MCP servers or plugin tools.',
-    actions: ['Browse the full tool catalog', 'See each tool\'s name, description and status (Configured, Available, Coming soon)', 'View the audio transcription and time zone settings'],
-    hints: 'The catalog is a fixed list of OpenClaw built-in tools, not read from the agents. It shows no MCP servers or plugin tools, so a tool missing here says nothing about what an agent has.',
-  },
   '/plugins': {
     title: 'Plugins',
     description: 'The OpenClaw plugins of one agent, read from its container. Plugins extend an agent with new tools and integrations.',
@@ -149,7 +143,6 @@ Navigation links inside Rev4a:
 - Lineage → /lineage?period=7d
 - Context → /memory
 - Workspace → /workspace
-- Tools → /tools
 - Plugins → /plugins
 - Skills → /skills
 - Wizard (first-run guide: providers, first agent) → /wizard

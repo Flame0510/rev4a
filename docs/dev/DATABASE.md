@@ -244,7 +244,7 @@ An optional file in the root of the Rev4a data directory, next to `.env`. It is 
 
 ### `settings.json` — application settings
 
-An optional file in the root of the Rev4a data directory, next to `.env`: `{ "timezone": "Europe/Rome" }`. The time zone is read by every dashboard page; with no file (or no valid zone in it) the server's own zone is used. A missing, unreadable or invalid file never raises. Written through a temp file and a rename (`lib/rev4a-settings.ts`). The first read imports the zone from the old `/data/rev4a/settings.json` (where the Tools page kept it) when the new file does not exist yet and the old one holds a valid zone; the old file is never changed.
+An optional file in the root of the Rev4a data directory, next to `.env`: `{ "timezone": "Europe/Rome" }`. The time zone is read by every dashboard page; with no file (or no valid zone in it) the server's own zone is used. A missing, unreadable or invalid file never raises. Written through a temp file and a rename (`lib/rev4a-settings.ts`). The first read imports the zone from the old `/data/rev4a/settings.json` (where the removed Tools page kept it) when the new file does not exist yet and the old one holds a valid zone; the old file is never changed.
 
 ## Useful Queries
 

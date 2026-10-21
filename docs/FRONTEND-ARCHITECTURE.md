@@ -166,7 +166,7 @@ Rules:
   - shows one section at a time (`AGENTS` → `FILES + CONFIG` → `EDITOR`)
   - avoids split-column clipping on narrow, fold, and small-tablet devices
 - **Sidebar and mobile drawer**
-  - one shared render (`navItems` in `Sidebar.tsx`) lists the pages in three titled groups, each with a small uppercase title and a thin line above every group but the first: Monitor (Dashboard, Lineage, Costs, System, Containers), Agents (Agents, Workspace, Context, Crons, Skills, Plugins, Tools) and Setup (Gateway, Credentials, Subscriptions, Config, Wizard)
+  - one shared render (`navItems` in `Sidebar.tsx`) lists the pages in three titled groups, each with a small uppercase title and a thin line above every group but the first: Monitor (Dashboard, Lineage, Costs, System, Containers), Agents (Agents, Workspace, Context, Crons, Skills, Plugins) and Setup (Gateway, Credentials, Subscriptions, Config, Wizard)
   - titles are plain text hidden from screen readers (the `role="group"` wrapper carries the name in `aria-label`); the desktop nav scrolls instead of pushing Logout off screen; the Wizard link is hidden on mobile
 - **Mobile bottom nav**
   - active below `md`
