@@ -124,9 +124,8 @@ Cron status (last run, next run) is fetched directly from the OpenClaw gateway e
 The agents list, Telegram accounts, and bindings are read directly from
 `openclaw.json` each time they are requested.
 
-`GET /api/agents-config` serves this, but no page calls it — there is no "Agents
-Config page". Per-agent settings are reached from the agent's detail panel on the
-Agents page.
+There is no page or route for this any more: per-agent settings are reached from
+the agent's detail panel on the Agents page.
 
 ## Subscriptions (ChatGPT / Codex)
 

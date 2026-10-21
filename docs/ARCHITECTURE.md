@@ -319,7 +319,7 @@ the rules for anything you touch, not as a description of the whole tree:
   **Not yet covered** (card BUG-7): `app/api/skills/`
   (save, delete, promote), `app/api/gateway/sync.ts` (including the `config patch`
   over stdin) and the gateway agent route, `app/api/agents/` (`config-json`, `token`,
-  `create`), `app/api/agents-active/route.ts`, `lib/channelManager.ts`,
+  `create`), `lib/channelManager.ts`,
   `lib/memory-context.ts`, `lib/subscription-login.ts` (bounded by its own
   `timeout 900`) and `terminal-ws-server.js`.
 - **A host-side kill does not reject.** `docker exec` exits 0 on the SIGTERM Node sends

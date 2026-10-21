@@ -413,30 +413,6 @@ Run the OAuth device flow for a provider that supports it.
 **Errors:** `400` for an unknown provider; the response body carries `available`
 with the providers that do support OAuth.
 
-### `POST /api/aliases/add`
-Add a model alias.
-
-**Auth:** browser cookie or bearer token
-
-**Body:** `{ "alias": "fast", "model": "deepseek/deepseek-chat" }`
-
-**Response:** `{ "ok": true, "output": "..." }` — `output` is the CLI's stdout.
-
-**Errors:** `400` if `alias` or `model` is missing.
-
-### `POST /api/aliases/remove`
-Remove a model alias.
-
-**Auth:** browser cookie or bearer token
-
-**Body:** `{ "alias": "fast" }`
-
-**Response:** `{ "ok": true, "output": "..." }`
-
-**Errors:** `400` if `alias` is missing.
-
----
-
 ## Config
 
 ### `PUT /api/config/env`
@@ -1952,65 +1928,6 @@ background `.catch` does not log it as a failure; `lastResult.result` becomes `c
 **Errors:** `404` nothing is running — the download has not started yet, or has
 already ended.
 
-### `GET /api/agents-active`
-Configured agents (from `openclaw.json`) enriched with recent session activity
-and workspace files.
-
-**Auth:** browser cookie
-
-**Response:**
-```json
-[
-  {
-    "agent_id": "ops",
-    "label": "Argus",
-    "displayName": "Argus",
-    "config_model": "openai-codex/gpt-5.4",
-    "workspace_path": "/data/.openclaw/workspace-ops/",
-    "files": [ { "name": "MEMORY.md", "path": "...", "rel_path": "MEMORY.md", "type": "markdown" } ],
-    "sessions": [ ...last 5 session rows... ],
-    "status": "idle",
-    "config": { ...raw agent config... }
-  }
-]
-```
-
----
-
-### `GET /api/agents-config`
-Read agents, Telegram accounts, and bindings from `openclaw.json` (sanitized — no raw tokens).
-
-**Auth:** browser cookie
-
-**Response:**
-```json
-{
-  "agents": [ { "id": "ops", "label": "Argus", "model": "..." } ],
-  "telegramAccounts": [ { "accountId": "argus", "tokenStatus": "masked", "enabled": true } ],
-  "bindings": [ { "bindingKey": "0", "type": "telegram", "agentId": "ops" } ]
-}
-```
-
----
-
-### `POST /api/agents-config`
-Update agents, Telegram accounts, or bindings. Writes to `openclaw.json` with atomic rename + backup.
-
-**Auth:** browser cookie
-
-**Body:**
-```json
-{
-  "agents": [ { "currentId": "ops", "id": "ops", "name": "Argus" } ],
-  "telegramAccounts": [],
-  "bindings": []
-}
-```
-
-**Response:** `{ "success": true, "data": { ...updated config payload... } }`
-
----
-
 ## Lineage
 
 ### `POST /api/lineage`
@@ -3080,13 +2997,6 @@ when missing or empty.
   "NODE_ENV": "production"
 }
 ```
-
-### `GET /api/provider-usage`
-Usage and quota state per provider, including live OpenRouter figures.
-
-**Auth:** browser cookie or bearer token
-
-**Response:** `{ "providers": [...], "openrouterLive": {…}, "quotas": {…} }`
 
 ### `GET /api/update-check`
 Installed version against the latest published one.
