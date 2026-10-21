@@ -2111,6 +2111,44 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .ws-tree-spinner { width: 10px; height: 10px; flex-shrink: 0; }
 .ws-disk-banner { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: 6px 14px; border-bottom: 1px solid var(--border); border-left: 2px solid var(--yellow); font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
 
+/* Context page: per-agent read-only overview of the prompt files */
+.cx-page { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); color: var(--text); overflow: hidden; }
+.cx-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 48px; padding: 0 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; box-sizing: border-box; }
+.cx-title { font-family: var(--font-serif-stack); font-size: 20px; letter-spacing: 4px; color: var(--violet); }
+.cx-reload { margin-left: auto; }
+.cx-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.cx-content { display: flex; flex-direction: column; gap: var(--space-4, 16px); padding: 16px 14px 32px; max-width: 1100px; width: 100%; box-sizing: border-box; }
+.cx-summary { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); background: var(--bg2); }
+.cx-summary-value { font-family: var(--font-mono-stack); font-size: 22px; color: var(--text); }
+.cx-summary-of { font-size: 12px; color: var(--text-dim); }
+.cx-summary-facts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-family: var(--font-mono-stack); font-size: 11px; color: var(--text-dim); }
+.cx-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.cx-section { display: flex; flex-direction: column; gap: 8px; }
+.cx-heading { margin: 0; font-family: var(--font-mono-stack); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; color: var(--violet); }
+.cx-table-wrap { overflow-x: auto; border: 1px solid var(--border); }
+.cx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cx-table th { padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 500; color: var(--text-dim); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.cx-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.cx-table tr:last-child td { border-bottom: 0; }
+.cx-num { font-family: var(--font-mono-stack); white-space: nowrap; }
+.cx-col-bar { min-width: 180px; width: 40%; }
+.cx-bar { display: flex; align-items: center; gap: 8px; }
+.cx-bar .ui-meter { flex: 1; min-width: 80px; }
+.cx-link { font-family: var(--font-mono-stack); font-size: 13px; color: var(--violet); text-decoration: none; overflow-wrap: anywhere; }
+.cx-link:hover { text-decoration: underline; }
+.cx-missing { font-family: var(--font-mono-stack); font-size: 13px; color: var(--text-dim); overflow-wrap: anywhere; }
+.cx-note { margin-top: 2px; font-size: 11px; color: var(--text-dim); }
+.cx-meta { font-family: var(--font-mono-stack); font-size: 11px; color: var(--text-dim); }
+.cx-rules { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 12px; border: 1px solid var(--border); }
+.cx-empty { padding: 12px; font-size: 12px; color: var(--text-dim); border: 1px solid var(--border); }
+.cx-mem-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); }
+.cx-mem-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.cx-mem-row:last-child { border-bottom: 0; }
+.cx-state { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; font-family: var(--font-mono-stack); }
+.cx-state-title { font-size: 13px; color: var(--text-dim); }
+.cx-state--error .cx-state-title { color: var(--red); }
+.cx-state-message { font-size: 11px; max-width: 420px; line-height: 1.6; color: var(--text-dim); overflow-wrap: anywhere; }
+
 /* Plugins page: per-agent read-only list */
 .pl-page { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); color: var(--text); overflow: hidden; }
 .pl-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 48px; padding: 0 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; box-sizing: border-box; }

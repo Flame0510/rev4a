@@ -102,10 +102,10 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     hints: 'Nothing is registered by hand: when an agent spawns a child agent to do work, that relationship is shown here on its own. Use the period selector to see recent activity.',
   },
   '/memory': {
-    title: 'Memory / Context',
-    description: 'Agent memory files and context documents stored in the workspace. Memories persist facts, preferences, and state across agent sessions.',
-    actions: ['Browse all memory files in the workspace', 'View the content of each memory file', 'Search through memory entries'],
-    hints: 'Memory files like MEMORY.md and SOUL.md define how agents behave. Editing them changes agent personality and knowledge.',
+    title: 'Context',
+    description: 'A read-only overview, per agent, of what OpenClaw puts in the agent\'s prompt (AGENTS.md, SOUL.md, IDENTITY.md, USER.md, then BOOTSTRAP.md while pending and MEMORY.md when present) and of the files the agent keeps under memory/.',
+    actions: ['Pick an agent with the selector (a stopped agent must be started first)', 'Read how many characters are injected against the total cap, and how many files were cut', 'See each prompt file with its size and a bar against the per-file cap, with a "truncated" badge when it is cut', 'Open any file in the Workspace page by clicking its name (editing happens there)', 'Browse the memory/ files, newest first, and the read-only Rev4a rules file'],
+    hints: 'OpenClaw cuts a prompt file longer than the per-file cap (20000 characters by default); the file that crosses the total cap (60000 by default) is cut to what remains and later files get nothing; the agent never sees the cut part. The page shows the caps in force and whether they come from the agent config or are OpenClaw defaults. A sub-agent session gets AGENTS.md only; MEMORY.md is also left out of cron, group and channel sessions; blank files are skipped. TOOLS.md and HEARTBEAT.md are not injected. The page only reads: to change a file, open it in the Workspace page.',
   },
   '/workspace': {
     title: 'Workspace',
@@ -147,7 +147,7 @@ Navigation links inside Rev4a:
 - System (CPU, RAM, disk of the server) → /system
 - Config → /config
 - Lineage → /lineage?period=7d
-- Memory / Context → /memory
+- Context → /memory
 - Workspace → /workspace
 - Tools → /tools
 - Plugins → /plugins

@@ -1,196 +1,283 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import type { MemoryContextPayload } from '@/lib/memory-context';
-import { Pill, Metric, Surface, Page, PageHeader, toneFromHealth } from '../components/ui';
+import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
+import { Button, LoadingSpinner, Meter, Pill, Select, meterLevel } from '../components/ui';
 import { apiFetch } from '@/lib/apiFetch';
-import { SkeletonLines } from '../components/Skeleton';
+import { contextUrl, workspaceFileUrl, type ContextView } from '@/lib/memory-context';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
 
-function formatBytes(value: number | null): string {
-  if (value === null) return '—';
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+interface AgentRow {
+  container: string;
+  label: string;
+  running: boolean;
 }
 
-function formatDate(value: string | null, timezone: string): string {
-  if (!value) return '—';
-  return formatDateTimeInTimezone(value, {}, timezone);
+function isAbort(e: unknown): boolean {
+  return (e as { name?: string } | null)?.name === 'AbortError';
 }
 
-export default function MemoryContextPageClient() {
-  const [data, setData] = useState<MemoryContextPayload | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+async function errorText(res: Response): Promise<string> {
+  try {
+    const data = await res.json() as { error?: unknown };
+    if (typeof data.error === 'string' && data.error) return data.error;
+  } catch { /* not JSON */ }
+  return `Request failed (HTTP ${res.status})`;
+}
+
+function StatePanel({ title, message, action, tone = 'muted' }: { title: string; message?: string; action?: React.ReactNode; tone?: 'muted' | 'error' }) {
+  return (
+    <div className={`cx-state${tone === 'error' ? ' cx-state--error' : ''}`} role={tone === 'error' ? 'alert' : 'status'}>
+      <div className="cx-state-title">{title}</div>
+      {message && <div className="cx-state-message">{message}</div>}
+      {action}
+    </div>
+  );
+}
+
+function chars(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+function bytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sourceText(source: 'default' | 'config'): string {
+  return source === 'config' ? 'set in the agent config' : 'OpenClaw default';
+}
+
+type ContextData = ContextView & { agent: string };
+
+export default function ContextPage() {
   const timezone = useRev4aTimezone();
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [dockerAvailable, setDockerAvailable] = useState(true);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [agentsReload, setAgentsReload] = useState(0);
+  const [selected, setSelected] = useState('');
 
+  const [data, setData] = useState<ContextData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  /** Set by a Reload or Retry click and used by the next request only: an agent switch keeps the server cache. */
+  const freshRef = useRef(false);
+  const reloadFresh = () => { freshRef.current = true; setReload((n) => n + 1); };
+  const abortRef = useRef<AbortController | null>(null);
+
+  // The agent list, on mount and on "Check again".
   useEffect(() => {
     const controller = new AbortController();
-    async function load() {
+    setAgentsLoading(true);
+    void (async () => {
       try {
         const res = await apiFetch('/api/memory-context', { signal: controller.signal });
         if (controller.signal.aborted) return;
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setData((await res.json()) as MemoryContextPayload);
-      } catch (err) {
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (controller.signal.aborted) return;
+          setAgents([]); setAgentsError(message);
+          return;
+        }
+        const body = await res.json() as { agents?: AgentRow[]; dockerAvailable?: boolean };
         if (controller.signal.aborted) return;
-        setError((err as Error).message);
+        const list = Array.isArray(body.agents) ? body.agents : [];
+        setAgents(list);
+        setDockerAvailable(body.dockerAvailable !== false);
+        setAgentsError(null);
+        setSelected((prev) => (list.some((a) => a.container === prev) ? prev : (list.find((a) => a.running) ?? list[0])?.container ?? ''));
+      } catch (e) {
+        if (isAbort(e) || controller.signal.aborted) return;
+        setAgents([]); setAgentsError('Could not load the agent list.');
+      } finally {
+        if (!controller.signal.aborted) setAgentsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [agentsReload]);
+
+  const current = agents.find((a) => a.container === selected) ?? null;
+  const canLoad = dockerAvailable && current != null && current.running;
+
+  // The selected agent's context: the latest request wins (AGENTS.md 2.2b.10).
+  useEffect(() => {
+    abortRef.current?.abort();
+    if (!canLoad) {
+      setData(null); setError(null); setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLoading(true);
+    setError(null);
+    setData(null);
+    const fresh = freshRef.current;
+    freshRef.current = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(contextUrl(selected, fresh), { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (!controller.signal.aborted) setError(message);
+          return;
+        }
+        const body = await res.json() as ContextData;
+        if (controller.signal.aborted) return;
+        setData(body);
+      } catch (e) {
+        if (isAbort(e) || controller.signal.aborted) return;
+        setError('Could not load the context.');
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }
-    void load();
+    })();
     return () => controller.abort();
-  }, []);
+  }, [selected, canLoad, reload]);
 
-  const metrics = useMemo(() => {
-    if (!data) return [];
-    return [
-      { label: 'Agents', value: data.summary.totalAgents },
-      { label: 'USER linked', value: data.summary.userLinked },
-      { label: 'Warnings', value: data.summary.warnings },
-      { label: 'Global files', value: data.summary.globalFiles },
-    ];
-  }, [data]);
+  let body: React.ReactNode;
+  if (agentsLoading) {
+    body = <LoadingSpinner label="LOADING" compact />;
+  } else if (agentsError) {
+    body = <StatePanel tone="error" title="Could not load the agent list" message={agentsError} action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Retry</Button>} />;
+  } else if (!dockerAvailable) {
+    body = <StatePanel tone="error" title="Docker is not running" message="Start Docker to see the context of your agents." action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Check again</Button>} />;
+  } else if (agents.length === 0) {
+    body = <StatePanel title="No agents yet" message="Create an agent on the Agents page to see its context here." />;
+  } else if (current && !current.running) {
+    body = <StatePanel title="This agent is not running. Start it from the Agents page." action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Check again</Button>} />;
+  } else if (loading) {
+    body = <LoadingSpinner label="LOADING CONTEXT" compact />;
+  } else if (error) {
+    body = <StatePanel tone="error" title="Could not load the context" message={error} action={<Button variant="secondary" size="sm" onClick={reloadFresh}>Retry</Button>} />;
+  } else if (data) {
+    const perFile = data.limits.perFile.value;
+    const totalPct = data.totals.cap > 0 ? (data.totals.injected / data.totals.cap) * 100 : 0;
+    body = (
+      <div className="cx-content">
+        <section className="cx-summary" aria-label="Summary">
+          <div className="cx-summary-main">
+            <span className="cx-summary-value">{chars(data.totals.injected)}</span>
+            <span className="cx-summary-of"> of {chars(data.totals.cap)} characters injected</span>
+          </div>
+          <Meter percent={totalPct} level={meterLevel(totalPct, 80, 100)} label="Injected characters against the total cap" />
+          <div className="cx-summary-facts">
+            {data.totals.truncatedFiles > 0
+              ? <Pill tone="warning">{data.totals.truncatedFiles} {data.totals.truncatedFiles === 1 ? 'file' : 'files'} truncated</Pill>
+              : <Pill tone="success">No file truncated</Pill>}
+            <span>Per file: {chars(perFile)} characters ({sourceText(data.limits.perFile.source)})</span>
+            <span>Total: {chars(data.limits.total.value)} characters ({sourceText(data.limits.total.source)})</span>
+          </div>
+          {data.totals.linkedFiles > 0 && (
+            <p className="cx-hint">{data.totals.linkedFiles === 1 ? '1 linked file is' : `${data.totals.linkedFiles} linked files are`} not counted in this total.</p>
+          )}
+          <p className="cx-hint">OpenClaw puts these files in the agent&apos;s prompt at the start of each session. A file longer than the cap is cut, and the agent never sees the cut part. A sub-agent session gets AGENTS.md only, and blank files are skipped. Click a file to open it in the Workspace page, where you can edit it.</p>
+        </section>
+
+        <section className="cx-section" aria-label="Prompt files">
+          <h2 className="cx-heading">PROMPT FILES</h2>
+          <div className="cx-table-wrap">
+            <table className="cx-table">
+              <thead>
+                <tr><th>File</th><th>Size</th><th>Injected</th><th className="cx-col-bar">Share of the per-file cap</th></tr>
+              </thead>
+              <tbody>
+                {data.files.map((f) => {
+                  const pct = f.chars !== null && perFile > 0 ? (f.chars / perFile) * 100 : 0;
+                  return (
+                    <tr key={f.name}>
+                      <td>
+                        {f.exists
+                          ? <Link className="cx-link" href={workspaceFileUrl(selected, f.path)}>{f.name}</Link>
+                          : <span className="cx-missing">{f.name}</span>}
+                        {f.note && <div className="cx-note">{f.note}</div>}
+                        {f.linked && <div className="cx-note">Linked file: OpenClaw follows it, but its size is not read here.</div>}
+                      </td>
+                      <td className="cx-num">{f.exists ? (f.linked ? 'linked file' : f.chars === null ? '—' : chars(f.chars)) : (f.optional ? 'not present' : 'missing')}</td>
+                      <td className="cx-num">{f.linked ? 'unknown' : f.exists && f.chars !== null ? chars(f.injected) : '—'}</td>
+                      <td className="cx-col-bar">
+                        {f.exists && f.chars !== null && (
+                          <div className="cx-bar">
+                            <Meter percent={pct} level={f.truncated ? 'critical' : meterLevel(pct, 80, 101)} label={`${f.name} against the per-file cap`} />
+                            {f.truncated && <Pill tone="warning">truncated</Pill>}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {data.other.length > 0 && (
+          <div className="cx-note">
+            Other workspace files, not injected into the prompt:{' '}
+            {data.other.map((o, i) => (
+              <span key={o.name}>{i > 0 && ', '}<Link className="cx-link" href={workspaceFileUrl(selected, o.path)}>{o.name}</Link></span>
+            ))}
+          </div>
+        )}
+
+        <section className="cx-section" aria-label="Rev4a rules">
+          <h2 className="cx-heading">REV4A RULES</h2>
+          <div className="cx-rules">
+            {data.rules.exists
+              ? <Link className="cx-link" href={workspaceFileUrl(selected, data.rules.path)}>{data.rules.path}</Link>
+              : <span className="cx-missing">{data.rules.path}</span>}
+            <span className="cx-meta">{data.rules.linked ? 'linked folder, not read' : data.rules.exists ? `${data.rules.size === null ? '—' : `${chars(data.rules.size)} characters`} · read-only` : 'not found'}</span>
+          </div>
+        </section>
+
+        <section className="cx-section" aria-label="Memory files">
+          <h2 className="cx-heading">MEMORY FILES{data.memory.files.length > 0 ? ` (${data.memory.files.length}${data.memory.truncated ? '+' : ''})` : ''}</h2>
+          {data.memory.linked ? (
+            <div className="cx-empty">memory/ is a linked folder, not read.</div>
+          ) : data.memory.files.length === 0 ? (
+            <div className="cx-empty">The agent has not saved any file under memory/ yet.</div>
+          ) : (
+            <ul className="cx-mem-list">
+              {data.memory.files.map((m) => (
+                <li key={m.path} className="cx-mem-row">
+                  <Link className="cx-link" href={workspaceFileUrl(selected, m.path)}>{m.name}</Link>
+                  <span className="cx-meta">{bytes(m.size)} · {formatDateTimeInTimezone(new Date(m.mtimeMs).toISOString(), {}, timezone)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {data.memory.truncated && <div className="cx-note">Showing the newest {data.memory.files.length} files; the list is cut (too many files, or folders nested deeper than three levels).</div>}
+        </section>
+      </div>
+    );
+  } else {
+    body = null;
+  }
 
   return (
-    <Page>
-      <div style={{ height: '48px', padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxSizing: 'border-box' }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>MEMORY</span>
-        {data?.strategy ? <Pill tone={toneFromHealth(data.strategy.health)}>health: {data.strategy.health}</Pill> : undefined}
-      </div>
-
-      <div className="ui-page" style={{ padding: '24px 20px 40px', overflow: 'auto' }}>
-        <div className="ui-page__inner" style={{ maxWidth: 1280, display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <div style={{ marginBottom: 8 }}>
-            <p style={{ margin: 0, color: 'var(--text-dim)', fontSize: '13px', lineHeight: 1.5 }}>Shared USER for common identity, local MEMORY per agent, local SOUL and AGENTS as operating bootstrap.</p>
-          </div>
-
-        {loading && (
-          <>
-            <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-              {Array.from({ length: 4 }).map((_, index) => (
-                <Metric key={index} title="" value="" loading />
-              ))}
-            </section>
-            <Surface variant="panel">
-              <SkeletonLines count={8} />
-            </Surface>
-          </>
+    <div className="cx-page">
+      <div className="cx-header">
+        <span className="cx-title">CONTEXT</span>
+        {!agentsLoading && agents.length > 0 && (
+          <Select
+            aria-label="Agent"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            options={agents.map((a) => ({ value: a.container, label: a.running ? a.label : `${a.label} (stopped)` }))}
+          />
         )}
-        {error && <div style={{ color: '#fca5a5', fontSize: 13 }}>{error}</div>}
-
-        {data && (
-          <>
-            <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-              {metrics.map((metric) => (
-                <Metric key={metric.label} title={metric.label} value={metric.value} tone="accent" />
-              ))}
-            </section>
-
-            <Surface variant="panel">
-              <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Agent Memory Health</strong>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <Pill>user: {data.strategy.userProfile}</Pill>
-                  <Pill>memory: {data.strategy.memory}</Pill>
-                </div>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
-                  <thead>
-                    <tr style={{ textAlign: 'left', color: '#8a8a92', fontSize: 11 }}>
-                      {['Agent', 'Workspace', 'USER', 'MEMORY', 'AGENTS', 'SOUL', 'HEARTBEAT', 'Strategy', 'Warnings'].map((label) => (
-                        <th key={label} style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontWeight: 500 }}>{label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.agents.map((agent) => (
-                      <tr key={`${agent.agentId}:${agent.workspace}`} style={{ verticalAlign: 'top' }}>
-                        <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 13 }}>{agent.displayName || agent.name}</div>
-                          <div style={{ color: '#8a8a92', fontSize: 11, marginTop: 4 }}>{agent.agentId} · {agent.source.join(', ')}</div>
-                        </td>
-                        <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, color: '#c7c7d0', maxWidth: 220, wordBreak: 'break-word' }}>
-                          <div>{agent.workspace}</div>
-                          <div style={{ color: agent.bootstrapBytes > agent.bootstrapBudgetBytes ? 'var(--warning, #f6c66b)' : '#8a8a92', fontSize: 11, marginTop: 6 }}>
-                            bootstrap {formatBytes(agent.bootstrapBytes)} / {formatBytes(agent.bootstrapBudgetBytes)}
-                          </div>
-                        </td>
-                        {Object.values(agent.files).map((file) => (
-                          <td key={`${agent.agentId}-${file.key}`} style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 11, minWidth: 150 }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <Pill tone={toneFromHealth(file.exists ? 'ok' : 'warning')}>{file.exists ? (file.isSymlink ? 'linked' : 'local') : 'missing'}</Pill>
-                              <div style={{ color: '#8a8a92' }}>{formatBytes(file.size)} · {formatDate(file.mtime, timezone)}</div>
-                              <div style={{ color: '#73737c', wordBreak: 'break-word' }}>{file.path}</div>
-                              {file.symlinkTarget && <div style={{ color: '#b8b8c2', wordBreak: 'break-word' }}>→ {file.symlinkTarget}</div>}
-                            </div>
-                          </td>
-                        ))}
-                        <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <Pill tone={toneFromHealth(agent.strategy.health)}>{agent.strategy.health}</Pill>
-                            <div>USER: {agent.strategy.userProfile}</div>
-                            <div>MEMORY: {agent.strategy.memory}</div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
-                          {agent.warnings.length ? (
-                            <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--warning, #f6c66b)' }}>
-                              {agent.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                            </ul>
-                          ) : (
-                            <span style={{ color: 'var(--green)' }}>No warnings</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Surface>
-
-            <Surface variant="panel">
-              <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Global Context files</strong>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, padding: 14 }}>
-                {data.globalContext.map((file) => (
-                  <Surface key={file.key} as="article" tone={toneFromHealth(file.exists ? 'ok' : 'warning')}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                      <strong style={{ fontSize: 13 }}>{file.key}</strong>
-                      <Pill tone={toneFromHealth(file.exists ? 'ok' : 'warning')}>{file.exists ? 'present' : 'missing'}</Pill>
-                    </div>
-                    <div style={{ color: '#8a8a92', fontSize: 11, wordBreak: 'break-word', marginTop: 8 }}>{file.path}</div>
-                    <div style={{ color: '#b8b8c2', fontSize: 11, marginTop: 4 }}>{formatBytes(file.size)} · {formatDate(file.mtime, timezone)}</div>
-                    {file.symlinkTarget && <div style={{ color: '#b8b8c2', fontSize: 11, marginTop: 4, wordBreak: 'break-word' }}>→ {file.symlinkTarget}</div>}
-                    {file.warnings.length > 0 && (
-                      <ul style={{ margin: '8px 0 0', paddingLeft: 16, color: 'var(--warning, #f6c66b)', fontSize: 11 }}>
-                        {file.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                      </ul>
-                    )}
-                  </Surface>
-                ))}
-              </div>
-            </Surface>
-
-            {data.strategy.warnings.length > 0 && (
-              <Surface variant="panel" tone="warning">
-                <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-                  <strong style={{ fontSize: 12, letterSpacing: '0.08em', color: 'var(--violet)' }}>Warnings</strong>
-                </div>
-                <ul style={{ margin: 0, padding: '12px 14px 12px 32px', color: 'var(--warning, #f6c66b)', fontSize: 12, lineHeight: 1.5 }}>
-                  {data.strategy.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                </ul>
-              </Surface>
-            )}
-          </>
+        {canLoad && (
+          <Button variant="ghost" size="sm" className="cx-reload" onClick={reloadFresh} disabled={loading} aria-label="Reload context">
+            Reload
+          </Button>
         )}
-        </div>
       </div>
-    </Page>
+      <div className="cx-body">{body}</div>
+    </div>
   );
 }

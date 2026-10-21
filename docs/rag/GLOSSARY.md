@@ -55,7 +55,7 @@ The routing layer that connects agents to AI providers. The Gateway page manages
 The tree of the sessions of every agent, read from the agents' own OpenClaw: each agent container, its `main` session, the other sessions, sub-agents an agent spawned (at any depth) and cron runs, with real status, model, tokens and cost. It is an interactive graph on the Lineage page; click a node for its details. Configurable time periods: 1d, 3d, 7d, 15d, 30d and all.
 
 ## Memory
-Files that store an agent's persistent knowledge and personality. The tracked set is USER.md, MEMORY.md, AGENTS.md, SOUL.md and HEARTBEAT.md. Editing them changes how an agent behaves. The Memory page shows these with size and budget tracking. A template may also ship IDENTITY.md or TOOLS.md, which are not tracked.
+Files that store an agent's persistent knowledge and personality. OpenClaw injects some of them into the prompt (AGENTS.md, SOUL.md, IDENTITY.md, USER.md, BOOTSTRAP.md while pending, MEMORY.md when present; not TOOLS.md or HEARTBEAT.md) and cuts a file longer than the per-file cap; daily memory lives under `memory/`. Editing them changes how an agent behaves. The Context page shows, per agent, what is injected and what is cut (read-only); the Workspace page edits the files.
 
 ## Model
 The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 5, DeepSeek Flash. Models are linked to specific providers. The Gateway page controls which models are enabled for the whole deployment; the agent detail panel sets which one a given agent runs, plus its fallbacks. A model whose name the provider has retired is tagged `deprecated` on the agent card and in that panel. The Gateway page does not show it.

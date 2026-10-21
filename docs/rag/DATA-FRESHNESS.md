@@ -162,9 +162,7 @@ is less than 30 seconds old.
 
 **Update frequency:** on demand (files read from disk on each request)
 
-Memory files are read from disk each time they are requested. There is no caching.
-
-The tracked set is `USER.md`, `MEMORY.md`, `AGENTS.md`, `SOUL.md`, `HEARTBEAT.md`.
+The Context page reads the agent's workspace inside its container each time, and the server keeps the answer for 30 seconds per agent (Reload skips it). It holds sizes and times only, never file contents.
 
 ---
 

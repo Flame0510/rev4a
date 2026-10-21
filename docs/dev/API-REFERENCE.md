@@ -2202,19 +2202,33 @@ On gateway-connection failure:
 ## Memory & Context
 
 ### `GET /api/memory-context`
-Memory context snapshot for the current agent workspace.
+The Context page. Read-only; no file contents are ever returned.
 
 **Auth:** browser cookie
+
+Without `agent`: the agent containers for the selector, `{ "agents": [{ "container", "label", "running" }], "dockerAvailable": true }` (`dockerAvailable: false` and an empty list when Docker cannot answer).
+
+With `?agent=<container>`: one read inside that container (a constant `node -e` script, argv only). The answer is cached 30 s per agent; `fresh=1` skips the cache.
 
 **Response:**
 ```json
 {
-  "files": [ { "path": "MEMORY.md", "sizeBytes": 13800, "lastModified": 1749200000000 } ],
-  "totalBytes": 29800,
-  "budgetBytes": 25600,
-  "overBudget": true
+  "agent": "agent_8ba21f83",
+  "files": [
+    { "name": "SOUL.md", "path": "SOUL.md", "exists": true, "chars": 25000, "injected": 20000, "truncated": true },
+    { "name": "MEMORY.md", "path": "MEMORY.md", "exists": true, "chars": 1200, "injected": 1200, "truncated": false,
+      "optional": true, "note": "Only when present; left out in sub-agent, cron, group and channel sessions" }
+  ],
+  "totals": { "injected": 21200, "cap": 60000, "chars": 26200, "truncatedFiles": 1, "linkedFiles": 0 },
+  "other": [{ "name": "TOOLS.md", "path": "TOOLS.md", "chars": 800 }],
+  "limits": { "perFile": { "value": 20000, "source": "default" }, "total": { "value": 60000, "source": "config" } },
+  "memory": { "linked": false, "files": [{ "name": "dreaming/2026-10-20.md", "path": "memory/dreaming/2026-10-20.md", "size": 3100, "mtimeMs": 1792500000000 }], "truncated": false },
+  "rules": { "path": ".rev4a/AGENTS.md", "exists": true, "size": 900, "linked": false }
 }
 ```
+`files` lists the injected files in injection order (AGENTS, SOUL, IDENTITY, USER, BOOTSTRAP, MEMORY); `other` lists TOOLS.md and HEARTBEAT.md when present (not injected, not counted); `chars` is null for a missing file or a symlink (never followed: such a file has `linked: true`, its `injected` is unknown and counted in `totals.linkedFiles`, and the total leaves it out). A whitespace-only file injects 0. A symlinked `memory/` or `.rev4a` folder is not read (`memory.linked`, `rules.linked`). `injected` applies the per-file cap, then the total cap: the file that crosses the total cap is cut to the characters that remain, later files get 0. `limits` come from the agent's `openclaw.json` (`agents.entries.<id>` over `agents.defaults`, keys `bootstrapMaxChars` and `bootstrapTotalMaxChars`) or the OpenClaw defaults (`source`: `config` or `default`). `memory.files` are the newest 200 files under `memory/` by mtime (walked to depth 3, at most 20000 entries visited); `memory.truncated` is true when more exist, the walk was cut or folders lie deeper. Sub-agent sessions only inject AGENTS.md (OpenClaw system-prompt docs). `agents.entries.main` is the entry id on real agents.
+
+**Errors:** 400 invalid or unknown agent; 502 agent not running, no answer in time or unreadable output; 503 Docker not available.
 
 ---
 

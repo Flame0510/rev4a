@@ -103,7 +103,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         href: '/memory',
-        label: 'Memory / Context',
+        label: 'Context',
         icon: (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M3 3.5A1.5 1.5 0 0 1 4.5 2H13v11.5a.5.5 0 0 1-.8.4L9.5 12 6.8 13.9a.5.5 0 0 1-.8-.4V4.5A1.5 1.5 0 0 0 4.5 3H13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
