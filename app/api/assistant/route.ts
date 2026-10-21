@@ -49,7 +49,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/crons': {
     title: 'Crons',
-    description: 'Scheduled cron jobs that run agents on a recurring schedule. Shows schedule expression (cron syntax), last run time, next run time, and status for each job.',
+    description: 'Scheduled cron jobs that run agents on a recurring schedule. Read from the running agents only (there is no host source). Shows schedule expression (cron syntax), last run time, next run time, and status for each job.',
     actions: ['See all scheduled cron jobs at a glance', 'Check when each cron last ran and when it will run next', 'View job status (scheduled, running, completed, error)'],
     hints: 'Cron jobs use standard cron syntax. Tabs and pills show the agent name (the container name is a secondary detail). If a job shows "error" status, it means the last execution failed.',
   },

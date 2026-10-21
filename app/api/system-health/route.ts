@@ -209,11 +209,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const cron = await listOpenClawCronJobs();
     const enabled = cron.jobs.filter((job) => job.enabled !== false).length;
-    const hostCount = cron.jobs.filter((j) => j.source === 'host').length;
-    const containerCount = cron.jobs.filter((j) => j.source === 'container').length;
-    checks.push({ id: 'cron.jobs', label: 'Cron jobs', health: enabled > 0 ? 'ok' : 'warning', value: enabled, details: `${hostCount} host · ${containerCount} container`, source: 'cron' });
+    checks.push({ id: 'cron.jobs', label: 'Cron jobs', health: enabled > 0 ? 'ok' : 'warning', value: enabled, details: `${cron.jobs.length} in agent containers`, source: 'cron' });
     if (enabled === 0) {
-      recommendations.push({ id: 'cron.enable-watchdog', severity: 'warning', source: 'cron', title: 'No enabled cron detected', details: 'No cron jobs are enabled on the host or any agent container.', actionHref: '/crons', dismissible: false, createdAt });
+      recommendations.push({ id: 'cron.enable-watchdog', severity: 'warning', source: 'cron', title: 'No enabled cron detected', details: 'No cron jobs are enabled in any agent container.', actionHref: '/crons', dismissible: false, createdAt });
     }
   } catch (error) {
     checks.push({ id: 'cron.openclaw', label: 'Cron jobs', health: 'warning', value: 'warning', details: (error as Error).message, source: 'cron' });

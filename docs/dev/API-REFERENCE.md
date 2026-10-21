@@ -2149,33 +2149,15 @@ a warning above $10 or with calls without a price, each with its recommendation,
 ## Crons
 
 ### `GET /api/crons`
-List of scheduled cron jobs from the host OpenClaw gateway (via `openclaw cron list --json`) and every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`).
+List of scheduled cron jobs from every running Docker container with the `AGENT_ID` label (via `docker exec openclaw cron list --json`). There is no host source: Rev4a never calls an `openclaw` binary on the host.
 
-Jobs from agent containers include `containerName` and `source: "container"` fields, plus `agentName`: the agent's display name (the container's `AGENT_NAME`), or `null` when the agent has none and for host jobs. The page labels tabs, pills and the detail by `agentName` and shows `containerName` only as a secondary detail. The names come from `lib/agent-names.ts` (one cached `docker inspect` for all containers).
-Jobs from the host gateway have `source: "host"`.
+Every job includes `containerName` and `source: "container"` fields, plus `agentName`: the agent's display name (the container's `AGENT_NAME`), or `null` when the agent has none. The page labels tabs, pills and the detail by `agentName` and shows `containerName` only as a secondary detail. The names come from `lib/agent-names.ts` (one cached `docker inspect` for all containers).
 
 **Auth:** Bearer or browser cookie
 
 **Response:**
 ```json
 [
-  {
-    "id": "eef708de-...",
-    "name": "openclaw-hygiene-nightly",
-    "description": "Nightly workspace cleanup",
-    "schedule": "15 3 * * *",
-    "scheduleExpr": "15 3 * * *",
-    "model": "openai-codex/gpt-5.4-mini",
-    "enabled": true,
-    "source": "host",
-    "state": {
-      "lastStatus": "ok",
-      "lastRunAtMs": 1749100000000,
-      "nextRunAtMs": 1749186000000
-    },
-    "computedNextRunAtMs": 1749186000000,
-    "createdAtMs": 1748000000000
-  },
   {
     "id": "c1b3e47f-...",
     "name": "atlas-weekly-report",
@@ -2193,18 +2175,11 @@ Jobs from the host gateway have `source: "host"`.
 ### `PATCH /api/crons/[id]`
 Update a cron job. Only the `enabled` field can be patched.
 
-For jobs inside a container, pass `containerName` in the body to identify which container to write to.
+`containerName` is required (a valid agent container name); without it the call fails with 400.
 
 **Auth:** Bearer or browser cookie
 
 **Body:**
-```json
-{
-  "enabled": false
-}
-```
-
-**Body (container cron):**
 ```json
 {
   "enabled": false,
@@ -2215,20 +2190,18 @@ For jobs inside a container, pass `containerName` in the body to identify which 
 **Response:**
 ```json
 {
-  "id": "eef708de-...",
-  "name": "openclaw-hygiene-nightly",
-  "enabled": false,
-  "scheduleExpr": "15 3 * * *"
+  "id": "c1b3e47f-...",
+  "enabled": false
 }
 ```
 
 ### `DELETE /api/crons/[id]`
-Remove a cron job permanently. For jobs inside a container, pass `containerName` as a query parameter.
+Remove a cron job permanently from its agent container. `containerName` is required as a query parameter; without a valid one the call fails with 400.
 
 **Auth:** Bearer or browser cookie
 
 **Query params:**
-- `containerName` (optional) — Docker container name for container-scoped jobs
+- `containerName` (required) — Docker container name of the agent that owns the job
 
 **Response:**
 ```json

@@ -30,13 +30,17 @@ export async function PATCH(
     allowed.containerName = body.containerName;
   }
 
-  if (Object.keys(allowed).length === 0) {
-    return NextResponse.json({ error: 'No patchable fields provided' }, { status: 400 });
+  if (typeof allowed.containerName !== 'string') {
+    return NextResponse.json({ error: 'containerName is required' }, { status: 400 });
+  }
+  if (typeof allowed.enabled !== 'boolean') {
+    return NextResponse.json({ error: 'enabled (boolean) is required' }, { status: 400 });
   }
 
   const result = patchCronJob(id, allowed);
   if (!result.ok) {
-    const status = result.error?.includes('not found') ? 404
+    const status = result.badRequest ? 400
+      : result.error?.includes('not found') ? 404
       : result.error?.includes('gateway') || result.error?.includes('Failed') ? 502
       : 500;
     return NextResponse.json({ error: result.error }, { status });
@@ -55,8 +59,8 @@ export async function DELETE(
   const { searchParams } = new URL(request.url);
   const containerName = searchParams.get('containerName') ?? undefined;
 
-  if (containerName !== undefined && !CONTAINER_NAME_RE.test(containerName)) {
-    return NextResponse.json({ error: 'Invalid containerName format' }, { status: 400 });
+  if (!containerName || !CONTAINER_NAME_RE.test(containerName)) {
+    return NextResponse.json({ error: 'Missing or invalid containerName' }, { status: 400 });
   }
 
   const result = removeCronJob(id, containerName);

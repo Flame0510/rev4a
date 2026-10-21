@@ -33,7 +33,7 @@ interface CronJob {
   state?: CronState;
   enabled?: boolean;
   createdAtMs?: number;
-  source?: 'host' | 'container';
+  source?: 'container';
   [key: string]: unknown;
 }
 
@@ -110,9 +110,9 @@ function describeCron(expr: string): string {
 // ── Agent filter helpers ──────────────────────────────────────────────────
 
 interface AgentFilter {
-  key: string;       // 'all' | 'host' | containerName
-  label: string;     // 'ALL' | 'HOST' | agent display name (container name when it has none)
-  source: string;    // 'all' | 'host' | 'container'
+  key: string;       // 'all' | containerName
+  label: string;     // 'ALL' | agent display name (container name when it has none)
+  source: string;    // 'all' | 'container'
   containerName?: string;
 }
 
@@ -121,10 +121,6 @@ function buildAgentFilters(jobs: CronJob[]): AgentFilter[] {
   const filters: AgentFilter[] = [{ key: 'all', label: 'ALL', source: 'all' }];
 
   for (const job of jobs) {
-    if (job.source === 'host' && !seen.has('host')) {
-      seen.add('host');
-      filters.push({ key: 'host', label: 'HOST', source: 'host' });
-    }
     if (job.containerName && !seen.has(job.containerName)) {
       seen.add(job.containerName);
       filters.push({
@@ -140,7 +136,6 @@ function buildAgentFilters(jobs: CronJob[]): AgentFilter[] {
 
 function filterJobs(jobs: CronJob[], agentKey: string): CronJob[] {
   if (agentKey === 'all') return jobs;
-  if (agentKey === 'host') return jobs.filter(j => j.source === 'host');
   return jobs.filter(j => j.containerName === agentKey);
 }
 
@@ -452,7 +447,6 @@ export default function CronsPage() {
 
                   {/* Meta row */}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 10, color: '#555', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
-                    {job.source === 'host' && <span>source: <span style={{ color: '#888' }}>host (gateway)</span></span>}
                     {isContainered && <span>agent: <span style={{ color: '#888' }}>{String(job.agentName ?? job.containerName)}</span></span>}
                     {isContainered && job.agentName && <span title="Container name" style={{ color: '#444' }}>{String(job.containerName)}</span>}
                     {model && <span>model: <span style={{ color: '#888' }}>{String(model)}</span></span>}

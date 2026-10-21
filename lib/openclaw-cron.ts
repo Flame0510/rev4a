@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import { dockerExecNoFail, mapWithConcurrency, buildExecArgs, clientTimeoutMs, isWrapperMissing, unwrappedContainers } from '@/lib/docker-exec';
 
 import { gatewayCliArgv } from '@/lib/gateway-cli';
-import { describeAgent } from '@/lib/agent-names';
+import { describeAgent, CONTAINER_NAME_RE } from '@/lib/agent-names';
 
 const execFileAsync = promisify(execFile);
 
@@ -96,7 +96,7 @@ export interface OpenClawCronJob {
   updatedAtMs?: number;
   sessionTarget?: string;
   wakeMode?: string;
-  source?: 'host' | 'container';
+  source?: 'container';
   delivery?: {
     mode?: string;
     channel?: string;
@@ -171,19 +171,6 @@ function parseCronListOutput(raw: string): OpenClawCronJob[] | null {
   }
 }
 
-async function listJobsOnHost(): Promise<OpenClawCronJob[] | null> {
-  try {
-    // Not a container command — this is the openclaw CLI on the host itself,
-    // so it goes through execFile directly rather than the docker-exec helper.
-    const raw = await execFileAsync('openclaw', ['cron', 'list', '--json', '--all'], {
-      encoding: 'utf8', timeout: 15000,
-    });
-    return parseCronListOutput(raw.stdout);
-  } catch {
-    return null;
-  }
-}
-
 async function listJobsInContainer(containerName: string): Promise<OpenClawCronJob[] | null> {
   // Try both common agent gateway ports. Agents default to 3000 (OpenClaw
   // gateway --bind lan --port 3000) but may also run on 18789 (default).
@@ -210,18 +197,6 @@ async function listJobsInContainer(containerName: string): Promise<OpenClawCronJ
 
 // ── PATCH helpers ────────────────────────────────────────────────────────
 
-function toggleOnHost(jobId: string, enabled: boolean): boolean {
-  try {
-    const action = enabled ? 'enable' : 'disable';
-    execFileSync('openclaw', ['cron', action, jobId], {
-      encoding: 'utf8', timeout: 10000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function toggleInContainer(containerName: string, jobId: string, enabled: boolean): boolean {
   const gatewayUrls = [
     'http://127.0.0.1:3000',
@@ -237,32 +212,16 @@ function toggleInContainer(containerName: string, jobId: string, enabled: boolea
   return false;
 }
 
-// ── List: host gateway + per-container cron ─────────────────────────────
+// ── List: per-container cron ─────────────────────────────
 
 export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   const seen = new Set<string>();
   const jobs: OpenClawCronJob[] = [];
 
-  // The host query and the agent discovery don't depend on each other, so they
-  // overlap. Everything below is ordered deterministically afterwards — host
-  // jobs first, then agents in discovery order — so the response doesn't shuffle
-  // between polls just because a container answered sooner this time.
-  const [hostJobs, agents] = await Promise.all([
-    listJobsOnHost(),
-    discoverAgentContainers(),
-  ]);
+  const agents = await discoverAgentContainers();
 
-  // 1. Host gateway cron jobs
-  if (hostJobs) {
-    for (const job of hostJobs) {
-      job.scheduleExpr = extractScheduleExpr(job);
-      job.source = 'host';
-      jobs.push(job);
-      if (job.id) seen.add(job.id);
-    }
-  }
-
-  // 2. Agent container cron jobs — queried concurrently, merged in order.
+  // Agent container cron jobs, queried concurrently and merged in discovery order, so the
+  // response doesn't shuffle between polls just because a container answered sooner.
   const perAgent = await mapWithConcurrency(
     agents,
     AGENT_QUERY_CONCURRENCY,
@@ -288,12 +247,14 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   return { ok: true, jobs, total: jobs.length };
 }
 
-// ── Patch: try container first (if containerName given), then host ──────
+// ── Patch: always inside an agent container ─────────────────────────────
 
 export interface CronPatchResult {
   ok: boolean;
   job?: OpenClawCronJob;
   error?: string;
+  /** True when the request named no valid container (HTTP 400). */
+  badRequest?: boolean;
 }
 
 // ── Cron run history ─────────────────────────────────────────────────────
@@ -356,17 +317,14 @@ export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronP
     return { ok: false, error: 'Only the enabled field can be patched' };
   }
 
-  const containerName = (patch as any).containerName;
-
-  if (containerName) {
-    const ok = toggleInContainer(containerName, id, patch.enabled);
-    if (ok) return { ok: true, job: { id, enabled: patch.enabled } as OpenClawCronJob };
-    return { ok: false, error: `Failed to toggle cron in ${describeAgent(containerName)}` };
+  const containerName = patch.containerName;
+  if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) {
+    return { ok: false, error: 'A valid containerName is required', badRequest: true };
   }
 
-  const ok = toggleOnHost(id, patch.enabled);
+  const ok = toggleInContainer(containerName, id, patch.enabled);
   if (ok) return { ok: true, job: { id, enabled: patch.enabled } as OpenClawCronJob };
-  return { ok: false, error: 'Failed to toggle cron on host gateway' };
+  return { ok: false, error: `Failed to toggle cron in ${describeAgent(containerName)}` };
 }
 
 // ── Remove ─────────────────────────────────────────────────────────────
@@ -374,17 +332,8 @@ export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronP
 export interface CronRemoveResult {
   ok: boolean;
   error?: string;
-}
-
-function removeOnHost(jobId: string): boolean {
-  try {
-    execFileSync('openclaw', ['cron', 'remove', jobId], {
-      encoding: 'utf8', timeout: 10000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  /** True when the request named no valid container (HTTP 400). */
+  badRequest?: boolean;
 }
 
 function removeInContainer(containerName: string, jobId: string): boolean {
@@ -402,13 +351,10 @@ function removeInContainer(containerName: string, jobId: string): boolean {
 }
 
 export function removeCronJob(id: string, containerName?: string): CronRemoveResult {
-  if (containerName) {
-    const ok = removeInContainer(containerName, id);
-    if (ok) return { ok: true };
-    return { ok: false, error: `Failed to remove cron job in ${describeAgent(containerName)}` };
+  if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) {
+    return { ok: false, error: 'A valid containerName is required', badRequest: true };
   }
-
-  const ok = removeOnHost(id);
+  const ok = removeInContainer(containerName, id);
   if (ok) return { ok: true };
-  return { ok: false, error: 'Failed to remove cron job on host gateway' };
+  return { ok: false, error: `Failed to remove cron job in ${describeAgent(containerName)}` };
 }

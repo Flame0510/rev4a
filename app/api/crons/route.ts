@@ -11,8 +11,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
   const result = await listOpenClawCronJobs();
-  // `agentName` is the agent's display name (AGENT_NAME); null for host jobs and for an
-  // agent without one. Additive: `containerName` and `agentId` are unchanged.
+  // `agentName` is the agent's display name (AGENT_NAME); null for an agent without one. Additive: `containerName` and `agentId` are unchanged.
   const containers = result.jobs.map((j) => j.containerName).filter((c): c is string => !!c);
   const names = await getAgentDisplayNames(containers);
   return NextResponse.json(
