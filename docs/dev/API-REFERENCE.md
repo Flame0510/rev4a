@@ -2467,19 +2467,26 @@ found the shell gone, `4003` opened in another tab, `4404` no container, `4409` 
 
 ## Plugins
 
+Plugins are read per agent, from inside the agent's container. Nothing runs on the host.
+
 ### `GET /api/plugins`
-List installed OpenClaw plugins.
+The agent containers for the page's selector.
 
 **Auth:** browser cookie
 
-**Response:** `{ "plugins": [ { "id": "file-transfer", "enabled": true, ... } ] }`
+**Response:** `{ "agents": [ { "container": "agent_2a3c3a07", "label": "Atlas", "running": true } ], "dockerAvailable": true }`. With Docker down: `{ "agents": [], "dockerAvailable": false }`.
 
-### `POST /api/plugins`
-Enable or disable a plugin.
+### `GET /api/plugins?agent=<container>`
+The plugins of one running agent. The route runs `openclaw plugins list --json` in the container through `dockerExec` (argv, 60 s limit; it needs no gateway), parses it with `lib/agent-plugins.ts` and caches the result per container for about 60 s. Concurrent requests for one container share a single CLI run; if every waiting request is dropped (the page switched agent) the run is cancelled. `fresh=1` (the Reload and Retry buttons only) skips the cache and joins only a run started after the request arrived. Log lines before or after the JSON are ignored, a repeated plugin id keeps its first entry, descriptions are cut at 500 characters and the list at 2,000 entries.
 
-**Body:** `{ "action": "enable" | "disable", "pluginId": "file-transfer" }`
+**Auth:** browser cookie
 
-**Response:** `{ "ok": true }`
+**Response:** `{ "agent": "agent_2a3c3a07", "plugins": [ { "id": "file-transfer", "name": "File Transfer", "version": "1.0.0", "description": "...", "enabled": true, "status": "loaded", "origin": "bundled", "tools": 3, "hooks": 1, "channels": [], "providers": [] } ], "truncated": false }`, enabled plugins first, then by name. `truncated` is `true` when the list was cut at 2,000 entries.
+
+**Errors** (short messages; the CLI's own output is only logged on the server): `400` invalid or unknown agent; `500` "Could not list plugins" for any other failure; `502` the agent is stopped, did not answer in time, returned an unreadable list, or runs an OpenClaw that cannot list plugins ("update the agent"); `503` Docker is not available.
+
+### `POST /api/plugins`, `PUT /api/plugins`
+`405 { "error": "Not available yet" }`. Enabling and disabling plugins is not available yet.
 
 ---
 

@@ -64,7 +64,7 @@ The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 5, De
 First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar. The mobile bottom navigation has five entries — Home, Agents, Workspace, Gateway, Containers — and the wizard is not one of them.
 
 ## Plugin
-An extension that adds new tools and capabilities to agents. Plugins are installed in the workspace and appear in the Plugins page with enable/disable toggles.
+An extension that adds new tools and capabilities to agents. The Plugins page reads the plugins of one agent from its container and lists each agent's plugins read-only (enabling and disabling is not available yet).
 
 ## Provider
 An AI service provider (OpenAI, Anthropic, Groq, OpenRouter, DeepSeek, etc.) that hosts models. Provider API keys are configured in the Gateway page or via the first-run wizard.

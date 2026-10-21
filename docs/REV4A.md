@@ -114,7 +114,7 @@ When environment variables are saved via the Config page (Save & Restart):
 | `/credentials` | Third-party tool credentials (GitHub, Trello, Vercel, Supabase, Notion, MongoDB) — SQLite vault; each credential has a switch per agent that delivers it through OpenClaw (environment entries and skill config for Trello, Notion and Supabase, a connection string plus `mongosh` and a shared skill for MongoDB, the managed GitHub identity, the Vercel CLI's own files) |
 | `/subscriptions` | ChatGPT (Codex) accounts per agent: connect an agent by device code (Rev4a shows a link and a code, you enter the code on OpenAI), see until when each agent is connected, see the account's usage limits (5 hours and weekly, with reset times), see the model each agent uses (read-only, with a link to the agent panel where it is chosen), disconnect. The tokens stay in the agent's volume; Rev4a stores nothing |
 | `/setup` | First-run password setup — sets `REV4A_PASSWORD` and the JWT secret before the dashboard is reachable |
-| `/plugins` | Plugin manager |
+| `/plugins` | Plugins of each agent, read from its container (read-only; agent selector, search, enabled filter) |
 | `/skills` | Skill registry — browse/edit all skills (shared, per-agent workspace, bundled). Promote agent skills to shared with one click. Rev4a's own skills (`rev4a-*`) show "Managed by Rev4a" and are read-only. |
 | `/tools` | Tool configuration |
 | `/gateway` | LLM provider keys, model catalogue and sync — see [GATEWAY.md](dev/GATEWAY.md) |

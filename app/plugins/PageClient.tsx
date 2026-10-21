@@ -1,295 +1,235 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useResponsive } from '../design-system';
-import { Button, Pill, LoadingSpinner, Switch } from '../components/ui';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Input, LoadingSpinner, Pill, Select } from '../components/ui';
+import { apiFetch } from '@/lib/apiFetch';
+import { pluginsUrl, type AgentPlugin } from '@/lib/agent-plugins';
 
-type BadgeColor = 'green' | 'red' | 'gray' | 'violet' | 'blue';
-
-function Badge({ children, color }: { children: React.ReactNode; color: BadgeColor }) {
-  const toneMap: Record<BadgeColor, 'success' | 'danger' | 'neutral' | 'accent' | 'info'> = {
-    green: 'success', red: 'danger', gray: 'neutral', violet: 'accent', blue: 'info',
-  };
-  return <Pill tone={toneMap[color]}>{children}</Pill>;
+interface AgentRow {
+  container: string;
+  label: string;
+  running: boolean;
 }
 
-function PanelTitle({ children }: { children: React.ReactNode }) {
+type Filter = 'all' | 'enabled' | 'disabled';
+
+function isAbort(e: unknown): boolean {
+  return (e as { name?: string } | null)?.name === 'AbortError';
+}
+
+async function errorText(res: Response): Promise<string> {
+  try {
+    const data = await res.json() as { error?: unknown };
+    if (typeof data.error === 'string' && data.error) return data.error;
+  } catch { /* not JSON */ }
+  return `Request failed (HTTP ${res.status})`;
+}
+
+function StatePanel({ title, message, action, tone = 'muted' }: { title: string; message?: string; action?: React.ReactNode; tone?: 'muted' | 'error' }) {
   return (
-    <div style={{
-      padding: '10px 20px',
-      fontSize: 10,
-      letterSpacing: 2,
-      color: 'var(--violet)',
-      borderBottom: '1px solid var(--border)',
-      background: 'var(--bg2)',
-      textTransform: 'uppercase',
-      flexShrink: 0,
-      fontFamily: 'var(--font-mono-stack)',
-    }}>
-      {children}
+    <div className={`pl-state${tone === 'error' ? ' pl-state--error' : ''}`} role={tone === 'error' ? 'alert' : 'status'}>
+      <div className="pl-state-title">{title}</div>
+      {message && <div className="pl-state-message">{message}</div>}
+      {action}
     </div>
   );
 }
 
-function EmptyState({ message }: { message: string }) {
-  return <div className="empty-state">{message}</div>;
+function countLabel(n: number, one: string): string {
+  return `${n} ${one}${n === 1 ? '' : 's'}`;
 }
 
-function ErrorState({ message }: { message: string }) {
-  return <div className="error-state">⚠ {message}</div>;
-}
-
-function LoadingState() {
-  return <LoadingSpinner label="LOADING" compact />;
-}
-
-// ─── Plugin type ──────────────────────────────────────────────────────────────
-
-interface Plugin {
-  id: string;
-  name?: string;
-  enabled: boolean;
-  status?: string;
-  version?: string;
-  origin?: string;
-  format?: string;
-  source?: string;
-  toolNames?: string[];
-  channelIds?: string[];
-  providerIds?: string[];
-  cliBackendIds?: string[];
-  hookNames?: string[];
-  services?: string[];
-  compat?: string[];
-}
-
-interface RowProps { label: string; value: string; mono?: boolean; small?: boolean; }
-function Row({ label, value, mono, small }: RowProps) {
+function PluginRow({ p }: { p: AgentPlugin }) {
+  const facts: string[] = [];
+  if (p.tools > 0) facts.push(countLabel(p.tools, 'tool'));
+  if (p.hooks > 0) facts.push(countLabel(p.hooks, 'hook'));
+  if (p.channels.length > 0) facts.push(`channels: ${p.channels.join(', ')}`);
+  if (p.providers.length > 0) facts.push(`providers: ${p.providers.join(', ')}`);
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', marginBottom: 2 }}>{label.toUpperCase()}</div>
-      <div style={{
-        fontFamily: "'JetBrains Mono', monospace",
-        fontSize: small ? 10 : 12,
-        color: 'var(--text)',
-        wordBreak: 'break-all',
-        ...(mono ? { background: 'var(--bg3)', padding: '4px 8px', borderRadius: 0, border: '1px solid #222228' } : {}),
-      }}>
-        {value}
+    <li className="pl-row">
+      <div className="pl-row-head">
+        <span className="pl-row-name">{p.name}</span>
+        {p.version && <span className="pl-row-version">v{p.version}</span>}
+        <Pill tone={p.enabled ? 'success' : 'neutral'}>{p.enabled ? 'enabled' : 'disabled'}</Pill>
+        {p.status && p.status !== 'enabled' && p.status !== 'disabled' && <Pill tone="info">{p.status}</Pill>}
+        {p.origin && <Pill tone="accent">{p.origin}</Pill>}
       </div>
-    </div>
+      {p.name !== p.id && <div className="pl-row-id">{p.id}</div>}
+      {p.description && <div className="pl-row-desc">{p.description}</div>}
+      {facts.length > 0 && <div className="pl-row-facts">{facts.join(' · ')}</div>}
+    </li>
   );
 }
 
 export default function PluginsPage() {
-  const [plugins, setPlugins] = useState<Plugin[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [dockerAvailable, setDockerAvailable] = useState(true);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [agentsReload, setAgentsReload] = useState(0);
+  const [selected, setSelected] = useState('');
+
+  const [plugins, setPlugins] = useState<AgentPlugin[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Plugin | null>(null);
-  const [filter, setFilter] = useState('all');
-  const [toggling, setToggling] = useState<string | null>(null);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const isMobile = useResponsive('lg');
+  const [reload, setReload] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  /** Set by a Reload or Retry click and used by the next request only: an agent switch keeps the server cache. */
+  const freshRef = useRef(false);
+  const reloadFresh = () => { freshRef.current = true; setReload((n) => n + 1); };
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/plugins', { credentials: 'same-origin', signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!signal?.aborted) setPlugins(data.plugins || []);
-    } catch (e) {
-      if ((e as Error)?.name === 'AbortError') return;
-      if (!signal?.aborted) setError((e as Error).message);
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, []);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
 
+  const pluginsAbortRef = useRef<AbortController | null>(null);
+
+  // The agent list, on mount and on "Check again".
   useEffect(() => {
     const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  const filtered = plugins.filter(p => {
-    if (filter === 'enabled') return p.enabled;
-    if (filter === 'disabled') return !p.enabled;
-    return true;
-  });
-
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3000);
-  };
-
-  const handleToggle = async (plugin: Plugin) => {
-    const action = plugin.enabled ? 'disable' : 'enable';
-    setToggling(plugin.id);
-    try {
-      const res = await fetch('/api/plugins', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ action, pluginId: plugin.id }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        showToast(`Plugin ${plugin.id} ${action}d`);
-        await load();
-        if (selected?.id === plugin.id) setSelected(p => p ? { ...p, enabled: !p.enabled } : p);
-      } else {
-        showToast(`Error: ${data.error}`);
+    setAgentsLoading(true);
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/plugins', { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (controller.signal.aborted) return;
+          setAgents([]); setAgentsError(message);
+          return;
+        }
+        const data = await res.json() as { agents?: AgentRow[]; dockerAvailable?: boolean };
+        if (controller.signal.aborted) return;
+        const list = Array.isArray(data.agents) ? data.agents : [];
+        setAgents(list);
+        setDockerAvailable(data.dockerAvailable !== false);
+        setAgentsError(null);
+        setSelected((prev) => (list.some((a) => a.container === prev) ? prev : (list.find((a) => a.running) ?? list[0])?.container ?? ''));
+      } catch (e) {
+        if (isAbort(e) || controller.signal.aborted) return;
+        setAgents([]); setAgentsError('Could not load the agent list.');
+      } finally {
+        if (!controller.signal.aborted) setAgentsLoading(false);
       }
-    } catch (e) {
-      showToast(`Error: ${(e as Error).message}`);
-    } finally {
-      setToggling(null);
+    })();
+    return () => controller.abort();
+  }, [agentsReload]);
+
+  const current = agents.find((a) => a.container === selected) ?? null;
+  const canLoad = dockerAvailable && current != null && current.running;
+
+  // The selected agent's plugins: the latest request wins (AGENTS.md 2.2b.10).
+  useEffect(() => {
+    pluginsAbortRef.current?.abort();
+    if (!canLoad) {
+      setPlugins([]); setError(null); setLoading(false);
+      return;
     }
-  };
+    const controller = new AbortController();
+    pluginsAbortRef.current = controller;
+    setLoading(true);
+    setError(null);
+    setPlugins([]); setTruncated(false);
+    const fresh = freshRef.current;
+    freshRef.current = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(pluginsUrl(selected, fresh), { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          const message = await errorText(res);
+          if (!controller.signal.aborted) setError(message);
+          return;
+        }
+        const data = await res.json() as { plugins?: AgentPlugin[]; truncated?: boolean };
+        if (controller.signal.aborted) return;
+        setPlugins(Array.isArray(data.plugins) ? data.plugins : []);
+        setTruncated(data.truncated === true);
+      } catch (e) {
+        if (isAbort(e) || controller.signal.aborted) return;
+        setError('Could not load the plugins.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [selected, canLoad, reload]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return plugins.filter((p) => {
+      if (filter === 'enabled' && !p.enabled) return false;
+      if (filter === 'disabled' && p.enabled) return false;
+      if (!q) return true;
+      return p.id.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
+    });
+  }, [plugins, query, filter]);
+
+  const enabledCount = plugins.filter((p) => p.enabled).length;
+
+  let body: React.ReactNode;
+  if (agentsLoading) {
+    body = <LoadingSpinner label="LOADING" compact />;
+  } else if (agentsError) {
+    body = <StatePanel tone="error" title="Could not load the agent list" message={agentsError} action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Retry</Button>} />;
+  } else if (!dockerAvailable) {
+    body = <StatePanel tone="error" title="Docker is not running" message="Start Docker to see the plugins of your agents." action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Check again</Button>} />;
+  } else if (agents.length === 0) {
+    body = <StatePanel title="No agents yet" message="Create an agent on the Agents page to see its plugins here." />;
+  } else if (current && !current.running) {
+    body = <StatePanel title="This agent is not running. Start it from the Agents page." action={<Button variant="secondary" size="sm" onClick={() => setAgentsReload((n) => n + 1)}>Check again</Button>} />;
+  } else if (loading) {
+    body = <LoadingSpinner label="LOADING PLUGINS" compact />;
+  } else if (error) {
+    body = <StatePanel tone="error" title="Could not load the plugins" message={error} action={<Button variant="secondary" size="sm" onClick={reloadFresh}>Retry</Button>} />;
+  } else if (plugins.length === 0) {
+    body = <StatePanel title="This agent has no plugins" />;
+  } else if (shown.length === 0) {
+    body = <StatePanel title="No plugins match" />;
+  } else {
+    body = <ul className="pl-list">{shown.map((p) => <PluginRow key={p.id} p={p} />)}</ul>;
+  }
+
+  const showTools = canLoad && !loading && !error && plugins.length > 0;
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      flex: 1,
-      background: 'var(--bg)',
-      color: 'var(--text)',
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 14px',
-        height: 48,
-        borderBottom: '1px solid var(--border)',
-        background: 'var(--bg)',
-        flexShrink: 0,
-        boxSizing: 'border-box',
-      }}>
-        <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>PLUGINS</span>
+    <div className="pl-page">
+      <div className="pl-header">
+        <span className="pl-title">PLUGINS</span>
+        {!agentsLoading && agents.length > 0 && (
+          <Select
+            aria-label="Agent"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            options={agents.map((a) => ({ value: a.container, label: a.running ? a.label : `${a.label} (stopped)` }))}
+          />
+        )}
+        {showTools && <span className="pl-count">{enabledCount} of {plugins.length} enabled{truncated ? " (list cut at 2000)" : ""}</span>}
+        {canLoad && (
+          <Button variant="ghost" size="sm" onClick={reloadFresh} disabled={loading} aria-label="Reload plugins">
+            Reload
+          </Button>
+        )}
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : 'row', overflow: 'hidden' }}>
-        {/* List */}
-        <div style={{ width: isMobile ? '100%' : 340, maxHeight: isMobile ? '45%' : '100%', borderRight: isMobile ? 'none' : '1px solid #222228', borderBottom: isMobile ? '1px solid #222228' : 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Filter bar */}
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid #222228', background: 'var(--bg2)', display: 'flex', gap: 6 }}>
-            {(['all', 'enabled', 'disabled'] as const).map(f => (
+      {showTools && (
+        <div className="pl-toolbar">
+          <div className="pl-search">
+            <Input
+              aria-label="Search plugins"
+              placeholder="Search plugins"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <div className="pl-filters">
+            {(['all', 'enabled', 'disabled'] as const).map((f) => (
               <Button key={f} variant={filter === f ? 'primary' : 'ghost'} size="sm" onClick={() => setFilter(f)}>
                 {f.toUpperCase()}
               </Button>
             ))}
-            <Button variant="ghost" size="sm" onClick={() => load()} style={{ marginLeft: 'auto' }}>
-              ⟳
-            </Button>
-          </div>
-
-          {/* List body */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {loading && <LoadingState />}
-            {!loading && error && <ErrorState message={error} />}
-            {!loading && !error && filtered.length === 0 && <EmptyState message="no plugins match" />}
-            {!loading && !error && filtered.map(p => (
-              <div
-                key={p.id}
-                onClick={() => setSelected(p)}
-                style={{
-                  padding: '10px 14px',
-                  borderBottom: '1px solid #18181c',
-                  cursor: 'pointer',
-                  background: selected?.id === p.id ? 'var(--bg3)' : 'transparent',
-                  borderLeft: selected?.id === p.id ? '2px solid #925BFC' : '2px solid transparent',
-                  transition: 'all 0.1s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text)', flex: 1 }}>
-                    {p.name || p.id}
-                  </span>
-                  <Badge color={p.enabled ? 'green' : 'gray'}>{p.status || (p.enabled ? 'enabled' : 'disabled')}</Badge>
-                </div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-dim)' }}>
-                  {p.id} {p.version ? `· v${p.version}` : ''}
-                </div>
-              </div>
-            ))}
           </div>
         </div>
-
-        {/* Detail */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {!selected ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#333', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-              ← select a plugin
-            </div>
-          ) : (
-            <>
-              <PanelTitle>PLUGIN — {selected.id}</PanelTitle>
-              <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-                  <h2 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: 'var(--text)', margin: 0 }}>{selected.name || selected.id}</h2>
-                  <Badge color={selected.enabled ? 'green' : 'gray'}>{selected.status || (selected.enabled ? 'enabled' : 'disabled')}</Badge>
-                  <Badge color={selected.origin === 'bundled' ? 'blue' : 'violet'}>{selected.origin || 'unknown'}</Badge>
-                </div>
-
-                {selected.version && <Row label="Version" value={selected.version} />}
-                <Row label="ID" value={selected.id} />
-                <Row label="Format" value={selected.format || '—'} />
-                {selected.source && <Row label="Source" value={selected.source} mono small />}
-
-                {([
-                  ['Tools', selected.toolNames],
-                  ['Channels', selected.channelIds],
-                  ['Providers', selected.providerIds],
-                  ['CLI Backends', selected.cliBackendIds],
-                  ['Hooks', selected.hookNames],
-                  ['Services', selected.services],
-                ] as [string, string[] | undefined][]).map(([label, arr]) => arr && arr.length > 0 && (
-                  <div key={label} style={{ marginBottom: 12 }}>
-                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>{label.toUpperCase()}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {arr.map(s => <Badge key={s} color="gray">{s}</Badge>)}
-                    </div>
-                  </div>
-                ))}
-
-                {selected.compat && selected.compat.length > 0 && (
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>COMPAT</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {selected.compat.map(c => <Badge key={c} color="violet">{c}</Badge>)}
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ marginTop: 24 }}>
-                  <Switch
-                    checked={selected.enabled}
-                    loading={toggling === selected.id}
-                    disabled={toggling !== null}
-                    label={selected.enabled ? 'Enabled' : 'Disabled'}
-                    ariaLabel="Plugin enabled"
-                    onChange={() => handleToggle(selected)}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {toastMsg && (
-          <div style={{
-            position: 'fixed', bottom: 24, right: 24,
-            background: 'var(--bg2)', border: '1px solid #925BFC',
-            color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 12, padding: '10px 18px', borderRadius: 0,
-            zIndex: 1000,
-          }}>
-            {toastMsg}
-          </div>
-        )}
-      </div>
+      )}
+      <div className="pl-body">{body}</div>
     </div>
   );
 }

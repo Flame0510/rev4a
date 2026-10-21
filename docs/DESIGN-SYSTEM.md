@@ -14,7 +14,7 @@ Centralized in `app/design-system.ts` as `Breakpoint` object and exposed via the
 |-------|-------|---------|
 | `Breakpoint.sm` | 576px | Mobile bottom nav centering |
 | `Breakpoint.md` | 768px | Dashboard, Lineage, SessionDrawer, Providers |
-| `Breakpoint.lg` | 992px | Agents (dense/fold devices), Crons, Plugins/Skills |
+| `Breakpoint.lg` | 992px | Agents (dense/fold devices), Crons, Skills |
 | `Breakpoint.xl` | 1200px | Reserved |
 | `Breakpoint.xxl` | 1400px | Reserved |
 
@@ -104,7 +104,8 @@ The hook uses `matchMedia` (passive, zero-CPU) and returns `boolean`.
 |------|-----------|----------------------|
 | Agents | `lg` (992px) | Single-column stacked: AGENTS → FILES+CONFIG → EDITOR |
 | Crons | `lg` (992px) | Tab navigation: jobs / runs |
-| Plugins/Skills | `lg` (992px) | Sidebar → Detail step |
+| Skills | `lg` (992px) | Sidebar → Detail step |
+| Plugins | none | Single list: header with agent selector and Reload wraps; search and filter wrap; no detail step |
 | Dashboard | `md` (768px) | Mobile header nav |
 | Lineage | `md` (768px) | Mobile tab: graph / feed |
 | SessionDrawer | `md` (768px) | Full-width drawer / compact |

@@ -121,9 +121,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/plugins': {
     title: 'Plugins',
-    description: 'Installed OpenClaw plugins that extend agent capabilities with new tools and integrations.',
-    actions: ['View all installed plugins', 'See each plugin\'s name, source, and description', 'Check which tools each plugin provides'],
-    hints: 'Plugins are loaded from the workspace plugins directory. Each plugin can add one or more tools to agents.',
+    description: 'The OpenClaw plugins of one agent, read from its container. Plugins extend an agent with new tools and integrations.',
+    actions: ['Pick an agent at the top', 'Search plugins by name, id or description', 'Filter enabled or disabled plugins', 'See each plugin\'s version, status, description and how many tools and hooks it adds'],
+    hints: 'The page is read-only for now: turning a plugin on or off is not available yet. A stopped agent must be started first. The list is cached for about a minute; Reload refreshes it.',
   },
   '/skills': {
     title: 'Skills',
