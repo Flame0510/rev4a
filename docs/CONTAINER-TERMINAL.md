@@ -36,7 +36,7 @@ locally or over a plain-IP VPS. Behind a proxy, see [Reverse proxies](#reverse-p
 | Process | Listens on | Role |
 |---|---|---|
 | `server.js` | 3740, all interfaces | Next.js (pages, API, `proxy.ts`) through its programmatic API, plus the WebSocket upgrade on `/api/terminal-ws` |
-| `daemon.js` | — | Session poll and machine metrics |
+| `daemon.js` | — | Session collector (reads each agent container) and machine metrics |
 | `terminal-ws-server.js` | 127.0.0.1:3741 | The PTYs and their sessions |
 
 The terminal server is its own process so a flood of shell output never stalls the

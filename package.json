@@ -36,7 +36,6 @@
     "rev4a-rules/",
     "rev4a-skills/",
     "daemon.js",
-    "lineage.js",
     "terminal-ws-server.js",
     "server.js",
     "package.json",

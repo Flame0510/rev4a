@@ -5,12 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useResponsive } from '../design-system';
 import type { SessionDetail } from '@/lib/types';
 import { Rev4aApiClient } from '@/lib/patterns/ApiClient';
-import { deriveSessionDisplayLabel } from '@/lib/patterns/sessionPresentation';
+import { deriveSessionDisplayLabel, sessionState } from '@/lib/patterns/sessionPresentation';
 import {
   formatUsd,
-  formatUsdOrDash,
   formatTokens,
   formatTimeFromUnixSeconds,
+  getTimeZone,
   formatDuration,
   truncate,
   statusColor,
@@ -19,7 +19,23 @@ import {
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import Rev4aLoader from './Rev4aLoader';
 
+/** Date and time in the dashboard time zone (the shared formatter shows the time only). Milliseconds in. */
+function formatStamp(ms: number | null | undefined): string {
+  if (!ms) return '-';
+  return new Date(ms).toLocaleString('en-GB', {
+    timeZone: getTimeZone(),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 interface SessionDrawerProps {
+  /** The session's uid: `<container>|<session_key>`. */
   sessionId: string | null;
   onClose: () => void;
 }
@@ -72,7 +88,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
       setLoading(true);
       setError('');
       try {
-        const data = await Rev4aApiClient.fetchSessionDetail(sessionId);
+        const data = await Rev4aApiClient.fetchSessionDetail(sessionId, controller.signal);
         if (!controller.signal.aborted) setDetail(data);
       } catch (e: unknown) {
         if (!controller.signal.aborted) {
@@ -91,6 +107,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
 
   const { session, events, children } = detail ?? { session: null, events: [], children: [] };
   const endedOrUpdated = session?.ended_at ?? session?.updated_at ?? null;
+  const state = session ? sessionState(session) : 'idle';
 
   return (
     <>
@@ -178,27 +195,29 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
             <div style={{ color: 'var(--violet)', fontSize: 12, marginBottom: 8 }}>
               {truncate(deriveSessionDisplayLabel(session), 40)}
             </div>
-            <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 10 }}>
-              {truncate(session.session_id, 60)}
+            <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 10, overflowWrap: 'anywhere' }}>
+              {truncate(session.session_key, 80)}
             </div>
             <Grid>
+              <Row label="AGENT">{session.agent_name ?? session.container}</Row>
+              <Row label="CONTAINER">{session.container}</Row>
+              <Row label="KIND">{session.kind || '-'}</Row>
               <Row label="STATUS">
-                <span style={{ color: statusColor(session.status) }}>●</span>{' '}
-                {session.status ?? 'idle'}
+                <span style={{ color: statusColor(state) }}>●</span>{' '}
+                {session.status || 'idle'}
+                {session.gone_at ? ' (container gone)' : ''}
               </Row>
-              <Row label="TYPE">
-                {session.session_id.includes(':cron:') ? 'cron' : 'session'}
+              {session.last_error && <Row label="ERROR">{truncate(session.last_error, 200)}</Row>}
+              <Row label="MODEL">{[session.provider, session.model].filter(Boolean).join(' / ') || '-'}</Row>
+              <Row label="COST">{session.cost_usd === null ? 'not priced' : formatUsd(session.cost_usd)}</Row>
+              <Row label="TOKENS">
+                in: {formatTokens(session.input_tokens)} out: {formatTokens(session.output_tokens)} total: {formatTokens(session.total_tokens)}
               </Row>
-              <Row label="MODEL">{session.model ?? '-'}</Row>
-              <Row label="COST">{formatUsdOrDash(session.cost_usd)}</Row>
-              <Row label="TOKEN">
-                in: {formatTokens(session.tokens_in)} out: {formatTokens(session.tokens_out)}
-              </Row>
-              <Row label="STARTED">{formatTimeFromUnixSeconds(session.started_at)}</Row>
-              <Row label="UPDATED">{formatTimeFromUnixSeconds(session.updated_at)}</Row>
-              <Row label="ENDED">{formatTimeFromUnixSeconds(session.ended_at)}</Row>
+              <Row label="STARTED">{formatStamp(session.started_at)}</Row>
+              <Row label="UPDATED">{formatStamp(session.updated_at)}</Row>
+              <Row label="ENDED">{formatStamp(session.ended_at)}</Row>
               <Row label="DURATION">{formatDuration(session.started_at, endedOrUpdated)}</Row>
-              <Row label="TASK">{truncate(session.task_preview ?? '-', 200)}</Row>
+              {session.cron_job_id && <Row label="CRON JOB">{truncate(session.cron_job_id, 40)}</Row>}
             </Grid>
           </Section>
 
@@ -220,10 +239,10 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
           <Section title="CHILD SESSIONS">
             {children.length === 0 && <Muted>No child sessions</Muted>}
             {children.map((child) => (
-              <div key={child.session_id} style={{ fontSize: 12 }}>
+              <div key={child.uid} style={{ fontSize: 12 }}>
                 <div>{truncate(deriveSessionDisplayLabel(child), 44)}</div>
                 <Muted>
-                  {child.status ?? 'idle'} {formatUsdOrDash(child.cost_usd)}
+                  {child.status || 'idle'} {child.cost_usd === null ? 'not priced' : formatUsd(child.cost_usd)}
                 </Muted>
               </div>
             ))}

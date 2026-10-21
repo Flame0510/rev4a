@@ -6,6 +6,7 @@ import { dashboardCosts } from '@/lib/agent-costs';
 import { listOpenClawCronJobs } from '@/lib/openclaw-cron';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { countFailureEvents } from '@/lib/runtime-errors';
+import { sessionsSummary } from '@/lib/agent-sessions-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,8 +64,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const db = openDb();
-    const sessionCount = (db.prepare('SELECT COUNT(*) AS total FROM sessions').get() as { total: number }).total;
-    const latestSessionRow = db.prepare('SELECT MAX(COALESCE(updated_at, started_at, 0)) AS latest FROM sessions').get() as { latest: number | null };
+    const sessionSummary = sessionsSummary(db);
+    const sessionCount = sessionSummary.total;
+    const latestSessionRow = { latest: sessionSummary.latest };
     const latestSessionTs = getSeconds(latestSessionRow.latest);
     const latestSessionAgeSeconds = latestSessionTs ? Math.floor(Date.now() / 1000) - latestSessionTs : null;
     const staleThresholdSeconds = getEnvNumber('REV4A_ALERT_STALE_SECONDS', 120);

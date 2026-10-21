@@ -1,27 +1,39 @@
 'use client';
 
-import type { FilterConfig, Period } from '@/lib/types';
+import type { AgentOption, FilterConfig } from '@/lib/types';
 import { PERIODS } from '@/lib/types';
 
 interface DashboardToolbarProps {
   filter: FilterConfig;
   onChange: (patch: Partial<FilterConfig>) => void;
-  agents?: string[];
+  /** The containers to filter on; 'all' is always offered. */
+  agents?: AgentOption[];
 }
 
-export default function DashboardToolbar({ filter, onChange, agents = ['all'] }: DashboardToolbarProps) {
+export default function DashboardToolbar({ filter, onChange, agents = [] }: DashboardToolbarProps) {
   return (
     <section className="toolbar">
       <span className="toolbar-label">AGENTS</span>
 
-      {agents.map((name) => (
+      <button
+        type="button"
+        className={`agent-btn ${filter.agent === 'all' ? 'active' : ''}`}
+        aria-pressed={filter.agent === 'all'}
+        onClick={() => onChange({ agent: 'all' })}
+      >
+        all
+      </button>
+      {agents.map((agent) => (
         <button
-          key={name}
+          key={agent.value}
           type="button"
-          className={`agent-btn ${filter.agent === name ? 'active' : ''}`}
-          onClick={() => onChange({ agent: name })}
+          className={`agent-btn ${filter.agent === agent.value ? 'active' : ''}`}
+          aria-pressed={filter.agent === agent.value}
+          title={agent.running ? agent.value : `${agent.value} (stopped)`}
+          onClick={() => onChange({ agent: agent.value })}
         >
-          {name}
+          {agent.label}
+          {!agent.running && <span className="agent-btn-stopped"> · stopped</span>}
         </button>
       ))}
 

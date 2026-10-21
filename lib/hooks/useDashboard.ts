@@ -3,19 +3,27 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import type { Session, SessionEvent, Costs, FilterConfig, Period, AgentFilter } from '../types';
+import type { Session, SessionEvent, Costs, FilterConfig, Period, AgentOption } from '../types';
 import { Rev4aEventBus } from '../patterns/EventBus';
 import { buildFilterStrategy } from '../patterns/FilterStrategy';
-import { isCronSession, extractAgentId } from '../patterns/SessionFactory';
-import { isSessionActive } from '../patterns/sessionPresentation';
-import { PERIOD_MS as PERIOD_MAP, PERIODS } from '../types';
+import { sessionsFromResponse } from '../patterns/ApiClient';
+import {
+  buildAgentOptions,
+  decorateEvents,
+  eventMatchesFilter,
+  expandWithParents,
+  isSessionActive,
+  resolveAgentFilter,
+  PERIOD_MS,
+} from '../patterns/sessionPresentation';
+import { PERIODS } from '../types';
 import { adaptCosts } from '../patterns/ApiAdapter';
 import { apiFetch } from '../apiFetch';
 
 function filterFromParams(params: URLSearchParams): Partial<FilterConfig> {
   const patch: Partial<FilterConfig> = {};
   const agent = params.get('agent');
-  if (agent) patch.agent = agent as AgentFilter;
+  if (agent) patch.agent = agent;
   const period = params.get('period');
   if (period && (PERIODS as readonly string[]).includes(period)) patch.period = period as Period;
   const active = params.get('active');
@@ -34,31 +42,12 @@ function filterToParams(filter: FilterConfig): URLSearchParams {
   return p;
 }
 
-function expandSessionsWithVisibleParents(allSessions: Session[], visibleLeafSessions: Session[]): Session[] {
-  if (!visibleLeafSessions.length) return [];
-
-  const byId = new Map(allSessions.map((session) => [session.session_id, session]));
-  const included = new Map<string, Session>();
-
-  for (const session of visibleLeafSessions) {
-    let currentSession: Session | undefined = session;
-    const seenInChain = new Set<string>();
-
-    while (currentSession?.session_id && !seenInChain.has(currentSession.session_id)) {
-      seenInChain.add(currentSession.session_id);
-      included.set(currentSession.session_id, currentSession);
-      const parentId: string | null = currentSession.parent_id ?? null;
-      currentSession = parentId ? byId.get(parentId) : undefined;
-    }
-  }
-
-  return allSessions.filter((session) => included.has(session.session_id));
-}
-
 // ── State ──────────────────────────────────────────────────────────────────
 
 interface DashboardState {
   sessions: Session[];
+  /** Sessions older than the stream's window, fetched for a period longer than 7 days. */
+  history: Session[];
   events: SessionEvent[];
   costs: Costs;
   filter: FilterConfig;
@@ -69,6 +58,7 @@ interface DashboardState {
 
 type Action =
   | { type: 'SET_SESSIONS'; sessions: Session[] }
+  | { type: 'SET_HISTORY'; sessions: Session[] }
   | { type: 'SET_EVENTS'; events: SessionEvent[] }
   | { type: 'PREPEND_EVENTS'; events: SessionEvent[] }
   | { type: 'SET_COSTS'; costs: Partial<Costs> }
@@ -80,6 +70,8 @@ function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
     case 'SET_SESSIONS':
       return { ...state, sessions: action.sessions, hasSessionsLoaded: true };
+    case 'SET_HISTORY':
+      return { ...state, history: action.sessions };
     case 'SET_EVENTS':
       return {
         ...state,
@@ -126,6 +118,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
 
   const [state, dispatch] = useReducer(reducer, {
     sessions: [],
+    history: [],
     events: [],
     costs: { today: 0, allTime: 0, byModel: [], ...initialCosts },
     filter: initialFilter,
@@ -156,9 +149,9 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
 
     apiFetch('/api/sessions', { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((sessions: Session[]) => {
-        if (!hasSessionsLoadedRef.current && Array.isArray(sessions)) {
-          dispatch({ type: 'SET_SESSIONS', sessions });
+      .then((raw: unknown) => {
+        if (!hasSessionsLoadedRef.current) {
+          dispatch({ type: 'SET_SESSIONS', sessions: sessionsFromResponse(raw) });
         }
       })
       .catch(() => {});
@@ -186,72 +179,109 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     };
   }, []);
 
-  const [availableAgents, setAvailableAgents] = useState<string[]>(['all']);
+  // The agents: containers (docker name) with their display name. Filters work on the container.
+  const [knownAgents, setKnownAgents] = useState<Array<{ container: string; label: string; running: boolean }>>([]);
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
   useEffect(() => {
+    const controller = new AbortController();
     const load = () =>
-      apiFetch('/api/agents')
+      apiFetch('/api/agents', { signal: controller.signal })
         .then((r) => r.json())
-        .then((agents: Array<{ agentId: string; displayName?: string; name: string }>) => {
+        .then((agents: Array<{ agentId: string; displayName?: string; name: string; state?: string }>) => {
           if (Array.isArray(agents)) {
-            const names = agents.map((a) => a.displayName || a.name || a.agentId).filter(Boolean);
-            setAvailableAgents(['all', ...names]);
+            setKnownAgents(
+              agents
+                .filter((a) => a.name)
+                .map((a) => ({ container: a.name, label: a.displayName || a.name, running: a.state === 'running' })),
+            );
+            setAgentsLoaded(true);
           }
         })
         .catch(() => {});
     load();
     const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
+    return () => {
+      controller.abort();
+      clearInterval(t);
+    };
   }, []);
 
-  const visibleLeafSessions = useMemo(() => {
-    const strategy = buildFilterStrategy(state.filter);
-    return strategy.filter(state.sessions);
-  }, [state.sessions, state.filter]);
+  // A period longer than the stream's 7 days is read from the API (and re-read, since the stream does not carry it).
+  const { period } = state.filter;
+  useEffect(() => {
+    if (period === '1d' || period === '3d' || period === '7d') {
+      dispatch({ type: 'SET_HISTORY', sessions: [] });
+      return;
+    }
+    let controller = new AbortController();
+    const load = () => {
+      controller.abort();
+      controller = new AbortController();
+      const since = period === 'all' ? 0 : Date.now() - PERIOD_MS[period];
+      apiFetch(`/api/sessions?since=${since}`, { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((raw: unknown) => dispatch({ type: 'SET_HISTORY', sessions: sessionsFromResponse(raw) }))
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      controller.abort();
+      clearInterval(t);
+    };
+  }, [period]);
+
+  // The stream is current; history only adds what the stream does not carry.
+  const allSessions = useMemo(() => {
+    if (!state.history.length) return state.sessions;
+    const live = new Set(state.sessions.map((s) => s.uid));
+    return [...state.sessions, ...state.history.filter((s) => !live.has(s.uid))];
+  }, [state.sessions, state.history]);
+
+  const availableAgents: AgentOption[] = useMemo(
+    () => buildAgentOptions(knownAgents, allSessions),
+    [knownAgents, allSessions],
+  );
+
+  // `?agent=` may hold an old display name: it is mapped to a container once the agents are known.
+  // When /api/agents is down, the session rows (container + agent name) resolve it; an agent that
+  // cannot be resolved means 'all', never an empty page.
+  const agentsKnown = agentsLoaded || state.hasSessionsLoaded;
+  const filter: FilterConfig = useMemo(
+    () => ({ ...state.filter, agent: agentsKnown ? resolveAgentFilter(state.filter.agent, availableAgents, allSessions) : state.filter.agent }),
+    [state.filter, agentsKnown, availableAgents, allSessions],
+  );
+
+  const visibleLeafSessions = useMemo(() => buildFilterStrategy(filter).filter(allSessions), [allSessions, filter]);
 
   const visibleSessions = useMemo(() => {
-    const expanded = expandSessionsWithVisibleParents(state.sessions, visibleLeafSessions);
+    const expanded = expandWithParents(allSessions, visibleLeafSessions, { showCron: filter.showCron });
     return expanded.length ? expanded : visibleLeafSessions;
-  }, [state.sessions, visibleLeafSessions]);
+  }, [allSessions, visibleLeafSessions, filter.showCron]);
+
+  const decoratedEvents = useMemo(() => decorateEvents(state.events, allSessions), [state.events, allSessions]);
 
   const visibleEvents = useMemo(() => {
-    const { agent, showCron, period, showOnlyActive } = state.filter;
-    const cutoff =
-      period !== 'all'
-        ? Date.now() - PERIOD_MAP[period as Exclude<Period, 'all'>]
-        : 0;
-    const visibleSessionIds = new Set(visibleLeafSessions.map((session) => session.session_id));
-    const activeSessionIds = showOnlyActive
-      ? new Set(state.sessions.filter(isSessionActive).map((session) => session.session_id))
-      : null;
-
-    return state.events
-      .filter((e) => {
-        const sessionId = e.session_id ?? '';
-        if (agent !== 'all' && extractAgentId(sessionId) !== agent) return false;
-        if (!showCron && isCronSession(sessionId)) return false;
-        if (cutoff && Number(e.ts ?? 0) * 1000 < cutoff) return false;
-        if (showOnlyActive) return activeSessionIds?.has(sessionId) ?? false;
-        return visibleSessionIds.size === 0 || visibleSessionIds.has(sessionId);
-      })
-      .slice(0, 20);
-  }, [state.events, state.filter, state.sessions, visibleLeafSessions]);
+    const now = Date.now();
+    return decoratedEvents.filter((e) => eventMatchesFilter(e, filter, visibleLeafSessions, now)).slice(0, 20);
+  }, [decoratedEvents, filter, visibleLeafSessions]);
 
   const setFilter = useCallback((patch: Partial<FilterConfig>) => {
     dispatch({ type: 'SET_FILTER', patch });
-    const next: FilterConfig = { ...state.filter, ...patch };
+    const next: FilterConfig = { ...filter, ...patch };
     const qs = filterToParams(next).toString();
     router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [state.filter, router, pathname]);
+  }, [filter, router, pathname]);
 
   const selectSession = useCallback((id: string | null) => {
     dispatch({ type: 'SELECT_SESSION', id });
   }, []);
 
   return {
-    sessions: state.sessions,
-    events: state.events,
+    sessions: allSessions,
+    events: decoratedEvents,
     costs: state.costs,
-    filter: state.filter,
+    filter,
     selectedSessionId: state.selectedSessionId,
     availableAgents,
     visibleSessions,

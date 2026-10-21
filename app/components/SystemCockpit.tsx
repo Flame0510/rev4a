@@ -139,10 +139,13 @@ export default function SystemCockpit({
   }, []);
 
   const metrics = useMemo(() => {
-    const active = sessions.filter(isSessionActive).length;
+    // Working sessions across all the agent containers (OpenClaw's own status).
+    const working = sessions.filter(isSessionActive);
+    const active = working.length;
+    const agentsWorking = new Set(working.map((session) => session.container)).size;
     const errors = events.filter((event) => String(event.type ?? event.event ?? '').toLowerCase().includes('error')).length;
     const latest = Math.max(...sessions.map((session) => Number(session.updated_at ?? session.started_at ?? 0)), 0);
-    return { active, errors, latest };
+    return { active, agentsWorking, errors, latest };
   }, [sessions, events]);
 
   const systemLoading = loading || !systemHealth;
@@ -178,7 +181,7 @@ export default function SystemCockpit({
           </div>
           <div className="ui-muted" style={{ marginTop: 10, fontSize: 11 }}>Server-side monitor from `/api/system-health`.</div>
         </Surface>
-        <Metric title="Active sessions" value={metrics.active} subtitle={`${sessions.length} total`} loading={loading} />
+        <Metric title="Active sessions" value={metrics.active} subtitle={`${metrics.active ? `in ${metrics.agentsWorking} agent${metrics.agentsWorking === 1 ? '' : 's'} · ` : ''}${sessions.length} total`} loading={loading} />
         {/* A Surface, not a Metric: a danger Metric paints its whole value red, and only the
             figure past its threshold should be. */}
         <Surface as="article" tone={machineTone}>

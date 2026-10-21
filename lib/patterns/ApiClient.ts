@@ -1,7 +1,8 @@
 // Facade + Singleton: wraps all Rev4a API calls behind a clean interface
 import type { Session, SessionDetail, Costs, SessionEvent } from '../types';
 import { SessionFactory, EventFactory } from './SessionFactory';
-import { adaptCosts, adaptSession, adaptEvent } from './ApiAdapter';
+import { adaptCosts, adaptSession } from './ApiAdapter';
+import { parseUid } from './sessionPresentation';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -14,6 +15,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** GET /api/sessions answers { sessions, total, version }; a bare array is still accepted. */
+export function sessionsFromResponse(raw: unknown): Session[] {
+  const list = Array.isArray(raw) ? raw : (raw as { sessions?: unknown } | null)?.sessions;
+  return Array.isArray(list) ? SessionFactory.createMany(list) : [];
+}
+
 class Rev4aApiClientClass {
   private static _instance: Rev4aApiClientClass | null = null;
 
@@ -24,9 +31,11 @@ class Rev4aApiClientClass {
     return Rev4aApiClientClass._instance;
   }
 
-  async fetchSessions(): Promise<Session[]> {
-    const raw = await apiFetch<unknown[]>('/api/sessions');
-    return Array.isArray(raw) ? SessionFactory.createMany(raw) : [];
+  /** `since` in ms; 0 asks for every session. Without it the server sends active ones plus the last 7 days. */
+  async fetchSessions(opts: { since?: number; signal?: AbortSignal } = {}): Promise<Session[]> {
+    const qs = opts.since === undefined ? '' : `?since=${Math.max(0, Math.floor(opts.since))}`;
+    const raw = await apiFetch<unknown>(`/api/sessions${qs}`, { signal: opts.signal });
+    return sessionsFromResponse(raw);
   }
 
   async fetchCosts(): Promise<Costs> {
@@ -34,9 +43,13 @@ class Rev4aApiClientClass {
     return adaptCosts(raw);
   }
 
-  async fetchSessionDetail(id: string): Promise<SessionDetail> {
+  /** `uid` is `<container>|<session_key>`. */
+  async fetchSessionDetail(uid: string, signal?: AbortSignal): Promise<SessionDetail> {
+    const parsed = parseUid(uid);
+    if (!parsed) throw new Error('Unknown session');
     const raw = await apiFetch<Record<string, unknown>>(
-      `/api/session?id=${encodeURIComponent(id)}`,
+      `/api/session?container=${encodeURIComponent(parsed.container)}&key=${encodeURIComponent(parsed.key)}`,
+      { signal },
     );
     return {
       session: adaptSession((raw.session ?? raw) as Record<string, unknown>),

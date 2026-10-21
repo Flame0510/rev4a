@@ -52,7 +52,7 @@ A lifecycle occurrence for a session: spawned, completed, failed, or missing too
 The routing layer that connects agents to AI providers. The Gateway page manages provider API keys and the model catalogue, and pushes that catalogue to every agent. Which model a given agent runs is set elsewhere, in the Model section of that agent's detail panel.
 
 ## Lineage
-The parent-child relationship tree between sessions. When an agent spawns another agent to do work, that relationship is shown as an interactive graph on the Lineage page. Configurable time periods: 1d, 3d, 7d, 15d, 30d and all.
+The tree of the sessions of every agent, read from the agents' own OpenClaw: each agent container, its `main` session, the other sessions, sub-agents an agent spawned (at any depth) and cron runs, with real status, model, tokens and cost. It is an interactive graph on the Lineage page; click a node for its details. Configurable time periods: 1d, 3d, 7d, 15d, 30d and all.
 
 ## Memory
 Files that store an agent's persistent knowledge and personality. The tracked set is USER.md, MEMORY.md, AGENTS.md, SOUL.md and HEARTBEAT.md. Editing them changes how an agent behaves. The Memory page shows these with size and budget tracking. A template may also ship IDENTITY.md or TOOLS.md, which are not tracked.

@@ -1,38 +1,30 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { getSession } from '@/lib/agent-sessions-db';
+import { openCostsDb } from '@/lib/costs-db';
 
 export const dynamic = 'force-dynamic';
 
+// GET /api/session?container=&key= -> { session, children, events }.
+// The old ?id=<session key> is accepted for one release: 400 when that key exists in several containers.
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
-  const sessionId = new URL(request.url).searchParams.get('id');
-  if (!sessionId) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  const p = new URL(request.url).searchParams;
+  const key = p.get('key') || p.get('id');
+  if (!key) return NextResponse.json({ error: 'Missing key' }, { status: 400 });
   try {
     const db = openDb();
-    const session = db
-      .prepare(`SELECT s.*, l.label AS lineage_label, l.agent_name AS lineage_agent_name
-        FROM sessions s
-        LEFT JOIN lineage l ON s.session_id = l.child_id
-        WHERE s.session_id = ?`)
-      .get(sessionId);
-    if (!session) {
+    let costsDb: ReturnType<typeof openCostsDb> = null;
+    try { costsDb = openCostsDb(); } catch { costsDb = null; }
+    try {
+      const r = getSession(db, { costsDb, container: p.get('container'), key });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+      return NextResponse.json({ session: r.session, children: r.children, events: r.events });
+    } finally {
+      try { costsDb?.close(); } catch { /* ignore */ }
       db.close();
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    const events = db
-      .prepare('SELECT * FROM events WHERE session_id = ? ORDER BY ts DESC LIMIT 20')
-      .all(sessionId);
-    const children = db
-      .prepare(
-        `SELECT s.*, l.label AS lineage_label, l.agent_name AS lineage_agent_name
-         FROM sessions s
-         JOIN lineage l ON s.session_id = l.child_id
-         WHERE l.parent_id = ? ORDER BY s.started_at DESC LIMIT 10`,
-      )
-      .all(sessionId);
-    db.close();
-    return NextResponse.json({ session, events, children });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

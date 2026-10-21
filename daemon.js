@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Rev4a Daemon — SQLite event logger
- * Polls OpenClaw sessions every 30s, writes events to SQLite, samples the host machine
+ * Reads every running agent's OpenClaw sessions from its own container (agent_sessions in
+ * events.db, with transition events), samples the host machine
  * (CPU, RAM, swap, storage) every 30s, samples what each container consumes every 60s
  * (metrics.db), and every 5 min reads what each running agent spent, as its OpenClaw priced
  * it, into costs.db — each on a timer of its own.
@@ -11,7 +12,7 @@
 
 const os = require('os');
 const fs = require('fs');
-const { spawnSync, execSync, execFile } = require('child_process');
+const { spawnSync, execFile } = require('child_process');
 const Database = require('better-sqlite3');
 const path = require('path');
 // Shared with the dashboard (lib/docker-socket.ts): one copy of where the Docker socket is.
@@ -23,6 +24,7 @@ const { EVENTS_RETENTION_MS, pruneEvents } = require('./lib/events-retention.js'
 const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js');
 const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, failureMessage: packagesFailureMessage, splitFailed: splitPackagesFailed } = require('./lib/agent-packages.js');
 const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
+const agentSessions = require('./lib/agent-sessions.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
@@ -32,10 +34,9 @@ const DATA_DIR = process.env.REV4A_DATA_DIR
     ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'rev4a')
     : path.join(os.homedir(), '.config', 'rev4a'));
 const DB_PATH = process.env.REV4A_DB || path.join(DATA_DIR, 'data', 'events.db');
-const POLL_INTERVAL_MS = 30_000;
 
 // No cost is estimated here. What agents spend is priced by each agent's own OpenClaw
-// and read by the Agent Costs timer below into costs.db; sessions.cost_usd stays 0.
+// and read by the Agent Costs timer below into costs.db.
 
 // ── DB Setup ────────────────────────────────────────────────────────────────
 
@@ -100,57 +101,15 @@ try {
   // Column already exists — ignore
 }
 
-// Prepared statements
-const upsertSession = db.prepare(`
-  INSERT INTO sessions (session_id, parent_id, label, model, tokens_in, tokens_out, cost_usd, status, task_preview, started_at, ended_at, updated_at, trello_card_url)
-  VALUES (@session_id, @parent_id, @label, @model, @tokens_in, @tokens_out, @cost_usd, @status, @task_preview, @started_at, @ended_at, @updated_at, @trello_card_url)
-  ON CONFLICT(session_id) DO UPDATE SET
-    model = excluded.model,
-    tokens_in = excluded.tokens_in,
-    tokens_out = excluded.tokens_out,
-    cost_usd = excluded.cost_usd,
-    status = excluded.status,
-    -- Only update updated_at if tokens actually changed (real activity)
-    updated_at = CASE
-      WHEN excluded.tokens_in != sessions.tokens_in OR excluded.tokens_out != sessions.tokens_out
-        OR excluded.status != sessions.status
-      THEN excluded.updated_at
-      ELSE sessions.updated_at
-    END,
-    ended_at = CASE
-      WHEN excluded.ended_at IS NOT NULL THEN excluded.ended_at
-      ELSE sessions.ended_at
-    END,
-    trello_card_url = COALESCE(excluded.trello_card_url, sessions.trello_card_url),
-    -- Update parent_id only if the incoming one is better (not null and not equal to main default)
-    parent_id = CASE
-      WHEN excluded.parent_id IS NOT NULL AND excluded.parent_id != sessions.parent_id
-        AND (sessions.parent_id IS NULL OR sessions.parent_id LIKE '%:main')
-      THEN excluded.parent_id
-      ELSE sessions.parent_id
-    END,
-    -- Update label only if the current one is the raw key (not a declared name)
-    label = CASE
-      WHEN sessions.label IS NULL OR sessions.label LIKE 'agent:%'
-      THEN excluded.label
-      ELSE sessions.label
-    END
-`);
-
 const insertEvent = db.prepare(`
   INSERT INTO events (ts, session_id, type, data) VALUES (@ts, @session_id, @type, @data)
 `);
 
-const getSession = db.prepare(`SELECT * FROM sessions WHERE session_id = ?`);
-
-// Track known sessions across polls
-const knownSessions = new Map(); // session_id -> { status, tokens_in, tokens_out }
-let pollCount = 0;
 
 // ── System Metrics ───────────────────────────────────────────────────────────
 //
 // Machine-wide CPU, RAM, swap and storage of the host Rev4a runs on, sampled on their
-// own timer (METRICS_INTERVAL_MS) — independent of the OpenClaw session poll, which has
+// own timer (METRICS_INTERVAL_MS) — independent of the agent sessions collector below, which has
 // no source on a host without the `openclaw` CLI.
 
 /**
@@ -1234,364 +1193,267 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
-function extractTrelloUrl(text) {
-  if (!text) return null;
-  const m = text.match(/https:\/\/trello\.com\/c\/[a-zA-Z0-9]+/);
-  return m ? m[0] : null;
-}
+// ── Agent sessions (LIN-1) ───────────────────────────────────────────────────
+// The daemon keeps a per-container copy of every agent's OpenClaw sessions in events.db
+// (agent_sessions, lib/agent-sessions.js). Source: each agent's own Gateway, through
+// `sessions.list` (all sessions incl. archived, paged) and, at a lower rate, `cron runs` for the
+// runs of each cron job. One call costs 5-12 s per agent (a CLI start-up), so: agents one at a
+// time, never overlapping passes, 30 s while something runs, 60 s idle, backing off on failures.
+// The host `openclaw` is not read any more. Transitions are computed against the stored row, so a
+// restart writes no event. A failed or garbled answer keeps the last state.
 
-function parseSessionKey(key) {  // e.g. "agent:website:subagent:abc123" or "agent:website:main"
-  if (!key) return { label: key, parent_id: null };
-  const parts = key.split(':');
-  // agent:<agentId>:main → root session
-  // agent:<agentId>:subagent:<uuid> → child session
-  if (parts.length >= 3 && parts[2] === 'main') {
-    return { label: key, parent_id: null };
-  }
-  if (parts.length >= 4 && parts[2] === 'subagent') {
-    // parent is agent:<agentId>:main
-    const parent = `${parts[0]}:${parts[1]}:main`;
-    return { label: key, parent_id: parent };
-  }
-  return { label: key, parent_id: null };
-}
+const SESSIONS_TICK_MS = 10_000;
+const SESSIONS_FIRST_DELAY_MS = 15_000;
+const SESSIONS_CRON_RUNS_LIMIT = 20;
+const SESSIONS_CRON_JOBS_PER_PASS = 5;
+const SESSIONS_RETENTION_INTERVAL_MS = 60 * 60 * 1000;
+const SESSIONS_RETENTION_BATCH = 5000;
+const SESSIONS_STATS_EVERY = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function inferStatus(session, prevSnapshot) {
-  // Strong failure signals from OpenClaw win immediately.
-  if (session.abortedLastRun || session.error || session.result === 'error' || session.status === 'error') return 'error';
-
-  const ageMs = session.ageMs || 0;
-  const tokensIn  = session.inputTokens  || 0;
-  const tokensOut = session.outputTokens || 0;
-
-  // If tokens changed since last poll → session is actively processing
-  if (prevSnapshot) {
-    const tokenDelta = (tokensIn + tokensOut) - (prevSnapshot.tokens_in + prevSnapshot.tokens_out);
-    if (tokenDelta > 0) return 'working';
-  }
-
-  // Updated very recently (< 3 min) and fresh → still active
-  if (ageMs < 180_000 && session.totalTokensFresh) return 'working';
-
-  // Updated in last 3–30 min without token change → idle (waiting/paused)
-  if (ageMs < 1_800_000) return 'idle';
-
-  // Not updated for > 30 min → completed
-  return 'completed';
-}
-
-function getOrphanResolution(session, snap, ageMs) {
-  const tokens = (session.inputTokens || 0) + (session.outputTokens || 0);
-  const kind = String(session.kind || '');
-  const hadFailureHints = Boolean(session.abortedLastRun || session.error || session.result === 'error');
-  if (hadFailureHints) return 'error';
-  if (tokens === 0 && kind === 'spawn-child') return 'error';
-  if (snap?.status === 'working' && tokens === 0 && ageMs >= 2 * 60 * 1000) return 'error';
-  return 'completed';
-}
-
-function orphanEventType(status) {
-  return status === 'error' ? 'fail' : 'complete';
-}
-
-// ── Main Poll Loop ───────────────────────────────────────────────────────────
-
-let openclawMissing = false;
-
-function pollSessions() {
-  // If openclaw is not installed, skip polling entirely
-  if (!openclawMissing) {
-    try {
-      execSync('which openclaw', { stdio: 'ignore', timeout: 3000 });
-    } catch {
-      openclawMissing = true;
-      log('OpenClaw not found — daemon idle (no sessions to poll)');
-      return;
-    }
-  } else {
-    return;
-  }
-
-  log('Polling OpenClaw sessions...');
-
-  let output;
-  {
-    const result = spawnSync(
-      'openclaw', ['sessions', '--json', '--all-agents'],
-      {
-        encoding: 'utf8',
-        timeout: 25_000,
-        killSignal: 'SIGKILL',
-        maxBuffer: 10 * 1024 * 1024,
-        env: { ...process.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
-    if (result.error || result.status !== 0) {
-      log(`WARN: openclaw sessions failed: ${result.error?.message || '(exit ' + result.status + ')'}`);
-      return;
-    }
-    output = result.stdout;
-  }
-
-  let data;
+const agentSessionsDdl = (() => {
   try {
-    // Strip any trailing non-JSON lines (e.g. stray log output from openclaw on stdout)
-    // Find the last closing brace of the top-level JSON object
-    const jsonEnd = output.lastIndexOf('}');
-    const cleanOutput = jsonEnd !== -1 ? output.slice(0, jsonEnd + 1) : output;
-    data = JSON.parse(cleanOutput);
-  } catch (err) {
-    log(`ERROR: Failed to parse JSON: ${err.message}`);
-    log(`ERROR: Raw output (first 500 chars): ${output.slice(0, 500)}`);
-    return; // graceful: skip this poll cycle, retry next interval
+    db.exec(agentSessions.CREATE_TABLES_SQL);
+    return true;
+  } catch (e) {
+    console.error(`[SESSIONS] cannot create agent_sessions: ${e.message}`);
+    return false;
   }
+})();
 
-  const sessions = data.sessions || [];
+const sessionCols = agentSessions.ALL_COLUMNS;
+const sessionStmts = agentSessionsDdl ? {
+  load: db.prepare('SELECT * FROM agent_sessions WHERE container = ?'),
+  upsert: db.prepare(`INSERT INTO agent_sessions (${sessionCols.join(', ')}) VALUES (${sessionCols.map((c) => '@' + c).join(', ')})
+    ON CONFLICT(container, session_key) DO UPDATE SET ${sessionCols.filter((c) => c !== 'container' && c !== 'session_key').map((c) => `${c} = excluded.${c}`).join(', ')}`),
+  touch: db.prepare('UPDATE agent_sessions SET last_seen_at = ? WHERE container = ? AND session_key = ?'),
+  gone: db.prepare('UPDATE agent_sessions SET gone_at = ? WHERE container = ? AND session_key = ? AND gone_at IS NULL'),
+  goneAll: db.prepare('UPDATE agent_sessions SET gone_at = ? WHERE container = ? AND gone_at IS NULL'),
+  bump: db.prepare('UPDATE agent_sessions_meta SET version = version + 1 WHERE id = 1'),
+  pruneAll: db.prepare(agentSessions.PRUNE_SQL.sessions),
+  pruneCronRuns: db.prepare(agentSessions.PRUNE_SQL.cronRuns),
+  pruneCronJobs: db.prepare(agentSessions.PRUNE_SQL.cronJobs),
+  pruneCronEvents: db.prepare(agentSessions.PRUNE_SQL.cronEvents),
+  storedContainers: db.prepare('SELECT DISTINCT container FROM agent_sessions WHERE gone_at IS NULL'),
+} : null;
+
+/** container -> { due, failures, anyRunning, lastError, cronReadAt: Map<jobId, marker>, cronDue } */
+const sessionAgents = new Map();
+let sessionsRunning = false;
+let sessionsTimer = null;
+let sessionsPasses = 0;
+let sessionsBusyMs = 0;
+let sessionsCpuUs = 0;
+let sessionsLastRetention = 0;
+let sessionsListFailing = false;
+let sessionsStartupChecked = false;
+
+function storedSessions(container) {
+  const map = new Map();
+  for (const r of sessionStmts.load.all(container)) map.set(r.session_key, r);
+  return map;
+}
+
+/**
+ * Writes one diff in a single transaction: upserted rows, events, rows that left the list, and one
+ * version bump when anything but last_seen_at changed.
+ */
+const writeSessionDiff = agentSessionsDdl ? db.transaction((container, diff, now) => {
+  for (const { row, changed } of diff.rows) {
+    if (changed) sessionStmts.upsert.run(row);
+    else sessionStmts.touch.run(now, container, row.session_key);
+  }
+  for (const key of diff.gone) sessionStmts.gone.run(now, container, key);
+  for (const ev of diff.events) {
+    insertEvent.run({ ts: ev.ts, session_id: ev.session_key, type: ev.type, data: JSON.stringify(ev.data) });
+  }
+  if (diff.changed) sessionStmts.bump.run();
+}) : null;
+
+const markContainerGone = agentSessionsDdl ? db.transaction((container, now) => {
+  const r = sessionStmts.goneAll.run(now, container);
+  if (r.changes > 0) sessionStmts.bump.run();
+  return r.changes;
+}) : null;
+
+async function readCronRuns(container, agentName, jobId) {
+  const out = await containerExec(container, ['sh', '-c', COSTS_GATEWAY_CLI, 'sh',
+    'cron', 'runs', '--id', jobId, '--limit', String(SESSIONS_CRON_RUNS_LIMIT)], COSTS_CALL_TIMEOUT_MS);
+  const start = out.indexOf('{');
+  if (start < 0) throw new Error('cron runs: no JSON in the answer');
+  const entries = agentSessions.parseCronRuns(JSON.parse(out.slice(start)));
+  // Runs older than the cron retention are not stored: retention would delete them again.
+  const cutoff = Date.now() - agentSessions.CRON_RETENTION_MS;
+  return entries
+    .map((e) => agentSessions.mapCronRun(e, jobId, { container, agentName }))
+    .filter((r) => r && (r.updated_at === null || r.updated_at >= cutoff));
+}
+
+async function collectAgentSessions(agent, state) {
+  const ctx = { container: agent.container, agentName: agent.name };
+  const { rows, complete } = await agentSessions.readAllSessions(
+    (params) => gatewayCall(agent.container, 'sessions.list', params), ctx);
   const now = Date.now();
-  let newCount = 0;
-  let updatedCount = 0;
+  const diff = agentSessions.diffSessions(storedSessions(agent.container), rows, now, { complete });
+  writeSessionDiff(agent.container, diff, now);
+  state.anyRunning = rows.some((r) => r.status === 'running');
+  let changed = diff.changed;
+  let events = diff.events.length;
 
-  const batchInsertEvents = db.transaction((evts) => {
-    for (const evt of evts) insertEvent.run(evt);
-  });
-
-  const pendingEvents = [];
-
-  // Load declared lineage (takes priority over key parsing)
-  let declaredLineage = {};   // child_id → parent_id
-  let declaredNames = {};     // child_id → agent_name
-  try {
-    db.prepare(`CREATE TABLE IF NOT EXISTS lineage (
-      child_id TEXT PRIMARY KEY,
-      parent_id TEXT NOT NULL,
-      agent_name TEXT,
-      declared_at INTEGER NOT NULL
-    )`).run();
-    try { db.prepare('ALTER TABLE lineage ADD COLUMN agent_name TEXT').run(); } catch(e) {}
-    const rows = db.prepare('SELECT child_id, parent_id, agent_name FROM lineage').all();
-    for (const r of rows) {
-      declaredLineage[r.child_id] = r.parent_id;
-      if (r.agent_name) declaredNames[r.child_id] = r.agent_name;
+  // Cron runs: a few jobs per pass, only those whose job row moved since they were read.
+  let storedNow = null;
+  const stored = () => (storedNow ??= storedSessions(agent.container));
+  if (Date.now() >= state.cronDue) {
+    const jobs = agentSessions.cronJobsToRead([...stored().values()], state.cronReadAt, Date.now(), SESSIONS_CRON_JOBS_PER_PASS);
+    for (const job of jobs) {
+      try {
+        const runRows = await readCronRuns(agent.container, agent.name, job.jobId);
+        const t = Date.now();
+        const runDiff = agentSessions.diffSessions(storedSessions(agent.container), runRows, t, { complete: false });
+        writeSessionDiff(agent.container, runDiff, t);
+        state.cronReadAt.set(job.jobId, job.marker);
+        changed = changed || runDiff.changed;
+        events += runDiff.events.length;
+      } catch (e) {
+        log(`[SESSIONS] cron runs of ${job.jobId} in ${agent.container}: ${e.message}`);
+      }
     }
-  } catch (e) { /* table not yet created, skip */ }
-
-  for (const s of sessions) {
-    const session_id = s.key;
-
-    // Skip Telegram channel/group sessions (multi-user).
-    // Keep Telegram direct sessions (agent:<id>:telegram:<account>:direct:...) as root nodes
-    // since they are the parent of all sub-agents spawned via Telegram.
-    if (session_id.includes(':telegram:') && !session_id.includes(':direct:')) continue;
-    const { label, parent_id: inferredParent } = parseSessionKey(s.key);
-    // Use parentSessionKey if present, otherwise declared lineage, otherwise inferred (always null now)
-    const parent_id = s.parentSessionKey || declaredLineage[session_id] || inferredParent;
-    const model = s.model || null;
-    const tokens_in = s.inputTokens || 0;
-    const tokens_out = s.outputTokens || 0;
-    const cost_usd = 0;
-    const started_at = s.updatedAt ? s.updatedAt - (s.ageMs || 0) : now;
-    const updated_at = s.updatedAt || now;
-
-    const isNew = !knownSessions.has(session_id);
-    const prevSnapshot = knownSessions.get(session_id);
-
-    const task_preview_val = s.task || s.task_preview || s.label || null;
-    const trello_card_url = extractTrelloUrl(task_preview_val);
-    // Use declared name if available, otherwise label from key
-    const effectiveLabel = declaredNames[session_id] || label;
-
-    const status = inferStatus(s, prevSnapshot);
-
-    // Fix 1: write ended_at when session transitions to completed/error
-    let ended_at = null;
-    if (status === 'completed' || status === 'error') {
-      // Preserve existing ended_at if already set; otherwise set it now
-      const existing = getSession.get(session_id);
-      ended_at = (existing && existing.ended_at) ? existing.ended_at : now;
-    }
-
-    upsertSession.run({
-      session_id,
-      parent_id,
-      label: effectiveLabel,
-      model,
-      tokens_in,
-      tokens_out,
-      cost_usd,
-      status,
-      task_preview: task_preview_val,
-      started_at,
-      ended_at,
-      updated_at,
-      trello_card_url,
-    });
-
-    if (isNew) {
-      newCount++;
-      pendingEvents.push({
-        ts: now,
-        session_id,
-        type: 'spawn',
-        data: JSON.stringify({ model, parent_id, tokens: tokens_in + tokens_out }),
-      });
-    } else if (prevSnapshot && prevSnapshot.status !== 'completed' && status === 'completed') {
-      pendingEvents.push({
-        ts: now,
-        session_id,
-        type: 'complete',
-        data: JSON.stringify({ tokens: tokens_in + tokens_out }),
-      });
-    } else if (prevSnapshot && prevSnapshot.status !== 'error' && status === 'error') {
-      pendingEvents.push({
-        ts: now,
-        session_id,
-        type: 'fail',
-        data: JSON.stringify({ tokens: tokens_in + tokens_out, reason: 'openclaw_error_signal' }),
-      });
-    }
-
-    knownSessions.set(session_id, {
-      status,
-      tokens_in,
-      tokens_out,
-      updatedAt: Date.now(),
-      kind: s.kind,
-      abortedLastRun: s.abortedLastRun,
-      error: s.error,
-      result: s.result,
-    });
-    updatedCount++;
+    if (jobs.length < SESSIONS_CRON_JOBS_PER_PASS) state.cronDue = Date.now() + 5 * 60 * 1000;
   }
+  if (changed) db.pragma('wal_checkpoint(PASSIVE)');
+  return { rows: rows.length, changed, events };
+}
 
-  if (pendingEvents.length > 0) batchInsertEvents(pendingEvents);
+const yieldToLoop = () => new Promise((resolve) => setImmediate(resolve));
 
-  // Auto-close orphan sessions: sessions that were working/idle but disappeared
-  // from openclaw sessions for > 5 minutes (10+ poll cycles) → mark as completed/error.
-  // Grace period protects against transient poll gaps or partial openclaw output.
-  const currentIds = new Set(sessions.filter(s => !s.key.includes(':telegram:')).map(s => s.key));
-  const fiveMinAgo = now - 5 * 60 * 1000;
-  if (currentIds.size > 0) {
-    const orphanCandidates = db.prepare(`
-      SELECT session_id, status, updated_at, tokens_in, tokens_out, ended_at
-      FROM sessions
-      WHERE status IN ('working','idle')
-      AND updated_at < ?
-      AND session_id NOT IN (${Array.from(currentIds).map(() => '?').join(',')})
-    `).all(fiveMinAgo, ...currentIds);
-    const orphanEvents = [];
-    let orphanCount = 0;
-    for (const row of orphanCandidates) {
-      const snap = knownSessions.get(row.session_id);
-      const resolved = getOrphanResolution({
-        inputTokens: row.tokens_in,
-        outputTokens: row.tokens_out,
-        kind: snap?.kind,
-        abortedLastRun: snap?.abortedLastRun,
-        error: snap?.error,
-        result: snap?.result,
-      }, snap, now - Number(row.updated_at || 0));
-      const ended_at = row.ended_at || now;
-      db.prepare(`UPDATE sessions SET status=?, ended_at=?, updated_at=? WHERE session_id = ?`).run(resolved, ended_at, now, row.session_id);
-      orphanEvents.push({
-        ts: now,
-        session_id: row.session_id,
-        type: orphanEventType(resolved),
-        data: JSON.stringify({ reason: 'orphan_close', prior_status: row.status, resolved_status: resolved }),
-      });
-      orphanCount++;
-    }
-    if (orphanEvents.length > 0) batchInsertEvents(orphanEvents);
-    if (orphanCount > 0) log(`Orphan cleanup: ${orphanCount} zombie sessions auto-closed (${orphanEvents.filter(e => e.type === 'fail').length} errors)`);
+/** Deletes in batches, giving the event loop a turn between batches. */
+async function pruneBatches(stmt, cutoff) {
+  let n = 0;
+  for (;;) {
+    const { changes } = stmt.run(cutoff, SESSIONS_RETENTION_BATCH);
+    n += changes;
+    if (changes < SESSIONS_RETENTION_BATCH) return n;
+    await yieldToLoop();
   }
+}
 
-  // ── Timeout Detection ────────────────────────────────────────────────────
-  // Find sub-agents that were 'working' in the last snapshot but are no longer
-  // present in the current output and have been missing for more than 10 minutes.
-  // These are recorded as 'timeout' in the events table.
-  const TIMEOUT_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-  for (const [session_id, snap] of knownSessions) {
-    // Only sub-agents (contain 'subagent' in the key)
-    if (!session_id.includes('subagent')) continue;
-    // Only if they were working in the last poll
-    if (snap.status !== 'working') continue;
-    // Only if not present in the current poll
-    if (currentIds.has(session_id)) continue;
-    // Only if missing long enough
-    const missingFor = now - (snap.updatedAt || now);
-    if (missingFor < TIMEOUT_THRESHOLD_MS) continue;
-    // The snapshot remembers its timeout was logged: events retention prunes the table, so the
-    // table alone would log it again every 30 days.
-    if (snap.timeoutLogged) continue;
-    // Prevent logging the same timeout multiple times (check if already logged)
-    const alreadyLogged = db.prepare(
-      `SELECT id FROM events WHERE session_id = ? AND type = 'spawn_timeout' LIMIT 1`
-    ).get(session_id);
-    if (alreadyLogged) { snap.timeoutLogged = true; continue; }
-
-    // Insert timeout event
-    insertEvent.run({
-      ts: now,
-      session_id,
-      type: 'spawn_timeout',
-      data: JSON.stringify({
-        missing_for_ms: missingFor,
-        last_status: snap.status,
-        message: `Subagent missing for ${Math.round(missingFor / 60000)} min without completing`,
-      }),
-    });
-    snap.timeoutLogged = true;
-    log(`[TIMEOUT] ${session_id} missing for ${Math.round(missingFor / 60000)} min`);
+async function pruneAgentSessions(now) {
+  let n = 0;
+  n += await pruneBatches(sessionStmts.pruneAll, now - agentSessions.RETENTION_MS);
+  n += await pruneBatches(sessionStmts.pruneCronRuns, now - agentSessions.CRON_RETENTION_MS);
+  n += await pruneBatches(sessionStmts.pruneCronJobs, now - agentSessions.CRON_RETENTION_MS);
+  await pruneBatches(sessionStmts.pruneCronEvents, now - agentSessions.CRON_RETENTION_MS);
+  if (n > 0) {
+    sessionStmts.bump.run();
+    log(`Sessions retention: ${n} rows deleted`);
   }
-
-  // Force names and parents declared via lineage — overrides any previous label, including the generic placeholder older data carries
-  const updateLabel = db.prepare('UPDATE sessions SET label = ?, parent_id = ? WHERE session_id = ?');
-  const applyLineage = db.transaction(() => {
-    for (const [child_id, agent_name] of Object.entries(declaredNames)) {
-      const parent_id = declaredLineage[child_id] || null;
-      updateLabel.run(agent_name, parent_id, child_id);
-    }
-  });
-  applyLineage();
-
-  log(`Poll done: ${sessions.length} sessions (${newCount} new, ${updatedCount} updated, ${pendingEvents.length} events written)`);
-
-  // Force WAL checkpoint so the VPS reads updated data from the main file
+  // PASSIVE never waits for readers; the next write moves the rest.
   db.pragma('wal_checkpoint(PASSIVE)');
+}
 
-  // Retention policy: delete cron sessions older than 7 days
-  const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-  const r1 = db.prepare(`DELETE FROM sessions WHERE session_id LIKE '%:cron:%' AND status = 'completed' AND updated_at < ?`).run(sevenDaysAgo);
-  const r2 = db.prepare(`DELETE FROM events WHERE session_id LIKE '%:cron:%' AND ts < ?`).run(sevenDaysAgo);
-  if (r1.changes > 0 || r2.changes > 0) {
-    log(`Retention cleanup: ${r1.changes} cron sessions, ${r2.changes} cron events deleted`);
-  }
-
-  // Prune knownSessions — delete completed sessions, and vanished ones whose timeout was logged, older than 30 days
-  const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  for (const [id, snap] of knownSessions) {
-    if ((snap.status === 'completed' || snap.timeoutLogged) && snap.updatedAt && snap.updatedAt < cutoff) {
-      knownSessions.delete(id);
+/**
+ * Once after start: containers that have live rows but are not running now (stopped or removed
+ * while the daemon was down) get gone_at. Compared with the stored rows, not the in-memory map,
+ * which is empty after a restart. One container per turn of the event loop.
+ */
+async function markStoppedContainersGone(live, now) {
+  const stored = sessionStmts.storedContainers.all().map((r) => r.container);
+  for (const container of agentSessions.containersToMarkGone(stored, live)) {
+    try {
+      const n = markContainerGone(container, now);
+      if (n > 0) log(`[SESSIONS] ${container} is not running: ${n} sessions marked gone`);
+    } catch (e) {
+      log(`[SESSIONS] could not mark ${container} gone: ${e.message}`);
     }
+    await yieldToLoop();
   }
+}
 
-  // FULL WAL checkpoint every 10 polls
-  pollCount = (pollCount || 0) + 1;
-  if (pollCount % 10 === 0) {
-    db.pragma('wal_checkpoint(FULL)');
-    log(`WAL checkpoint FULL executed (poll #${pollCount})`);
+async function collectSessions() {
+  if (!agentSessionsDdl || sessionsRunning) return;
+  sessionsRunning = true;
+  const t0 = Date.now();
+  const cpu0 = process.cpuUsage();
+  try {
+    let agents;
+    try {
+      agents = await listRunningAgents();
+      sessionsListFailing = false;
+    } catch (e) {
+      if (!sessionsListFailing) log(`[SESSIONS] Docker unreachable: ${e.message}`);
+      sessionsListFailing = true;
+      return;
+    }
+    const now = Date.now();
+    const live = new Set(agents.map((a) => a.container));
+    if (!sessionsStartupChecked) {
+      sessionsStartupChecked = true;
+      try { await markStoppedContainersGone(live, now); } catch (e) { log(`[SESSIONS] startup check: ${e.message}`); }
+    }
+    // A container that stopped or was removed keeps its rows and gets gone_at; it is read again once it runs.
+    for (const [container, state] of sessionAgents) {
+      if (live.has(container)) continue;
+      try {
+        const n = markContainerGone(container, now);
+        if (n > 0) log(`[SESSIONS] ${container} is not running: ${n} sessions marked gone`);
+      } catch (e) {
+        log(`[SESSIONS] could not mark ${container} gone: ${e.message}`);
+      }
+      sessionAgents.delete(container);
+    }
+    for (const agent of agents) {
+      let state = sessionAgents.get(agent.container);
+      if (!state) {
+        state = { due: 0, failures: 0, anyRunning: false, lastError: null, cronReadAt: new Map(), cronDue: 0 };
+        sessionAgents.set(agent.container, state);
+      }
+      if (Date.now() < state.due) continue;
+      const a0 = Date.now();
+      try {
+        const res = await collectAgentSessions(agent, state);
+        state.failures = 0;
+        if (state.lastError) log(`[SESSIONS] ${agent.container} readable again`);
+        state.lastError = null;
+        if (res.changed) log(`[SESSIONS] ${agent.container}: ${res.rows} sessions, ${res.events} events, ${Date.now() - a0} ms`);
+      } catch (e) {
+        state.failures += 1;
+        if (state.lastError !== e.message) log(`[SESSIONS] ${agent.container}: ${e.message}`);
+        state.lastError = e.message;
+      }
+      state.due = Date.now() + agentSessions.nextDelayMs(state.anyRunning, state.failures);
+    }
+    if (Date.now() - sessionsLastRetention > SESSIONS_RETENTION_INTERVAL_MS) {
+      sessionsLastRetention = Date.now();
+      try { await pruneAgentSessions(Date.now()); } catch (e) { log(`[SESSIONS] retention: ${e.message}`); }
+    }
+  } finally {
+    sessionsBusyMs += Date.now() - t0;
+    const cpu = process.cpuUsage(cpu0);
+    sessionsCpuUs += cpu.user + cpu.system;
+    sessionsPasses += 1;
+    if (sessionsPasses % SESSIONS_STATS_EVERY === 0) {
+      log(`[SESSIONS] ${sessionsPasses} passes: ${Math.round(sessionsBusyMs / sessionsPasses)} ms and ${Math.round(sessionsCpuUs / sessionsPasses / 1000)} ms CPU in the daemon per pass`);
+    }
+    sessionsRunning = false;
   }
+}
+
+function scheduleSessions(delay) {
+  sessionsTimer = setTimeout(() => {
+    collectSessions()
+      .catch((e) => log(`[SESSIONS ERROR] ${e.message}`))
+      .finally(() => scheduleSessions(SESSIONS_TICK_MS));
+  }, delay);
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
 log('Rev4a Daemon starting...');
 log(`DB: ${DB_PATH}`);
-log(`Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
+log('Agent sessions: read from each running agent container, adaptive 30-60 s');
 
-// Run immediately, then on interval
-pollSessions();
-const timer = setInterval(pollSessions, POLL_INTERVAL_MS);
+// Agent sessions: the first pass a few seconds after start, then a tick after each finished pass.
+scheduleSessions(SESSIONS_FIRST_DELAY_MS);
 
 // Machine metrics: the first sample a few seconds after start (the CPU figure needs a
 // delta from the baseline taken at load), then every interval. Off when metrics.db failed.
@@ -1743,7 +1605,7 @@ const firstPackages = setTimeout(() => { samplePackages(); packagesTimer = setIn
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
-  clearInterval(timer);
+  clearTimeout(sessionsTimer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
   clearTimeout(containersTimer);
@@ -1764,7 +1626,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   log('SIGINT received, shutting down...');
-  clearInterval(timer);
+  clearTimeout(sessionsTimer);
   clearTimeout(firstSample);
   clearInterval(metricsTimer);
   clearTimeout(containersTimer);

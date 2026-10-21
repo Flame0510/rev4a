@@ -29,7 +29,9 @@ PRAGMA synchronous = NORMAL;
 
 ## Tables
 
-### `sessions` — primary session tracking
+### `sessions` — primary session tracking (legacy)
+
+No longer written: the daemon fills `agent_sessions` instead. Kept untouched so a rollback still finds it.
 
 ```sql
 CREATE TABLE sessions (
@@ -67,11 +69,11 @@ CREATE TABLE events (
 CREATE INDEX idx_events_session ON events(session_id, ts);
 ```
 
-Types written today: `spawn`, `complete`, `fail`, `spawn_timeout` (the daemon's session poll),
+Types written today: `session_started`, `subagent_spawned`, `session_ended`, `session_failed`, `session_aborted` (the daemon's session collector; `data` carries the `container`). Older installs also hold `spawn`, `complete`, `fail`, `spawn_timeout` from the previous host poll, which age out by the 30-day rule below.
 `system_anomaly` (the daemon's machine and container metrics, session `system`), `agent_created` and
 `agent_deleted` (the create and delete routes, session `system:agents`).
 
-**Retention:** two rules. The session poll deletes cron-session events older than 7 days. On
+**Retention:** two rules. The session collector deletes the cron-session events it wrote (`session_*`, `subagent_spawned`) older than 7 days; events of the older format are left to the 30-day rule. On
 its own timer the daemon deletes every event older than 30 days, whatever its type or session
 (`lib/events-retention.js`, `pruneEvents`): first pass about 10 s after start, then every 6
 hours, in batches of at most 5 000 rows, so other writers (in WAL mode readers are never blocked) wait only for one batch. A pass deletes at
@@ -80,7 +82,38 @@ the backlog is gone. A row exactly at the cutoff stays. This timer needs only `e
 when `metrics.db` failed to open. On a development machine with a nearly full disk,
 `system_anomaly` reached ~4 000 rows in a month.
 
-### `lineage` — explicit parent→child declarations
+### `agent_sessions` — the agents' sessions, per container
+
+Written by the daemon only (`lib/agent-sessions.js`, created by the daemon and by `initializeRev4aDb`,
+`CREATE TABLE … IF NOT EXISTS`). Primary key `(container, session_key)`, so two agents both have
+`agent:main:main`. `container` is the value `costs.db` uses.
+
+```sql
+CREATE TABLE agent_sessions (
+  container TEXT NOT NULL, session_key TEXT NOT NULL, agent_name TEXT, session_id TEXT,
+  kind TEXT,          -- main|subagent|cron|cron_run|explicit|custom|direct|dashboard
+  parent_key TEXT,    -- spawnedBy ?? parentSessionKey (a cron run: its job)
+  parent_kind TEXT,   -- 'spawn' (real lineage) | 'cron' | 'nav' (navigation only)
+  spawn_depth INTEGER, label TEXT,
+  status TEXT,        -- running|done|failed|aborted|''
+  last_error TEXT, model TEXT, provider TEXT,
+  input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER,
+  cost_usd REAL,      -- OpenClaw's estimate; NULL when unknown, never 0 for unknown
+  cron_job_id TEXT,
+  started_at INTEGER, updated_at INTEGER, ended_at INTEGER, archived_at INTEGER,  -- Unix ms
+  last_seen_at INTEGER, gone_at INTEGER,
+  PRIMARY KEY (container, session_key)
+);
+-- indexes (container, updated_at) and (container, parent_key)
+CREATE TABLE agent_sessions_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+```
+
+`agent_sessions_meta.version` is bumped by every collector pass that changed something. The
+collector writes the events `session_started`, `subagent_spawned` (`data.parent_key`),
+`session_ended`, `session_failed` and `session_aborted` into `events` (`session_id` = the
+session key, `data.container` = the container). A session that finished and starts a new turn writes `session_started` again; a cron job's own row writes no event (its runs do). A listing is marked complete only when the rows received reach the agent's `totalCount`; otherwise no row is marked gone. On start, rows of containers that are no longer running get `gone_at`. Retention: rows not returned by any listing for 30 days (`last_seen_at`), cron runs 7 days; a row the agent still lists is never deleted. `/api/stream` sends the sessions frame only when `version` changes, with the same window and cap (2,000) as `GET /api/sessions`. `cost_usd` is NULL when OpenClaw did not price the session (never 0); `GET /api/sessions` fills a NULL from `costs.db` `agent_cost_sessions` by `(container, session_id)` when that row has a cost above 0.
+
+### `lineage` — explicit parent→child declarations (legacy)
 
 ```sql
 CREATE TABLE lineage (
@@ -91,7 +124,7 @@ CREATE TABLE lineage (
 );
 ```
 
-Populated by agents calling `lineage.js` at spawn time or via `POST /api/lineage`.
+Legacy: no longer written since the `agent_sessions` collector, and no longer read by the API (the previous version still reads it, so it stays until a later release drops it).
 
 The daemon also writes a `system_anomaly` event (session `system`) when the machine
 crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). The System
@@ -228,19 +261,21 @@ FROM agent_cost_model_daily WHERE date >= date('now', '-29 days')
 GROUP BY provider, model ORDER BY spent DESC;
 
 -- events.db: active sessions right now
-SELECT session_id, label, model, status
-FROM sessions WHERE status = 'working';
+SELECT container, session_key, label, model, status
+FROM agent_sessions WHERE status = 'running' AND gone_at IS NULL;
 
 -- Last poll time (freshness check)
 SELECT datetime(MAX(ts)/1000, 'unixepoch', 'localtime') AS last_event
 FROM events;
 
--- Lineage tree for a session
-WITH RECURSIVE tree(child_id, parent_id, agent_name, depth) AS (
-  SELECT child_id, parent_id, agent_name, 0 FROM lineage WHERE child_id = 'agent:ops:main'
+-- Sub-agent tree of one agent (real spawns only)
+WITH RECURSIVE tree(session_key, parent_key, depth) AS (
+  SELECT session_key, parent_key, 0 FROM agent_sessions
+  WHERE container = 'rev4a-agent_1' AND session_key = 'agent:main:main'
   UNION ALL
-  SELECT l.child_id, l.parent_id, l.agent_name, t.depth + 1
-  FROM lineage l JOIN tree t ON l.parent_id = t.child_id
+  SELECT s.session_key, s.parent_key, t.depth + 1
+  FROM agent_sessions s JOIN tree t ON s.parent_key = t.session_key
+  WHERE s.container = 'rev4a-agent_1' AND s.parent_kind = 'spawn'
 )
 SELECT * FROM tree;
 ```
@@ -272,8 +307,8 @@ the dashboard's cold backups cover them.
 
 `events.db` is Rev4a's own record — what it did to agents (the job tables, created and
 deleted) and what it saw (anomalies, alerts). What agents do is read from OpenClaw: agent
-spend is in `costs.db`; sessions and lineage move to the lineage collector, and with it
-`sessions`, `lineage` and the poll's `spawn`/`complete` events leave this file.
+spend is in `costs.db`; sessions are in `agent_sessions` (above), and the old
+`sessions` and `lineage` tables are left untouched until a later release drops them.
 
 ## Metrics Database (`metrics.db`)
 
@@ -288,7 +323,7 @@ only writer; `GET /api/metrics` and `GET /api/system-health` read it
 API answers with `latest: null`. If the daemon cannot open it (corrupt, unwritable), it
 logs `[METRICS] disabled` and keeps polling sessions without sampling.
 **Sampling:** the first sample about 5 s after the daemon starts, then every 30 s, on a timer
-of its own — independent of the OpenClaw session poll.
+of its own — independent of the session collector.
 **Retention:** 30 days, pruned at every sample: ~86 400 `system_metrics` rows, and one
 `system_disks` row per filesystem per sample (up to ~259 200 for three).
 

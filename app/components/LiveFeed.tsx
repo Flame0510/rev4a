@@ -1,7 +1,6 @@
 'use client';
 
 import type { SessionEvent } from '@/lib/types';
-import { deriveSessionDisplayLabel } from '@/lib/patterns/sessionPresentation';
 import { formatTimeFromUnixSeconds } from '@/lib/utils/format';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { SkeletonLines } from './Skeleton';
@@ -28,19 +27,13 @@ export default function LiveFeed({ events, loading = false }: LiveFeedProps) {
         ) : (
           events.map((item, index) => (
             <div
-              key={`${item.ts ?? 0}-${item.event ?? 'evt'}-${index}`}
+              key={`${item.id ?? item.ts ?? 0}-${item.event ?? 'evt'}-${index}`}
               className="feed-item"
             >
               <span className="feed-time">{formatTimeFromUnixSeconds(item.ts)}</span>
-              &nbsp;<span className="feed-type">{item.type ?? item.event ?? 'event'}</span>
-              <span className="feed-label">
-                {deriveSessionDisplayLabel({
-                  session_id: item.session_id ?? '',
-                  label: item.session_label ?? item.label ?? null,
-                  lineage_label: null,
-                  task_preview: null,
-                })}
-              </span>
+              &nbsp;<span className="feed-type">{(item.type ?? item.event ?? 'event').replace(/_/g, ' ')}</span>
+              {item.agent_name && <span className="feed-agent">{item.agent_name}</span>}
+              <span className="feed-label">{item.session_label ?? item.session_id ?? ''}</span>
             </div>
           ))
         )}

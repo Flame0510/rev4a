@@ -1,14 +1,17 @@
 import { type NextRequest } from 'next/server';
 import { DB_PATH } from '@/lib/db';
+import { openCostsDb } from '@/lib/costs-db';
 import Database from 'better-sqlite3';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dashboardCosts } from '@/lib/agent-costs';
+import { listSessions, recentEvents, sessionsChanged, sessionsVersion } from '@/lib/agent-sessions-db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<Response> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let lastEventId = 0;
+  let lastSessionsVersion: number | null = null;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -20,20 +23,26 @@ export async function GET(request: NextRequest): Promise<Response> {
       const poll = () => {
         try {
           const db = new Database(DB_PATH, { readonly: true });
-          const newEvents = db
-            .prepare(
-              `SELECT e.*, s.label AS session_label FROM events e
-               LEFT JOIN sessions s ON e.session_id = s.session_id
-               WHERE e.id > ? ORDER BY e.ts ASC LIMIT 20`,
-            )
-            .all(lastEventId) as { id: number }[];
-          const sessions = db
-            .prepare(`SELECT s.*, l.label AS lineage_label, l.agent_name AS lineage_agent_name
-                      FROM sessions s
-                      LEFT JOIN lineage l ON s.session_id = l.child_id
-                      ORDER BY s.started_at DESC LIMIT 100`)
-            .all();
-          db.close();
+          let newEvents: { id: number }[] = [];
+          let sessions: ReturnType<typeof listSessions>['sessions'] | null = null;
+          let costsDb: ReturnType<typeof openCostsDb> = null;
+          try {
+            try { newEvents = recentEvents(db, { limit: 20, afterId: lastEventId, ascending: true }) as { id: number }[]; } catch { newEvents = []; }
+            // The sessions frame is sent only when the collector bumped the version (and on the first poll),
+            // with the same list GET /api/sessions answers (same window, same cap). A failed read keeps the last frame.
+            const version = sessionsVersion(db);
+            if (sessionsChanged(lastSessionsVersion, version)) {
+              try { costsDb = openCostsDb(); } catch { costsDb = null; }
+              const listed = listSessions(db, { costsDb });
+              if (!listed.error) {
+                sessions = listed.sessions;
+                lastSessionsVersion = version;
+              }
+            }
+          } finally {
+            try { costsDb?.close(); } catch { /* ignore */ }
+            db.close();
+          }
           // What the agents' OpenClaw priced today (UTC day), like GET /api/costs.
           const costs = dashboardCosts();
 
@@ -41,7 +50,7 @@ export async function GET(request: NextRequest): Promise<Response> {
             lastEventId = newEvents[newEvents.length - 1].id;
             send({ type: 'events', data: newEvents });
           }
-          send({ type: 'sessions', data: sessions });
+          if (sessions) send({ type: 'sessions', data: sessions });
           send({ type: 'costs', data: { today: costs?.today ?? 0 } });
         } catch {
           // Ignore DB read errors to keep stream alive.

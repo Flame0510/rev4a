@@ -4,12 +4,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
-import type { Session, TreeNode } from '@/lib/types';
-import { buildSessionTree } from '@/lib/patterns/SessionFactory';
-import { nodeLabel } from '@/lib/patterns/sessionPresentation';
+import type { AgentOption, Session, TreeNode } from '@/lib/types';
+import { buildSessionTree } from '@/lib/patterns/sessionPresentation';
 
 interface SessionTopologyProps {
   sessions: Session[];
+  /** The containers, for the agent names and the stopped mark. */
+  agents?: AgentOption[];
   filter: string;
   onNodeClick: (sessionId: string) => void;
   emptyMessage?: string;
@@ -20,7 +21,17 @@ export interface SessionTopologyHandle {
 }
 
 function formatCost(value: number | null | undefined): string {
-  return `$${Number(value ?? 0).toFixed(4)}`;
+  if (value === null || value === undefined) return 'not priced';
+  return `$${Number(value).toFixed(4)}`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+}
+
+/** The node's text: a container shows its agent name, marked when the container is stopped. */
+function nodeText(d: TreeNode): string {
+  return d._agentNode && d.stopped ? `${d.name} (stopped)` : d.name;
 }
 
 function draw(
@@ -64,7 +75,7 @@ function draw(
 
   let lastActivation = { id: '', ts: 0 };
   const activateNode = (d: d3.HierarchyPointNode<TreeNode>) => {
-    const id = d.data.session_id;
+    const id = d.data.uid;
     if (!id || d.data._virtualRoot || d.data._agentNode) return;
     const now = Date.now();
     if (lastActivation.id === id && now - lastActivation.ts < 250) return;
@@ -76,7 +87,7 @@ function draw(
     .selectAll<SVGGElement, d3.HierarchyPointNode<TreeNode>>('.node')
     .data(root.descendants().filter((d) => !d.data._virtualRoot))
     .join('g')
-    .attr('class', (d) => `node ${d.data.status ?? 'idle'}`)
+    .attr('class', (d) => `node ${d.data._agentNode ? 'agent' : d.data.state ?? 'idle'}${d.data.stopped ? ' stopped' : ''}`)
     .attr('transform', (d) => `translate(${d.y},${d.x})`)
     .on('mousemove', (event: MouseEvent, d) => {
       if (isTouch || !tooltipEl) return;
@@ -88,12 +99,17 @@ function draw(
       const th = tooltipEl.offsetHeight || 80;
       tooltipEl.style.left = `${Math.min(tx, window.innerWidth - tw - 8)}px`;
       tooltipEl.style.top = `${Math.min(ty, window.innerHeight - th - 8)}px`;
-      tooltipEl.innerHTML = [
-        `<div><strong>${nodeLabel(d.data)}</strong></div>`,
-                `<div>model: ${d.data.model ?? '-'}</div>`,
-        `<div>cost: ${formatCost(d.data.cost_usd)}</div>`,
-        `<div>status: ${d.data.status ?? 'idle'}</div>`,
-      ].join('');
+      tooltipEl.innerHTML = (d.data._agentNode
+        ? [`<div><strong>${escapeHtml(nodeText(d.data))}</strong></div>`, `<div>container: ${escapeHtml(d.data.container ?? '-')}</div>`]
+        : [
+            `<div><strong>${escapeHtml(d.data.name)}</strong></div>`,
+            `<div>kind: ${escapeHtml(d.data.kind ?? '-')}</div>`,
+            `<div>model: ${escapeHtml(d.data.model ?? '-')}</div>`,
+            `<div>cost: ${escapeHtml(formatCost(d.data.cost_usd))}</div>`,
+            `<div>status: ${escapeHtml(d.data.state ?? 'idle')}</div>`,
+            ...(d.data.hint ? [`<div>${escapeHtml(d.data.hint)}</div>`] : []),
+          ]
+      ).join('');
     })
     .on('mouseleave', () => {
       if (tooltipEl) tooltipEl.style.display = 'none';
@@ -102,7 +118,7 @@ function draw(
     .on('click', (_: MouseEvent, d) => activateNode(d));
 
   node
-    .filter((d) => d.data.status === 'working' || d.data.status === 'active')
+    .filter((d) => d.data.state === 'working')
     .append('circle')
     .attr('class', 'pulse-ring')
     .attr('r', 10);
@@ -111,14 +127,14 @@ function draw(
 
   node
     .append('text')
-    .text((d) => nodeLabel(d.data))
+    .text((d) => nodeText(d.data))
     .attr('dy', 22)
     .attr('text-anchor', 'middle')
     .style('font-size', '10px')
     .style('fill', '#d6e2e8');
 
   node
-    .filter((d) => Number(d.data.cost_usd ?? 0) > 0)
+    .filter((d) => !d.data._agentNode && d.data.cost_usd !== null && d.data.cost_usd !== undefined && Number(d.data.cost_usd) > 0)
     .append('text')
     .text((d) => formatCost(d.data.cost_usd))
     .attr('dy', 34)
@@ -159,7 +175,7 @@ function draw(
 }
 
 const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(function SessionTopology(
-  { sessions, filter, onNodeClick, emptyMessage = 'No sessions visible' },
+  { sessions, agents = [], filter, onNodeClick, emptyMessage = 'No sessions visible' },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -172,7 +188,7 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
 
   useEffect(() => { setMounted(true); }, []);
 
-  const treeData = useMemo(() => buildSessionTree(sessions, filter), [sessions, filter]);
+  const treeData = useMemo(() => buildSessionTree(sessions, agents, filter), [sessions, agents, filter]);
   const hasVisibleNodes = useMemo(() => (treeData.children ?? []).some((node) => node._agentNode ? (node.children?.length ?? 0) > 0 : true), [treeData]);
   const fitKey = useMemo(() => JSON.stringify({
     filter,

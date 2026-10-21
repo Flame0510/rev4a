@@ -2132,3 +2132,11 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .pl-state-title { font-size: 13px; color: var(--text-dim); }
 .pl-state--error .pl-state-title { color: var(--red); }
 .pl-state-message { font-size: 11px; max-width: 420px; line-height: 1.6; color: var(--text-dim); overflow-wrap: anywhere; }
+
+/* Lineage on the agent containers (LIN-3) */
+.agent-btn-stopped { opacity: 0.6; }
+.node.done circle { stroke: #4b5563; fill: #0a0a0b; }
+.node.aborted circle { stroke: #d6a64a; fill: #1a1408; }
+.node.agent circle { stroke: var(--violet); fill: #120d06; }
+.node.stopped { opacity: 0.55; }
+.feed-agent { color: var(--violet-dim, var(--text-dim)); font-size: 10px; flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

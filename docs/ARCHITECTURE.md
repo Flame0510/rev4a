@@ -719,9 +719,9 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 
 ### Responsibilities
 
-1. Poll `openclaw sessions --json --all-agents` every 30 s
-2. Upsert session rows into `events.db`
-3. Emit `spawn` / `complete` / `fail` / `spawn_timeout` events into the `events` table
+1. Read every running agent's sessions from its own container (`sessions.list` through the Gateway CLI, plus `cron runs`), every 30 s while something runs and at most once a minute otherwise
+2. Keep them in `events.db` table `agent_sessions`, keyed by `(container, session_key)`
+3. Emit `session_started` / `subagent_spawned` / `session_ended` / `session_failed` / `session_aborted` events into the `events` table (`session_id` = the session key, `data.container` = the container)
 4. Sample the host machine (CPU, RAM, swap, storage) every 30 s into `metrics.db`, on a
    timer of its own
 5. Sample what each container consumes every 60 s, and the disk Docker holds every 10 min,
@@ -730,30 +730,30 @@ The Rev4a daemon (`daemon.js`) is a standalone Node.js process that bridges the 
 7. Read what each running agent spent, as its own OpenClaw priced it, every 5 min into
    `costs.db`, and each vendor's balance or usage every hour (see [Agent Costs](#agent-costs));
    prune `proxy_usage_hourly` (the proxy's per-agent meter) of rows older than 400 days
-8. Manage DB lifecycle (WAL mode; events.db checkpointed after each poll cycle)
+8. Manage DB lifecycle (WAL mode; events.db checkpointed after each pass that changed something)
 
-### Poll Interval
+### Agent sessions (lineage collector)
 
-A fixed 30 s timer, whether or not sessions are working. When the OpenClaw CLI is not on
-the host, the session poll logs it once and stays idle; the machine metrics keep being
-sampled, since they have their own timer.
+The host `openclaw` is not read any more: a Mac's own OpenClaw no longer feeds the Lineage
+page, only the agents (containers) do. Per running agent, one at a time and never two passes
+at once, the daemon calls `sessions.list` (`limit 200`, `archived: all`, paged by
+`nextOffset`) through the agent's Gateway CLI, with the token read inside the container.
+Only the `main` OpenClaw agent's sessions are kept. A call costs 5-12 s (a CLI start-up), so an
+agent is read every 30 s while one of its sessions runs and every 60 s when idle; an agent that
+fails is read less often (doubling up to 10 min) and logged once.
+Cron runs are not in `sessions.list`: for each cron job whose row moved, `cron runs` is read
+(at most 5 jobs per pass, 5 min apart) and stored as kind `cron_run`.
 
-### Session costs
+Transitions are computed against the **stored** row, so a restart writes no event. A new session
+writes `session_started` only when it was active in the last 10 minutes (an older one was
+found, not seen starting). A failed, timed-out or garbled answer changes nothing; an empty list
+is believed only with `totalCount: 0`. A stopped container keeps its rows with `gone_at`;
+rows missing from a complete listing get `gone_at` too. `agent_sessions_meta.version` is bumped
+by every pass that changed something. Retention: rows idle for 30 days are deleted, cron jobs
+and runs after 7 days (hourly, in batches of 5000).
 
-The session poll writes no cost: `sessions.cost_usd` stays 0. It used to be estimated from a
-fixed 2025 rate table (`$3 / $15` per 1M for anything unknown), which the dashboard showed as
-spend. What the agents actually spend is priced by each agent's own OpenClaw and read by the
-Agent Costs timer — see [Agent Costs](#agent-costs).
-
-### Upsert Logic
-
-The daemon uses `INSERT … ON CONFLICT DO UPDATE` with these rules:
-
-- `updated_at` is only refreshed when tokens or status actually change (avoids phantom updates)
-- `parent_id` is updated only if the incoming value is better (non-null, and current is null or a generic `:main` default)
-- `label` is updated only if the current value is null or still the raw session key (preserves declared names)
-- `ended_at` is set once and never overwritten with null
-- `trello_card_url` is set from `task_preview` on first occurrence; never overwritten
+The old `sessions` and `lineage` tables are left as they are and no longer written.
+Costs per session stay in `costs.db`; `agent_sessions.cost_usd` is OpenClaw's estimate or NULL.
 
 ### System Metrics
 
@@ -774,7 +774,7 @@ own database next to `events.db` (schema in `docs/dev/DATABASE.md`). Machine-wid
 The first sample comes about 5 s after start (the CPU figure needs a delta from the baseline
 taken at load), then one every 30 s. Samples older than 30 days are pruned at every sample.
 `metrics.db` is opened in a try: if it cannot be (corrupt, unwritable), sampling is off —
-`[METRICS] disabled` in the log — and the session poll keeps running. The API side reads
+`[METRICS] disabled` in the log — and the session collector keeps running. The API side reads
 it through `lib/metrics-db.ts` (read-only, `null` when there is nothing to read);
 `GET /api/metrics` serves the System page (`/system`) and the dashboard's Machine card.
 

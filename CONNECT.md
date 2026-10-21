@@ -118,18 +118,16 @@ the dashboard's cold backups cover them. Details: `docs/dev/DATABASE.md` § Back
 Rev4a runs three processes under the hood:
 
 1. **Dashboard** (`server.js`) — Next.js (UI and API routes) plus the terminal's WebSocket, on port 3740
-2. **Daemon** (`daemon.js`) — polls sessions every 30s, writes to SQLite, collects system metrics
+2. **Daemon** (`daemon.js`) — reads every running agent's sessions from its container (every 30 s while something runs, 60 s idle), writes to SQLite, collects system metrics
 3. **Terminal WebSocket** (`terminal-ws-server.js`) — PTY terminal access to containers (127.0.0.1:3741, reached through the dashboard's own port — no reverse proxy needed)
 
-`rev4a serve` manages all three as a single process group. On Ctrl+C or SIGTERM, all children are cleanly stopped. The daemon calls `openclaw sessions --json --all-agents` when an OpenClaw instance is available. Without OpenClaw, the dashboard still works (you'll see an empty state).
+`rev4a serve` manages all three as a single process group. On Ctrl+C or SIGTERM, all children are cleanly stopped. The daemon asks each running agent container for its sessions through the container's own Gateway; it does not read the host's `openclaw`. With no agent running, the dashboard still works (you'll see an empty state).
 
-## Using the Lineage Utility
+## Lineage
 
-To record agent hierarchy:
-
-```bash
-node lineage.js "<child_session_key>" "<parent_session_key>" "<Agent Name>"
-```
+Rev4a reads each agent's sessions from its own container (OpenClaw's `sessions.list`), so sub-agent
+links and cron runs appear on the Lineage page without any agent doing anything. There is nothing to
+register by hand (the old `lineage.js` utility and `POST /api/lineage` are gone).
 
 ## Troubleshooting
 

@@ -127,6 +127,15 @@ Already used:
 - **Adapter**: `ApiAdapter` converts raw API payloads to domain types.
 - **Strategy + Composite**: `FilterStrategy` composes dashboard filtering.
 
+Lineage page (`/lineage`) and the dashboard's session figures read the sessions of every agent container (`agent_sessions`, via `GET /api/sessions` and the SSE `sessions` frame):
+
+- **Identity is `uid`** = `<container>|<session_key>`; two containers can hold the same key. The drawer asks `/api/session?container=&key=` from the uid.
+- **The tree** (`buildSessionTree` in `lib/patterns/sessionPresentation.ts`) is container (agent display name, "stopped" marked) → `main` → sessions → sub-agents at any depth → cron runs, by `parent_uid`. A missing parent or a loop hangs the session from `main`.
+- **Status** comes from OpenClaw (`running` is "working", `failed` is "error", `aborted`), never from the clock; a row of a gone container is not working. Cost is `null` when unpriced and shown as "not priced", never $0. All times are milliseconds.
+- **Filters** (agent = container, period, active only, no cron) are pure functions in `sessionPresentation.ts`; `?agent=` still accepts an old display name and falls back to `all`. A period longer than the stream's 7 days is read from `/api/sessions?since=` and refreshed every 30 s.
+- The Live feed names the agent of each event; the dashboard's "Active sessions" counts working sessions across containers.
+- Tested without a browser by `scripts/test-lineage-ui.mjs` (the logic files import types only, so Node runs them).
+
 Added UI-side discipline:
 
 - **Factory-ish tone mapping**: `toneFromHealth()` maps domain health into UI tone.

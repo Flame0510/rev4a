@@ -46,8 +46,8 @@ function fill(db, rows) {
   db.transaction(() => { for (const [ts, type] of rows) ins.run(ts, 's', type); })();
 }
 
-test('FAILURE_EVENT_TYPES are exactly fail and spawn_timeout', () =>
-  assert.deepEqual([...FAILURE_EVENT_TYPES], ['fail', 'spawn_timeout']));
+test('FAILURE_EVENT_TYPES are the old fail, spawn_timeout and the new session_failed', () =>
+  assert.deepEqual([...FAILURE_EVENT_TYPES], ['fail', 'spawn_timeout', 'session_failed']));
 test('missing events table returns 0', () =>
   assert.equal(countFailureEvents(mkdb('sessions'), SINCE), 0));
 test('events table without a type column returns 0', () =>

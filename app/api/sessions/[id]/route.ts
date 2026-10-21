@@ -1,38 +1,34 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { openDb } from '@/lib/db';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { getSession } from '@/lib/agent-sessions-db';
+import { openCostsDb } from '@/lib/costs-db';
 
+export const dynamic = 'force-dynamic';
+
+// GET /api/sessions/<session_key>[?container=] -> { session, children, events }.
+// The key alone must be unique across containers: 400 when it is not.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   const { id } = await params;
-  const sessionId = decodeURIComponent(id);
-  const db = openDb();
+  const key = decodeURIComponent(id);
+  const container = new URL(request.url).searchParams.get('container');
   try {
-    const session = db
-      .prepare(`SELECT s.*, l.label AS lineage_label, l.agent_name AS lineage_agent_name
-        FROM sessions s
-        LEFT JOIN lineage l ON s.session_id = l.child_id
-        WHERE s.session_id = ?`)
-      .get(sessionId);
-    if (!session) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    const events = db
-      .prepare('SELECT * FROM events WHERE session_id = ? ORDER BY ts DESC LIMIT 20')
-      .all(sessionId);
-    const children = db
-      .prepare(
-        `SELECT s.*, l.label AS lineage_label, l.agent_name AS lineage_agent_name
-         FROM sessions s
-         JOIN lineage l ON s.session_id = l.child_id
-         WHERE l.parent_id = ? ORDER BY s.started_at DESC LIMIT 10`,
-      )
-      .all(sessionId);
-    return NextResponse.json({ session, events, children });
+    const db = openDb();
+    let costsDb: ReturnType<typeof openCostsDb> = null;
+    try { costsDb = openCostsDb(); } catch { costsDb = null; }
+    try {
+      const r = getSession(db, { costsDb, container, key });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+      return NextResponse.json({ session: r.session, children: r.children, events: r.events });
+    } finally {
+      try { costsDb?.close(); } catch { /* ignore */ }
+      db.close();
+    }
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
-  } finally {
-    db.close();
   }
 }

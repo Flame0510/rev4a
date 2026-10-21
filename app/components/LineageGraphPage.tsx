@@ -112,6 +112,7 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
               <SessionTopology
                 ref={topologyRef}
                 sessions={visibleSessions}
+                agents={availableAgents}
                 filter={filter.agent}
                 onNodeClick={selectSession}
                 emptyMessage={filter.showOnlyActive ? 'No active sessions in the selected period' : 'No sessions visible with current filters'}

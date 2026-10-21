@@ -8,7 +8,7 @@
 
 ## 1. What OpenClaw Provides (Reference)
 
-Rev4a already reads session state via the daemon (`daemon.js`) polling `openclaw sessions --json --all-agents`. The proposed integration adds **read + write** access to OpenClaw's built-in maintenance controls.
+Rev4a already reads session state through the daemon's container collector (`daemon.js`), which lists each agent's sessions with the Gateway's `sessions.list` inside its container. The proposed integration adds **read + write** access to OpenClaw's built-in maintenance controls.
 
 ### 1.1 `session.maintenance` (store + transcript cleanup)
 

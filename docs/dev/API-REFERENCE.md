@@ -444,57 +444,65 @@ Restart the Rev4a server (via systemd).
 ## Sessions
 
 ### `GET /api/sessions`
-Returns all sessions (up to 2000), newest first, joined with lineage labels.
+Sessions of every agent, read from the `agent_sessions` table of `events.db` (filled by the daemon
+from each agent's container). Default: running now or updated in the last 7 days, newest first, at
+most 2000. Until the daemon has written the table the answer is empty, never an error.
 
 **Auth:** browser cookie
 
-**Response:**
-```json
-[
-  {
-    "session_id": "agent:ops:main",
-    "parent_id": null,
-    "label": "Argus",
-    "model": "openai-codex/gpt-5.4",
-    "tokens_in": 12500,
-    "tokens_out": 3200,
-    "cost_usd": 0,
-    "status": "idle",
-    "task_preview": "Run hygiene audit...",
-    "started_at": 1749200000000,
-    "ended_at": null,
-    "updated_at": 1749201000000,
-    "trello_card_url": null,
-    "lineage_label": null,
-    "lineage_agent_name": null
-  }
-]
-```
-
----
-
-### `GET /api/session?id=<session_id>`
-Returns a single session with its events and child sessions.
-
-**Auth:** browser cookie
-
-**Query params:** `id` (required)
+**Query params (all optional):** `container`, `kind` (main, subagent, cron, cron_run, explicit, custom, direct, dashboard), `since` (ms; replaces the 7-day window), `active=1` (running only), `limit` (max 2000).
 
 **Response:**
 ```json
 {
-  "session": { ...session row... },
-  "events": [ ...event rows... ],
-  "children": [ ...session rows... ]
+  "sessions": [
+    {
+      "uid": "rev4a-agent_1|agent:main:subagent:3f2c",
+      "container": "rev4a-agent_1", "agent_name": "Atlas",
+      "session_key": "agent:main:subagent:3f2c", "session_id": "…",
+      "kind": "subagent", "parent_uid": "rev4a-agent_1|agent:main:main",
+      "parent_kind": "spawn", "spawn_depth": 1, "label": "Hygiene",
+      "status": "done", "last_error": null,
+      "model": "gpt-5.4", "provider": "openai-codex",
+      "input_tokens": 12500, "output_tokens": 3200, "total_tokens": 15700,
+      "cost_usd": null, "cron_job_id": null,
+      "started_at": 1749200000000, "updated_at": 1749201000000, "ended_at": 1749201000000,
+      "archived_at": null, "gone_at": null,
+      "id": "agent:main:subagent:3f2c", "parent_id": "agent:main:main"
+    }
+  ],
+  "total": 1,
+  "version": 42
 }
 ```
 
-**Error:** `400` if `id` missing; `404` if not found.
+`parent_uid` is set only when the parent row exists in the same container (`parent_kind` is `spawn` for a
+real sub-agent link, `cron` for a cron run, `nav` for a navigation parent). `cost_usd` is `null` when
+OpenClaw did not price the session, never 0. `id` and `parent_id` are the old field names, kept for
+one release. `version` changes whenever the daemon stored a change.
+
+---
+
+### `GET /api/session?container=<name>&key=<session_key>`
+One session with its events and child sessions (rows whose parent is this key, same container).
+
+**Auth:** browser cookie
+
+**Query params:** `key` (required), `container`. The old `id=<session key>` is accepted for one release and answers `400` when the key exists in more than one container.
+
+**Response:**
+```json
+{ "session": { ...session... }, "children": [ ...sessions... ], "events": [ ...event rows... ] }
+```
+
+Events are those whose `data` carries this container; older events without it do not appear.
+
+**Errors:** `400` missing key or ambiguous key; `404` not found.
 
 ---
 
 ### `GET /api/sessions/[id]`
-One session with its events and any child sessions.
+Same as `GET /api/session`, with the session key in the path (`?container=` optional; `400` when ambiguous).
 
 **Auth:** browser cookie or bearer token
 
@@ -508,9 +516,8 @@ One session with its events and any child sessions.
 
 Agent costs come from `costs.db`: what each agent's own OpenClaw priced, copied by the
 daemon (the queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts`). `GET /api/costs/usage` feeds the Costs
-page, `GET /api/costs` the dashboard, `GET /api/costs/agent` the agent panel. `GET
-/api/stats` and `GET /api/stats-since` still read the `sessions` table of `events.db`,
-whose `cost_usd` is no longer estimated (always 0).
+page, `GET /api/costs` the dashboard, `GET /api/costs/agent` the agent panel. `GET /api/stats`
+and `GET /api/stats-since` were removed with the lineage rework; spend is only in `costs.db`.
 
 ### `GET /api/costs/usage?range=today|7d|30d`
 What the agents spent in a range of UTC days, today included (default `7d`), read from
@@ -613,45 +620,6 @@ taking them out could hide an unpriced paid model.
 
 ---
 
-### `GET /api/stats`
-Current-month aggregate stats (tokens + cost) grouped by model, from the `sessions` table
-(`started_at` is in milliseconds). The costs are the `sessions.cost_usd` column, which is no
-longer estimated: 0, except rows written before 2026-09-27. Agent spend is `GET /api/costs/usage`.
-
-**Auth:** Bearer or browser cookie
-
-**Response:**
-```json
-{
-  "total": {
-    "total": 0,
-    "total_in": 850000,
-    "total_out": 210000,
-    "sessions": 47
-  },
-  "byModel": [
-    { "model": "rev4a/deepseek/deepseek-flash", "cost": 0, "tokens_in": 600000, "tokens_out": 150000, "sessions": 30 }
-  ]
-}
-```
-
----
-
-### `GET /api/stats-since?ts=<unix_ms>`
-Sum of `sessions.cost_usd` since a given timestamp — 0 for sessions polled since 2026-09-27
-(see `GET /api/stats`).
-
-**Auth:** Bearer or browser cookie
-
-**Query params:** `ts` — Unix timestamp in milliseconds
-
-**Response:**
-```json
-{ "total": 0 }
-```
-
----
-
 ### `GET /api/costs`
 The dashboard's figures (without ChatGPT subscription calls): today's spend (UTC day), all-time spend, today's calls without a
 price, and today's spend by model — from `costs.db`. The SSE stream (`GET /api/stream`)
@@ -722,8 +690,9 @@ Paginated event log.
 
 ### `GET /api/stream`
 Server-Sent Events stream. Every 5 s it sends one message per kind, each `{ type, data }`:
-`events` (new rows of the `events` table, only when there are any), `sessions` (the 100 most
-recent sessions with their lineage label) and `costs` (`{ "today": … }`, what the agents spent
+`events` (new rows of the `events` table, only when there are any), `sessions` (the same `Session[]` as
+`GET /api/sessions`, at most 500, sent on the first poll and then only when the daemon changed the
+sessions table) and `costs` (`{ "today": … }`, what the agents spent
 today, UTC day — the same figure as `GET /api/costs`).
 
 **Auth:** browser cookie or Bearer
@@ -1928,24 +1897,6 @@ background `.catch` does not log it as a failure; `lastResult.result` becomes `c
 **Errors:** `404` nothing is running — the download has not started yet, or has
 already ended.
 
-## Lineage
-
-### `POST /api/lineage`
-Register a parent→child relationship between sessions.
-
-**Auth:** browser cookie or Bearer
-
-**Body:**
-```json
-{ "childId": "agent:ops:subagent:uuid", "parentId": "agent:ops:main", "label": "Hygiene Agent" }
-```
-
-**Response:** `{ "ok": true, "childId": "...", "parentId": "...", "label": "Hygiene Agent" }`
-
-**Error:** `400` if `childId` or `parentId` missing.
-
----
-
 ## Metrics
 
 ### `GET /api/metrics`
@@ -2113,7 +2064,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 Aggregated checks of the runtime, cron jobs and usage cost, with recommendations. It
 does not report CPU, RAM or disk (those are in `GET /api/metrics`). Its `runtime.heartbeat`
 check ("Daemon heartbeat") reads the age of the newest machine metrics sample in
-`metrics.db`: it shows the daemon is alive, not that the OpenClaw session poll ingests —
+`metrics.db`: it shows the daemon is alive, not that the session collector ingests —
 the two run on separate timers. A `metrics.db` that cannot be read makes this one check
 say so; it does not fail the others.
 

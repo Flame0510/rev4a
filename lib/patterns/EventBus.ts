@@ -14,10 +14,17 @@ export interface IDashboardObserver {
 
 // ── Singleton EventBus ─────────────────────────────────────────────────────
 
-function sessionsFingerprint(data: unknown[]): string {
-  return (data as { session_id?: string; parent_id?: string | null; status?: string; cost_usd?: number; label?: string; lineage_label?: string | null }[])
-    .map((s) => `${s.session_id}|${s.parent_id ?? ''}|${s.status}|${s.cost_usd}|${s.label}|${s.lineage_label ?? ''}`)
+function sessionsFingerprint(list: unknown[]): string {
+  return (list as Partial<Record<string, unknown>>[])
+    .map((s) => [s.uid ?? s.id, s.parent_uid ?? s.parent_id, s.status, s.cost_usd, s.label, s.updated_at, s.ended_at, s.gone_at, s.total_tokens, s.agent_name].join('|'))
     .join('\n');
+}
+
+/** The sessions frame carries the Session list, bare or wrapped in { sessions }. */
+function framedSessions(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  const inner = (data as { sessions?: unknown } | null)?.sessions;
+  return Array.isArray(inner) ? inner : [];
 }
 
 class Rev4aEventBusClass {
@@ -86,10 +93,11 @@ class Rev4aEventBusClass {
 
   private dispatch(msg: StreamMessage): void {
     if (msg.type === 'sessions') {
-      const hash = sessionsFingerprint(Array.isArray(msg.data) ? msg.data : []);
+      const list = framedSessions(msg.data);
+      const hash = sessionsFingerprint(list);
       if (hash === this.lastSessionsHash) return;
       this.lastSessionsHash = hash;
-      this.latestSessions = SessionFactory.createMany(msg.data);
+      this.latestSessions = SessionFactory.createMany(list);
     } else if (msg.type === 'events') {
       this.latestEvents = EventFactory.createMany(msg.data);
     } else if (msg.type === 'costs') {

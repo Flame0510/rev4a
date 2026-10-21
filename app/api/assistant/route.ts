@@ -97,9 +97,9 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   },
   '/lineage': {
     title: 'Lineage',
-    description: 'Interactive graph showing parent-child relationships between agent sessions. Each node is a session, edges show who spawned whom.',
+    description: 'Interactive graph of the sessions of every agent, read from each agent\'s own container. Each node is a session, edges show who spawned whom (sub-agents) and which cron job a run belongs to.',
     actions: ['View the session hierarchy tree', 'Select a time period (1d, 3d, 7d, 15d, 30d or all) to filter the view', 'Click any session node to inspect its details', 'Zoom and pan through the graph'],
-    hints: 'When an agent spawns a child agent to do work, that relationship is shown here. Use the period selector to see recent activity.',
+    hints: 'Nothing is registered by hand: when an agent spawns a child agent to do work, that relationship is shown here on its own. Use the period selector to see recent activity.',
   },
   '/memory': {
     title: 'Memory / Context',
