@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { updateCachedRev4aTimezone } from '@/lib/timezone';
 import { apiFetch } from '@/lib/apiFetch';
 import { Button, Input, MemoryLimitPicker, Page, PageHeader, Surface, Pill, Modal, useDockerTotalMb } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
@@ -202,6 +203,7 @@ export default function ConfigPageClient() {
           </section>
 
           <AgentDefaults />
+          <TimezoneSettings />
 
           <div
             style={{
@@ -376,6 +378,141 @@ function AgentDefaults() {
           <Button type="button" variant="primary" size="sm" loading={saving} disabled={!loaded || !!parseError || value === saved} onClick={save}>
             {saving ? 'Saving…' : 'Save default'}
           </Button>
+          {message && <span style={{ fontSize: 12, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</span>}
+        </div>
+      </div>
+    </Surface>
+  );
+}
+
+/** Zone names for the datalist: this browser's list plus UTC. The server has the last word. */
+function browserTimezones(): string[] {
+  try {
+    const zones = (Intl as unknown as { supportedValuesOf(key: string): string[] }).supportedValuesOf('timeZone');
+    return zones.includes('UTC') ? zones : ['UTC', ...zones];
+  } catch {
+    return ['UTC'];
+  }
+}
+
+/**
+ * "Time zone": the zone every page of the dashboard shows times in. Until one is saved it is the
+ * server's own zone. Saved on its own (GET/PUT /api/settings), not with the environment variables.
+ */
+function TimezoneSettings() {
+  const [value, setValue] = useState('');
+  const [saved, setSaved] = useState<{ timezone: string; source: 'saved' | 'env' | 'server' } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const savingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const zones = useMemo(browserTimezones, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    apiFetch('/api/settings', { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        return res.json();
+      })
+      .then((body: { timezone?: string; source?: 'saved' | 'env' | 'server' }) => {
+        const timezone = body?.timezone || 'UTC';
+        const source = body?.source === 'saved' ? 'saved' : body?.source === 'env' ? 'env' : 'server';
+        setSaved({ timezone, source });
+        setValue(source === 'saved' ? timezone : '');
+        setMessage(null);
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name !== 'AbortError') setMessage({ ok: false, text: 'Could not load the time zone' });
+      });
+    return () => controller.abort();
+  }, []);
+
+  const trimmed = value.trim();
+  const unchanged = !saved || trimmed === '' || (saved.source === 'saved' && trimmed === saved.timezone);
+
+  const save = async () => {
+    if (savingRef.current || unchanged) return;
+    savingRef.current = true;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: trimmed }),
+        signal: abortRef.current?.signal,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Error ${res.status}`);
+      updateCachedRev4aTimezone(body.timezone);
+      setSaved({ timezone: body.timezone, source: 'saved' });
+      setValue(body.timezone);
+      setMessage({ ok: true, text: 'Saved' });
+    } catch (e: unknown) {
+      if ((e as Error)?.name !== 'AbortError') setMessage({ ok: false, text: (e as Error).message || 'Could not save' });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: null }),
+        signal: abortRef.current?.signal,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Error ${res.status}`);
+      updateCachedRev4aTimezone(body.timezone);
+      setSaved({ timezone: body.timezone, source: body.source === 'env' ? 'env' : 'server' });
+      setValue('');
+      setMessage({ ok: true, text: 'Using the server default' });
+    } catch (e: unknown) {
+      if ((e as Error)?.name !== 'AbortError') setMessage({ ok: false, text: (e as Error).message || 'Could not reset' });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Surface variant="panel">
+      <div style={{ padding: '14px 16px', display: 'grid', gap: 8, marginBottom: 20 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, letterSpacing: '0.02em' }}>Time zone</div>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.4 }}>
+          The zone the dashboard shows times in (Costs, System, Crons, Memory and the header clock). Until you save one it follows the server.
+        </div>
+        <Input
+          label="Time zone"
+          list="rev4a-timezones"
+          value={value}
+          placeholder={saved ? (saved.source === 'saved' ? 'Time zone' : `Server default (${saved.timezone})`) : 'Loading…'}
+          disabled={!saved || saving}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => { setValue(e.target.value); setMessage(null); }}
+        />
+        <datalist id="rev4a-timezones">
+          {zones.map((z) => <option key={z} value={z} />)}
+        </datalist>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <Button type="button" variant="primary" size="sm" loading={saving} disabled={unchanged} onClick={save}>
+            {saving ? 'Saving…' : 'Save time zone'}
+          </Button>
+          {saved?.source === 'saved' && (
+            <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={reset}>
+              Use server default
+            </Button>
+          )}
           {message && <span style={{ fontSize: 12, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</span>}
         </div>
       </div>

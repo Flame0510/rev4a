@@ -3,6 +3,7 @@
 import type { SessionEvent } from '@/lib/types';
 import { deriveSessionDisplayLabel } from '@/lib/patterns/sessionPresentation';
 import { formatTimeFromUnixSeconds } from '@/lib/utils/format';
+import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { SkeletonLines } from './Skeleton';
 
 interface LiveFeedProps {
@@ -11,6 +12,7 @@ interface LiveFeedProps {
 }
 
 export default function LiveFeed({ events, loading = false }: LiveFeedProps) {
+  useRev4aTimezone(); // re-render when the time zone loads or changes (formatTimeFromUnixSeconds reads it)
   return (
     <article className="panel feed-panel">
       <h2>Live Events</h2>

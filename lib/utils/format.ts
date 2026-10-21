@@ -1,4 +1,5 @@
-// Formatting utilities — pure functions, no side effects
+// Formatting utilities — pure functions, no side effects (apart from asking for the time zone setting once)
+import { fallbackRev4aTimezone, fetchRev4aTimezone, getCachedRev4aTimezone } from '@/lib/timezone';
 
 export function formatUsd(value: number | null | undefined): string {
   return `$${Number(value ?? 0).toFixed(2)}`;
@@ -54,21 +55,36 @@ export function formatTokens(value: number | null | undefined): string {
   return String(n);
 }
 
-let _timezone = process.env.REV4A_TIMEZONE || 'Europe/Rome';
+let _timezone: string | null = null;
 
-export function setTimeZone(tz: string): void {
+/** Pins the zone for the next calls (tests, one-off use). The dashboard setting is used otherwise. */
+export function setTimeZone(tz: string | null): void {
   _timezone = tz;
 }
 
+/**
+ * The zone times are shown in: the dashboard setting (Config > Time zone, loaded into the
+ * browser's cache by the pages), else REV4A_TIMEZONE where the server runs this, else the
+ * browser's zone (the same fallback as the hook), else UTC. In the browser the setting is requested here when it is not
+ * loaded yet, so a later call has it.
+ */
 export function getTimeZone(): string {
-  return _timezone;
+  if (_timezone) return _timezone;
+  const cached = getCachedRev4aTimezone();
+  if (cached) return cached;
+  if (typeof window !== 'undefined') {
+    void fetchRev4aTimezone();
+  } else if (process.env.REV4A_TIMEZONE) {
+    return process.env.REV4A_TIMEZONE;
+  }
+  return fallbackRev4aTimezone();
 }
 
 export function formatTimeFromUnixSeconds(ts: number | null | undefined): string {
   if (!ts) return '--:--:--';
   const ms = Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts);
   return new Date(ms).toLocaleString('it-IT', {
-    timeZone: _timezone,
+    timeZone: getTimeZone(),
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

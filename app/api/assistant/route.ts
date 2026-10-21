@@ -87,7 +87,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     title: 'Config',
     description: 'Rev4a application configuration page. View and manage settings that control how Rev4a behaves.',
     actions: ['View current configuration values', 'Modify configuration settings', 'Save changes to update Rev4a behavior', 'Set the default memory limit offered for new agents (Agent defaults)'],
-    hints: 'Saved environment values are written to the .env file; restart Rev4a for those to take effect. Agent defaults (the default memory limit for new agents) are saved to agent-defaults.json and apply at once, without a restart; they only prefill the create wizard and never change an existing agent.',
+    hints: 'Saved environment values are written to the .env file; restart Rev4a for those to take effect. Time zone (the zone the dashboard shows times in; by default the one of the server) is saved to settings.json and applies at once. Agent defaults (the default memory limit for new agents) are saved to agent-defaults.json and apply at once, without a restart; they only prefill the create wizard and never change an existing agent.',
   },
   '/login': {
     title: 'Login',

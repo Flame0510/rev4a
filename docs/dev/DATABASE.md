@@ -209,6 +209,10 @@ container started again. Rows are never pruned.
 
 An optional file in the root of the Rev4a data directory, next to `.env`. It is written as `{ "memoryLimitMb": 2048 }`, or `{ "memoryLimitMb": null }` for no default. It only prefills the create wizard; nothing reads it to change an existing agent. A missing, unreadable or invalid file reads as `null` and never raises. Written with mode `0600` through a temp file and a rename (`lib/agent-defaults.ts`).
 
+### `settings.json` — application settings
+
+An optional file in the root of the Rev4a data directory, next to `.env`: `{ "timezone": "Europe/Rome" }`. The time zone is read by every dashboard page; with no file (or no valid zone in it) the server's own zone is used. A missing, unreadable or invalid file never raises. Written through a temp file and a rename (`lib/rev4a-settings.ts`). The first read imports the zone from the old `/data/rev4a/settings.json` (where the Tools page kept it) when the new file does not exist yet and the old one holds a valid zone; the old file is never changed.
+
 ## Useful Queries
 
 ```sql

@@ -133,10 +133,10 @@ Browse agent memory files. The tracked set is USER.md, MEMORY.md, AGENTS.md, SOU
 A template may ship other files, such as IDENTITY.md or TOOLS.md, but those are not part of the tracked context set.
 
 ### Config (`/config`)
-Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered. The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
+Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
 
 ### Tools (`/tools`)
-Catalog of the OpenClaw built-in tools available to agents, grouped by area: file and code, shell, web, messaging, sessions, media, and others. The list is curated in the app, not discovered at runtime, so it covers built-ins only and does not enumerate MCP servers or plugin tools. The page also holds audio/TTS and timezone settings.
+Catalog of the OpenClaw built-in tools available to agents, grouped by area: file and code, shell, web, messaging, sessions, media, and others. The list is curated in the app, not discovered at runtime, so it covers built-ins only and does not enumerate MCP servers or plugin tools. The page also holds audio/TTS settings. The dashboard time zone is set in Config, not here.
 
 ### Plugins (`/plugins`)
 Browse installed OpenClaw plugins. Enable/disable toggle per plugin. Plugins extend agent capabilities with new tools and integrations.

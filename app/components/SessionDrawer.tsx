@@ -16,6 +16,7 @@ import {
   statusColor,
   parseEventData,
 } from '@/lib/utils/format';
+import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import Rev4aLoader from './Rev4aLoader';
 
 interface SessionDrawerProps {
@@ -24,6 +25,7 @@ interface SessionDrawerProps {
 }
 
 export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps) {
+  useRev4aTimezone(); // re-render when the time zone loads or changes (formatTimeFromUnixSeconds reads it)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<SessionDetail | null>(null);

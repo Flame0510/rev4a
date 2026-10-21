@@ -2089,6 +2089,9 @@ The agent's memory limit, read from the container inspect.
 ### `GET /api/agent-defaults` / `PUT /api/agent-defaults`
 `{ "memoryLimitMb": 2048 }`, or `null`: the default memory limit that **prefills** the create wizard. It never applies to an existing agent. `PUT` validates like the create route (`400` on a bad value; `null`, `0` or `''` clear it). Stored in `agent-defaults.json` (see DATABASE.md). **Auth:** browser cookie or Bearer `REV4A_TOKEN`.
 
+### `GET /api/settings` / `PUT /api/settings`
+`{ "timezone": "Europe/Rome", "source": "saved" }`: the time zone every dashboard page shows times in. `source` is `"saved"` when one was saved; otherwise `"env"` when `REV4A_TIMEZONE` holds a valid zone, else `"server"` (the server's own zone, `"UTC"` if it cannot tell). `PUT { "timezone": "Europe/Rome" }` accepts only an IANA name the runtime knows (the `Intl.supportedValuesOf("timeZone")` list, `UTC`, or an alias it resolves, such as `Asia/Kolkata`); anything else is `400`. The name is stored and returned in canonical spelling (`europe/rome` becomes `Europe/Rome`, `utc` becomes `UTC`). `PUT { "timezone": null }` forgets the saved zone and answers with the default now in effect. Stored in `settings.json` (see DATABASE.md). **Auth:** browser cookie or Bearer `REV4A_TOKEN`.
+
 ### `GET /api/metrics/alerts?limit=10`
 The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
 samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
