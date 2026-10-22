@@ -3,7 +3,8 @@ import DashboardLayout from './components/DashboardLayout';
 import { Skeleton } from './components/Skeleton';
 import type { Metadata } from 'next';
 
-export const metadata: Metadata = { title: 'Dashboard' };
+// The root layout's title template does not apply to a page in its own segment: spell it out.
+export const metadata: Metadata = { title: { absolute: 'Dashboard · Rev4a' } };
 
 export const dynamic = 'force-dynamic';
 
