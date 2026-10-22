@@ -1,9 +1,14 @@
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import * as fs from 'fs';
 import { NextResponse, type NextRequest } from 'next/server';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { agentBusyReason } from '@/lib/agent-busy';
+import { redactedMessage } from '@/lib/redact-secret';
+import { writeTokenToContainer, restartArgv } from '@/lib/agent-token';
+
+const execFileAsync = promisify(execFile);
 
 export const dynamic = 'force-dynamic';
 
@@ -25,10 +30,6 @@ function readTokenFile(): TokenData {
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
@@ -38,9 +39,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function PUT(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
+  let redactToken = '';
   try {
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : null;
+    redactToken = token ?? '';
 
     if (token === null) {
       return NextResponse.json(
@@ -65,10 +68,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     let containers: { name: string; agentId: string }[] = [];
 
     try {
-      const raw = execSync(
-        `docker ps --filter "label=AGENT_ID" --format '{{.Names}} {{.Label "AGENT_ID"}}'`,
+      const { stdout } = await execFileAsync(
+        'docker',
+        ['ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}} {{.Label "AGENT_ID"}}'],
         { encoding: 'utf-8', timeout: 5000 },
-      ).trim();
+      );
+      const raw = stdout.trim();
       containers = raw
         ? raw.split('\n').map((line) => {
           const [name, agentId] = line.trim().split(/\s+/);
@@ -87,21 +92,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
           skipped.push(name);
           continue;
         }
-        // Write token to /root/.agent-token (entrypoint reads this, overrides env var)
-        execSync(
-          `docker exec ${shellQuote(name)} sh -c 'echo ${shellQuote(token)} > /root/.agent-token'`,
-          { encoding: 'utf-8', timeout: 10000 },
-        );
+        // Write token to /root/.agent-token (entrypoint reads this, overrides env var).
+        // The token goes on stdin: never in argv, never in a shell string.
+        await writeTokenToContainer(name, token);
         // Restart to pick up new token
-        execSync(`docker restart ${shellQuote(name)}`, {
-          encoding: 'utf-8',
-          timeout: 20000,
-        });
+        await execFileAsync('docker', restartArgv(name), { encoding: 'utf-8', timeout: 20000 });
         containersUpdated += 1;
       } catch (e) {
         // Report the failure instead of swallowing it: a token that reached only some
         // agents used to look like a full success.
-        failed.push({ container: name, error: (e as Error)?.message ?? String(e) });
+        failed.push({ container: name, error: redactedMessage(e, token) });
       }
     }
 
@@ -113,7 +113,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     });
   } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: (e as Error).message || 'Unknown error' },
+      { success: false, error: redactedMessage(e, redactToken) || 'Unknown error' },
       { status: 500 },
     );
   }

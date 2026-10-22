@@ -888,7 +888,7 @@ no key) or `missing` (no longer in the catalogue). `null` when no primary is set
 has it — so `offered` with `resolvable: false` means the container is out of sync.
 
 ### `POST /api/agents/create`
-Create a new agent container from a template.
+Create a new agent container from a template. `docker run` is spawned without a shell and the gateway token is handed to docker through its environment (`-e OPENCLAW_GATEWAY_TOKEN`), so it never appears in argv; error messages returned or logged have the token replaced with `***`. The success response still returns `controlToken`.
 
 **Auth:** browser cookie
 
@@ -1788,7 +1788,7 @@ being swallowed.
 
 **Side effects:**
 - Writes the new token to `data/agents-token.json`
-- Writes the token file (`/root/.agent-token`) into every running container with `AGENT_ID` label
+- Writes the token file (`/root/.agent-token`, mode 0600, replaced atomically) into every running container with `AGENT_ID` label. The token is sent on stdin to a constant script, so it never appears in host or container argv; every `error` returned (per container and the outer one) has the token replaced with `***`
 - Restarts each container so the entrypoint picks up the new token via `OPENCLAW_GATEWAY_TOKEN` env
 
 ---

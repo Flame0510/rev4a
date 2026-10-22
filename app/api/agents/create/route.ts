@@ -8,13 +8,15 @@ import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { extractProviderAndModel } from '@/app/api/provider/upstream';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { getMountFlags, applyRuntimeConfig, withControlUiPolicy } from '@/lib/agent-setup';
-import { listLocalAgentImages, newestLocalSupportedVersion } from '@/lib/agent-images';
+import { listLocalAgentImages, runDocker, newestLocalSupportedVersion } from '@/lib/agent-images';
 import { localImageRef } from '@/lib/agent-versions';
 import { isModelOffered } from '@/lib/model-catalogue';
 import { findAvailablePortBlock, portMappingArgs, validatePortInput, DEFAULT_BLOCK_SIZE } from '@/lib/agent-ports';
 import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { redactSecret, redactedMessage } from '@/lib/redact-secret';
+import { buildCreateRunArgs } from '@/lib/agent-create-args';
 import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 
 
@@ -70,6 +72,8 @@ function readAgentsToken(): string {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
+  // Read once so the outer catch can redact it from any error text.
+  const createToken = readAgentsToken();
   try {
     let body: CreateBody;
     try {
@@ -221,18 +225,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `AGENT_ID=${containerName}`,
       `AGENT_NAME=${displayName.trim()}`,
       `AGENT_TEMPLATE=${template}`,
-      `OPENCLAW_GATEWAY_TOKEN=${agentsToken}`,
       `TZ=Europe/Rome`,
     ];
 
-    const labelOpts = labels.map((l) => `-l ${shellQuote(l)}`).join(' ');
-    const envOpts = envVars.map((e) => `-e ${shellQuote(e)}`).join(' ');
-    const portOpt = portMappingArgs(portStart, portEnd).join(' ');
-    // A limit is the operator's choice: no flag at all unless one was asked for. The swap
-    // equals the limit, so the limit is the total the container can use.
-    const memoryOpt = memoryLimitMb === null
-      ? ''
-      : `--memory ${mbToBytes(memoryLimitMb)} --memory-swap ${mbToBytes(memoryLimitMb)} \\\n      `;
 
     // Template files that will be copied into the container workspace.
     // Files that don't exist in the template dir are silently skipped —
@@ -244,22 +239,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // (Chrome, builds, scripts) stays a zombie and counts against the container's pids
     // limit until the container can no longer start anything. Same flag in
     // lib/agent-recreate.ts.
-    const cmd = `docker run -d \
-      --init \
-      --name "${containerName}" \
-      --network "${network}" \
-      --restart unless-stopped \
-      --add-host host.docker.internal:host-gateway \
-      -v agent-${containerName}-data:/root \
-      ${mountFlags.join(' \
-      ')} \
-      ${memoryOpt}${labelOpts} \
-      ${envOpts} \
-      ${portOpt} \
-      "${image}"`;
-
-    const result = execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
-    const containerId = result.trim();
+    // The gateway token reaches docker through its environment (runDocker adds `-e KEY`):
+    // it never appears in argv, in a shell string or in an error message.
+    const runArgs = buildCreateRunArgs({
+      containerName,
+      network,
+      mountFlags,
+      memoryBytes: memoryLimitMb === null ? null : mbToBytes(memoryLimitMb),
+      labels,
+      envVars,
+      portArgs: portMappingArgs(portStart, portEnd),
+      image,
+    });
+    let runOutput = '';
+    await runDocker(runArgs, {
+      env: { OPENCLAW_GATEWAY_TOKEN: agentsToken },
+      timeoutMs: 60000,
+      // onLine mixes stdout and stderr: keep only what looks like the container id `docker run -d` prints,
+      // so a warning printed after it cannot take its place.
+      onLine: (line) => { const t = line.trim(); if (/^[0-9a-f]{64}$/.test(t)) runOutput = t; },
+    });
+    const containerId = runOutput;
 
     // Log event to events.db if it exists
     try {
@@ -330,7 +330,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             { timeout: 10000, stdio: 'pipe' },
           );
         } catch (cpErr) {
-          console.warn(`[create] Failed to copy ${tf} to ${containerName}:`, (cpErr as Error).message);
+          console.warn(`[create] Failed to copy ${tf} to ${containerName}:`, redactedMessage(cpErr, agentsToken));
         }
       }
 
@@ -405,7 +405,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await patchRev4aProvider(containerName);
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
-      console.error('[agent:create] runtime config patch failed:', (e as Error).message || String(e));
+      console.error('[agent:create] runtime config patch failed:', redactedMessage(e, agentsToken));
     }
 
     return NextResponse.json({
@@ -422,9 +422,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portDisplay: isBlock ? `${portStart}-${portEnd}` : String(portStart),
     });
   } catch (e: unknown) {
-    const err = e as Error;
     return NextResponse.json(
-      { success: false, error: err.message || 'Unknown error' },
+      { success: false, error: redactSecret((e as Error).message || 'Unknown error', createToken) },
       { status: 500 },
     );
   }
