@@ -241,5 +241,63 @@ test('events: milliseconds (the *1000 bug), the agent named, container from data
   assert.ok(!P.eventMatchesFilter({ ...ev[1], ts: NOW - 2 * DAY }, cfg({ period: '1d' }), vis, NOW));
 });
 
+// --- graph layout (LIN-8) ---
+const texts = (n) => [P.truncateLabel(P.nodeLabel(n)), n._agentNode ? '' : '$0.0012'];
+const mk = (name, children = []) => ({ uid: name, name, state: 'idle', children });
+const rootOf = (kids) => ({ uid: '__root__', name: '', state: 'idle', _virtualRoot: true, children: kids });
+function boxRect(b) {
+  return { l: b.x - b.width / 2, r: b.x + b.width / 2, t: b.y - 8, b: b.y + P.COST_DY + 2 };
+}
+function overlaps(boxes) {
+  const rs = boxes.filter((b) => !b.node._virtualRoot).map((b) => ({ ...boxRect(b), n: b.node.name }));
+  for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+    const a = rs[i], c = rs[j];
+    if (a.l < c.r && c.l < a.r && a.t < c.b && c.t < a.b) return `${a.n} / ${c.n}`;
+  }
+  return null;
+}
+
+test('layout: spacing grows with the number of siblings and 40 siblings never overlap', () => {
+  const heightOf = (n) => {
+    const kids = Array.from({ length: n }, (_, i) => mk(`Session number ${i}`));
+    const boxes = P.layoutTree(rootOf([mk('main', kids)]), texts);
+    return { boxes, span: Math.max(...boxes.map((b) => b.y)) - Math.min(...boxes.map((b) => b.y)) };
+  };
+  assert.ok(heightOf(15).span > heightOf(5).span);
+  assert.ok(heightOf(40).span >= 39 * P.NODE_BLOCK_HEIGHT);
+  assert.equal(overlaps(heightOf(40).boxes), null);
+});
+
+test('layout: a 4-level chain of long labels never overlaps, parent left of child', () => {
+  const long = (p) => `${p} ${'very long session label '.repeat(4)}`;
+  const chain = mk(long('d3'));
+  const tree = rootOf([mk(long('agent'), [mk(long('d1'), [mk(long('d2'), [chain, mk(long('d3b'))])])])]);
+  const boxes = P.layoutTree(tree, texts);
+  assert.equal(overlaps(boxes), null);
+  const byName = (p) => boxes.find((b) => b.node.name.startsWith(p));
+  assert.ok(byName('d1').x - byName('d1').width / 2 > byName('agent').x + byName('agent').width / 2);
+  assert.ok(byName('d2').x - byName('d2').width / 2 > byName('d1').x + byName('d1').width / 2);
+  assert.ok(boxes.every((b) => b.width <= P.LABEL_MAX_CHARS * P.LABEL_CHAR_WIDTH + 1));
+});
+
+test('layout: wide tree with grandchildren has no overlap and is deterministic', () => {
+  const kids = Array.from({ length: 12 }, (_, i) => mk(`Branch ${i}`, Array.from({ length: i % 4 }, (_, j) => mk(`Leaf ${i}-${j}`))));
+  const t = rootOf([mk('main', kids)]);
+  const a = P.layoutTree(t, texts);
+  assert.equal(overlaps(a), null);
+  assert.deepEqual(P.layoutTree(t, texts).map((b) => [b.x, b.y]), a.map((b) => [b.x, b.y]));
+});
+
+test('labels: truncation keeps the full text on the node and ends with an ellipsis', () => {
+  const full = 'Lineage test with sub-agents and a very long session name';
+  const cut = P.truncateLabel(full);
+  assert.ok(Array.from(cut).length <= P.LABEL_MAX_CHARS && cut.endsWith('…'));
+  assert.equal(P.truncateLabel('short'), 'short');
+  const node = mk(full);
+  P.layoutTree(rootOf([node]), texts);
+  assert.equal(node.name, full);
+  assert.equal(P.nodeLabel({ ...mk('Atlas'), _agentNode: true, stopped: true }), 'Atlas (stopped)');
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

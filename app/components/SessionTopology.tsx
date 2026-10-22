@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import type { AgentOption, Session, TreeNode } from '@/lib/types';
-import { buildSessionTree } from '@/lib/patterns/sessionPresentation';
+import { buildSessionTree, layoutTree, nodeLabel as nodeText, truncateLabel, LABEL_DY, COST_DY } from '@/lib/patterns/sessionPresentation';
 
 interface SessionTopologyProps {
   sessions: Session[];
@@ -29,9 +29,9 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 }
 
-/** The node's text: a container shows its agent name, marked when the container is stopped. */
-function nodeText(d: TreeNode): string {
-  return d._agentNode && d.stopped ? `${d.name} (stopped)` : d.name;
+/** The cost line under a node; none for a container node. */
+function costText(d: TreeNode): string | null {
+  return d._agentNode || d._virtualRoot ? null : formatCost(d.cost_usd);
 }
 
 function draw(
@@ -52,18 +52,25 @@ function draw(
   const content = g.append('g').attr('transform', 'translate(40,20)');
 
   const zoom = d3.zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.2, 5])
+    .scaleExtent([0.05, 5])
     .on('zoom', (event) => g.attr('transform', event.transform));
   svg.call(zoom).on('dblclick.zoom', null);
+  // A redraw (new data, a resize) keeps the current pan/zoom instead of snapping back to identity.
+  g.attr('transform', d3.zoomTransform(svgEl).toString());
 
   const root = d3.hierarchy<TreeNode>(treeData);
-  const treeLayout = d3.tree<TreeNode>().size([height - 40, width - 120]);
-  treeLayout(root);
+  // Positions come from the measured layout: x is the depth column, y the vertical slot.
+  const boxes = new Map(layoutTree(treeData, (n) => [truncateLabel(nodeText(n)), costText(n) ?? '']).map((b) => [b.node, b]));
+  root.each((d) => {
+    const b = boxes.get(d.data)!;
+    (d as any).px = b.x;
+    (d as any).py = b.y;
+  });
 
   const linkGen = d3
     .linkHorizontal<d3.HierarchyPointLink<TreeNode>, d3.HierarchyPointNode<TreeNode>>()
-    .x((d) => d.y)
-    .y((d) => d.x);
+    .x((d: any) => d.px)
+    .y((d: any) => d.py);
 
   content
     .selectAll('.link')
@@ -88,7 +95,7 @@ function draw(
     .data(root.descendants().filter((d) => !d.data._virtualRoot))
     .join('g')
     .attr('class', (d) => `node ${d.data._agentNode ? 'agent' : d.data.state ?? 'idle'}${d.data.stopped ? ' stopped' : ''}`)
-    .attr('transform', (d) => `translate(${d.y},${d.x})`)
+    .attr('transform', (d) => `translate(${(d as any).px},${(d as any).py})`)
     .on('mousemove', (event: MouseEvent, d) => {
       if (isTouch || !tooltipEl) return;
       tooltipEl.style.display = 'block';
@@ -103,6 +110,7 @@ function draw(
         ? [`<div><strong>${escapeHtml(nodeText(d.data))}</strong></div>`, `<div>container: ${escapeHtml(d.data.container ?? '-')}</div>`]
         : [
             `<div><strong>${escapeHtml(d.data.name)}</strong></div>`,
+            `<div>agent: ${escapeHtml(d.data.container ?? '-')}</div>`,
             `<div>kind: ${escapeHtml(d.data.kind ?? '-')}</div>`,
             `<div>model: ${escapeHtml(d.data.model ?? '-')}</div>`,
             `<div>cost: ${escapeHtml(formatCost(d.data.cost_usd))}</div>`,
@@ -127,17 +135,17 @@ function draw(
 
   node
     .append('text')
-    .text((d) => nodeText(d.data))
-    .attr('dy', 22)
+    .text((d) => truncateLabel(nodeText(d.data)))
+    .attr('dy', LABEL_DY)
     .attr('text-anchor', 'middle')
     .style('font-size', '10px')
     .style('fill', '#d6e2e8');
 
   node
-    .filter((d) => !d.data._agentNode && d.data.cost_usd !== null && d.data.cost_usd !== undefined && Number(d.data.cost_usd) > 0)
+    .filter((d) => costText(d.data) !== null)
     .append('text')
-    .text((d) => formatCost(d.data.cost_usd))
-    .attr('dy', 34)
+    .text((d) => costText(d.data) as string)
+    .attr('dy', COST_DY)
     .attr('text-anchor', 'middle')
     .style('font-size', '10px')
     .style('fill', '#89a1ad');
@@ -155,7 +163,7 @@ function draw(
     const padX = isTouch ? 24 : 48;
     const padY = isTouch ? 24 : 36;
     const scale = Math.max(
-      0.2,
+      0.05,
       Math.min(
         1.5,
         (width - padX * 2) / bbox.width,
@@ -271,7 +279,15 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
     };
 
     render(shouldAutoFit);
-    const ro = new ResizeObserver(() => render(false));
+    // ResizeObserver also fires once right after observe(): redrawing then would wipe the auto-fit
+    // that was just scheduled. Redraw only when the size really changed.
+    let lastSize = `${svgEl.clientWidth}x${svgEl.clientHeight}`;
+    const ro = new ResizeObserver(() => {
+      const size = `${svgEl.clientWidth}x${svgEl.clientHeight}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      render(false);
+    });
     ro.observe(svgEl);
     return () => {
       ro.disconnect();

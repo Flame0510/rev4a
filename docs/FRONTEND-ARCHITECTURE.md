@@ -135,6 +135,7 @@ Lineage page (`/lineage`) and the dashboard's session figures read the sessions 
 - **Status** comes from OpenClaw (`running` is "working", `failed` is "error", `aborted`), never from the clock; a row of a gone container is not working. Cost is `null` when unpriced and shown as "not priced", never $0. All times are milliseconds.
 - **Filters** (agent = container, period, active only, no cron) are pure functions in `sessionPresentation.ts`; `?agent=` still accepts an old display name and falls back to `all`. A period longer than the stream's 7 days is read from `/api/sessions?since=` and refreshed every 30 s.
 - The Live feed names the agent of each event; the dashboard's "Active sessions" counts working sessions across containers.
+- **Graph layout** (`layoutTree` in `sessionPresentation.ts`, drawn by `SessionTopology.tsx`): every leaf owns a vertical slot of `NODE_BLOCK_HEIGHT`, so any number of siblings stays readable, and each depth is a column as wide as its widest label plus `DEPTH_GAP`, so a parent's label never meets its child's. Labels are cut at `LABEL_MAX_CHARS` with an ellipsis (`truncateLabel`); the tooltip carries the full text. A session without a price shows "not priced" under its label, never a missing line. The view fits the tree on load and "Reset view" refits it (zoom down to 0.05).
 - Tested without a browser by `scripts/test-lineage-ui.mjs` (the logic files import types only, so Node runs them).
 
 Added UI-side discipline:

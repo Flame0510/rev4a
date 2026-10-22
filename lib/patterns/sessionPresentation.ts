@@ -347,3 +347,77 @@ export function buildSessionTree(sessions: Session[], agents: AgentOption[], fil
   }
   return root;
 }
+
+// --- Lineage graph layout ---------------------------------------------------------------------
+// Deterministic and measured by character count (the graph font is monospace), so a test can
+// prove that no two label boxes overlap. The component only draws what this computes.
+
+/** A label longer than this is cut with an ellipsis; the tooltip keeps the full text. */
+export const LABEL_MAX_CHARS = 24;
+/** Width of one character of the 10px monospace graph font. */
+export const LABEL_CHAR_WIDTH = 6.2;
+/** Vertical room of one node: circle, label line and cost line, plus a gap. */
+export const NODE_BLOCK_HEIGHT = 52;
+/** Free space kept between the label columns of two depths. */
+export const DEPTH_GAP = 36;
+/** Label and cost line below the node circle, relative to the node centre. */
+export const LABEL_DY = 22;
+export const COST_DY = 34;
+
+export function truncateLabel(text: string, max: number = LABEL_MAX_CHARS): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : `${chars.slice(0, Math.max(1, max - 1)).join('').trimEnd()}…`;
+}
+
+/** The node's text: a container shows its agent name, marked when the container is stopped. */
+export function nodeLabel(d: TreeNode): string {
+  return d._agentNode && d.stopped ? `${d.name} (stopped)` : d.name;
+}
+
+export interface LayoutBox {
+  node: TreeNode;
+  depth: number;
+  /** Horizontal centre of the node (and of its label). */
+  x: number;
+  /** Vertical position of the node circle. */
+  y: number;
+  /** Width of the widest text under the node. */
+  width: number;
+}
+
+/**
+ * Lays the tree out left to right. Every leaf gets its own vertical slot of NODE_BLOCK_HEIGHT, so
+ * siblings never overlap whatever their number, and a parent sits at the middle of its children.
+ * Every depth gets a column as wide as its widest text plus DEPTH_GAP, so a parent's label never
+ * runs into its child's. `textsOf` returns the lines drawn under a node (label, cost).
+ * A virtual root takes no room.
+ */
+export function layoutTree(root: TreeNode, textsOf: (n: TreeNode) => string[]): LayoutBox[] {
+  const boxes: LayoutBox[] = [];
+  const colWidth: number[] = [];
+  let nextSlot = 0;
+
+  const widthOf = (n: TreeNode): number =>
+    n._virtualRoot ? 0 : Math.max(16, ...textsOf(n).map((t) => Array.from(t).length * LABEL_CHAR_WIDTH));
+
+  const place = (n: TreeNode, depth: number): LayoutBox => {
+    const box: LayoutBox = { node: n, depth, x: 0, y: 0, width: widthOf(n) };
+    boxes.push(box);
+    colWidth[depth] = Math.max(colWidth[depth] ?? 0, box.width);
+    const kids = (n.children ?? []).map((c) => place(c, depth + 1));
+    if (kids.length) box.y = (kids[0].y + kids[kids.length - 1].y) / 2;
+    else box.y = nextSlot++ * NODE_BLOCK_HEIGHT;
+    return box;
+  };
+  place(root, 0);
+
+  const centres: number[] = [];
+  let edge = 0;
+  colWidth.forEach((w, depth) => {
+    if (depth > 0 && colWidth[depth - 1] > 0) edge += DEPTH_GAP;
+    centres[depth] = edge + w / 2;
+    edge += w;
+  });
+  for (const b of boxes) b.x = centres[b.depth];
+  return boxes;
+}
