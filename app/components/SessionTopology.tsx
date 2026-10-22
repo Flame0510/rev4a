@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import type { AgentOption, Session, TreeNode } from '@/lib/types';
-import { buildSessionTree, layoutTree, nodeLabel as nodeText, truncateLabel, LABEL_DY, COST_DY } from '@/lib/patterns/sessionPresentation';
+import { buildSessionTree, topologyFitKey, layoutTree, nodeLabel as nodeText, truncateLabel, LABEL_DY, COST_DY } from '@/lib/patterns/sessionPresentation';
 
 interface SessionTopologyProps {
   sessions: Session[];
@@ -43,8 +43,12 @@ function draw(
   isTouch: boolean,
   onNodeClick: (id: string) => void,
   registerReset: (reset: () => void) => void,
-) {
+): boolean {
   const svg = d3.select(svgEl);
+  const fitWasRunning = d3.active(svgEl) !== null;
+  // A fit transition scheduled by the previous draw would otherwise drive the old zoom behaviour
+  // and leave the new <g> half-way.
+  svg.interrupt();
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${width} ${height}`);
 
@@ -180,6 +184,7 @@ function draw(
   };
 
   registerReset(resetView);
+  return fitWasRunning;
 }
 
 const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(function SessionTopology(
@@ -191,6 +196,7 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
   const resetRef = useRef<() => void>(() => {});
   const prevFitKeyRef = useRef<string>('');
   const fitFrameRef = useRef<number | null>(null);
+  const pendingFitRef = useRef(false);
   const [isTouch, setIsTouch] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -198,10 +204,7 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
 
   const treeData = useMemo(() => buildSessionTree(sessions, agents, filter), [sessions, agents, filter]);
   const hasVisibleNodes = useMemo(() => (treeData.children ?? []).some((node) => node._agentNode ? (node.children?.length ?? 0) > 0 : true), [treeData]);
-  const fitKey = useMemo(() => JSON.stringify({
-    filter,
-    nodes: treeData.children ?? [],
-  }), [filter, treeData]);
+  const fitKey = useMemo(() => topologyFitKey(filter, treeData), [filter, treeData]);
 
   useImperativeHandle(ref, () => ({
     resetView: () => resetRef.current(),
@@ -234,12 +237,12 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
     const svgEl = svgRef.current;
     const tooltipEl = tooltipRef.current;
     if (!svgEl || !hasVisibleNodes) return;
-    const shouldAutoFit = fitKey !== prevFitKeyRef.current;
+    // A wanted fit stays pending until it has really run: an effect re-run (a poll, isTouch settling)
+    // can cancel the scheduled frame before it fires, and the next run must schedule it again.
+    if (fitKey !== prevFitKeyRef.current) pendingFitRef.current = true;
     prevFitKeyRef.current = fitKey;
 
     const scheduleAutoFit = () => {
-      if (!shouldAutoFit) return;
-
       if (fitFrameRef.current !== null) {
         cancelAnimationFrame(fitFrameRef.current);
       }
@@ -259,6 +262,7 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
           }
 
           resetRef.current();
+          pendingFitRef.current = false;
           fitFrameRef.current = null;
         });
       };
@@ -269,16 +273,17 @@ const SessionTopology = forwardRef<SessionTopologyHandle, SessionTopologyProps>(
     const render = (autoFit: boolean) => {
       const width = svgEl.clientWidth || 900;
       const height = svgEl.clientHeight || 480;
-      draw(svgEl, tooltipEl, width, height, treeData, isTouch, onNodeClick, (reset) => {
+      const fitWasRunning = draw(svgEl, tooltipEl, width, height, treeData, isTouch, onNodeClick, (reset) => {
         resetRef.current = reset;
       });
 
-      if (autoFit) {
+      // A fit that the redraw interrupted runs again on the new drawing.
+      if (autoFit || pendingFitRef.current || fitWasRunning) {
         scheduleAutoFit();
       }
     };
 
-    render(shouldAutoFit);
+    render(pendingFitRef.current);
     // ResizeObserver also fires once right after observe(): redrawing then would wipe the auto-fit
     // that was just scheduled. Redraw only when the size really changed.
     let lastSize = `${svgEl.clientWidth}x${svgEl.clientHeight}`;

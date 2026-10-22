@@ -238,6 +238,10 @@ The central container, running the Next.js dashboard + orchestration API.
   only its table's types and function names. They were four near-identical copies that had
   started to drift. At startup `lib/agent-jobs-maintenance.ts` prunes each table to the
   newest 20 rows per agent — the panel reads the latest row only, so the rest is history.
+- **Startup repair of the token file mode.** `instrumentation.ts` runs `repairAllTokenFileModes`
+  (`lib/agent-token.ts`, not awaited, logged) on every running agent: a `/root/.agent-token`
+  that an older release left 0644 becomes 0600 (a constant script that only removes group/other
+  permissions, so a stricter mode stays; a missing file or a symlink is left alone; idempotent). Stopped agents are fixed at a later Rev4a start.
 - **Browser access** to an agent's Control UI goes through `lib/agent-devices.ts`:
   `openclaw devices list | approve | reject | rename | remove` and
   `openclaw dashboard --json`, run inside the container with the async `dockerExec`.

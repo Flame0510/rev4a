@@ -16,6 +16,7 @@ import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { redactSecret, redactedMessage } from '@/lib/redact-secret';
+import { acquireTokenLock } from '@/lib/agent-token-lock';
 import { buildCreateRunArgs } from '@/lib/agent-create-args';
 import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 
@@ -74,6 +75,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   // Read once so the outer catch can redact it from any error text.
   const createToken = readAgentsToken();
+  // Held from reading the token to the end of `docker run`, so a token save cannot miss the new
+  // container (lib/agent-token-lock.ts). Released on every exit.
+  let releaseTokenLock: () => void = () => {};
+  // The token read under the lock (can differ from createToken if it was saved meanwhile).
+  let laterToken = '';
   try {
     let body: CreateBody;
     try {
@@ -197,7 +203,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const network = getNetwork();
 
     // Read agents token for new containers
+    releaseTokenLock = await acquireTokenLock();
     const agentsToken = readAgentsToken();
+    laterToken = agentsToken;
     if (!agentsToken) {
       return NextResponse.json(
         { success: false, error: 'Agents gateway token is missing. Set it from /agents before creating agents.' },
@@ -260,6 +268,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       onLine: (line) => { const t = line.trim(); if (/^[0-9a-f]{64}$/.test(t)) runOutput = t; },
     });
     const containerId = runOutput;
+    releaseTokenLock();
 
     // Log event to events.db if it exists
     try {
@@ -423,9 +432,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: redactSecret((e as Error).message || 'Unknown error', createToken) },
+      { success: false, error: redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) },
       { status: 500 },
     );
+  } finally {
+    releaseTokenLock();
   }
 }
 

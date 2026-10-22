@@ -94,6 +94,25 @@ export async function register() {
         if (tagged.length) console.log(`[rev4a] Tagged ${tagged.length} untagged agent image(s): ${tagged.join(', ')}`);
       })
       .catch((e) => console.warn(`[rev4a] Could not check agent images on startup: ${(e as Error)?.message ?? e}`));
+    // Agents whose token file was created 0644 by an older release: tighten it to 0600 in every
+    // RUNNING agent. Idempotent, only ever restricts. Stopped agents are fixed at a later Rev4a start.
+    // Not awaited, so it cannot delay the server start.
+    import('./lib/agent-token')
+      .then(async ({ repairAllTokenFileModes }) => {
+        const { promisify } = await import('node:util');
+        const { execFile } = await import('node:child_process');
+        const run = promisify(execFile);
+        const changed = await repairAllTokenFileModes(async () => {
+          const { stdout } = await run(
+            'docker',
+            ['ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}}'],
+            { encoding: 'utf-8', timeout: 5000 },
+          );
+          return stdout.split('\n').map((n) => n.trim()).filter(Boolean);
+        });
+        if (changed) console.log(`[rev4a] Restricted the gateway token file on ${changed} agent(s)`);
+      })
+      .catch((e) => console.warn(`[rev4a] Could not check the agent token files on startup: ${(e as Error)?.message ?? e}`));
     // Retention for the lifecycle job tables: the panel reads the latest row of each
     // agent, so the history is trimmed to the newest rows per agent. Best-effort.
     try {

@@ -82,4 +82,9 @@ test('create run argv carries no token', () => {
   assert.ok(!noMem.includes('--memory'));
 });
 
+test('a secret shorter than 8 characters is not split on, the assignment still is', () => {
+  assert.equal(redactSecret('the cat sat', 'at'), 'the cat sat');
+  assert.equal(redactSecret('OPENCLAW_GATEWAY_TOKEN=abc x', 'abc'), 'OPENCLAW_GATEWAY_TOKEN=*** x');
+  assert.equal(redactSecret('x 12345678 y', '12345678'), 'x *** y');
+});
 console.log(`\n${passed} passed`);

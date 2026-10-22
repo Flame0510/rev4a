@@ -7,6 +7,7 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { redactedMessage } from '@/lib/redact-secret';
 import { writeTokenToContainer, restartArgv } from '@/lib/agent-token';
+import { acquireTokenLock } from '@/lib/agent-token-lock';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +41,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
   let redactToken = '';
+  // Held from writing the file to the end of the container loop (see lib/agent-token-lock.ts).
+  let releaseLock: () => void = () => {};
   try {
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : null;
@@ -57,8 +60,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updated_at: Date.now(),
     };
 
+    releaseLock = await acquireTokenLock();
     fs.mkdirSync(require('path').dirname(AGENTS_TOKEN_FILE), { recursive: true });
-    fs.writeFileSync(AGENTS_TOKEN_FILE, JSON.stringify(payload, null, 2));
+    // An existing file keeps its mode on write: set it explicitly.
+    fs.writeFileSync(AGENTS_TOKEN_FILE, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    fs.chmodSync(AGENTS_TOKEN_FILE, 0o600);
 
     let containersUpdated = 0;
     /** Containers left alone because an operation is running on them. */
@@ -81,7 +87,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         }).filter((c) => c.name)
         : [];
     } catch {
-      containers = [];
+      return NextResponse.json(
+        { success: false, error: 'Docker is not reachable: the token was saved, the agents were not updated.' },
+        { status: 502 },
+      );
     }
 
     for (const { name, agentId } of containers) {
@@ -107,6 +116,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       success: failed.length === 0,
+      ...(failed.length
+        ? { error: `The token was saved but ${failed.length} agent(s) were not updated: ${failed.map((f) => f.container).join(', ')}.` }
+        : {}),
       containersUpdated,
       ...(skipped.length ? { skipped } : {}),
       ...(failed.length ? { failed } : {}),
@@ -116,5 +128,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       { success: false, error: redactedMessage(e, redactToken) || 'Unknown error' },
       { status: 500 },
     );
+  } finally {
+    releaseLock();
   }
 }

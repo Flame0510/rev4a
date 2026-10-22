@@ -421,3 +421,18 @@ export function layoutTree(root: TreeNode, textsOf: (n: TreeNode) => string[]): 
   for (const b of boxes) b.x = centres[b.depth];
   return boxes;
 }
+
+/**
+ * The key that decides when the lineage view refits: the filter and the tree structure only
+ * (every node's uid and its parent's). Cost, state and model change on every live update of a
+ * running session and must not move the view.
+ */
+export function topologyFitKey(filter: string, tree: TreeNode): string {
+  const parts: string[] = [];
+  const walk = (node: TreeNode, parent: string) => {
+    parts.push(`${node.uid}<${parent}`);
+    for (const child of node.children ?? []) walk(child, node.uid);
+  };
+  for (const child of tree.children ?? []) walk(child, tree.uid);
+  return JSON.stringify({ filter, nodes: parts });
+}

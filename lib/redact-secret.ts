@@ -1,3 +1,6 @@
+/** Shorter secrets are not matched as plain text (see redactSecret). */
+const MIN_SECRET_LENGTH = 8;
+
 /**
  * Removes a secret from text that is about to be returned to a client or logged.
  *
@@ -7,7 +10,8 @@
  */
 export function redactSecret(text: string, secret?: string | null): string {
   let out = String(text ?? '');
-  if (secret) out = out.split(secret).join('***');
+  // A very short secret would also match ordinary words: only the assignment pattern applies then.
+  if (secret && secret.length >= MIN_SECRET_LENGTH) out = out.split(secret).join('***');
   return out.replace(/(OPENCLAW_GATEWAY_TOKEN=)[^\s'"]+/g, '$1***');
 }
 

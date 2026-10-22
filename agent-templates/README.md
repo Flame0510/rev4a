@@ -77,14 +77,15 @@ the shared volumes, writes the model and provider configuration and waits for th
 gateway. A bare container, for testing the image only:
 
 ```bash
-docker run -d \
+export OPENCLAW_GATEWAY_TOKEN=<token>   # docker reads the value from the environment
+docker run -d --init \
   --name <id> \
   --network rev4a-network \
   --restart unless-stopped \
   --add-host host.docker.internal:host-gateway \
   -v agent-<id>-data:/root \
   -l "AGENT_ID=<id>" \
-  -e OPENCLAW_GATEWAY_TOKEN=<token> \
+  -e OPENCLAW_GATEWAY_TOKEN \
   -p <port>:3000 \
   openclaw-agent-base:<tag>
 ```
