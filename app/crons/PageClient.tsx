@@ -14,6 +14,8 @@ interface CronPayload { kind?: string; message?: string; model?: string; [k: str
 interface CronState { lastStatus?: string; nextRunAtMs?: number | null; lastRunAtMs?: number | null; [k: string]: unknown }
 interface CronDelivery { mode?: string; channel?: string; to?: string; [k: string]: unknown }
 
+interface CronReadIssue { container: string; agentName?: string | null; error?: string }
+
 interface CronJob {
   id?: string;
   name?: string;
@@ -143,6 +145,8 @@ function filterJobs(jobs: CronJob[], agentKey: string): CronJob[] {
 export default function CronsPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dockerUnavailable, setDockerUnavailable] = useState(false);
+  const [readIssues, setReadIssues] = useState<CronReadIssue[]>([]);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState('all');
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
@@ -200,11 +204,15 @@ export default function CronsPage() {
 
   async function load(signal?: AbortSignal) {
     try {
-      const jobsRes = await apiFetch('/api/crons', { signal });
+      const jobsRes = await apiFetch('/api/crons?status=1', { signal });
       if (signal?.aborted) return;
       if (jobsRes.ok) {
-        const data = await jobsRes.json() as CronJob[] | { jobs: CronJob[] };
-        if (!signal?.aborted) setJobs(Array.isArray(data) ? data : (data.jobs ?? []));
+        const data = await jobsRes.json() as CronJob[] | { jobs: CronJob[]; dockerUnavailable?: boolean; errors?: CronReadIssue[] };
+        if (!signal?.aborted) {
+          setJobs(Array.isArray(data) ? data : (data.jobs ?? []));
+          setDockerUnavailable(!Array.isArray(data) && data.dockerUnavailable === true);
+          setReadIssues(!Array.isArray(data) && Array.isArray(data.errors) ? data.errors : []);
+        }
       }
     } catch { /* keep UI alive */ }
     finally { if (!signal?.aborted) setLoading(false); }
@@ -297,6 +305,14 @@ export default function CronsPage() {
       {/* No loader here: the skeleton lives inside each column, so the page keeps
           its real layout while loading instead of showing a stack of bars above
           two empty panels. */}
+
+      {(dockerUnavailable || readIssues.length > 0) && (
+        <div role="status" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--yellow)' }}>
+          {dockerUnavailable
+            ? 'Docker is not reachable: the cron jobs of the agents cannot be read right now.'
+            : `Could not read ${readIssues.map((e) => e.agentName || e.container).join(', ')}: its cron jobs are missing from this list.`}
+        </div>
+      )}
 
       {/* Agent filter bar */}
       {agentFilters.length > 1 && (

@@ -203,7 +203,7 @@ export default function GatewayPageClient() {
 
   /** The band chips' tooltip: when the band in force now ends, in UTC. */
   const bandUntilLabel = bandChangeAt
-    ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(new Date(bandChangeAt))
+    ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' }).format(new Date(bandChangeAt))
     : null;
 
   /**

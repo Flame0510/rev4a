@@ -83,12 +83,12 @@ export function getTimeZone(): string {
 export function formatTimeFromUnixSeconds(ts: number | null | undefined): string {
   if (!ts) return '--:--:--';
   const ms = Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts);
-  return new Date(ms).toLocaleString('it-IT', {
+  return new Date(ms).toLocaleString(undefined, {
     timeZone: getTimeZone(),
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   });
 }
 

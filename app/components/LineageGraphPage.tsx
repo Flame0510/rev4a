@@ -20,6 +20,8 @@ interface LineageGraphPageProps {
 export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps) {
   const {
     costs,
+    sessionsTotal,
+    liveSessionCount,
     filter,
     selectedSessionId,
     availableAgents,
@@ -97,6 +99,9 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
               <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>
                 Lineage map of sessions, sub-agents and operational relationships.
+                {sessionsTotal !== null && sessionsTotal > liveSessionCount && (
+                  <span> Showing {liveSessionCount} of {sessionsTotal} sessions.</span>
+                )}
               </div>
               <button
                 type="button"

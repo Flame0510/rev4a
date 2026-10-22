@@ -1,11 +1,10 @@
 import type Database from 'better-sqlite3';
 
 /**
- * The `events.type` values daemon.js writes when a run fails: `fail` for an OpenClaw
- * error signal or an orphan close that resolved to error, `spawn_timeout` for a
- * sub-agent that vanished while working. Case-sensitive on purpose — the daemon writes
- * them lowercase (`session_failed` comes from the lineage collector;
- * the old types age out in 30 days), and `FAIL`, `failed`, `error` or `spawn` are not failures.
+ * The `events.type` values that mean a run failed: `session_failed`, written by the session collector
+ * for a failed session or cron run, and the two types of the previous host poll, `fail` and
+ * `spawn_timeout`, which older installs still hold (they age out in 30 days). Case-sensitive on
+ * purpose: `FAIL`, `failed`, `error` or `spawn` are not failures.
  */
 export const FAILURE_EVENT_TYPES = ['fail', 'spawn_timeout', 'session_failed'] as const;
 

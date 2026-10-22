@@ -248,4 +248,28 @@ await test('adaptive interval: 30 s running, 60 s idle, doubling to 10 min on fa
   assert.equal(s.nextDelayMs(false, 30), 600_000);
 });
 
+await test('cron ids: no leading dash, 128 chars at most', () => {
+  assert.equal(s.validJobId('-rf'), false); assert.equal(s.validJobId('--help'), false);
+  assert.equal(s.validJobId('a-b_c1'), true); assert.equal(s.validJobId('_x'), true);
+  assert.equal(s.validJobId('a'.repeat(128)), true); assert.equal(s.validJobId('a'.repeat(129)), false);
+  assert.equal(s.validJobId(''), false); assert.equal(s.validJobId('a b'), false);
+});
+
+await test('failing cron jobs back off (5 min doubling to 6 h) and never starve the others', () => {
+  assert.equal(s.cronBackoffMs(1), 300_000); assert.equal(s.cronBackoffMs(2), 600_000);
+  assert.equal(s.cronBackoffMs(3), 1_200_000); assert.equal(s.cronBackoffMs(50), 6 * 3600_000);
+  const j = (id, upd) => row({ session_key: `agent:main:cron:${id}`, kind: 'cron', updated_at: upd });
+  const rows = ['f1', 'f2', 'f3', 'f4', 'f5', 'ok1', 'ok2'].map((id, i) => j(id, NOW - 1000 - i));
+  const failed = new Map(['f1', 'f2', 'f3', 'f4', 'f5'].map((id) => [id, { at: NOW - 60_000, failures: 1 }]));
+  assert.deepEqual(s.cronJobsToRead(rows, new Map(), NOW, 5, failed).map((x) => x.jobId), ['ok1', 'ok2'], 'five failing jobs are skipped');
+  assert.equal(s.cronJobsToRead(rows, new Map(), NOW + 300_001, 7, failed).length, 7, 'retried after the backoff');
+  const failed2 = new Map([['f1', { at: NOW, failures: 2 }]]);
+  assert.ok(!s.cronJobsToRead(rows, new Map(), NOW + 400_000, 7, failed2).some((x) => x.jobId === 'f1'), 'second failure waits 10 min');
+  // never read first, then the oldest read
+  const read = new Map([['ok1', NOW - 5000], ['f1', NOW - 9000]]);
+  const order = s.cronJobsToRead(rows, read, NOW, 7).map((x) => x.jobId);
+  assert.deepEqual(order.slice(0, 5).sort(), ['f2', 'f3', 'f4', 'f5', 'ok2'], 'never-read jobs come first');
+  assert.deepEqual(order.slice(5), ['f1', 'ok1'], 'then the oldest read first');
+});
+
 console.log(`\n${passed} passed`);

@@ -54,7 +54,7 @@ If you are an AI agent working on this repo: read this file before closing any t
 | `instrumentation.ts` | `docs/dev/GATEWAY.md` — Sync Flow |
 | `daemon.js` container sampling, `lib/docker-stats.js`, `lib/docker-socket-path.js`, `lib/container-metrics.ts`, `app/api/metrics/**`, `app/system/**`, `app/agents/ResourceSection.tsx` | `docs/ARCHITECTURE.md` — Container Consumption; `docs/dev/DATABASE.md` — Container consumption; `docs/dev/API-REFERENCE.md` — Metrics; `docs/FRONTEND-ARCHITECTURE.md` — System page, Agent resources; `docs/rag/` |
 | `lib/model-pricing.ts` (prices, `PRICE_SCHEDULES`), `lib/price-schedule-sync.ts` | `docs/dev/GATEWAY.md` — Costs: OpenClaw prices every call |
-| `daemon.js` cost collector, `lib/agent-costs.ts`, `lib/cost-reconciliation.ts`, `app/api/costs/**`, `app/costs/**`, `app/agents/CostSection.tsx` | `docs/ARCHITECTURE.md` — Agent Costs; `docs/dev/DATABASE.md` — Costs Database; `docs/dev/API-REFERENCE.md` — Stats & Costs; `docs/FRONTEND-ARCHITECTURE.md` — Costs page |
+| `daemon.js` cost collector, `lib/agent-costs.ts`, `lib/cost-reconciliation.ts`, `app/api/costs/**`, `app/costs/**`, `app/agents/CostSection.tsx` | `docs/ARCHITECTURE.md` — Agent Costs; `docs/dev/DATABASE.md` — Costs Database; `docs/dev/API-REFERENCE.md` — Costs; `docs/FRONTEND-ARCHITECTURE.md` — Costs page |
 | `app/lib/**` | `docs/FRONTEND-ARCHITECTURE.md` |
 | DB schema (migrations, new tables/columns) | `docs/dev/DATABASE.md` — schema section |
 | Environment variables | `README.md` — Configuration table |

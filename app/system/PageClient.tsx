@@ -72,9 +72,9 @@ function percentOf(used: number | null, total: number | null): number | null {
 function timeFormatter(range: Range, timeZone: string): (ts: number) => string {
   const opts: Intl.DateTimeFormatOptions =
     range === '1h' || range === '24h'
-      ? { hour: '2-digit', minute: '2-digit', hour12: false }
-      : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false };
-  const fmt = new Intl.DateTimeFormat('en-GB', { ...opts, timeZone });
+      ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+      : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+  const fmt = new Intl.DateTimeFormat(undefined, { ...opts, timeZone });
   return (ts) => fmt.format(new Date(ts * 1000));
 }
 

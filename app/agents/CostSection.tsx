@@ -73,7 +73,7 @@ export default function CostSection({ container }: { container: string }) {
   }
 
   const stale = !data.collectedAt || Date.now() - data.collectedAt > data.intervalS * 3 * 1000;
-  const utcTime = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+  const utcTime = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' });
   // What the gateway charges right now: the band the agent's calls are billed at until the
   // next change (the rows below are history, priced as each call happened).
   const rows: [string, string][] = data.pricing ? [

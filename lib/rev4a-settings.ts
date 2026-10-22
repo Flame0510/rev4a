@@ -114,7 +114,8 @@ export function readTimezone(
 ): { timezone: string; source: TimezoneSource } {
   const saved = readSettings(dir, legacyFile).timezone;
   if (saved) return { timezone: saved, source: 'saved' };
-  if (isValidTimezone(env)) return { timezone: env, source: 'env' };
+  const fromEnv = canonicalTimezone(env);
+  if (fromEnv) return { timezone: fromEnv, source: 'env' };
   return { timezone: serverTimezone(), source: 'server' };
 }
 

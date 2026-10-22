@@ -104,8 +104,8 @@ function formatAge(ms: number): string {
 }
 
 const dayStart = (date: string) => Date.parse(`${date}T00:00:00Z`) / 1000;
-const utcDay = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-const utcTime = new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+const utcDay = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const utcTime = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' });
 
 function share(part: number, whole: number): number {
   return whole > 0 ? (part / whole) * 100 : 0;
@@ -165,7 +165,7 @@ export default function CostsPageClient() {
   const stale = loading && data !== null && data.range !== range;
   const now = Date.now();
   const t = data?.totals;
-  const sessionTime = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
+  const sessionTime = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone });
 
   // Agents the daemon is still trying to read (a recent attempt) whose figures are not
   // current. A stopped or deleted agent is no longer attempted and keeps its last figures

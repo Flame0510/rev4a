@@ -22,7 +22,7 @@ import Rev4aLoader from './Rev4aLoader';
 /** Date and time in the dashboard time zone (the shared formatter shows the time only). Milliseconds in. */
 function formatStamp(ms: number | null | undefined): string {
   if (!ms) return '-';
-  return new Date(ms).toLocaleString('en-GB', {
+  return new Date(ms).toLocaleString(undefined, {
     timeZone: getTimeZone(),
     year: 'numeric',
     month: '2-digit',
@@ -30,7 +30,7 @@ function formatStamp(ms: number | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   });
 }
 

@@ -29,7 +29,7 @@ export type Session = {
   ended_at: number | null;
   archived_at: number | null;
   gone_at: number | null;
-  // Legacy fields kept for the current UI until LIN-3 lands.
+  // Legacy fields kept for one more release for the current UI.
   id: string;
   parent_id: string | null;
 };
@@ -37,6 +37,8 @@ export type Session = {
 type Row = Record<string, unknown> & { container: string; session_key: string };
 
 export const SESSIONS_CAP = 2000;
+/** Newest cron runs kept per job in a listing (the rest stay in the table, counted in `total`). */
+export const CRON_RUNS_PER_JOB = 20;
 export const DEFAULT_WINDOW_MS = 7 * 24 * 3600 * 1000;
 const COLUMNS = [
   'container', 'session_key', 'agent_name', 'session_id', 'kind', 'parent_key', 'parent_kind', 'spawn_depth',
@@ -190,9 +192,36 @@ export function listSessions(db: Database.Database, opts: ListOptions = {}): Lis
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   try {
     const total = (db.prepare(`SELECT COUNT(*) AS n FROM agent_sessions ${clause}`).get(...args) as { n: number }).n;
-    const rows = db
-      .prepare(`SELECT ${COLUMNS}, parent_key FROM agent_sessions ${clause} ORDER BY COALESCE(updated_at, started_at, 0) DESC, container, session_key LIMIT ?`)
-      .all(...args, limit) as Row[];
+    const order = 'ORDER BY COALESCE(updated_at, started_at, 0) DESC, container, session_key';
+    let rows: Row[];
+    if (opts.kind) {
+      // An explicit kind filter is a direct question: no per-job trimming.
+      rows = db.prepare(`SELECT ${COLUMNS}, parent_key FROM agent_sessions ${clause} ${order} LIMIT ?`).all(...args, limit) as Row[];
+    } else {
+      // Cron runs (a minutely job leaves ~10k rows a week) must not crowd out the other kinds: the other
+      // kinds are read first, then the newest CRON_RUNS_PER_JOB runs of each job fill what is left of the cap.
+      const base = clause ? `${clause} AND` : 'WHERE';
+      const others = db
+        .prepare(`SELECT ${COLUMNS}, parent_key FROM agent_sessions ${base} (kind IS NULL OR kind != 'cron_run') ${order} LIMIT ?`)
+        .all(...args, limit) as Row[];
+      const room = limit - others.length;
+      let cron: Row[] = [];
+      if (room > 0) {
+        cron = db
+          .prepare(
+            `SELECT ${COLUMNS}, parent_key FROM (
+               SELECT ${COLUMNS}, parent_key,
+                 ROW_NUMBER() OVER (PARTITION BY container, COALESCE(cron_job_id, session_key)
+                                    ORDER BY COALESCE(updated_at, started_at, 0) DESC, session_key) AS rn
+               FROM agent_sessions ${base} kind = 'cron_run'
+             ) WHERE rn <= ${CRON_RUNS_PER_JOB} OR (status = 'running' AND gone_at IS NULL) ${order} LIMIT ?`,
+          )
+          .all(...args, room) as Row[];
+      }
+      const stamp = (r: Row) => num(r.updated_at) ?? num(r.started_at) ?? 0;
+      const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+      rows = [...others, ...cron].sort((p, q) => stamp(q) - stamp(p) || cmp(p.container, q.container) || cmp(p.session_key, q.session_key));
+    }
     return { sessions: toSessions(db, rows, opts.costsDb), total, version: sessionsVersion(db) };
   } catch {
     // `error` lets a caller tell a failed read from an empty table (the stream keeps its last frame).
@@ -245,6 +274,20 @@ export function getSession(db: Database.Database, q: { container?: string | null
 /** True when the sessions frame must be sent: the collector bumped the version since the last frame. */
 export function sessionsChanged(lastSent: number | null, version: number): boolean {
   return lastSent === null || version !== lastSent;
+}
+
+/**
+ * What the costs.db side of the listing looks like, cheaply (one aggregate, no listing): the stream
+ * rebuilds its sessions frame only when this or the collector's version changes. '' without costs.db.
+ */
+export function costsDbSignature(costsDb: Database.Database | null | undefined): string {
+  if (!costsDb) return '';
+  try {
+    const r = costsDb.prepare('SELECT COUNT(*) AS n, TOTAL(cost) AS s FROM agent_cost_sessions').get() as { n: number; s: number };
+    return `${r.n}:${Number(r.s).toFixed(6)}`;
+  } catch {
+    return '';
+  }
 }
 
 /** Cheap check for a new-session-state count, used by system health. */

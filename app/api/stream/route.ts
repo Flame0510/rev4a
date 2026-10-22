@@ -4,7 +4,7 @@ import { openCostsDb } from '@/lib/costs-db';
 import Database from 'better-sqlite3';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dashboardCosts } from '@/lib/agent-costs';
-import { listSessions, recentEvents, sessionsChanged, sessionsVersion } from '@/lib/agent-sessions-db';
+import { listSessions, costsDbSignature, recentEvents, sessionsChanged, sessionsVersion } from '@/lib/agent-sessions-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +12,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   let lastEventId = 0;
   let lastSessionsVersion: number | null = null;
+  let lastCostSignature = '';
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -25,18 +26,24 @@ export async function GET(request: NextRequest): Promise<Response> {
           const db = new Database(DB_PATH, { readonly: true });
           let newEvents: { id: number }[] = [];
           let sessions: ReturnType<typeof listSessions>['sessions'] | null = null;
+          let sessionsTotal = 0;
           let costsDb: ReturnType<typeof openCostsDb> = null;
           try {
             try { newEvents = recentEvents(db, { limit: 20, afterId: lastEventId, ascending: true }) as { id: number }[]; } catch { newEvents = []; }
-            // The sessions frame is sent only when the collector bumped the version (and on the first poll),
-            // with the same list GET /api/sessions answers (same window, same cap). A failed read keeps the last frame.
+            // The sessions frame is sent when the collector bumped the version (and on the first poll) or when
+            // the cost fields of the list changed (costs.db fills them at read time, without a version bump).
+            // It carries the same list GET /api/sessions answers (same window, same cap). A failed read keeps the last frame.
+            // Both checks are one cheap read each; the list itself is built only when one of them moved.
             const version = sessionsVersion(db);
-            if (sessionsChanged(lastSessionsVersion, version)) {
-              try { costsDb = openCostsDb(); } catch { costsDb = null; }
+            try { costsDb = openCostsDb(); } catch { costsDb = null; }
+            const signature = costsDbSignature(costsDb);
+            if (sessionsChanged(lastSessionsVersion, version) || signature !== lastCostSignature) {
               const listed = listSessions(db, { costsDb });
               if (!listed.error) {
                 sessions = listed.sessions;
+                sessionsTotal = listed.total;
                 lastSessionsVersion = version;
+                lastCostSignature = signature;
               }
             }
           } finally {
@@ -50,7 +57,7 @@ export async function GET(request: NextRequest): Promise<Response> {
             lastEventId = newEvents[newEvents.length - 1].id;
             send({ type: 'events', data: newEvents });
           }
-          if (sessions) send({ type: 'sessions', data: sessions });
+          if (sessions) send({ type: 'sessions', data: sessions, total: sessionsTotal });
           send({ type: 'costs', data: { today: costs?.today ?? 0 } });
         } catch {
           // Ignore DB read errors to keep stream alive.

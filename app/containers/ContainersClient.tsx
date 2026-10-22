@@ -25,10 +25,13 @@ export default function ContainersClient() {
   const [usage, setUsage] = useState<Record<string, Usage>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Set after mount, in the viewer's locale: rendering the time during SSR would differ on the client.
+  const [clock, setClock] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   async function load(signal?: AbortSignal) {
     try {
+      setClock(new Date().toLocaleTimeString());
       const [res, usageRes] = await Promise.all([
         fetch('/api/containers', { signal }),
         // The figures are a bonus: a daemon that has not sampled yet must not break the list.
@@ -81,7 +84,7 @@ export default function ContainersClient() {
         <h1 style={{ fontSize: 20, fontWeight: 400, color: 'var(--violet)', letterSpacing: 2, margin: 0 }}>CONTAINERS</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-            {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{new Date().toLocaleTimeString('it-IT')}</span>
+            {containers.length} container · <span style={{ fontFamily: 'var(--font-mono-stack)', fontSize: 11 }}>{clock}</span>
           </span>
           <Button variant="ghost" size="sm" onClick={refresh} aria-label="Refresh containers">↻</Button>
         </div>

@@ -130,6 +130,13 @@ test('resolution order: saved, then REV4A_TIMEZONE, then the server zone', () =>
   assert.deepEqual(s.readTimezone(dir, none, 'Asia/Dubai'), { timezone: 'Asia/Tokyo', source: 'saved' });
 });
 
+test('REV4A_TIMEZONE is canonicalised, and ignored when invalid', () => {
+  const dir = tmp();
+  const none = path.join(dir, 'x');
+  assert.deepEqual(s.readTimezone(dir, none, 'europe/rome'), { timezone: 'Europe/Rome', source: 'env' });
+  assert.equal(s.readTimezone(dir, none, 'Mars/Base').source, 'server');
+});
+
 test('canonical spelling is stored: europe/rome, utc', () => {
   assert.equal(s.canonicalTimezone('europe/rome'), 'Europe/Rome');
   assert.equal(s.canonicalTimezone('utc'), 'UTC');

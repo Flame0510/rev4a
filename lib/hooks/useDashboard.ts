@@ -6,7 +6,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import type { Session, SessionEvent, Costs, FilterConfig, Period, AgentOption } from '../types';
 import { Rev4aEventBus } from '../patterns/EventBus';
 import { buildFilterStrategy } from '../patterns/FilterStrategy';
-import { sessionsFromResponse } from '../patterns/ApiClient';
+import { sessionsFromResponse, sessionsTotalFromResponse } from '../patterns/ApiClient';
 import {
   buildAgentOptions,
   decorateEvents,
@@ -46,6 +46,8 @@ function filterToParams(filter: FilterConfig): URLSearchParams {
 
 interface DashboardState {
   sessions: Session[];
+  /** Real number of sessions behind `sessions` (the list is capped); null when unknown. */
+  sessionsTotal: number | null;
   /** Sessions older than the stream's window, fetched for a period longer than 7 days. */
   history: Session[];
   events: SessionEvent[];
@@ -57,7 +59,7 @@ interface DashboardState {
 }
 
 type Action =
-  | { type: 'SET_SESSIONS'; sessions: Session[] }
+  | { type: 'SET_SESSIONS'; sessions: Session[]; total?: number | null }
   | { type: 'SET_HISTORY'; sessions: Session[] }
   | { type: 'SET_EVENTS'; events: SessionEvent[] }
   | { type: 'PREPEND_EVENTS'; events: SessionEvent[] }
@@ -69,7 +71,7 @@ type Action =
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
     case 'SET_SESSIONS':
-      return { ...state, sessions: action.sessions, hasSessionsLoaded: true };
+      return { ...state, sessions: action.sessions, sessionsTotal: action.total ?? null, hasSessionsLoaded: true };
     case 'SET_HISTORY':
       return { ...state, history: action.sessions };
     case 'SET_EVENTS':
@@ -118,6 +120,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
 
   const [state, dispatch] = useReducer(reducer, {
     sessions: [],
+    sessionsTotal: null,
     history: [],
     events: [],
     costs: { today: 0, allTime: 0, byModel: [], ...initialCosts },
@@ -142,7 +145,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     const controller = new AbortController();
 
     const unsubscribe = Rev4aEventBus.subscribe({
-      onSessions: (sessions) => dispatch({ type: 'SET_SESSIONS', sessions }),
+      onSessions: (sessions, total) => dispatch({ type: 'SET_SESSIONS', sessions, total }),
       onEvents: (events) => dispatch({ type: 'PREPEND_EVENTS', events }),
       onCostUpdate: (today) => dispatch({ type: 'UPDATE_COST_TODAY', today }),
     });
@@ -151,7 +154,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((raw: unknown) => {
         if (!hasSessionsLoadedRef.current) {
-          dispatch({ type: 'SET_SESSIONS', sessions: sessionsFromResponse(raw) });
+          dispatch({ type: 'SET_SESSIONS', sessions: sessionsFromResponse(raw), total: sessionsTotalFromResponse(raw) });
         }
       })
       .catch(() => {});
@@ -279,6 +282,8 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
 
   return {
     sessions: allSessions,
+    sessionsTotal: state.sessionsTotal,
+    liveSessionCount: state.sessions.length,
     events: decoratedEvents,
     costs: state.costs,
     filter,

@@ -166,4 +166,49 @@ test('cost: a NULL cost is filled from costs.db by (container, session_id); 0 or
   assert.equal(m.listSessions(d, { now: NOW }).sessions.find((s) => s.session_key === 'agent:main:subagent:x').cost_usd, null);
 });
 
+test('cron runs do not crowd out main and sub-agent sessions (per-job trimming, real total)', () => {
+  const d = new Database(':memory:');
+  d.exec(DDL);
+  d.prepare('INSERT INTO agent_sessions_meta VALUES (1, 1)').run();
+  const ins = d.prepare("INSERT INTO agent_sessions (container, session_key, kind, status, cron_job_id, updated_at) VALUES (?, ?, ?, 'done', ?, ?)");
+  d.transaction(() => {
+    for (let i = 0; i < 2500; i++) ins.run('a1', `agent:main:cron:j${i % 2}:run:${i}`, 'cron_run', `j${i % 2}`, NOW - 1000 + i);
+    ins.run('a1', 'agent:main:main', 'main', null, NOW - 2 * DAY);
+    ins.run('a1', 'agent:main:subagent:s', 'subagent', null, NOW - 2 * DAY);
+  })();
+  const r = m.listSessions(d, { now: NOW });
+  const keys = r.sessions.map((x) => x.session_key);
+  assert.ok(keys.includes('agent:main:main') && keys.includes('agent:main:subagent:s'));
+  assert.equal(r.total, 2502, 'total stays the real count');
+  assert.equal(r.sessions.filter((x) => x.kind === 'cron_run').length, 2 * m.CRON_RUNS_PER_JOB);
+  const stamps = r.sessions.map((x) => x.updated_at);
+  assert.deepEqual(stamps, [...stamps].sort((a, b) => b - a), 'same newest-first order');
+  assert.equal(m.listSessions(d, { now: NOW, kind: 'cron_run' }).sessions.length, 2000, 'an explicit kind is not trimmed');
+});
+
+test('a running cron run is kept even when its job has newer runs', () => {
+  const d = new Database(':memory:');
+  d.exec(DDL);
+  d.prepare('INSERT INTO agent_sessions_meta VALUES (1, 1)').run();
+  const ins = d.prepare("INSERT INTO agent_sessions (container, session_key, kind, status, cron_job_id, updated_at) VALUES (?, ?, 'cron_run', ?, 'j', ?)");
+  d.transaction(() => {
+    ins.run('a1', 'agent:main:cron:j:run:stuck', 'running', NOW - 3 * DAY);
+    for (let i = 0; i < 30; i++) ins.run('a1', `agent:main:cron:j:run:${i}`, 'done', NOW - 1000 + i);
+  })();
+  const keys = m.listSessions(d, { now: NOW }).sessions.map((x) => x.session_key);
+  assert.ok(keys.includes('agent:main:cron:j:run:stuck'));
+  assert.equal(keys.length, m.CRON_RUNS_PER_JOB + 1);
+});
+
+test('costsDbSignature: cheap, changes when costs.db gets a cost, empty without costs.db', () => {
+  const c = new Database(':memory:');
+  c.exec('CREATE TABLE agent_cost_sessions (container TEXT NOT NULL, session_id TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0)');
+  const before = m.costsDbSignature(c);
+  assert.equal(before, m.costsDbSignature(c), 'stable while nothing changes');
+  c.prepare("INSERT INTO agent_cost_sessions VALUES ('a1', 'S1', 0.5)").run();
+  assert.notEqual(m.costsDbSignature(c), before);
+  assert.equal(m.costsDbSignature(null), '');
+  assert.equal(m.costsDbSignature(new Database(':memory:')), '', 'no table → empty, never throws');
+});
+
 console.log(`\n${passed} passed`);

@@ -76,7 +76,9 @@ export function cronJobsToRead(
   readAt: Map<string, number>,
   now: number,
   max: number,
+  failed?: Map<string, { at: number; failures: number }>,
 ): Array<{ jobId: string; marker: number }>;
+export function cronBackoffMs(failures: number): number;
 export function nextDelayMs(anyRunning: boolean, failures?: number): number;
 export const PRUNE_SQL: { sessions: string; cronRuns: string; cronJobs: string; cronEvents: string };
 export function containersToMarkGone(storedContainers: Iterable<string>, liveContainers: Iterable<string>): string[];

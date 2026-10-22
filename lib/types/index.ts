@@ -81,7 +81,7 @@ export interface ModelCost {
 
 // SSE streaming message shapes
 export type StreamMessage =
-  | { type: 'sessions'; data: unknown[] | { sessions?: unknown[] } }
+  | { type: 'sessions'; data: unknown[] | { sessions?: unknown[] }; total?: number }
   | { type: 'events'; data: unknown[] }
   | { type: 'costs'; data: { today?: number } };
 

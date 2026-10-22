@@ -21,6 +21,12 @@ export function sessionsFromResponse(raw: unknown): Session[] {
   return Array.isArray(list) ? SessionFactory.createMany(list) : [];
 }
 
+/** The real number of matching sessions, when the answer carries it (a bare array does not). */
+export function sessionsTotalFromResponse(raw: unknown): number | null {
+  const total = Array.isArray(raw) ? undefined : (raw as { total?: unknown } | null)?.total;
+  return typeof total === 'number' && Number.isFinite(total) ? total : null;
+}
+
 class Rev4aApiClientClass {
   private static _instance: Rev4aApiClientClass | null = null;
 

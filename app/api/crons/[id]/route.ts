@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { patchCronJob, removeCronJob } from '@/lib/openclaw-cron';
+import { isValidAgentContainer, listAgentContainers } from '@/lib/agent-containers';
+import { checkCronRequest } from '@/lib/cron-ids';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 
 export const dynamic = 'force-dynamic';
 
-const CONTAINER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+const checkTarget = (jobId: string, containerName: unknown) =>
+  checkCronRequest({ jobId, containerName }, { isValidContainer: isValidAgentContainer, listContainers: listAgentContainers });
 
 export async function PATCH(
   request: NextRequest,
@@ -23,12 +26,7 @@ export async function PATCH(
 
   const allowed: Record<string, unknown> = {};
   if (typeof body.enabled === 'boolean') allowed.enabled = body.enabled;
-  if (typeof body.containerName === 'string') {
-    if (!CONTAINER_NAME_RE.test(body.containerName)) {
-      return NextResponse.json({ error: 'Invalid containerName format' }, { status: 400 });
-    }
-    allowed.containerName = body.containerName;
-  }
+  if (typeof body.containerName === 'string') allowed.containerName = body.containerName;
 
   if (typeof allowed.containerName !== 'string') {
     return NextResponse.json({ error: 'containerName is required' }, { status: 400 });
@@ -36,6 +34,9 @@ export async function PATCH(
   if (typeof allowed.enabled !== 'boolean') {
     return NextResponse.json({ error: 'enabled (boolean) is required' }, { status: 400 });
   }
+
+  const target = await checkTarget(id, allowed.containerName);
+  if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
 
   const result = patchCronJob(id, allowed);
   if (!result.ok) {
@@ -59,13 +60,15 @@ export async function DELETE(
   const { searchParams } = new URL(request.url);
   const containerName = searchParams.get('containerName') ?? undefined;
 
-  if (!containerName || !CONTAINER_NAME_RE.test(containerName)) {
+  if (!containerName) {
     return NextResponse.json({ error: 'Missing or invalid containerName' }, { status: 400 });
   }
+  const target = await checkTarget(id, containerName);
+  if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
 
   const result = removeCronJob(id, containerName);
   if (!result.ok) {
-    const status = result.error?.includes('not found') ? 404 : 502;
+    const status = result.badRequest ? 400 : result.error?.includes('not found') ? 404 : 502;
     return NextResponse.json({ error: result.error }, { status });
   }
 

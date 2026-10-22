@@ -495,7 +495,7 @@ function TimezoneSettings() {
           label="Time zone"
           list="rev4a-timezones"
           value={value}
-          placeholder={saved ? (saved.source === 'saved' ? 'Time zone' : `Server default (${saved.timezone})`) : 'Loading…'}
+          placeholder={saved ? (saved.source === 'saved' ? 'Time zone' : saved.source === 'env' ? `From REV4A_TIMEZONE (${saved.timezone})` : `Server default (${saved.timezone})`) : 'Loading…'}
           disabled={!saved || saving}
           autoComplete="off"
           spellCheck={false}

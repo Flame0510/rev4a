@@ -84,7 +84,8 @@ async function pluginsOf(row: AgentContainerRow, fresh: boolean, arrivedAt: numb
     if (hit) return hit;
   }
   let flight = flights().get(row.container);
-  if (!flight || (fresh && flight.startedAt < arrivedAt)) flight = startRun(row);
+  // A run whose waiters all left was aborted: it is dying, so joining it would end in an abort error.
+  if (!flight || flight.controller.signal.aborted || (fresh && flight.startedAt < arrivedAt)) flight = startRun(row);
   const f = flight;
   f.waiters++;
   let released = false;

@@ -47,7 +47,7 @@ export function RecentAlerts({ timeZone }: { timeZone: string }) {
     };
   }, []);
 
-  const format = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
+  const format = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone });
 
   return (
     <Surface as="section">

@@ -4,6 +4,7 @@ import { dockerExecNoFail, mapWithConcurrency, buildExecArgs, clientTimeoutMs, i
 
 import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { describeAgent, CONTAINER_NAME_RE } from '@/lib/agent-names';
+import { isValidCronJobId } from '@/lib/cron-ids';
 
 const execFileAsync = promisify(execFile);
 
@@ -107,10 +108,20 @@ export interface OpenClawCronJob {
   [key: string]: unknown;
 }
 
+/** One agent whose cron jobs could not be read (it did not answer, or answered garbage). */
+export interface CronReadError {
+  container: string;
+  error: string;
+}
+
 export interface OpenClawCronListResult {
   ok: boolean;
   jobs: OpenClawCronJob[];
   total: number;
+  /** True when `docker ps` failed: the jobs list is empty because nothing could be asked, not because there are none. */
+  dockerUnavailable: boolean;
+  /** Agents that were running but whose jobs could not be read. */
+  errors: CronReadError[];
 }
 
 export interface AgentInfo {
@@ -131,7 +142,7 @@ function extractScheduleExpr(job: OpenClawCronJob): string {
 
 // ── Discover agent containers ────────────────────────────────────────────
 
-async function discoverAgentContainers(): Promise<AgentInfo[]> {
+async function discoverAgentContainers(): Promise<{ agents: AgentInfo[]; dockerUnavailable: boolean }> {
   try {
     // One `docker ps` for everything. This used to run an extra `docker inspect`
     // per container just to read the AGENT_ID label — but `docker ps` prints
@@ -141,7 +152,7 @@ async function discoverAgentContainers(): Promise<AgentInfo[]> {
       'ps', '--filter', 'label=AGENT_ID', '--format', '{{.Label "AGENT_ID"}}\t{{.Names}}',
     ], { encoding: 'utf8', timeout: 5000 });
 
-    return raw.stdout.trim().split('\n')
+    const agents = raw.stdout.trim().split('\n')
       .map((line) => {
         const [agentId, containerName] = line.split('\t');
         if (!containerName?.trim()) return null;
@@ -151,8 +162,9 @@ async function discoverAgentContainers(): Promise<AgentInfo[]> {
         };
       })
       .filter(Boolean) as AgentInfo[];
+    return { agents, dockerUnavailable: false };
   } catch {
-    return [];
+    return { agents: [], dockerUnavailable: true };
   }
 }
 
@@ -198,6 +210,7 @@ async function listJobsInContainer(containerName: string): Promise<OpenClawCronJ
 // ── PATCH helpers ────────────────────────────────────────────────────────
 
 function toggleInContainer(containerName: string, jobId: string, enabled: boolean): boolean {
+  if (!isValidCronJobId(jobId)) return false;
   const gatewayUrls = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:18789',
@@ -218,7 +231,8 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   const seen = new Set<string>();
   const jobs: OpenClawCronJob[] = [];
 
-  const agents = await discoverAgentContainers();
+  const { agents, dockerUnavailable } = await discoverAgentContainers();
+  const errors: CronReadError[] = [];
 
   // Agent container cron jobs, queried concurrently and merged in discovery order, so the
   // response doesn't shuffle between polls just because a container answered sooner.
@@ -229,8 +243,11 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
   );
 
   for (const [i, containerJobs] of perAgent.entries()) {
-    if (!containerJobs) continue;
     const agent = agents[i];
+    if (!containerJobs) {
+      errors.push({ container: agent.containerName, error: 'The agent did not answer' });
+      continue;
+    }
     for (const job of containerJobs) {
       job.scheduleExpr = extractScheduleExpr(job);
       job.source = 'container';
@@ -244,7 +261,7 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
     }
   }
 
-  return { ok: true, jobs, total: jobs.length };
+  return { ok: true, jobs, total: jobs.length, dockerUnavailable, errors };
 }
 
 // ── Patch: always inside an agent container ─────────────────────────────
@@ -291,6 +308,7 @@ export function getCronRuns(
   jobId: string,
   limit: number = 20,
 ): CronRunsResult {
+  if (!isValidCronJobId(jobId)) return { ok: false, entries: [], error: 'Invalid job id' };
   const gatewayUrls = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:18789',
@@ -317,6 +335,8 @@ export function patchCronJob(id: string, patch: Partial<OpenClawCronJob>): CronP
     return { ok: false, error: 'Only the enabled field can be patched' };
   }
 
+  if (!isValidCronJobId(id)) return { ok: false, error: 'Invalid job id', badRequest: true };
+
   const containerName = patch.containerName;
   if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) {
     return { ok: false, error: 'A valid containerName is required', badRequest: true };
@@ -337,6 +357,7 @@ export interface CronRemoveResult {
 }
 
 function removeInContainer(containerName: string, jobId: string): boolean {
+  if (!isValidCronJobId(jobId)) return false;
   const gatewayUrls = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:18789',
@@ -351,6 +372,7 @@ function removeInContainer(containerName: string, jobId: string): boolean {
 }
 
 export function removeCronJob(id: string, containerName?: string): CronRemoveResult {
+  if (!isValidCronJobId(id)) return { ok: false, error: 'Invalid job id', badRequest: true };
   if (typeof containerName !== 'string' || !CONTAINER_NAME_RE.test(containerName)) {
     return { ok: false, error: 'A valid containerName is required', badRequest: true };
   }

@@ -7,7 +7,7 @@ import { SessionFactory, EventFactory } from './SessionFactory';
 // ── Observer interface ─────────────────────────────────────────────────────
 
 export interface IDashboardObserver {
-  onSessions?(sessions: Session[]): void;
+  onSessions?(sessions: Session[], total?: number | null): void;
   onEvents?(events: SessionEvent[]): void;
   onCostUpdate?(today: number): void;
 }
@@ -34,6 +34,7 @@ class Rev4aEventBusClass {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSessionsHash = '';
   private latestSessions: Session[] | null = null;
+  private latestTotal: number | null = null;
   private latestEvents: SessionEvent[] | null = null;
   private latestCostToday: number | null = null;
 
@@ -86,7 +87,7 @@ class Rev4aEventBusClass {
   }
 
   private replayTo(observer: IDashboardObserver): void {
-    if (this.latestSessions && observer.onSessions) observer.onSessions(this.latestSessions);
+    if (this.latestSessions && observer.onSessions) observer.onSessions(this.latestSessions, this.latestTotal);
     if (this.latestEvents && observer.onEvents) observer.onEvents(this.latestEvents);
     if (this.latestCostToday !== null && observer.onCostUpdate) observer.onCostUpdate(this.latestCostToday);
   }
@@ -94,10 +95,12 @@ class Rev4aEventBusClass {
   private dispatch(msg: StreamMessage): void {
     if (msg.type === 'sessions') {
       const list = framedSessions(msg.data);
-      const hash = sessionsFingerprint(list);
+      const total = typeof msg.total === 'number' && Number.isFinite(msg.total) ? msg.total : null;
+      const hash = `${total ?? ''}#${sessionsFingerprint(list)}`;
       if (hash === this.lastSessionsHash) return;
       this.lastSessionsHash = hash;
       this.latestSessions = SessionFactory.createMany(list);
+      this.latestTotal = total;
     } else if (msg.type === 'events') {
       this.latestEvents = EventFactory.createMany(msg.data);
     } else if (msg.type === 'costs') {
@@ -106,7 +109,7 @@ class Rev4aEventBusClass {
 
     for (const obs of this.observers) {
       if (msg.type === 'sessions' && obs.onSessions && this.latestSessions) {
-        obs.onSessions(this.latestSessions);
+        obs.onSessions(this.latestSessions, this.latestTotal);
       } else if (msg.type === 'events' && obs.onEvents && this.latestEvents) {
         obs.onEvents(this.latestEvents);
       } else if (msg.type === 'costs' && obs.onCostUpdate && this.latestCostToday !== null) {

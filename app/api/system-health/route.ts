@@ -81,8 +81,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     // The daemon's heartbeat: the age of its newest machine metrics sample (metrics.db, every
-    // 30 s on a timer of its own). It proves the daemon is alive — not that the OpenClaw session
-    // poll is ingesting, which runs separately and may have nothing to poll on this host.
+    // 30 s on a timer of its own). It proves the daemon is alive — not that the sessions collector
+    // is ingesting, which runs separately (it reads each agent's Gateway; there is no host poll).
     const metricSample = latestMetricSample();
     const hasSystemMetrics = metricSample.available;
     const latestMetricTs = getSeconds(metricSample.ts);
@@ -211,8 +211,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const cron = await listOpenClawCronJobs();
     const enabled = cron.jobs.filter((job) => job.enabled !== false).length;
-    checks.push({ id: 'cron.jobs', label: 'Cron jobs', health: enabled > 0 ? 'ok' : 'warning', value: enabled, details: `${cron.jobs.length} in agent containers`, source: 'cron' });
-    if (enabled === 0) {
+    // When Docker is down or an agent did not answer, an empty list proves nothing: no "no enabled cron" claim.
+    const degraded = cron.dockerUnavailable || cron.errors.length > 0;
+    const degradedDetails = cron.dockerUnavailable
+      ? 'Docker is not reachable: cron jobs could not be read'
+      : `Could not read the cron jobs of ${cron.errors.map((e) => e.container).join(', ')}`;
+    checks.push({
+      id: 'cron.jobs',
+      label: 'Cron jobs',
+      health: degraded || enabled === 0 ? 'warning' : 'ok',
+      value: enabled,
+      details: degraded ? `${cron.jobs.length} read; ${degradedDetails}` : `${cron.jobs.length} in agent containers`,
+      source: 'cron',
+    });
+    if (enabled === 0 && !degraded) {
       recommendations.push({ id: 'cron.enable-watchdog', severity: 'warning', source: 'cron', title: 'No enabled cron detected', details: 'No cron jobs are enabled in any agent container.', actionHref: '/crons', dismissible: false, createdAt });
     }
   } catch (error) {

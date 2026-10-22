@@ -987,12 +987,16 @@ async function listRunningAgents() {
     }
     raw = parts.join('\n');
   }
-  return raw.split('\n').filter(Boolean).map((line) => {
+  const agents = raw.split('\n').filter(Boolean).map((line) => {
     const [name, agentId, env] = line.split('\t');
     const container = String(parseQuoted(name) ?? '').replace(/^\//, '');
     const agentName = String(parseQuoted(env) ?? '').replace(/^AGENT_NAME=/, '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
     return { container, agentId: parseQuoted(agentId) || null, name: agentName || null };
   }).filter((a) => CONTAINER_NAME_RE.test(a.container));
+  // `docker ps` listed containers but `inspect` told nothing about any of them: Docker is failing, not empty.
+  // Throwing makes the caller treat it as unreachable and mark nothing gone.
+  if (!agents.length) throw new Error('docker inspect returned nothing for the listed containers');
+  return agents;
 }
 
 const utcDate = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -1237,7 +1241,7 @@ const sessionStmts = agentSessionsDdl ? {
   storedContainers: db.prepare('SELECT DISTINCT container FROM agent_sessions WHERE gone_at IS NULL'),
 } : null;
 
-/** container -> { due, failures, anyRunning, lastError, cronReadAt: Map<jobId, marker>, cronDue } */
+/** container -> { due, failures, anyRunning, lastError, cronReadAt: Map<jobId, marker>, cronFailed: Map<jobId, { at, failures }>, cronDue } */
 const sessionAgents = new Map();
 let sessionsRunning = false;
 let sessionsTimer = null;
@@ -1304,7 +1308,7 @@ async function collectAgentSessions(agent, state) {
   let storedNow = null;
   const stored = () => (storedNow ??= storedSessions(agent.container));
   if (Date.now() >= state.cronDue) {
-    const jobs = agentSessions.cronJobsToRead([...stored().values()], state.cronReadAt, Date.now(), SESSIONS_CRON_JOBS_PER_PASS);
+    const jobs = agentSessions.cronJobsToRead([...stored().values()], state.cronReadAt, Date.now(), SESSIONS_CRON_JOBS_PER_PASS, state.cronFailed);
     for (const job of jobs) {
       try {
         const runRows = await readCronRuns(agent.container, agent.name, job.jobId);
@@ -1312,9 +1316,12 @@ async function collectAgentSessions(agent, state) {
         const runDiff = agentSessions.diffSessions(storedSessions(agent.container), runRows, t, { complete: false });
         writeSessionDiff(agent.container, runDiff, t);
         state.cronReadAt.set(job.jobId, job.marker);
+        state.cronFailed.delete(job.jobId);
         changed = changed || runDiff.changed;
         events += runDiff.events.length;
       } catch (e) {
+        const failures = (state.cronFailed.get(job.jobId)?.failures ?? 0) + 1;
+        state.cronFailed.set(job.jobId, { at: Date.now(), failures });
         log(`[SESSIONS] cron runs of ${job.jobId} in ${agent.container}: ${e.message}`);
       }
     }
@@ -1404,7 +1411,7 @@ async function collectSessions() {
     for (const agent of agents) {
       let state = sessionAgents.get(agent.container);
       if (!state) {
-        state = { due: 0, failures: 0, anyRunning: false, lastError: null, cronReadAt: new Map(), cronDue: 0 };
+        state = { due: 0, failures: 0, anyRunning: false, lastError: null, cronReadAt: new Map(), cronFailed: new Map(), cronDue: 0 };
         sessionAgents.set(agent.container, state);
       }
       if (Date.now() < state.due) continue;

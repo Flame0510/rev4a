@@ -75,7 +75,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 ## Explanation Questions
 
 - "What does the lineage graph show?"
-- "What do the different statuses mean (idle, working, completed, error)?"
+- "What do the different statuses mean (working, idle, done, error, aborted)?"
 - "What is a gateway?"
 - "What is the Provider Gateway?"
 - "What is the difference between a plugin and a skill?"

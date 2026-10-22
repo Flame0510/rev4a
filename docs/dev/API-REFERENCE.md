@@ -446,7 +446,9 @@ Restart the Rev4a server (via systemd).
 ### `GET /api/sessions`
 Sessions of every agent, read from the `agent_sessions` table of `events.db` (filled by the daemon
 from each agent's container). Default: running now or updated in the last 7 days, newest first, at
-most 2000. Until the daemon has written the table the answer is empty, never an error.
+most 2000. Cron runs do not crowd out the other kinds: the other sessions are listed first and only the
+newest 20 runs of each cron job (plus any run still running) fill what is left of the cap (`kind=cron_run` asks for them all, up to the
+cap). Until the daemon has written the table the answer is empty, never an error.
 
 **Auth:** browser cookie
 
@@ -479,12 +481,14 @@ most 2000. Until the daemon has written the table the answer is empty, never an 
 `parent_uid` is set only when the parent row exists in the same container (`parent_kind` is `spawn` for a
 real sub-agent link, `cron` for a cron run, `nav` for a navigation parent). `cost_usd` is `null` when
 OpenClaw did not price the session, never 0. `id` and `parent_id` are the old field names, kept for
-one release. `version` changes whenever the daemon stored a change.
+one release. `version` changes whenever the daemon stored a change. `total` is the real number of matching
+sessions: when it is larger than `sessions.length` the list was capped, and the Lineage page shows
+"Showing N of M sessions".
 
 ---
 
 ### `GET /api/session?container=<name>&key=<session_key>`
-One session with its events and child sessions (rows whose parent is this key, same container).
+One session with its events (the newest 20) and child sessions (rows whose parent is this key, same container; up to 50).
 
 **Auth:** browser cookie
 
@@ -512,7 +516,7 @@ Same as `GET /api/session`, with the session key in the path (`?container=` opti
 
 ---
 
-## Stats & Costs
+## Costs
 
 Agent costs come from `costs.db`: what each agent's own OpenClaw priced, copied by the
 daemon (the queries are in `lib/agent-costs.ts` (spend) and `lib/cost-reconciliation.ts` (`vendor_balance`), on a read-only handle from `lib/costs-db.ts`). `GET /api/costs/usage` feeds the Costs
@@ -666,12 +670,12 @@ object when a scheduled model is on offer).
 
 ## Events
 
-### `GET /api/events?limit=50&offset=0`
-Paginated event log.
+### `GET /api/events?limit=50`
+The newest events, newest first. There is no `offset`.
 
 **Auth:** browser cookie
 
-**Query params:** `limit` (default 50), `offset` (default 0)
+**Query params:** `limit` (default 50, clamped to 1-500)
 
 **Response:**
 ```json
@@ -680,26 +684,32 @@ Paginated event log.
     "id": 1042,
     "ts": 1749201500000,
     "session_id": "agent:ops:subagent:uuid",
-    "type": "spawn",
-    "data": "{\"task\":\"run hygiene...\"}"
+    "type": "subagent_spawned",
+    "data": "{\"container\":\"rev4a-agent_1\"}",
+    "session_label": "Hygiene",
+    "agent_name": "Atlas",
+    "container": "rev4a-agent_1"
   }
 ]
 ```
+
+Each row also carries `session_label` and `agent_name` (from the session row of the same container, `null` when there is none) and `container` (from `data.container`, `null` for events without one).
 
 ---
 
 ### `GET /api/stream`
 Server-Sent Events stream. Every 5 s it sends one message per kind, each `{ type, data }`:
 `events` (new rows of the `events` table, only when there are any), `sessions` (the same `Session[]` as
-`GET /api/sessions`, at most 500, sent on the first poll and then only when the daemon changed the
-sessions table) and `costs` (`{ "today": … }`, what the agents spent
+`GET /api/sessions`, at most 2,000, sent on the first poll and then when the daemon changed the
+sessions table or when `costs.db` got new costs (costs are filled at read time; each poll reads only
+the version and one aggregate of `costs.db`, the list is rebuilt only when one moved); the message also carries `total`, the real number of sessions) and `costs` (`{ "today": … }`, what the agents spent
 today, UTC day — the same figure as `GET /api/costs`).
 
 **Auth:** browser cookie or Bearer
 
 **Event format:**
 ```
-data: {"type":"sessions","data":[...]}
+data: {"type":"sessions","data":[...],"total":120}
 data: {"type":"costs","data":{"today":0.0112}}
 ```
 
@@ -2086,9 +2096,10 @@ say so; it does not fail the others.
 
 Checks: `runtime.sessions`, `runtime.heartbeat`, `runtime.errors24h`
 ("Failed runs (24h)": the failure events of the last 24 hours — the `events` rows whose
-`type` is `fail` or `spawn_timeout`, the two types `daemon.js` writes for a failed run
-and for a sub-agent that timed out; the `events.ts` column is in milliseconds and any
-count above zero is a warning that raises the `runtime.review-errors` recommendation),
+`type` is `fail`, `spawn_timeout` (the two types older installs hold, from the previous host poll) or
+`session_failed` (the session collector); it also counts failed cron runs and failed sessions; the
+`events.ts` column is in milliseconds and any count above zero is a warning that raises the
+`runtime.review-errors` recommendation),
 `cost.usageBasedToday` ("Spent today": the agents' spend today, UTC day, from `costs.db`;
 a warning above $10 or with calls without a price, each with its recommendation,
 `cost.review-usage-based` / `cost.unpriced-calls`), `cron.jobs`. `health` (overall and per check) is `"ok"` /
@@ -2105,6 +2116,8 @@ List of scheduled cron jobs from every running Docker container with the `AGENT_
 Every job includes `containerName` and `source: "container"` fields, plus `agentName`: the agent's display name (the container's `AGENT_NAME`), or `null` when the agent has none. The page labels tabs, pills and the detail by `agentName` and shows `containerName` only as a secondary detail. The names come from `lib/agent-names.ts` (one cached `docker inspect` for all containers).
 
 **Auth:** Bearer or browser cookie
+
+**Query params:** `status=1` (optional) answers `{ "jobs": [...], "dockerUnavailable": false, "errors": [{ "container", "agentName", "error" }] }` instead of the bare array, so a caller can tell an empty list from "Docker is not reachable" (`dockerUnavailable: true`) or an agent that did not answer (one entry in `errors`). The Crons page uses it and shows a banner. `GET /api/system-health` raises no "No enabled cron detected" in either case.
 
 **Response:**
 ```json
@@ -2126,7 +2139,7 @@ Every job includes `containerName` and `source: "container"` fields, plus `agent
 ### `PATCH /api/crons/[id]`
 Update a cron job. Only the `enabled` field can be patched.
 
-`containerName` is required (a valid agent container name); without it the call fails with 400.
+`containerName` is required and must be one of the agent containers Docker lists; the job id must match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$`. Otherwise the call fails with 400 (`Invalid job id` or `Unknown agent`), before anything is executed in a container; 502 `Docker is not reachable` when the container list cannot be read. The same checks apply to `DELETE /api/crons/[id]` and `GET /api/crons/runs`.
 
 **Auth:** Bearer or browser cookie
 
@@ -2226,9 +2239,11 @@ With `?agent=<container>`: one read inside that container (a constant `node -e` 
   "rules": { "path": ".rev4a/AGENTS.md", "exists": true, "size": 900, "linked": false }
 }
 ```
-`files` lists the injected files in injection order (AGENTS, SOUL, IDENTITY, USER, BOOTSTRAP, MEMORY); `other` lists TOOLS.md and HEARTBEAT.md when present (not injected, not counted); `chars` is null for a missing file or a symlink (never followed: such a file has `linked: true`, its `injected` is unknown and counted in `totals.linkedFiles`, and the total leaves it out). A whitespace-only file injects 0. A symlinked `memory/` or `.rev4a` folder is not read (`memory.linked`, `rules.linked`). `injected` applies the per-file cap, then the total cap: the file that crosses the total cap is cut to the characters that remain, later files get 0. `limits` come from the agent's `openclaw.json` (`agents.entries.<id>` over `agents.defaults`, keys `bootstrapMaxChars` and `bootstrapTotalMaxChars`) or the OpenClaw defaults (`source`: `config` or `default`). `memory.files` are the newest 200 files under `memory/` by mtime (walked to depth 3, at most 20000 entries visited); `memory.truncated` is true when more exist, the walk was cut or folders lie deeper. Sub-agent sessions only inject AGENTS.md (OpenClaw system-prompt docs). `agents.entries.main` is the entry id on real agents.
+`files` lists the injected files in injection order (AGENTS, SOUL, IDENTITY, USER, BOOTSTRAP, MEMORY); `other` lists TOOLS.md and HEARTBEAT.md when present (not injected, not counted); `chars` is null for a missing file or a symlink (never followed: such a file has `linked: true`, its `injected` is unknown and counted in `totals.linkedFiles`, and the total leaves it out). A whitespace-only file injects 0. A linked file reports `injected: 0` in the JSON (the page shows "unknown" for it). A prompt file larger than 8 MB is not read: `chars` then holds its size in bytes. A symlinked `memory/` or `.rev4a` folder is not read (`memory.linked`, `rules.linked`). `injected` applies the per-file cap, then the total cap: the file that crosses the total cap is cut to the characters that remain, later files get 0. `limits` come from the agent's `openclaw.json` (`agents.entries.<id>` over `agents.defaults`, keys `bootstrapMaxChars` and `bootstrapTotalMaxChars`) or the OpenClaw defaults (`source`: `config` or `default`). `memory.files` are the newest 200 files under `memory/` by mtime (walked to depth 3, at most 20000 entries visited); `memory.truncated` is true when more exist, the walk was cut or folders lie deeper. Sub-agent sessions only inject AGENTS.md (OpenClaw system-prompt docs). `agents.entries.main` is the entry id on real agents.
 
-**Errors:** 400 invalid or unknown agent; 502 agent not running, no answer in time or unreadable output; 503 Docker not available.
+The figures are approximate for agents on the native Codex harness: there OpenClaw routes SOUL.md, IDENTITY.md and USER.md differently and does not paste MEMORY.md on every turn.
+
+**Errors:** 400 invalid or unknown agent; 500 `Could not read the context` (an unexpected failure); 502 agent not running, no answer in time or unreadable output; 503 Docker not available.
 
 ---
 

@@ -94,10 +94,14 @@ export function formatDateTimeInTimezone(
   value: string | number | Date,
   options: Intl.DateTimeFormatOptions,
   timezone: string = fallbackRev4aTimezone(),
-  locale = 'it-IT',
+  locale: string | undefined = undefined,
 ): string {
+  // `undefined` is the viewer's own locale (the browser's). `hour12: false` is mapped to a 24-hour cycle that
+  // never shows "24:00" (some locales print midnight that way with `hour12: false`).
+  const { hour12, ...rest } = options;
   return new Date(value).toLocaleString(locale, {
-    ...options,
+    ...rest,
+    ...(hour12 === false ? { hourCycle: 'h23' as const } : hour12 === true ? { hour12 } : {}),
     timeZone: normalizeRev4aTimezone(timezone),
   });
 }
