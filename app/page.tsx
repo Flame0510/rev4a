@@ -1,6 +1,9 @@
 import { Suspense } from 'react';
 import DashboardLayout from './components/DashboardLayout';
 import { Skeleton } from './components/Skeleton';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { title: 'Dashboard' };
 
 export const dynamic = 'force-dynamic';
 

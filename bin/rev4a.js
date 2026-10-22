@@ -717,7 +717,7 @@ CONFIGURATION:
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   console.log(BANNER);
-  console.log(`Rev4a v${pkg.version} — Agency Monitor Dashboard`);
+  console.log(`Rev4a v${pkg.version} — Revolution for Agents`);
   console.log(HELP_TEXT);
   process.exit(0);
 }

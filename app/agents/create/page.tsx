@@ -7,6 +7,9 @@ import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import { readAgentDefaults } from '@/lib/agent-defaults';
 import CreatePageClient from './PageClient';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { title: 'Create agent' };
 
 export const dynamic = 'force-dynamic';
 

@@ -18,8 +18,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'REV4A - Agency Monitor',
-  description: 'Mobile-ready monitoring dashboard for OpenClaw workspaces.',
+  // Each page sets its own title ("Lineage · Rev4a"); pages without one show the default.
+  title: { default: 'Rev4a — Revolution for Agents', template: '%s · Rev4a' },
+  description: 'Dashboard and orchestrator for OpenClaw agents.',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'REV4A' },
   icons: {

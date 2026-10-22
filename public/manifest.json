@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "REV4A - Agency Monitor",
+  "name": "Rev4a — Revolution for Agents",
   "short_name": "REV4A",
-  "description": "Mobile-ready monitoring dashboard for OpenClaw workspaces.",
+  "description": "Dashboard and orchestrator for OpenClaw agents.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -6,7 +6,7 @@
 
 Rev4a UI should follow a layered architecture:
 
-1. `app/*/page.tsx` — routing only.
+1. `app/*/page.tsx` — routing only, plus the page title: `export const metadata = { title: 'Lineage' }`. The root layout adds the template, so the browser tab reads "Lineage · Rev4a"; a page without a title shows "Rev4a — Revolution for Agents". A client-only page (`app/login`) gets its title from a small `layout.tsx` next to it. A new page must set its title.
 2. `app/components/*Page*.tsx` — page composition and data orchestration.
 3. `app/components/ui/*` — shared design-system primitives.
 4. `lib/patterns/*` — domain/data patterns.

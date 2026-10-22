@@ -1,4 +1,7 @@
 import TerminalClient from './TerminalClient';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { title: 'Terminal' };
 
 export default async function TerminalPage({
   params,
