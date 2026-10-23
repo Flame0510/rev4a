@@ -51,6 +51,12 @@ export async function register() {
     } catch {
       console.warn('[rev4a] Could not check agent updates on startup');
     }
+    // Updates recorded as failed or interrupted although the agent has run the new version fine
+    // since (a slow start, a restart during the wait): proved with the stored baseline, then marked
+    // resolved. Idempotent, not awaited, so it cannot delay the server start.
+    import('./lib/agent-update')
+      .then(({ resolveFailedUpdatesAtStartup }) => resolveFailedUpdatesAtStartup())
+      .catch((e) => console.warn(`[rev4a] Could not re-check failed agent updates on startup: ${(e as Error)?.message ?? e}`));
     // Recreates cut off by the restart: the row becomes `interrupted` and an agent the
     // backup had stopped is started again, so nothing stays down.
     try {

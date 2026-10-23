@@ -178,7 +178,12 @@ The central container, running the Next.js dashboard + orchestration API.
   session and its cron jobs, takes a cold pre-update backup, recreates the container on
   the newer version (`lib/agent-recreate.ts`, argv only, env values outside the process
   table), waits for `/startupz` to report that version, re-applies Rev4a's config and
-  checks the counts. A rollback restores the pre-update backup on the previous version.
+  checks the counts. A Gateway that is slow to start (past 10 minutes) is waited for up to 30
+  minutes more before the update is called failed (`finishAfterRecreate` in
+  `lib/agent-update-resolution.ts`). A `failed` or `interrupted` update is marked resolved
+  (`resolved_at`, `resolution`; `status` untouched) only for an update that never produced a verification result (a slow start, or an interruption during `migrating` or `verifying` — never an interrupted rollback), and only with evidence checked now: running, ready,
+  on `to_version`, baseline verification passing; at startup (not awaited) and on panel reads (at most
+  every 5 minutes per agent). A rollback restores the pre-update backup on the previous version.
   Both run inside the Rev4a process; `markInterruptedUpdates()` at startup turns an
   unfinished one into `interrupted`. `lib/agent-busy.ts` gives the routes one 409 reason
   for "edit, update, recreate, restore or backup running". After a successful update, `pruneAgentImages()`

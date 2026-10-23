@@ -10,7 +10,8 @@
  * `/api/agents/[id]/update`, polled every 2 s while either runs. See lib/agent-update.ts.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Button, ConfirmModal } from '../components/ui';
+import { Accordion, Badge, Button, ConfirmModal } from '../components/ui';
+import { isResolvedFailure, offersRollback, showsRedFailure } from '@/lib/agent-update-resolution';
 import { SkeletonLines } from '../components/Skeleton';
 
 type UpdateStatus =
@@ -37,18 +38,34 @@ interface UpdateView {
   finishedAtMs: number | null;
   /** A recreate or restore that finished after this failed or interrupted update: its rollback undoes it too. */
   laterJob: { kind: 'recreate' | 'restore'; atMs: number } | null;
+  /** Set when a failed or interrupted update was later proved fine on the target version. */
+  resolvedAtMs: number | null;
+  resolution: string | null;
+}
+
+interface HistoryEntry {
+  id: number;
+  status: UpdateStatus;
+  fromVersion: string | null;
+  toVersion: string;
+  error: string | null;
+  resolution: string | null;
+  resolvedAtMs: number | null;
+  backupFile: string | null;
+  startedAtMs: number;
+  finishedAtMs: number | null;
 }
 
 interface UpdateInfo {
   currentVersion: string | null;
   candidate: { fromVersion: string; toVersion: string } | null;
   update: UpdateView | null;
+  history?: HistoryEntry[];
 }
 
 type Action = 'update' | 'rollback';
 
 const ACTIVE: UpdateStatus[] = ['pending', 'backing_up', 'migrating', 'verifying', 'rolling_back'];
-const ROLLBACK_FROM: UpdateStatus[] = ['done', 'failed', 'interrupted', 'rollback_failed'];
 const POLL_MS = 2_000;
 
 const STEPS: { status: UpdateStatus; label: string }[] = [
@@ -87,6 +104,7 @@ export default function UpdateSection({
   const busyRef = useRef<Action | null>(null);
   const [confirming, setConfirming] = useState<Action | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const lastStatus = useRef<UpdateStatus | null>(null);
 
@@ -130,6 +148,16 @@ export default function UpdateSection({
     return () => clearInterval(timer);
   }, [active, load]);
 
+  // An unresolved failure is re-checked by Rev4a in the background (lib/agent-update.ts), which can
+  // take tens of seconds (probe, transcripts, cron list): read again a few times, so a failure proved
+  // harmless turns muted without a manual reload. Bounded: three reads, then the normal panel reads.
+  const failedId = update && showsRedFailure(update) ? update.id : null;
+  useEffect(() => {
+    if (failedId === null) return;
+    const timers = [8_000, 25_000, 60_000].map((ms) => setTimeout(() => { void load(); }, ms));
+    return () => timers.forEach(clearTimeout);
+  }, [failedId, load]);
+
   const run = async (action: Action) => {
     setConfirming(null);
     if (busyRef.current) return;
@@ -162,7 +190,8 @@ export default function UpdateSection({
 
   const candidate = info?.candidate ?? null;
   const stepIndex = update ? STEPS.findIndex((s) => s.status === update.status) : -1;
-  const canRollBack = !!update && !active && ROLLBACK_FROM.includes(update.status) && !!update.backupFile && !!update.fromVersion;
+  const canRollBack = !!update && offersRollback(update, active);
+  const history = info?.history ?? [];
 
   return (
     <div>
@@ -179,6 +208,7 @@ export default function UpdateSection({
       {update && active && update.status !== 'rolling_back' && (
         <div style={{ margin: '6px 0 10px' }}>
           <div style={metaStyle}>Updating OpenClaw {update.fromVersion} → {update.toVersion}. The agent is offline until it finishes.</div>
+          {update.error && <div style={metaStyle}>{update.error}</div>}
           {STEPS.map((step, i) => {
             const state = update.status === 'pending' ? 'waiting' : i < stepIndex ? 'done' : i === stepIndex ? 'running' : 'waiting';
             return (
@@ -213,7 +243,7 @@ export default function UpdateSection({
         </div>
       )}
 
-      {update && (update.status === 'failed' || update.status === 'interrupted') && (
+      {update && showsRedFailure(update) && (
         <div style={{ margin: '6px 0 10px' }}>
           <Badge tone="danger">
             <span style={{ fontSize: 10 }}>
@@ -227,6 +257,16 @@ export default function UpdateSection({
               {update.verification.lostEvents.map((l) => `${l.session}: ${l.before} → ${l.after}`).join(' · ')}
             </div>
           )}
+          {update.backupFile && <div style={metaStyle}>Pre-update backup: {update.backupFile}</div>}
+        </div>
+      )}
+
+      {update && isResolvedFailure(update) && (
+        <div style={{ margin: '6px 0 10px' }}>
+          <div style={metaStyle}>
+            The update to OpenClaw {update.toVersion} on {when(update.startedAtMs)} reported: {update.error ?? update.status}.
+            {' '}Since then: {update.resolution ?? 'verified against its baseline'} ({when(update.resolvedAtMs)}).
+          </div>
           {update.backupFile && <div style={metaStyle}>Pre-update backup: {update.backupFile}</div>}
         </div>
       )}
@@ -270,6 +310,32 @@ export default function UpdateSection({
           </Button>
         )}
       </div>
+
+      {history.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <Accordion
+            title="Update history"
+            summary={`${history.length} update${history.length === 1 ? '' : 's'}`}
+            open={historyOpen}
+            onToggle={() => setHistoryOpen((v) => !v)}
+          >
+            {history.map((h) => (
+              <div key={h.id} style={{ padding: '4px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text)' }}>
+                  {when(h.startedAtMs)} · {h.fromVersion ?? 'unknown'} → {h.toVersion} · {h.status.replace(/_/g, ' ')}
+                </div>
+                {h.error && <div style={metaStyle}>{h.error}</div>}
+                {h.resolution && <div style={metaStyle}>Resolved ({when(h.resolvedAtMs)}): {h.resolution}</div>}
+                {h.backupFile && (
+                  <div style={metaStyle}>
+                    Backup: {h.backupFile}. To go back, restore it from the Backup section.
+                  </div>
+                )}
+              </div>
+            ))}
+          </Accordion>
+        </div>
+      )}
 
       {actionError && (
         <div style={{ margin: '6px 0' }}>

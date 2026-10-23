@@ -35,14 +35,15 @@ import {
 import { BACKUP_VOLUME, coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
 import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer, type AgentContainerInspect } from '@/lib/agent-recreate';
 import { applyRuntimeConfig } from '@/lib/agent-setup';
-import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { probeGateway, waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
-import { activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
+import { activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, markUpdateResolved, unresolvedFailedUpdates, updateHistory, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { latestRecreate } from '@/lib/agent-recreate-state';
 import { latestRestore } from '@/lib/agent-restore-state';
 import { laterJob, type LaterJob } from '@/lib/agent-update-later-job';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
+import { DEFAULT_FINISH_TIMINGS, dueForRecheck, evaluateResolution, finishAfterRecreate, resolutionText, verifyJsonForStore } from '@/lib/agent-update-resolution';
 
 /** A migration runs `doctor --fix` before the Gateway starts; allow for large state. */
 const MIGRATION_READY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -164,6 +165,32 @@ export function verify(baseline: Baseline, transcripts: Record<string, number>, 
   };
 }
 
+export interface NowVerification {
+  verification: Verification;
+  /** Why the update cannot be called verified (lost events, missing or unreadable cron jobs); null when it can. */
+  error: string | null;
+  /** The baseline had cron jobs but the list could not be read. */
+  cronUnreadable: boolean;
+}
+
+/** Compare the agent, as it is now, with a stored baseline. Shared by the update and the after-the-fact check. */
+async function verifyNow(container: string, baseline: Baseline): Promise<NowVerification> {
+  const transcriptsAfter = await countTranscripts(container);
+  const cronAfter = await cronJobNames(container);
+  // Unreadable is not "no jobs": refuse to call the update verified rather than
+  // report `done` while cron loss would be undetectable.
+  const cronUnreadable = !!baseline.cronJobs?.length && cronAfter === null;
+  const verification = verify(baseline, transcriptsAfter, cronAfter);
+  let error: string | null = null;
+  if (cronUnreadable) error = 'The cron job list could not be read after the update, so the verification is incomplete';
+  else if (!verification.ok) {
+    error = verification.lostEvents.length
+      ? `${verification.lostEvents.length} session(s) have fewer transcript events than before the update`
+      : `Cron jobs missing after the update: ${(verification.missingCronJobs ?? []).join(', ')}`;
+  }
+  return { verification, error, cronUnreadable };
+}
+
 /** Jobs running in this process, so a second start for the same agent is refused. */
 const running = new Set<string>();
 
@@ -228,38 +255,36 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
     await recreateAgentContainer(agentId, container, localImageRef(toVersion));
     stopped = false;
 
-    if (!(await waitForGatewayReady(agentId, MIGRATION_READY_TIMEOUT_MS))) {
-      throw new Error(`OpenClaw ${toVersion} did not finish starting within ${MIGRATION_READY_TIMEOUT_MS / 60_000} minutes`);
-    }
-    const version = await runningVersion(agentId);
-    if (version !== toVersion) throw new Error(`The agent reports OpenClaw ${version ?? 'no version'} instead of ${toVersion}`);
+    // A slow start (a large migration) is not a failure: after the first window Rev4a keeps
+    // waiting in the background, then runs exactly the steps that were left.
+    await finishAfterRecreate(
+      {
+        waitReady: (timeoutMs) => waitForGatewayReady(agentId, timeoutMs),
+        runningVersion: () => runningVersion(agentId),
+        onSlowStart: () => updateRow(id, {
+          error: `OpenClaw ${toVersion} is still starting after ${MIGRATION_READY_TIMEOUT_MS / 60_000} minutes; Rev4a keeps waiting`,
+        }),
+        applyConfig: async () => {
+          await applyRuntimeConfig(agentId);
+          try {
+            await patchRev4aProvider(agentId);
+          } catch (e) {
+            console.error('[agent:update] provider patch failed:', (e as Error).message);
+          }
+        },
+        onVerifying: () => updateRow(id, { status: 'verifying' }),
+        verify: async () => {
+          const result = await verifyNow(agentId, baseline);
+          const stored = verifyJsonForStore(result.verification, result.cronUnreadable);
+          if (stored !== null) updateRow(id, { verify_json: stored });
+          if (result.error) throw new Error(result.error);
+        },
+      },
+      toVersion,
+      { ...DEFAULT_FINISH_TIMINGS, firstWindowMs: MIGRATION_READY_TIMEOUT_MS },
+    );
 
-    await applyRuntimeConfig(agentId);
-    try {
-      await patchRev4aProvider(agentId);
-    } catch (e) {
-      console.error('[agent:update] provider patch failed:', (e as Error).message);
-    }
-
-    updateRow(id, { status: 'verifying' });
-    const transcriptsAfter = await countTranscripts(agentId);
-    const cronAfter = await cronJobNames(agentId);
-    if (baseline.cronJobs?.length && cronAfter === null) {
-      // Unreadable is not "no jobs": refuse to call the update verified rather than
-      // report `done` while cron loss would be undetectable.
-      throw new Error('The cron job list could not be read after the update, so the verification is incomplete');
-    }
-    const result = verify(baseline, transcriptsAfter, cronAfter);
-    updateRow(id, { verify_json: JSON.stringify(result) });
-    if (!result.ok) {
-      throw new Error(
-        result.lostEvents.length
-          ? `${result.lostEvents.length} session(s) have fewer transcript events than before the update`
-          : `Cron jobs missing after the update: ${(result.missingCronJobs ?? []).join(', ')}`,
-      );
-    }
-
-    updateRow(id, { status: 'done' });
+    updateRow(id, { status: 'done', error: null });
 
     // Retention: images nothing needs any more (lib/agent-images.ts). Best-effort.
     pruneAgentImages()
@@ -440,6 +465,85 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
   }
 }
 
+// ── Resolving an old failure ─────────────────────────────────────────────────
+
+const resolutionChecked = new Map<string, number>();
+const resolutionChecking = new Set<string>();
+
+/**
+ * A `failed` or `interrupted` update is resolved only with evidence, checked now: the container
+ * runs, its Gateway is ready, it reports the update's target version and the stored baseline
+ * verification passes (sessions have at least their baseline events, every baseline cron job is
+ * there; an unreadable cron list is not verified). The row's `status` is never rewritten, only
+ * `resolved_at`, `resolution` and `verify_json` are filled. Never throws; returns true when the
+ * row was resolved by this call.
+ */
+export async function checkUpdateResolution(agentId: string): Promise<boolean> {
+  if (resolutionChecking.has(agentId) || running.has(agentId)) return false;
+  resolutionChecking.add(agentId);
+  resolutionChecked.set(agentId, Date.now());
+  try {
+    if (!isValidAgentId(agentId)) return false;
+    const row = latestUpdate(agentId);
+    if (!row || row.resolved_at != null || (row.status !== 'failed' && row.status !== 'interrupted')) return false;
+    if (await agentBusyReason(agentId)) return false;
+    const container = await inspectAgentContainer(agentId);
+    const containerRunning = container?.State?.Running === true;
+    const gatewayReady = containerRunning && (await probeGateway(agentId)) === 'ready';
+    const version = gatewayReady ? await runningVersion(agentId) : null;
+
+    let baseline: Baseline | null = null;
+    try {
+      baseline = row.baseline_json ? (JSON.parse(row.baseline_json) as Baseline) : null;
+    } catch {
+      baseline = null;
+    }
+    let now: NowVerification | null = null;
+    if (baseline && gatewayReady && version === row.to_version) now = await verifyNow(agentId, baseline);
+
+    const decision = evaluateResolution({
+      status: row.status,
+      resolvedAt: row.resolved_at ?? null,
+      toVersion: row.to_version,
+      containerRunning,
+      gatewayReady,
+      runningVersion: version,
+      verifyJson: row.verify_json,
+      error: row.error,
+      hasBaseline: baseline !== null,
+      cronUnreadable: now?.cronUnreadable ?? false,
+      verificationOk: now ? now.error === null : null,
+    });
+    if (!decision.resolved || !now) return false;
+
+    const later = laterJob(row, latestRecreate(agentId), latestRestore(agentId));
+    const text = resolutionText(row.status, row.to_version, later);
+    // The write itself is guarded on status (failed/interrupted) and resolved_at IS NULL, so a
+    // rollback that started during this check cannot be stamped.
+    return markUpdateResolved(row.id, text, JSON.stringify(now.verification));
+  } catch (e) {
+    console.warn(`[agent:update] could not check the update of ${agentId} after the fact: ${(e as Error).message}`);
+    return false;
+  } finally {
+    resolutionChecking.delete(agentId);
+  }
+}
+
+/**
+ * At startup: every agent whose latest update failed or was interrupted is checked once, one after
+ * the other. Not awaited by the caller. Repairs installs hit by a slow start recorded as a failure.
+ */
+export async function resolveFailedUpdatesAtStartup(): Promise<number> {
+  let resolved = 0;
+  for (const row of unresolvedFailedUpdates()) {
+    if (await checkUpdateResolution(row.agent_id)) {
+      resolved++;
+      console.log(`[agent:update] Update of ${row.agent_id} to ${row.to_version} verified after the fact`);
+    }
+  }
+  return resolved;
+}
+
 export interface AgentUpdateView {
   id: number;
   agentId: string;
@@ -455,6 +559,40 @@ export interface AgentUpdateView {
   finishedAtMs: number | null;
   /** A recreate or restore that finished after this failed or interrupted update: its rollback undoes it too. */
   laterJob: LaterJob | null;
+  /** When a failed or interrupted update was later proved fine; null while unresolved (and for every other status). */
+  resolvedAtMs: number | null;
+  /** Why it was proved fine, e.g. "verified on 2026.9.9 after a slow start". */
+  resolution: string | null;
+}
+
+/** One update attempt in the read-only history. */
+export interface AgentUpdateHistoryEntry {
+  id: number;
+  status: AgentUpdateRow['status'];
+  fromVersion: string | null;
+  toVersion: string;
+  error: string | null;
+  resolution: string | null;
+  resolvedAtMs: number | null;
+  backupFile: string | null;
+  startedAtMs: number;
+  finishedAtMs: number | null;
+}
+
+/** The agent's last 20 updates, newest first. */
+export function agentUpdateHistory(agentId: string): AgentUpdateHistoryEntry[] {
+  return updateHistory(agentId, 20).map((r) => ({
+    id: r.id,
+    status: r.status,
+    fromVersion: r.from_version,
+    toVersion: r.to_version,
+    error: r.error,
+    resolution: r.resolution ?? null,
+    resolvedAtMs: r.resolved_at ?? null,
+    backupFile: r.backup_file,
+    startedAtMs: r.started_at,
+    finishedAtMs: r.finished_at,
+  }));
 }
 
 /** The latest update of an agent, with live backup progress. */
@@ -463,6 +601,12 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
   if (!row) return null;
   const later = laterJob(row, latestRecreate(agentId), latestRestore(agentId));
   let backupPercent: number | null = null;
+  // A failed or interrupted update gets re-checked in the background (at most every 5 minutes per
+  // agent); the panel is not held for it, the next read shows the outcome.
+  if ((row.status === 'failed' || row.status === 'interrupted') && row.resolved_at == null && dueForRecheck(resolutionChecked.get(agentId), Date.now())) {
+    resolutionChecked.set(agentId, Date.now());
+    void checkUpdateResolution(agentId);
+  }
   if (row.status === 'backing_up') backupPercent = (await coldBackupStatus(agentId))?.percent ?? null;
   return {
     id: row.id,
@@ -477,5 +621,7 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
     startedAtMs: row.started_at,
     finishedAtMs: row.finished_at,
     laterJob: later,
+    resolvedAtMs: row.resolved_at ?? null,
+    resolution: row.resolution ?? null,
   };
 }

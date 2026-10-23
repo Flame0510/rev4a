@@ -126,7 +126,7 @@ A ChatGPT Plus or Pro (Codex) account connected to one agent from the Subscripti
 Optional reverse proxy an operator can put in front of the Rev4a dashboard or of an agent's port. Rev4a does not configure it and sets no routing labels on agents: an agent's Control UI is reached on its published port. Rev4a itself runs on port 3740 and does not require Traefik.
 
 ## Update (Agent)
-Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. Undone with Rollback.
+Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. A slow start is waited for, not treated as a failure. Undone with Rollback.
 
 ## Vault
 Rev4a's store for third-party service tokens (GitHub, Trello, Vercel, Supabase, Notion, MongoDB). Provider API keys live separately in `provider-keys.json`, managed from the Gateway page. Supports reveal (written to an audit table no route or view reads) and a per-agent switch (on, off, or an error). Secrets are stored unencrypted.

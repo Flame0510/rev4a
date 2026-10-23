@@ -1273,8 +1273,14 @@ The agent's OpenClaw version, the update it could take, and its latest update
     "backupFile": "agent-agent_9253eee3-preupdate-2026.9.3-2026-09-16_003512345.tar.gz",
     "backupPercent": 40, "verification": null, "error": null,
     "startedAtMs": 1789524912000, "finishedAtMs": null,
-    "laterJob": null
-  }
+    "laterJob": null, "resolvedAtMs": null, "resolution": null
+  },
+  "history": [
+    { "id": 3, "status": "backing_up", "fromVersion": "2026.9.3", "toVersion": "2026.9.4",
+      "error": null, "resolution": null, "resolvedAtMs": null,
+      "backupFile": "agent-agent_9253eee3-preupdate-2026.9.3-2026-09-16_003512345.tar.gz",
+      "startedAtMs": 1789524912000, "finishedAtMs": null }
+  ]
 }
 ```
 
@@ -1286,6 +1292,20 @@ The agent's OpenClaw version, the update it could take, and its latest update
   finished `done` strictly after the update ended (`finished_at`, else `updated_at`), the more recent of the
   two: `{ "kind": "recreate" | "restore", "atMs": … }`; `null` otherwise. A rollback restores the
   pre-update backup, so it undoes that job too; the panel says so. It never blocks the rollback.
+- `update.resolvedAtMs` / `update.resolution`: set for a `failed` or `interrupted` update that was later proved
+  fine. Only an update that stopped before its own verification qualifies (its `verify_json` is empty and its
+  error is a slow-start timeout, or it was interrupted); one with a recorded verification result, a version
+  mismatch or any other error never does. The text names the cause ("after a slow start", "after Rev4a
+  restarted during the update") and a later recreate or restore. Proof: the container runs, its Gateway is ready, it reports `toVersion` and the stored baseline verification
+  passes now (sessions have at least their baseline events, every baseline cron job exists; an unreadable cron
+  list is not verified). `status` is not rewritten. Rev4a checks at startup (once per agent, not awaited) and
+  in the background when this route is read (at most every 5 minutes per agent); an unresolved failure stays
+  as it was. A slow start (the Gateway not ready after 10 minutes) is no longer a failure by itself: the
+  update stays `migrating` with a note in `error`, waits up to 30 more minutes (in 30 s waits, each probing the Gateway every 2 s), then finishes the remaining
+  steps and becomes `done` (or `failed` if the Gateway never answers or the verification fails).
+- `history`: the agent's last 20 updates (newest first) with `id`, `status`, `fromVersion`, `toVersion`,
+  `error`, `resolution`, `resolvedAtMs`, `backupFile`, `startedAtMs`, `finishedAtMs`. Read-only; the panel
+  offers no rollback from it, the backup is restorable from the Backup section.
 - `verification`: `{ sessions, lostEvents: [{ session, before, after }], missingCronJobs, ok }`.
 
 `503` when Docker cannot be reached.

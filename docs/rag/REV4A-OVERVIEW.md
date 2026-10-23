@@ -77,6 +77,14 @@ the update, on the old version; anything the agent did after that backup is lost
 recreate or restore done since (the confirmation names the backup date and any such job). The agent
 must be running to start an update.
 
+A slow start is not a failure: if the new version needs more than 10 minutes to start, Rev4a keeps
+waiting up to 30 more minutes and then finishes the update. An update recorded as failed or interrupted
+whose agent has since been proved fine (running the new version, ready, nothing missing against the
+stored baseline) is shown as a muted line with the resolution instead of a red failure, and its
+**Roll back** button is hidden; one that cannot be proved stays red with Roll back. The collapsed
+**Update history** lists every update of the agent (date, versions, status, error, resolution, backup
+file); a backup from it is restored from the Backup section.
+
 The agent base image banner above (not this update — an agent's own **Update to
 <version>** recreates it on an image already downloaded) is the one running the
 `docker pull`. While it runs the banner shows the percent of layers finished and the

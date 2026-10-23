@@ -155,7 +155,10 @@ CREATE TABLE agent_upgrades (
   error         TEXT,
   started_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
-  finished_at   INTEGER
+  finished_at   INTEGER,
+  resolved_at   INTEGER,         -- added after 1.21.1 (guarded ADD COLUMN): a failed or interrupted
+                                 -- update later proved fine; status is never rewritten
+  resolution    TEXT             -- why, e.g. "verified on 2026.9.9 after a slow start"
 );
 
 CREATE INDEX idx_agent_upgrades_agent ON agent_upgrades(agent_id, started_at);
@@ -163,7 +166,13 @@ CREATE INDEX idx_agent_upgrades_agent ON agent_upgrades(agent_id, started_at);
 
 One row per update attempt (`lib/agent-update.ts`); a rollback moves the same row on to
 `rolling_back`. Created by `lib/db-bootstrap.mjs`. At startup, rows still in an active
-status are marked `interrupted`. Rows are never pruned.
+status are marked `interrupted`. The newest rows of each agent are kept (job-history retention).
+
+`resolved_at` / `resolution` (and a filled `verify_json`) are written by `lib/agent-update.ts`
+(`checkUpdateResolution`) only for an update that stopped before its own verification (`verify_json` NULL; a slow-start timeout written by the update itself, or an interruption during `migrating` or `verifying`; a recorded verification failure, a version mismatch or an interrupted rollback is never eligible) and only when, checked at that moment, the container runs, its Gateway is
+ready, it reports `to_version` and the stored `baseline_json` verification passes. The row's `status`,
+`error` and `finished_at` are not touched, so an older Rev4a reads the row as before (a failed update
+that was in fact fine). The write is guarded on `status IN ('failed','interrupted')` and `resolved_at IS NULL`, so a rollback starting meanwhile cannot be stamped. Both columns are added by `addMissingColumns`, safe to run twice.
 
 ### `agent_recreates` — agent recreates
 
