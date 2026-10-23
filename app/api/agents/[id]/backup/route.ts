@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { isValidAgentId } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { runDocker } from '@/lib/agent-images';
+import { forgetBackupAvailability } from '@/lib/agent-update';
 
 export const dynamic = 'force-dynamic';
 
@@ -119,6 +120,8 @@ export async function DELETE(request: Request,
       { timeoutMs: 30_000, env: { FILE: file } },
     );
 
+    // The panel's rollback offer depends on this file: forget what it knew about it.
+    forgetBackupAvailability(id);
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

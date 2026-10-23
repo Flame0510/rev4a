@@ -17,7 +17,7 @@ async function test(name, fn) {
 
 // ── Slow start ────────────────────────────────────────────────────────────────
 
-const T = { firstWindowMs: 600, extraWindowMs: 300, checkEveryMs: 100 };
+const T = { firstWindowMs: 600, extraWindowMs: 300, checkEveryMs: 100, versionRetryMs: 1 };
 
 function deps(readyAfterCalls, over = {}) {
   const calls = [];
@@ -27,6 +27,7 @@ function deps(readyAfterCalls, over = {}) {
     deps: {
       waitReady: async () => { waits++; calls.push(`wait${waits}`); return waits >= readyAfterCalls; },
       runningVersion: async () => '2026.9.9',
+      containerState: async () => ({ running: true, status: 'running', restartCount: 0 }),
       onSlowStart: () => calls.push('slow'),
       applyConfig: async () => { calls.push('apply'); },
       onVerifying: () => calls.push('verifying'),
@@ -65,6 +66,46 @@ await test('verification failure after a slow start: the error reaches the calle
   const d = deps(2, { verify: async () => { throw new Error('1 session(s) have fewer transcript events than before the update'); } });
   await assert.rejects(m.finishAfterRecreate(d.deps, '2026.9.9', T), /fewer transcript events/);
   assert.ok(d.calls.includes('verifying'));
+});
+
+await test('container gone or exited during the extra wait: stops early with a clear, non-eligible error', async () => {
+  for (const [state, text] of [[null, /container is gone/], [{ running: false, status: 'exited', restartCount: 0 }, /container exited/]]) {
+    const d = deps(99, { containerState: async () => state });
+    await assert.rejects(m.finishAfterRecreate(d.deps, '2026.9.9', T), text);
+    assert.equal(d.calls.filter((c) => c.startsWith('wait')).length, 1, 'no extra wait');
+    assert.ok(!d.calls.includes('slow'));
+  }
+  const err = 'The agent container exited before OpenClaw 2026.9.9 finished starting (state: exited)';
+  assert.equal(m.isEligibleForResolution('failed', null, err), false);
+});
+await test('a restarting container is still waited for; 3 restarts since the recreate stop the wait', async () => {
+  let n = 0;
+  const waiting = deps(3, { containerState: async () => ({ running: false, status: 'restarting', restartCount: 2 }) });
+  await m.finishAfterRecreate(waiting.deps, '2026.9.9', T);
+  const looping = deps(99, { containerState: async () => ({ running: true, status: 'running', restartCount: n++ === 0 ? 1 : 4 }) });
+  await assert.rejects(m.finishAfterRecreate(looping.deps, '2026.9.9', T), /keeps restarting \(3 restarts/);
+  assert.equal(looping.calls.filter((c) => c.startsWith('wait')).length, 1);
+  assert.equal(m.isEligibleForResolution('failed', null, 'The gateway keeps restarting (3 restarts since the update), so OpenClaw 2026.9.9 will not finish starting'), false);
+});
+await test('an uninspectable container does not stop the wait', async () => {
+  const d = deps(3, { containerState: async () => { throw new Error('docker down'); } });
+  await m.finishAfterRecreate(d.deps, '2026.9.9', T);
+  assert.ok(d.calls.includes('verify'));
+});
+await test('a null version right after ready is retried up to 3 times; a different version fails at once', async () => {
+  let reads = 0;
+  const ok = deps(1, { runningVersion: async () => (++reads < 3 ? null : '2026.9.9') });
+  await m.finishAfterRecreate(ok.deps, '2026.9.9', T);
+  assert.equal(reads, 3);
+  assert.ok(ok.calls.includes('verify'));
+  reads = 0;
+  const never = deps(1, { runningVersion: async () => { reads++; return null; } });
+  await assert.rejects(m.finishAfterRecreate(never.deps, '2026.9.9', T), /reports no version/);
+  assert.equal(reads, 4);
+  reads = 0;
+  const other = deps(1, { runningVersion: async () => { reads++; return '2026.9.3'; } });
+  await assert.rejects(m.finishAfterRecreate(other.deps, '2026.9.9', T), /2026\.9\.3 instead/);
+  assert.equal(reads, 1);
 });
 
 // ── Resolution ────────────────────────────────────────────────────────────────
@@ -133,6 +174,49 @@ await test('resolved failure: not red, no rollback in the status area', async ()
   assert.equal(m.showsRedFailure(r), false);
   assert.equal(m.offersRollback(r, false), false);
 });
+await test('resolved failure of the latest update offers Roll back anyway, not the plain Roll back', async () => {
+  const r = row('failed', { resolvedAtMs: 5 });
+  assert.equal(m.offersRollbackAnyway(r, false), true);
+  assert.equal(m.offersRollbackAnyway(r, true), false);
+  assert.equal(m.offersRollbackAnyway(row('failed'), false), false);
+  assert.equal(m.offersRollbackAnyway(row('done'), false), false);
+  assert.equal(m.offersRollbackAnyway(row('failed', { resolvedAtMs: 5, backupFile: null }), false), false);
+});
+await test('an interrupted rollback is never a resolved failure, even with a stale resolved_at', async () => {
+  const r = row('interrupted', { resolvedAtMs: 5, error: 'Rev4a restarted while this step was running: rolling_back' });
+  assert.equal(m.isResolvedFailure(r), false);
+  assert.equal(m.showsRedFailure(r), true);
+  assert.equal(m.offersRollback(r, false), true);
+  assert.equal(m.offersRollbackAnyway(r, false), false);
+});
+await test('a deleted pre-update backup hides both rollbacks and shows the muted line; unknown keeps them', async () => {
+  for (const r of [row('done'), row('failed'), row('failed', { resolvedAtMs: 5 })]) {
+    const gone = { ...r, backupAvailable: false };
+    assert.equal(m.offersRollback(gone, false), false);
+    assert.equal(m.offersRollbackAnyway(gone, false), false);
+    assert.equal(m.backupWasDeleted(gone, false), true);
+    for (const known of [true, null, undefined]) {
+      const ok = { ...r, backupAvailable: known };
+      assert.equal(m.backupWasDeleted(ok, false), false);
+      assert.equal(m.offersRollback(ok, false) || m.offersRollbackAnyway(ok, false), true);
+    }
+  }
+  assert.equal(m.backupWasDeleted({ ...row('done'), backupAvailable: false }, true), false, 'no line while active');
+  assert.equal(m.backupWasDeleted({ ...row('rolled_back'), backupAvailable: false }, false), false);
+});
+await test('whenEligible runs no container work for a row that can never be resolved', async () => {
+  let calls = 0;
+  const gather = async () => { calls++; return 'x'; };
+  for (const r of [
+    { status: 'failed', verify_json: '{"ok":true}', error: 'OpenClaw 2026.9.9 did not finish starting within 40 minutes' },
+    { status: 'failed', verify_json: null, error: 'The pre-update backup failed: x' },
+    { status: 'interrupted', verify_json: null, error: 'Rev4a restarted while this step was running: rolling_back' },
+    { status: 'done', verify_json: null, error: null },
+  ]) assert.equal(await m.whenEligible(r, gather), null);
+  assert.equal(calls, 0);
+  assert.equal(await m.whenEligible({ status: 'failed', verify_json: null, error: 'OpenClaw 2026.9.9 did not finish starting within 40 minutes' }, gather), 'x');
+  assert.equal(calls, 1);
+});
 await test('done keeps its rollback; active hides it; missing backup hides it', async () => {
   assert.equal(m.offersRollback(row('done'), false), true);
   assert.equal(m.offersRollback(row('done'), true), false);
@@ -165,8 +249,9 @@ await test('resolution text names the real cause and a later recreate or restore
   const at = Date.UTC(2026, 9, 23, 12);
   assert.equal(m.resolutionText('failed', '2026.9.9', null), 'verified on 2026.9.9 after a slow start');
   assert.equal(m.resolutionText('interrupted', '2026.9.9', null), 'verified on 2026.9.9 after Rev4a restarted during the update');
-  assert.equal(m.resolutionText('failed', '2026.9.9', { kind: 'recreate', atMs: at }), 'verified on 2026.9.9 after a slow start (the agent was recreated on 2026-10-23)');
-  assert.equal(m.resolutionText('interrupted', '2026.9.9', { kind: 'restore', atMs: at }), 'verified on 2026.9.9 after Rev4a restarted during the update (the agent was restored on 2026-10-23)');
+  assert.equal(m.resolutionText('failed', '2026.9.9', { kind: 'recreate', atMs: at }), 'verified on 2026.9.9 after a slow start (the agent was recreated on 2026-10-23 UTC)');
+  assert.equal(m.resolutionText('interrupted', '2026.9.9', { kind: 'restore', atMs: at }), 'verified on 2026.9.9 after Rev4a restarted during the update (the agent was restored on 2026-10-23 UTC)');
+  assert.equal(m.resolutionText('failed', '2026.9.9', null, "Rev4a's config could not be re-applied: boom"), "verified on 2026.9.9 after a slow start; Rev4a's config could not be re-applied: boom");
 });
 await test('an unreadable cron list stores no verification result', async () => {
   assert.equal(m.verifyJsonForStore({ ok: true }, true), null);
@@ -204,6 +289,27 @@ await test('an interrupted row loses the "keeps waiting" note, other errors stay
   assert.equal(get(a).error, 'Rev4a restarted while this step was running: migrating');
   assert.equal(get(b).error, 'Rev4a restarted while this step was running: backing_up');
   assert.match(get(c).error, /keeps waiting/);
+});
+await test('markInterrupted keeps the real step: a slow-start note only survives for a migrating row', async () => {
+  const mig = add('migrating', 'OpenClaw 2026.9.9 is still starting after 10 minutes; Rev4a keeps waiting');
+  const ver = add('verifying', null); // onVerifying clears the note, so a verifying row has no error
+  for (const [id, step] of [[mig, 'migrating'], [ver, 'verifying']]) {
+    db.prepare("UPDATE agent_upgrades SET error = COALESCE(error, 'Rev4a restarted while this step was running: ' || status), status = 'interrupted' WHERE id = ?").run(id);
+  }
+  m.clearStaleSlowStartNote(db);
+  assert.equal(get(mig).error, 'Rev4a restarted while this step was running: migrating');
+  assert.equal(get(ver).error, 'Rev4a restarted while this step was running: verifying');
+});
+await test('clearing the resolution columns (a rollback start) really nulls them', async () => {
+  const id = add('failed', 'OpenClaw 2026.9.9 did not finish starting within 40 minutes');
+  assert.equal(m.markResolvedSql(db, id, 'r', '{}', 5), true);
+  assert.equal(get(id).resolved_at, 5);
+  db.prepare("UPDATE agent_upgrades SET status = 'rolling_back', error = NULL, resolved_at = NULL, resolution = NULL WHERE id = ?").run(id);
+  db.prepare("UPDATE agent_upgrades SET error = COALESCE(error, 'Rev4a restarted while this step was running: ' || status), status = 'interrupted' WHERE id = ?").run(id);
+  const r = get(id);
+  assert.equal(r.resolved_at, null);
+  assert.equal(r.resolution, null);
+  assert.equal(m.isResolvedFailure({ status: r.status, resolvedAtMs: r.resolved_at, backupFile: 'b', fromVersion: '1', error: r.error }), false);
 });
 db.close();
 fs.rmSync(dir, { recursive: true, force: true });

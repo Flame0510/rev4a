@@ -50,10 +50,10 @@ const state = createJobState({
   activeStatuses: ACTIVE_STATUSES,
   finalStatuses: FINAL,
   insertColumns: ['from_version', 'to_version'],
-  writableColumns: ['backup_file', 'baseline_json', 'verify_json'],
+  writableColumns: ['backup_file', 'baseline_json', 'verify_json', 'resolved_at', 'resolution'],
 });
 
-type Writable = Partial<Pick<AgentUpdateRow, 'status' | 'backup_file' | 'baseline_json' | 'verify_json' | 'error'>>;
+type Writable = Partial<Pick<AgentUpdateRow, 'status' | 'backup_file' | 'baseline_json' | 'verify_json' | 'error' | 'resolved_at' | 'resolution'>>;
 
 export function insertUpdate(agentId: string, fromVersion: string | null, toVersion: string): number {
   return state.insert(agentId, fromVersion, toVersion);
@@ -84,11 +84,16 @@ export function activeUpdateAgentIds(): Set<string> {
 export function markInterruptedUpdates(): number {
   const changed = state.markInterrupted();
   if (changed > 0) {
-    const db = openDb(false);
+    // Only a note fix: it must never stop recoverInterruptedUpdates from restarting stopped containers.
     try {
-      clearStaleSlowStartNote(db);
-    } finally {
-      db.close();
+      const db = openDb(false);
+      try {
+        clearStaleSlowStartNote(db);
+      } finally {
+        db.close();
+      }
+    } catch (e) {
+      console.warn('[agent:update] could not clean up the slow-start note of interrupted updates:', (e as Error).message);
     }
   }
   return changed;

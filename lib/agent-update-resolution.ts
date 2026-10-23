@@ -21,6 +21,8 @@ export interface FinishDeps {
   waitReady(timeoutMs: number): Promise<boolean>;
   /** The OpenClaw version the running Gateway reports. */
   runningVersion(): Promise<string | null>;
+  /** The agent container as Docker sees it now; null when it is gone or cannot be inspected. */
+  containerState(): Promise<ContainerState | null>;
   /** The slow start was noticed: the first window passed without the Gateway being ready. */
   onSlowStart(): void;
   /** The Gateway is ready on the target version: re-apply Rev4a's own config and the provider patch. */
@@ -31,6 +33,17 @@ export interface FinishDeps {
   verify(): Promise<void>;
 }
 
+/** What the extra wait needs to know about the container. */
+export interface ContainerState {
+  running: boolean;
+  /** Docker's `State.Status` ("running", "restarting", "exited", ...). */
+  status: string;
+  restartCount: number;
+}
+
+/** The Gateway restarting this many times since the recreate is a crash loop, not a slow start. */
+export const CRASH_LOOP_RESTARTS = 3;
+
 export interface FinishTimings {
   /** The first window, as before. */
   firstWindowMs: number;
@@ -38,13 +51,29 @@ export interface FinishTimings {
   extraWindowMs: number;
   /** Length of each wait in the extra window; inside each wait the Gateway is probed every 2 s (waitForGatewayReady). */
   checkEveryMs: number;
+  /** Pause between reads of the version when the Gateway is ready but reports none (retried 3 times). */
+  versionRetryMs: number;
 }
 
 export const DEFAULT_FINISH_TIMINGS: FinishTimings = {
   firstWindowMs: 10 * 60 * 1000,
   extraWindowMs: 30 * 60 * 1000,
   checkEveryMs: 30 * 1000,
+  versionRetryMs: 5 * 1000,
 };
+
+const VERSION_RETRIES = 3;
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Why waiting longer is pointless, or null when the container is still plausibly starting (or cannot be told). */
+function deadContainerReason(state: ContainerState | null, baselineRestarts: number, toVersion: string): string | null {
+  if (!state) return `The agent container is gone, so OpenClaw ${toVersion} cannot finish starting`;
+  const restarting = state.status === 'restarting';
+  if (!state.running && !restarting) return `The agent container exited before OpenClaw ${toVersion} finished starting (state: ${state.status})`;
+  const restarts = state.restartCount - baselineRestarts;
+  if (restarts >= CRASH_LOOP_RESTARTS) return `The gateway keeps restarting (${restarts} restarts since the update), so OpenClaw ${toVersion} will not finish starting`;
+  return null;
+}
 
 /**
  * Wait for the Gateway (first window, then a longer background window), then run the remaining steps.
@@ -56,20 +85,37 @@ export async function finishAfterRecreate(
   toVersion: string,
   timings: FinishTimings = DEFAULT_FINISH_TIMINGS,
 ): Promise<void> {
+  // Restarts are counted from the recreate; a container that cannot be inspected is not a reason to stop.
+  const baselineRestarts = (await deps.containerState().catch(() => null))?.restartCount ?? 0;
   let ready = await deps.waitReady(timings.firstWindowMs);
   if (!ready) {
-    deps.onSlowStart();
     // A zero or negative step would make the window count infinite.
     const step = Math.max(1, timings.checkEveryMs);
     const windows = Math.max(1, Math.ceil(timings.extraWindowMs / step));
-    for (let i = 0; i < windows && !ready; i++) ready = await deps.waitReady(step);
+    let noted = false;
+    for (let i = 0; i < windows && !ready; i++) {
+      let state: ContainerState | null;
+      let known = true;
+      try { state = await deps.containerState(); } catch { state = null; known = false; }
+      const dead = known ? deadContainerReason(state, baselineRestarts, toVersion) : null;
+      if (dead) throw new Error(dead);
+      if (!noted) { deps.onSlowStart(); noted = true; }
+      ready = await deps.waitReady(step);
+    }
   }
   if (!ready) {
     const total = (timings.firstWindowMs + timings.extraWindowMs) / 60_000;
     throw new Error(`OpenClaw ${toVersion} did not finish starting within ${total} minutes`);
   }
-  const version = await deps.runningVersion();
-  if (version !== toVersion) throw new Error(`The agent reports OpenClaw ${version ?? 'no version'} instead of ${toVersion}`);
+  // A Gateway that answers ready can still be a moment from reporting its version: read it again before failing.
+  let version = await deps.runningVersion();
+  for (let i = 0; version === null && i < VERSION_RETRIES; i++) {
+    await sleep(timings.versionRetryMs);
+    version = await deps.runningVersion();
+  }
+  if (version !== toVersion) {
+    throw new Error(version === null ? `The agent reports no version instead of OpenClaw ${toVersion}` : `The agent reports OpenClaw ${version} instead of ${toVersion}`);
+  }
 
   await deps.applyConfig();
   deps.onVerifying();
@@ -129,6 +175,18 @@ export function isEligibleForResolution(status: string, verifyJson: string | nul
   return SLOW_START_ERROR.test(error);
 }
 
+/**
+ * Runs `gather` (everything that touches the container: busy check, probe, version, transcript count,
+ * cron list) only for a row that can be resolved at all; any other row returns null with no container call.
+ */
+export async function whenEligible<T>(
+  row: { status: string; verify_json: string | null; error: string | null },
+  gather: () => Promise<T>,
+): Promise<T | null> {
+  if (!isEligibleForResolution(row.status, row.verify_json, row.error)) return null;
+  return gather();
+}
+
 export function evaluateResolution(input: ResolutionInput): ResolutionDecision {
   if (!isResolvable(input.status)) return { resolved: false, reason: 'not a failed or interrupted update' };
   if (input.resolvedAt !== null) return { resolved: false, reason: 'already resolved' };
@@ -146,6 +204,7 @@ export function evaluateResolution(input: ResolutionInput): ResolutionDecision {
   return { resolved: true };
 }
 
+/** The day in UTC: the server has no way to know the operator's time zone. */
 const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /** The sentence stored as `resolution`: why and when the failure was proved harmless. */
@@ -153,10 +212,12 @@ export function resolutionText(
   status: string,
   toVersion: string,
   later: { kind: 'recreate' | 'restore'; atMs: number } | null,
+  configNote?: string | null,
 ): string {
   const cause = status === 'interrupted' ? 'after Rev4a restarted during the update' : 'after a slow start';
-  const note = later ? ` (the agent was ${later.kind === 'restore' ? 'restored' : 'recreated'} on ${isoDay(later.atMs)})` : '';
-  return `verified on ${toVersion} ${cause}${note}`;
+  const note = later ? ` (the agent was ${later.kind === 'restore' ? 'restored' : 'recreated'} on ${isoDay(later.atMs)} UTC)` : '';
+  const config = configNote ? `; ${configNote}` : '';
+  return `verified on ${toVersion} ${cause}${note}${config}`;
 }
 
 /** `verify_json` to store after the update's own verification: nothing when the cron list was unreadable (incomplete, not a result). */
@@ -199,10 +260,18 @@ export interface PanelUpdate {
   resolvedAtMs?: number | null;
   backupFile: string | null;
   fromVersion: string | null;
+  /** The row's `error`; an interrupted rollback is never a resolved failure. */
+  error?: string | null;
+  /** The pre-update backup file still exists; false = deleted, null/undefined = unknown (the server still refuses). */
+  backupAvailable?: boolean | null;
 }
+
+/** An interruption that cut a ROLLBACK: the volume may already hold the pre-update backup. */
+const INTERRUPTED_ROLLBACK = /^Rev4a restarted while this step was running: rolling_back$/;
 
 /** A failed or interrupted update that has been proved fine since. */
 export function isResolvedFailure(update: PanelUpdate): boolean {
+  if (update.error && INTERRUPTED_ROLLBACK.test(update.error)) return false;
   return isResolvable(update.status) && typeof update.resolvedAtMs === 'number';
 }
 
@@ -213,7 +282,23 @@ export function showsRedFailure(update: PanelUpdate): boolean {
 
 const ROLLBACK_STATUSES = ['done', 'failed', 'interrupted', 'rollback_failed'];
 
-/** Whether the status area offers Roll back: never for a resolved failure (the backup stays in the Backup section). */
+/** Whether the status area offers the normal Roll back: never for a resolved failure (see {@link offersRollbackAnyway}). */
 export function offersRollback(update: PanelUpdate, active: boolean): boolean {
-  return !active && ROLLBACK_STATUSES.includes(update.status) && !isResolvedFailure(update) && !!update.backupFile && !!update.fromVersion;
+  return !active && update.backupAvailable !== false && ROLLBACK_STATUSES.includes(update.status) && !isResolvedFailure(update) && !!update.backupFile && !!update.fromVersion;
+}
+
+/**
+ * A resolved failure of the LATEST update can still be rolled back, but never by accident: the panel shows a
+ * secondary "Roll back anyway…" whose confirmation needs the agent's name typed. Older history rows have none.
+ */
+export function offersRollbackAnyway(update: PanelUpdate, active: boolean): boolean {
+  return !active && update.backupAvailable !== false && isResolvedFailure(update) && !!update.backupFile && !!update.fromVersion;
+}
+
+/**
+ * The backup is known to be deleted, so going back is impossible: the panel shows a muted line instead of a
+ * Roll back (any rollback status, resolved or not, with the data a rollback would have needed).
+ */
+export function backupWasDeleted(update: PanelUpdate, active: boolean): boolean {
+  return !active && update.backupAvailable === false && ROLLBACK_STATUSES.includes(update.status) && !!update.backupFile && !!update.fromVersion;
 }

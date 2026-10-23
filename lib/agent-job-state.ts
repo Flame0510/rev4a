@@ -29,7 +29,7 @@ export interface JobStateSpec {
 
 export interface JobState {
   insert(agentId: string, ...values: (string | number | null)[]): number;
-  update(id: number, fields: Record<string, string | null | undefined>): void;
+  update(id: number, fields: Record<string, string | number | null | undefined>): void;
   latest<T>(agentId: string): T | null;
   isActive(agentId: string): boolean;
   activeAgentIds(): Set<string>;
@@ -76,7 +76,7 @@ export function createJobState(spec: JobStateSpec): JobState {
       const now = Date.now();
       const sets = [...entries.map(([key]) => `${key} = ?`), 'updated_at = ?'];
       const values: unknown[] = [...entries.map(([, value]) => value), now];
-      const status = fields.status;
+      const status = typeof fields.status === 'string' ? fields.status : undefined;
       if (status && finalStatuses.includes(status)) {
         sets.push('finished_at = ?');
         values.push(now);

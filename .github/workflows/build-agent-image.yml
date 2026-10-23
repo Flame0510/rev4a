@@ -56,7 +56,9 @@ jobs:
 
       - name: Lowercase repo for ghcr.io
         id: vars
-        run: echo "repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "repo=$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Resolve the OpenClaw version
         id: version
@@ -70,20 +72,27 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION="$(sed -n 's/^ARG OPENCLAW_VERSION=//p' agent-templates/base-image/Dockerfile | head -1)"
           fi
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::the OpenClaw version is missing or malformed: '${VERSION}'"
+          # The WHOLE string must match (grep -E checks line by line, so a second line would pass),
+          # and a newline is refused outright: the value reaches $GITHUB_OUTPUT.
+          NL=$'\n'
+          if [[ "$VERSION" == *"$NL"* ]] || [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the OpenClaw version is missing or malformed"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Compute tags
         id: tags
+        env:
+          REPO: ${{ steps.vars.outputs.repo }}
+          VERSION: ${{ steps.version.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          PROMOTE_LATEST: ${{ inputs.promote_latest }}
         run: |
           set -euo pipefail
-          BASE="ghcr.io/${{ steps.vars.outputs.repo }}/openclaw-agent-base"
-          VERSION="${{ steps.version.outputs.version }}"
+          BASE="ghcr.io/${REPO}/openclaw-agent-base"
           TAGS="${BASE}:${VERSION},${BASE}:${VERSION}-${GITHUB_SHA::7}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.promote_latest }}" = "true" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PROMOTE_LATEST" = "true" ]; then
             TAGS="${TAGS},${BASE}:latest"
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
@@ -133,11 +142,13 @@ jobs:
           outputs: type=image,name=ghcr.io/${{ needs.prepare.outputs.repo }}/openclaw-agent-base,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST_DIR: ${{ runner.temp }}/digests
         run: |
           set -euo pipefail
-          mkdir -p "${{ runner.temp }}/digests"
-          digest="${{ steps.build.outputs.digest }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+          mkdir -p "$DIGEST_DIR"
+          touch "$DIGEST_DIR/${DIGEST#sha256:}"
 
       - name: Upload the digest
         uses: actions/upload-artifact@v4
@@ -225,8 +236,9 @@ jobs:
           BASE: ghcr.io/${{ needs.prepare.outputs.repo }}/openclaw-agent-base
         run: |
           set -euo pipefail
-          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::retag_latest_as is malformed: '$V'"
+          NL=$'\n'
+          if [[ "$V" == *"$NL"* ]] || [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::retag_latest_as is malformed"
             exit 1
           fi
           docker buildx imagetools create -t "${BASE}:${V}" "${BASE}:latest"

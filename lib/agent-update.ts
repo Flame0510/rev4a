@@ -37,13 +37,16 @@ import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer,
 import { applyRuntimeConfig } from '@/lib/agent-setup';
 import { probeGateway, waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
-import { activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, markUpdateResolved, unresolvedFailedUpdates, updateHistory, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
+import { ACTIVE_STATUSES as ACTIVE_STATUSES_FOR_VIEW, activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, markUpdateResolved, unresolvedFailedUpdates, updateHistory, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { latestRecreate } from '@/lib/agent-recreate-state';
 import { latestRestore } from '@/lib/agent-restore-state';
 import { laterJob, type LaterJob } from '@/lib/agent-update-later-job';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
-import { DEFAULT_FINISH_TIMINGS, dueForRecheck, evaluateResolution, finishAfterRecreate, resolutionText, verifyJsonForStore } from '@/lib/agent-update-resolution';
+import { DEFAULT_FINISH_TIMINGS, dueForRecheck, evaluateResolution, finishAfterRecreate, resolutionText, offersRollback, offersRollbackAnyway, verifyJsonForStore, whenEligible, type ContainerState } from '@/lib/agent-update-resolution';
+import { redactSecret } from '@/lib/redact-secret';
+import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
+import fs from 'node:fs';
 
 /** A migration runs `doctor --fix` before the Gateway starts; allow for large state. */
 const MIGRATION_READY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -125,6 +128,14 @@ async function cronJobNames(container: string): Promise<string[] | null> {
   } catch {
     return null;
   }
+}
+
+/** The agent container as Docker reports it; null when it is gone, a thrown error when it cannot be inspected. */
+async function containerState(agentId: string): Promise<ContainerState | null> {
+  const container = await inspectAgentContainer(agentId);
+  if (!container) return null;
+  const state = container.State;
+  return { running: state?.Running === true, status: state?.Status ?? (state?.Running ? 'running' : 'exited'), restartCount: Number((container as { RestartCount?: number }).RestartCount ?? 0) || 0 };
 }
 
 async function runningVersion(container: string): Promise<string | null> {
@@ -261,6 +272,7 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
       {
         waitReady: (timeoutMs) => waitForGatewayReady(agentId, timeoutMs),
         runningVersion: () => runningVersion(agentId),
+        containerState: () => containerState(agentId),
         onSlowStart: () => updateRow(id, {
           error: `OpenClaw ${toVersion} is still starting after ${MIGRATION_READY_TIMEOUT_MS / 60_000} minutes; Rev4a keeps waiting`,
         }),
@@ -269,10 +281,11 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
           try {
             await patchRev4aProvider(agentId);
           } catch (e) {
-            console.error('[agent:update] provider patch failed:', (e as Error).message);
+            console.error('[agent:update] provider patch failed:', redactSecret((e as Error).message, readAgentsToken()));
           }
         },
-        onVerifying: () => updateRow(id, { status: 'verifying' }),
+        // The slow-start note ("still starting") is stale once the Gateway answers.
+        onVerifying: () => updateRow(id, { status: 'verifying', error: null }),
         verify: async () => {
           const result = await verifyNow(agentId, baseline);
           const stored = verifyJsonForStore(result.verification, result.cronUnreadable);
@@ -312,9 +325,19 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
   }
 }
 
+/** The agents' shared Gateway token, to keep it out of stored error texts; empty when unreadable. */
+function readAgentsToken(): string {
+  try {
+    const data = JSON.parse(fs.readFileSync(AGENTS_TOKEN_FILE, 'utf-8')) as { token?: unknown };
+    return typeof data.token === 'string' ? data.token.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 /** The useful part of an error for the panel: a `docker exec` failure carries a whole stack trace. */
 function shortError(e: unknown): string {
-  const message = (e as Error)?.message ?? String(e);
+  const message = redactSecret((e as Error)?.message ?? String(e), readAgentsToken());
   const lines = message.split('\n').map((l) => l.trim()).filter(Boolean);
   const cause = lines.find((l) => /^(Error|[A-Z]\w*Error):/.test(l));
   const text = cause && cause !== lines[0] ? `${lines[0]} ${cause}` : lines[0] ?? message;
@@ -366,15 +389,39 @@ const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
 const ROLLBACK_READY_TIMEOUT_MS = 5 * 60 * 1000;
 const ROLLBACK_FROM: readonly AgentUpdateRow['status'][] = ['done', 'failed', 'interrupted', 'rollback_failed'];
 
+/**
+ * Whether the backup file is in the backup volume. The script always exits 0 and prints its answer, so a
+ * Docker failure (daemon down, timeout, image pull) throws instead of reading as "deleted".
+ */
 async function backupFileExists(file: string): Promise<boolean> {
+  let answer = '';
+  await runDocker(
+    ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'if [ -f "/backup/$FILE" ]; then echo present; else echo absent; fi'],
+    { timeoutMs: 60_000, env: { FILE: file }, onLine: (line) => { const t = line.trim(); if (t === 'present' || t === 'absent') answer = t; } },
+  );
+  if (!answer) throw new Error('The backup check gave no answer');
+  return answer === 'present';
+}
+
+const BACKUP_CHECK_TTL_MS = 60_000;
+const backupChecks = ((globalThis as { __rev4aBackupChecks?: Map<string, { exists: boolean; at: number }> }).__rev4aBackupChecks ??= new Map());
+
+/** Forget what is known about the pre-update backup files of an agent (after one is deleted). */
+export function forgetBackupAvailability(agentId: string): void {
+  for (const key of backupChecks.keys()) if (key.startsWith(`${agentId}\u0000`)) backupChecks.delete(key);
+}
+
+/** Whether the file exists, cached for 60 s per agent and file; null when the check itself fails. */
+async function backupAvailability(agentId: string, file: string): Promise<boolean | null> {
+  const key = `${agentId}\u0000${file}`;
+  const hit = backupChecks.get(key);
+  if (hit && Date.now() - hit.at < BACKUP_CHECK_TTL_MS) return hit.exists;
   try {
-    await runDocker(
-      ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'test -f "/backup/$FILE"'],
-      { timeoutMs: 60_000, env: { FILE: file } },
-    );
-    return true;
+    const exists = await backupFileExists(file);
+    backupChecks.set(key, { exists, at: Date.now() });
+    return exists;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -406,13 +453,19 @@ async function runRollbackStart(agentId: string): Promise<number> {
   if (!isSupportedVersion(row.from_version)) {
     throw new UpdateRefusedError(`This Rev4a no longer supports OpenClaw ${row.from_version} (the version this update moved away from), so it cannot roll back to it`);
   }
-  if (!(await backupFileExists(row.backup_file))) {
-    throw new UpdateRefusedError(`The pre-update backup ${row.backup_file} no longer exists`);
+  let exists: boolean;
+  try {
+    exists = await backupFileExists(row.backup_file);
+  } catch (e) {
+    throw new UpdateRefusedError(`Could not check the pre-update backup: ${(e as Error).message}`);
   }
+  if (!exists) throw new UpdateRefusedError(`The pre-update backup ${row.backup_file} no longer exists`);
+  forgetBackupAvailability(agentId);
   const container = await inspectAgentContainer(agentId);
   if (!container) throw new UpdateRefusedError(`No container found with AGENT_ID '${agentId}'`);
 
-  updateRow(row.id, { status: 'rolling_back', error: null });
+  // A rollback clears any earlier resolution: if it is cut off, the row is red again with Roll back.
+  updateRow(row.id, { status: 'rolling_back', error: null, resolved_at: null, resolution: null });
   void runRollback(row, container).finally(() => running.delete(agentId));
   return row.id;
 }
@@ -458,7 +511,7 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
     const version = parseOpenClawVersion(await dockerExecNoFail(agentId, ['openclaw', '--version'], { timeoutMs: 60_000 }));
     if (version !== fromVersion) throw new Error(`The agent reports OpenClaw ${version ?? 'no version'} instead of ${fromVersion}`);
 
-    void reapplyWhenReady(name).catch((e) => console.warn(`[rollback] credential re-apply failed on ${name}:`, (e as Error).message));
+    void reapplyWhenReady(name).catch((e) => console.warn(`[rollback] credential re-apply failed on ${name}:`, redactSecret((e as Error).message, readAgentsToken())));
     updateRow(row.id, { status: 'rolled_back' });
   } catch (e) {
     updateRow(row.id, { status: 'rollback_failed', error: shortError(e) });
@@ -486,43 +539,66 @@ export async function checkUpdateResolution(agentId: string): Promise<boolean> {
     if (!isValidAgentId(agentId)) return false;
     const row = latestUpdate(agentId);
     if (!row || row.resolved_at != null || (row.status !== 'failed' && row.status !== 'interrupted')) return false;
-    if (await agentBusyReason(agentId)) return false;
-    const container = await inspectAgentContainer(agentId);
-    const containerRunning = container?.State?.Running === true;
-    const gatewayReady = containerRunning && (await probeGateway(agentId)) === 'ready';
-    const version = gatewayReady ? await runningVersion(agentId) : null;
+    // Before any container work: a row that can never be resolved must not run the transcript count
+    // and the cron list again on every panel open.
+    const checked = await whenEligible(row, async () => {
+      if (await agentBusyReason(agentId)) return false;
+      const container = await inspectAgentContainer(agentId);
+      const containerRunning = container?.State?.Running === true;
+      const gatewayReady = containerRunning && (await probeGateway(agentId)) === 'ready';
+      const version = gatewayReady ? await runningVersion(agentId) : null;
 
-    let baseline: Baseline | null = null;
-    try {
-      baseline = row.baseline_json ? (JSON.parse(row.baseline_json) as Baseline) : null;
-    } catch {
-      baseline = null;
-    }
-    let now: NowVerification | null = null;
-    if (baseline && gatewayReady && version === row.to_version) now = await verifyNow(agentId, baseline);
+      let baseline: Baseline | null = null;
+      try {
+        baseline = row.baseline_json ? (JSON.parse(row.baseline_json) as Baseline) : null;
+      } catch {
+        baseline = null;
+      }
+      let now: NowVerification | null = null;
+      if (baseline && gatewayReady && version === row.to_version) now = await verifyNow(agentId, baseline);
 
-    const decision = evaluateResolution({
-      status: row.status,
-      resolvedAt: row.resolved_at ?? null,
-      toVersion: row.to_version,
-      containerRunning,
-      gatewayReady,
-      runningVersion: version,
-      verifyJson: row.verify_json,
-      error: row.error,
-      hasBaseline: baseline !== null,
-      cronUnreadable: now?.cronUnreadable ?? false,
-      verificationOk: now ? now.error === null : null,
+      const decision = evaluateResolution({
+        status: row.status,
+        resolvedAt: row.resolved_at ?? null,
+        toVersion: row.to_version,
+        containerRunning,
+        gatewayReady,
+        runningVersion: version,
+        verifyJson: row.verify_json,
+        error: row.error,
+        hasBaseline: baseline !== null,
+        cronUnreadable: now?.cronUnreadable ?? false,
+        verificationOk: now ? now.error === null : null,
+      });
+      return { decision, now };
     });
+    if (!checked) return false;
+    const { decision, now } = checked;
     if (!decision.resolved || !now) return false;
 
     const later = laterJob(row, latestRecreate(agentId), latestRestore(agentId));
-    const text = resolutionText(row.status, row.to_version, later);
+    // The update's own steps re-apply Rev4a's config; a resolution does the same before it is stamped.
+    // Best-effort: a failure is logged and mentioned in the text, it does not block the resolution.
+    const failures: string[] = [];
+    try {
+      await applyRuntimeConfig(agentId);
+    } catch (e) {
+      console.warn(`[agent:update] could not re-apply Rev4a's config on ${agentId}: ${redactSecret((e as Error).message, readAgentsToken())}`);
+      failures.push(shortError(e));
+    }
+    try {
+      await patchRev4aProvider(agentId);
+    } catch (e) {
+      console.warn(`[agent:update] provider patch failed on ${agentId}: ${redactSecret((e as Error).message, readAgentsToken())}`);
+      failures.push(shortError(e));
+    }
+    const configNote = failures.length ? `Rev4a's config could not be re-applied: ${failures[0]}` : null;
+    const text = resolutionText(row.status, row.to_version, later, configNote);
     // The write itself is guarded on status (failed/interrupted) and resolved_at IS NULL, so a
     // rollback that started during this check cannot be stamped.
     return markUpdateResolved(row.id, text, JSON.stringify(now.verification));
   } catch (e) {
-    console.warn(`[agent:update] could not check the update of ${agentId} after the fact: ${(e as Error).message}`);
+    console.warn(`[agent:update] could not check the update of ${agentId} after the fact: ${redactSecret((e as Error).message, readAgentsToken())}`);
     return false;
   } finally {
     resolutionChecking.delete(agentId);
@@ -563,6 +639,8 @@ export interface AgentUpdateView {
   resolvedAtMs: number | null;
   /** Why it was proved fine, e.g. "verified on 2026.9.9 after a slow start". */
   resolution: string | null;
+  /** The pre-update backup still exists; checked only when a rollback could be offered; null = unknown. */
+  backupAvailable: boolean | null;
 }
 
 /** One update attempt in the read-only history. */
@@ -607,6 +685,11 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
     resolutionChecked.set(agentId, Date.now());
     void checkUpdateResolution(agentId);
   }
+  const active = (ACTIVE_STATUSES_FOR_VIEW as readonly string[]).includes(row.status);
+  const panel = { status: row.status, resolvedAtMs: row.resolved_at ?? null, backupFile: row.backup_file, fromVersion: row.from_version, error: row.error };
+  const backupAvailable = row.backup_file && (offersRollback(panel, active) || offersRollbackAnyway(panel, active))
+    ? await backupAvailability(agentId, row.backup_file)
+    : null;
   if (row.status === 'backing_up') backupPercent = (await coldBackupStatus(agentId))?.percent ?? null;
   return {
     id: row.id,
@@ -623,5 +706,6 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
     laterJob: later,
     resolvedAtMs: row.resolved_at ?? null,
     resolution: row.resolution ?? null,
+    backupAvailable,
   };
 }

@@ -1198,6 +1198,8 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
   const [showEdit, setShowEdit] = useState(false);
   /** Bumped when an edit starts here, so the banner refetches at once. */
   const [editPing, setEditPing] = useState(0);
+  /** Bumped by the Backup section after a delete, restore or backup: the update section re-reads whether its rollback backup exists. */
+  const [backupsChanged, setBackupsChanged] = useState(0);
 
   // Safe to resolve during render: this panel only mounts once the agent list has
   // been fetched client-side, so it never runs in a server render. The helper
@@ -1345,7 +1347,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
       <RestartSection agentName={agent.name} agentBusy={busy} onRestarted={onRestarted} />
 
       {/* Backup - persistent volume backup & restore */}
-      <BackupSection agentName={agent.name} agentBusy={busy} onStarted={(kind) => onActivity(agent.agentId, kind)} />
+      <BackupSection agentName={agent.name} agentId={agent.agentId} agentBusy={busy} onChanged={() => setBackupsChanged((n) => n + 1)} onStarted={(kind) => onActivity(agent.agentId, kind)} />
 
       {/* Config modal */}
       {showConfig && <ConfigModal agent={agent} onClose={() => setShowConfig(false)} />}
@@ -1370,7 +1372,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
       <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<RotateIcon size={12} />} label="OPENCLAW VERSION" />
         <div style={{ padding: '12px 14px' }}>
-          <UpdateSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
+          <UpdateSection backupsChanged={backupsChanged} agentId={agent.agentId} displayName={agent.displayName || agent.name} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
         </div>
       </div>
       <RecreateSection agentName={agent.name} displayName={agent.displayName || agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
@@ -1435,7 +1437,7 @@ interface RestoreJob {
   error: string | null;
 }
 
-function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string; agentBusy?: boolean; onStarted?: (kind: 'backup' | 'restore') => void }) {
+function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: { agentName: string; agentId: string; agentBusy?: boolean; onStarted?: (kind: 'backup' | 'restore') => void; onChanged?: () => void }) {
   const [backups, setBackups] = useState<{ name: string; size: string; date: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [backup, setBackup] = useState<ColdBackupJob | null>(null);
@@ -1444,6 +1446,8 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
   const [busy, setBusy] = useState<{ kind: 'starting' | 'cancelling' | 'restoring' | 'deleting'; file?: string } | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
+  /** The file whose Delete is being confirmed, and the rollback it would make impossible (if any). */
+  const [deleteConfirm, setDeleteConfirm] = useState<{ file: string; rollbackTo: string | null } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -1495,6 +1499,7 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
         if (job?.status === 'succeeded') showToast('Backup completed: ' + job.file);
         else if (job?.status === 'failed') showToast('Backup failed: ' + (job.error ?? 'unknown error'), 'error');
         await loadBackups();
+        onChanged?.();
       } catch { /* aborted or transient network error — the next tick retries */ }
     }, 2000);
   }, [agentName, loadBackups, stopPolling]);
@@ -1600,6 +1605,7 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
       if (res.status === 202 && data.started) {
         setRestore({ status: 'restoring', file, error: null });
         onStarted?.('restore');
+        onChanged?.();
         startRestorePolling();
       } else {
         showToast(data.error || 'Restore failed to start', 'error');
@@ -1608,6 +1614,22 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
       showToast((e as Error).message, 'error');
     }
     setBusy(null);
+  };
+
+  /** Ask before deleting; when this is the backup the latest update's Roll back needs, say so. */
+  const askDeleteBackup = async (file: string) => {
+    let rollbackTo: string | null = null;
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/update`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = (await res.json()) as { update?: { backupFile: string | null; fromVersion: string | null; status: string; resolvedAtMs: number | null; backupAvailable: boolean | null } | null };
+        const u = data.update;
+        const offered = !!u && u.backupFile === file && !!u.fromVersion && u.backupAvailable !== false
+          && ['done', 'failed', 'interrupted', 'rollback_failed'].includes(u.status);
+        if (offered && u) rollbackTo = u.fromVersion;
+      }
+    } catch { /* unknown: the plain confirmation */ }
+    setDeleteConfirm({ file, rollbackTo });
   };
 
   const handleDeleteBackup = async (file: string) => {
@@ -1619,6 +1641,7 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
         showToast(data.error || 'Delete failed', 'error');
       }
       await loadBackups();
+      onChanged?.();
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
     }
@@ -1730,7 +1753,7 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
                     size="sm"
                     disabled={actionsLocked}
                     loading={busy?.kind === 'deleting' && busy.file === b.name}
-                    onClick={() => handleDeleteBackup(b.name)}
+                    onClick={() => { void askDeleteBackup(b.name); }}
                   >
                     Delete
                   </Button>
@@ -1750,6 +1773,17 @@ function BackupSection({ agentName, agentBusy, onStarted }: { agentName: string;
           {toast.msg}
         </div>
       )}
+      <ConfirmModal
+        open={deleteConfirm !== null}
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={() => { const file = deleteConfirm?.file; setDeleteConfirm(null); if (file) void handleDeleteBackup(file); }}
+        title="Delete Backup"
+        message={`Delete ${deleteConfirm?.file ?? ''}? This cannot be undone.` +
+          (deleteConfirm?.rollbackTo ? `\n\nThis is the backup the Roll back to OpenClaw ${deleteConfirm.rollbackTo} needs: after deleting it you can no longer go back.` : '')}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        tone="danger"
+      />
       <ConfirmModal
         open={restoreConfirm !== null}
         onClose={() => setRestoreConfirm(null)}

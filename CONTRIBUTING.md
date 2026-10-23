@@ -208,8 +208,11 @@ push to `main` that touches it, and on demand. The OpenClaw release comes from
 `ARG OPENCLAW_VERSION` in the Dockerfile; a missing or malformed value fails the run
 before anything is built.
 
-Every tag is **one multi-arch manifest list** (`linux/amd64` + `linux/arm64`), so Apple
-Silicon Macs and ARM servers run agents natively. The workflow builds each platform on its
+Every tag published from the 384bd8e build on is **one multi-arch manifest list**
+(`linux/amd64` + `linux/arm64`), so Apple Silicon Macs and ARM servers run agents
+natively. Tags published before it (2026.9.3, 28cf675, and older) are amd64 only and run
+emulated on ARM hosts; a Mac gets the native image only after the new 2026.9.9 build is
+downloaded (the NEW BUILD banner) and the agent is recreated or updated. The workflow builds each platform on its
 own native runner (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64; no QEMU),
 pushes each image by digest, and a `merge` job joins the digests into the manifest list
 for every tag with `docker buildx imagetools create` and prints `imagetools inspect`. The
@@ -224,6 +227,11 @@ It publishes to `ghcr.io/<repo>/openclaw-agent-base`:
   release
 - `:<version>-<short sha>` — immutable, one per commit
 - `:latest` — **only** when the workflow is run by hand with `promote_latest`
+
+A retag of a pre-multi-arch `:latest` (`retag_latest_as`) copies the manifest list as it is,
+so it publishes only amd64: the old image had no other platform. The version inputs are
+validated as a whole string (a second line is refused) and step outputs reach later scripts
+through `env:`, never through `${{ }}` inside the script.
 
 Rev4a itself never uses `:latest`: it pulls `:<version>` for the versions listed in
 `lib/agent-versions.json` and keeps each as `openclaw-agent-base:<version>`. `:latest` is

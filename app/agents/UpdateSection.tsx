@@ -10,8 +10,8 @@
  * `/api/agents/[id]/update`, polled every 2 s while either runs. See lib/agent-update.ts.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Accordion, Badge, Button, ConfirmModal } from '../components/ui';
-import { isResolvedFailure, offersRollback, showsRedFailure } from '@/lib/agent-update-resolution';
+import { Accordion, Badge, Button, ConfirmModal, Input, Modal } from '../components/ui';
+import { backupWasDeleted, isResolvedFailure, offersRollback, offersRollbackAnyway, showsRedFailure } from '@/lib/agent-update-resolution';
 import { SkeletonLines } from '../components/Skeleton';
 
 type UpdateStatus =
@@ -41,6 +41,8 @@ interface UpdateView {
   /** Set when a failed or interrupted update was later proved fine on the target version. */
   resolvedAtMs: number | null;
   resolution: string | null;
+  /** The pre-update backup still exists (checked only while a rollback could be offered); null = unknown. */
+  backupAvailable: boolean | null;
 }
 
 interface HistoryEntry {
@@ -63,7 +65,7 @@ interface UpdateInfo {
   history?: HistoryEntry[];
 }
 
-type Action = 'update' | 'rollback';
+type Action = 'update' | 'rollback' | 'rollbackAnyway';
 
 const ACTIVE: UpdateStatus[] = ['pending', 'backing_up', 'migrating', 'verifying', 'rolling_back'];
 const POLL_MS = 2_000;
@@ -80,6 +82,14 @@ function when(ms: number | null): string {
   return ms ? new Date(ms).toLocaleString() : '';
 }
 
+/** "12/10/2026, 11 days ago": the date a backup was taken and how long ago that is. */
+function dateAndAge(ms: number | null): string {
+  if (!ms) return 'the day of the update';
+  const days = Math.max(0, Math.floor((Date.now() - ms) / 86_400_000));
+  const ago = days === 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`;
+  return `${new Date(ms).toLocaleDateString()}, ${ago}`;
+}
+
 /** A recreate or restore after a failed update: the rollback undoes it too. */
 function laterJobText(job: NonNullable<UpdateView['laterJob']>): string {
   return `The agent was ${job.kind === 'restore' ? 'restored' : 'recreated'} on ${when(job.atMs)}, after this update.`;
@@ -87,11 +97,17 @@ function laterJobText(job: NonNullable<UpdateView['laterJob']>): string {
 
 export default function UpdateSection({
   agentId,
+  displayName,
   running,
   onChanged,
   onStarted,
+  backupsChanged = 0,
 }: {
   agentId: string;
+  /** Incremented by the Backup section after a delete, restore or backup: the update state is read again. */
+  backupsChanged?: number;
+  /** The name the operator sees (AGENT_NAME); the "Roll back anyway" confirmation asks for it. Falls back to agentId. */
+  displayName?: string;
   running: boolean;
   /** An update or rollback finished: the parent reloads the agent (new image, new version). */
   onChanged?: () => void;
@@ -103,17 +119,19 @@ export default function UpdateSection({
   const [busy, setBusy] = useState<Action | null>(null);
   const busyRef = useRef<Action | null>(null);
   const [confirming, setConfirming] = useState<Action | null>(null);
+  const [typedName, setTypedName] = useState('');
+  const confirmName = (displayName ?? '').trim() || agentId;
   const [actionError, setActionError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const lastStatus = useRef<UpdateStatus | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/update`, { signal: controller.signal, cache: 'no-store' });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/update${fresh ? '?fresh=1' : ''}`, { signal: controller.signal, cache: 'no-store' });
       if (abortRef.current !== controller) return;
       const data = (await res.json().catch(() => null)) as (UpdateInfo & { error?: string }) | null;
       if (abortRef.current !== controller) return;
@@ -143,6 +161,10 @@ export default function UpdateSection({
   }, [load]);
 
   useEffect(() => {
+    if (backupsChanged > 0) void load(true);
+  }, [backupsChanged, load]);
+
+  useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => { void load(); }, POLL_MS);
     return () => clearInterval(timer);
@@ -160,6 +182,7 @@ export default function UpdateSection({
 
   const run = async (action: Action) => {
     setConfirming(null);
+    setTypedName('');
     if (busyRef.current) return;
     busyRef.current = action;
     setBusy(action);
@@ -174,12 +197,12 @@ export default function UpdateSection({
         : await fetch(`/api/agents/${encodeURIComponent(agentId)}/update/rollback`, { method: 'POST' });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        setActionError(data?.error ?? `Could not start the ${action} (HTTP ${res.status})`);
+        setActionError(data?.error ?? `Could not start the ${action === 'update' ? 'update' : 'rollback'} (HTTP ${res.status})`);
       } else {
         onStarted?.();
       }
     } catch {
-      setActionError(`Could not start the ${action}`);
+      setActionError(`Could not start the ${action === 'update' ? 'update' : 'rollback'}`);
     }
     busyRef.current = null;
     setBusy(null);
@@ -191,6 +214,11 @@ export default function UpdateSection({
   const candidate = info?.candidate ?? null;
   const stepIndex = update ? STEPS.findIndex((s) => s.status === update.status) : -1;
   const canRollBack = !!update && offersRollback(update, active);
+  const canRollBackAnyway = !!update && offersRollbackAnyway(update, active);
+  const backupDeleted = !!update && backupWasDeleted(update, active);
+  const deletedText = update
+    ? `The pre-update backup (${when(update.startedAtMs) || 'date unknown'}) was deleted: going back to OpenClaw ${update.fromVersion} is no longer possible.`
+    : '';
   const history = info?.history ?? [];
 
   return (
@@ -268,6 +296,19 @@ export default function UpdateSection({
             {' '}Since then: {update.resolution ?? 'verified against its baseline'} ({when(update.resolvedAtMs)}).
           </div>
           {update.backupFile && <div style={metaStyle}>Pre-update backup: {update.backupFile}</div>}
+          {canRollBackAnyway && (
+            <div style={{ marginTop: 6 }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={busy === 'rollbackAnyway'}
+                disabled={busy !== null}
+                onClick={() => { void load(true); setTypedName(''); setConfirming('rollbackAnyway'); }}
+              >
+                {busy === 'rollbackAnyway' ? 'Starting…' : 'Roll back anyway…'}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -284,6 +325,8 @@ export default function UpdateSection({
           {update.error && <div style={metaStyle}>{update.error}</div>}
         </div>
       )}
+
+      {backupDeleted && <div style={{ ...metaStyle, margin: '6px 0 10px' }}>{deletedText}</div>}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
         {candidate && !active && (
@@ -304,7 +347,7 @@ export default function UpdateSection({
             size="sm"
             loading={busy === 'rollback'}
             disabled={busy !== null}
-            onClick={() => { void load(); setConfirming('rollback'); }}
+            onClick={() => { void load(true); setConfirming('rollback'); }}
           >
             {busy === 'rollback' ? 'Starting…' : `Roll back to ${update.fromVersion}`}
           </Button>
@@ -328,7 +371,7 @@ export default function UpdateSection({
                 {h.resolution && <div style={metaStyle}>Resolved ({when(h.resolvedAtMs)}): {h.resolution}</div>}
                 {h.backupFile && (
                   <div style={metaStyle}>
-                    Backup: {h.backupFile}. To go back, restore it from the Backup section.
+                    Backup: {h.backupFile}, the agent's data from before this update. Going back to the previous version is the Roll back of the latest update; older updates cannot be rolled back.
                   </div>
                 )}
               </div>
@@ -356,8 +399,20 @@ export default function UpdateSection({
         confirmLabel="Update"
         cancelLabel="Cancel"
       />
+      <Modal
+        open={backupDeleted && (confirming === 'rollback' || confirming === 'rollbackAnyway')}
+        onClose={() => { setConfirming(null); setTypedName(''); }}
+        title="Roll back is no longer possible"
+        tone="warning"
+        maxWidth={420}
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: '#aaa', marginBottom: 16 }}>{deletedText}</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="sm" onClick={() => { setConfirming(null); setTypedName(''); }}>Close</Button>
+        </div>
+      </Modal>
       <ConfirmModal
-        open={confirming === 'rollback'}
+        open={confirming === 'rollback' && !backupDeleted}
         onClose={() => setConfirming(null)}
         onConfirm={() => { void run('rollback'); }}
         title={update?.fromVersion ? `Roll back to OpenClaw ${update.fromVersion}?` : 'Roll back?'}
@@ -371,6 +426,38 @@ export default function UpdateSection({
         cancelLabel="Cancel"
         tone="danger"
       />
+      <Modal
+        open={confirming === 'rollbackAnyway' && !backupDeleted}
+        onClose={() => { setConfirming(null); setTypedName(''); }}
+        title={update?.fromVersion ? `Roll back to OpenClaw ${update.fromVersion} anyway?` : 'Roll back anyway?'}
+        tone="danger"
+        maxWidth={460}
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: '#aaa', marginBottom: 16, whiteSpace: 'pre-wrap' }}>
+          {`This update was checked and the agent works on OpenClaw ${update?.toVersion ?? 'the new version'}. ` +
+            `Rolling back replaces its whole volume with the pre-update backup ${update?.backupFile ?? ''}, taken on ${dateAndAge(update?.startedAtMs ?? null)}, ` +
+            `and starts it again on OpenClaw ${update?.fromVersion ?? 'the previous version'}.\n\n` +
+            `EVERYTHING the agent did since that date is lost: conversations, memory, workspace files and cron changes. The agent is offline until it finishes.`}
+        </div>
+        <Input
+          label={`Type the agent's name (${confirmName}) to confirm`}
+          value={typedName}
+          onChange={(e) => setTypedName(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Button variant="secondary" size="sm" onClick={() => { setConfirming(null); setTypedName(''); }}>Cancel</Button>
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={typedName.trim() !== confirmName}
+            onClick={() => { void run('rollbackAnyway'); }}
+          >
+            Roll back and lose newer data
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

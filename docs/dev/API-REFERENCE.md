@@ -1292,12 +1292,13 @@ The agent's OpenClaw version, the update it could take, and its latest update
   finished `done` strictly after the update ended (`finished_at`, else `updated_at`), the more recent of the
   two: `{ "kind": "recreate" | "restore", "atMs": … }`; `null` otherwise. A rollback restores the
   pre-update backup, so it undoes that job too; the panel says so. It never blocks the rollback.
+- `update.backupAvailable`: `true`/`false` when the pre-update backup file exists, `null` when unknown or not checked. Checked (a short alpine container) only when the panel could offer a rollback, cached 60 s per agent and file; `GET …/update?fresh=1` clears the cache first (the panel passes it when a rollback confirmation opens), and `DELETE /api/agents/[id]/backup` clears it. `false` hides Roll back in the panel; the rollback route still refuses a missing backup (`409`).
 - `update.resolvedAtMs` / `update.resolution`: set for a `failed` or `interrupted` update that was later proved
   fine. Only an update that stopped before its own verification qualifies (its `verify_json` is empty and its
   error is a slow-start timeout, or it was interrupted); one with a recorded verification result, a version
   mismatch or any other error never does. The text names the cause ("after a slow start", "after Rev4a
   restarted during the update") and a later recreate or restore. Proof: the container runs, its Gateway is ready, it reports `toVersion` and the stored baseline verification
-  passes now (sessions have at least their baseline events, every baseline cron job exists; an unreadable cron
+  passes now (before the resolution is stamped Rev4a re-applies its config and provider block, best-effort; sessions have at least their baseline events, every baseline cron job exists; an unreadable cron
   list is not verified). `status` is not rewritten. Rev4a checks at startup (once per agent, not awaited) and
   in the background when this route is read (at most every 5 minutes per agent); an unresolved failure stays
   as it was. A slow start (the Gateway not ready after 10 minutes) is no longer a failure by itself: the
@@ -1305,7 +1306,9 @@ The agent's OpenClaw version, the update it could take, and its latest update
   steps and becomes `done` (or `failed` if the Gateway never answers or the verification fails).
 - `history`: the agent's last 20 updates (newest first) with `id`, `status`, `fromVersion`, `toVersion`,
   `error`, `resolution`, `resolvedAtMs`, `backupFile`, `startedAtMs`, `finishedAtMs`. Read-only; the panel
-  offers no rollback from it, the backup is restorable from the Backup section.
+  offers no rollback from it (only the latest update can be rolled back). The backup is the agent's data from
+  before that update: a Restore from the Backup section brings the data back but keeps the OpenClaw version
+  (and 2026.9.9 migrates it again), so going back to the previous version is the Roll back of the latest update.
 - `verification`: `{ sessions, lostEvents: [{ session, before, after }], missingCronJobs, ok }`.
 
 `503` when Docker cannot be reached.
@@ -1341,7 +1344,10 @@ and the provider sync skips the agent.
 
 ### `POST /api/agents/[id]/update/rollback`
 Roll back the latest update — `done`, `failed`, `interrupted` or `rollback_failed` — while
-its pre-update backup exists. `202` with the `update` (`rolling_back`).
+its pre-update backup exists. `202` with the `update` (`rolling_back`). A failed or interrupted update that was
+resolved (`resolvedAtMs` set) is still accepted: the panel offers it as "Roll back anyway…" and asks for the agent's
+name to be typed; the route itself does not ask. Starting a rollback clears `resolved_at` and `resolution`, so an
+interrupted rollback is red again with Roll back.
 
 1. The previous version's image is made local (pulled when it is a supported version).
 2. The agent is stopped and its volume replaced by the pre-update backup.

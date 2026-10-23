@@ -108,7 +108,11 @@ fi
 # argument is readable in /proc/*/cmdline (ps) by every process in the container. The
 # token still sits in the container's environment (Rev4a sets OPENCLAW_GATEWAY_TOKEN at
 # create, visible to docker inspect and every docker exec) and in /root/.agent-token, both
-# root-only inside the container: this removes the argv exposure only. The one exception is a config that sets its own
+# root-only inside the container: this removes the argv exposure only (processes in the container
+# run as root and can still read the environment and the token file; the gateway's child processes
+# now inherit the live token in their environment). Agents still on OpenClaw 2026.9.3, or on a
+# 2026.9.9 image built before 384bd8e, keep using --token until they are recreated or updated.
+# The one exception is a config that sets its own
 # gateway.auth (token, password or another mode): the config beats the environment
 # but not --token, so --token is kept there and the agent token stays in charge.
 # An unreadable config keeps --token too. The token is never printed.

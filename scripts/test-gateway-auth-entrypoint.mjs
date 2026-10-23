@@ -79,5 +79,18 @@ test('workflow retag is multi-arch safe', () => {
   assert.ok(!/docker pull/.test(wf));
 });
 
+test('workflow validates the whole version string and keeps step outputs out of script text', () => {
+  // grep -E matches line by line: a second line would pass. Bash [[ =~ ]] checks the whole string.
+  assert.ok(!/grep -Eq/.test(wf));
+  assert.equal((wf.match(/\[\[ ! "\$(VERSION|V)" =~ \^\[0-9\]\+/g) ?? []).length, 2);
+  assert.equal((wf.match(/== \*"\$NL"\*/g) ?? []).length, 2);
+  // No ${{ }} expression inside a run: script (only env:, with: and similar keys carry them).
+  const scripts = wf.split(/\n(?=\s*- name:)/).flatMap((step) => {
+    const m = step.match(/\n\s+run: \|?\n?([\s\S]*?)(?=\n\s{6,8}[a-z-]+:|$)/);
+    return m ? [m[1]] : [];
+  });
+  for (const body of scripts) assert.ok(!/\$\{\{/.test(body), `expression in a run script: ${body.slice(0, 80)}`);
+});
+
 rmSync(tmp, { recursive: true, force: true });
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

@@ -40,10 +40,16 @@ anyone keeping a list:
   `/usr/local/share/rev4a/apt-baseline`, written at build time, and are not copied.
 - `rev4a-gateway-auth` decides how the entrypoint hands the agent token to the gateway.
   The token goes in `OPENCLAW_GATEWAY_TOKEN` and the gateway starts without `--token`, so
-  it is not in `/proc/*/cmdline`. When `openclaw.json` sets its own `gateway.auth` (token,
+  it is no longer in process listings (`ps`, `docker top`) on the host or in the container;
+  processes in the container run as root and can still read the environment and the token
+  file, and the gateway's child processes inherit the live token. Agents on 2026.9.3 and on
+  a 2026.9.9 image built before 384bd8e still use `--token` until recreated or updated. When `openclaw.json` sets its own `gateway.auth` (token,
   password or a non-token mode; the config beats the environment) or cannot be read, the
-  entrypoint keeps `--token` and logs it. The image is built natively for amd64 and arm64
-  and published as one multi-arch tag (see `CONTRIBUTING.md`).
+  entrypoint keeps `--token` and logs it. From the 384bd8e build on the image is built
+  natively for amd64 and arm64 and published as one multi-arch tag (see `CONTRIBUTING.md`);
+  2026.9.3 (28cf675) and older tags are amd64 only and run emulated on ARM hosts, and a
+  retag of a pre-multi-arch `:latest` copies only amd64. On a Mac the native image arrives
+  after the new 2026.9.9 build is downloaded (NEW BUILD) and the agent is recreated or updated.
 - `rev4a-packages-restore` is started by the entrypoint in the background just before
   the gateway, which never waits for it. It puts the saved sources back, finds the
   recorded packages dpkg no longer has, runs `apt-get update` and installs each one

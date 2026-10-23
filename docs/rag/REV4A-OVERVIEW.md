@@ -81,9 +81,12 @@ A slow start is not a failure: if the new version needs more than 10 minutes to 
 waiting up to 30 more minutes and then finishes the update. An update recorded as failed or interrupted
 whose agent has since been proved fine (running the new version, ready, nothing missing against the
 stored baseline) is shown as a muted line with the resolution instead of a red failure, and its
-**Roll back** button is hidden; one that cannot be proved stays red with Roll back. The collapsed
-**Update history** lists every update of the agent (date, versions, status, error, resolution, backup
-file); a backup from it is restored from the Backup section.
+**Roll back** button is replaced by a secondary **Roll back anyway…** (latest update only; it asks you to
+type the agent's name and warns that everything done since the backup is lost); one that cannot be proved stays
+red with Roll back. Rev4a re-applies its config before it marks an update resolved. The collapsed **Update
+history** lists the last 20 updates (date, versions, status, error, resolution, backup file), read-only: the
+backup is the agent's data from before that update, and going back to the previous version is the Roll back
+of the latest update (a Restore from the Backup section keeps the OpenClaw version).
 
 The agent base image banner above (not this update — an agent's own **Update to
 <version>** recreates it on an image already downloaded) is the one running the
