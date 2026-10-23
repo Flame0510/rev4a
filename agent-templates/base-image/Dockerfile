@@ -2,6 +2,7 @@
 #
 # Base image for agent containers in the Rev4a ecosystem.
 # Includes: Node, OpenClaw, gh CLI, jq, Vercel CLI, Supabase CLI, entrypoint.
+# Built natively for linux/amd64 and linux/arm64 and published as one multi-arch tag.
 #
 # The agent's persistent volume is mounted at /root. Whatever this image writes
 # under /root (openclaw.json, installed plugins) reaches only agents created on an
@@ -55,7 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # bundled-plugin postinstall steps never run).
 #
 # Supabase CLI comes from its GitHub release (npm global is not supported on Linux),
-# for the architecture being built: amd64 in CI, arm64 on an Apple Silicon machine.
+# for the architecture being built: amd64 and arm64 in CI, each on a native runner.
 #
 # gateway.controlUi.dangerouslyDisableDeviceAuth is not set: OpenClaw 9.x retired
 # it, ignores it and `doctor --fix` removes it. Browsers pair through device approval.
@@ -113,7 +114,9 @@ RUN chmod 0755 /usr/local/sbin/rev4a-apt /usr/local/sbin/rev4a-packages-restore 
 # directory on PATH (after the system directories, so it never shadows them).
 ENV PATH="${PATH}:/root/.local/bin"
 
-# Standard entrypoint
+# Standard entrypoint, and the helper that decides how it hands the token to the gateway
+COPY rev4a-gateway-auth /usr/local/sbin/rev4a-gateway-auth
+RUN chmod 0755 /usr/local/sbin/rev4a-gateway-auth
 COPY entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh
 

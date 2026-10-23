@@ -14,6 +14,11 @@ name: Build and Publish Agent Base Image
 #                       moves when the image is rebuilt for the same release
 #   :<version>-<sha>    immutable, one per commit
 #   :latest             only with promote_latest
+#
+# Every tag is ONE multi-arch manifest list (linux/amd64 + linux/arm64). Each platform
+# is built natively on its own runner (no QEMU) and pushed by digest; the merge job
+# then creates the manifest list for every tag. Rev4a pulls by tag and docker picks the
+# host's platform; the revision label is baked into both images.
 
 on:
   push:
@@ -37,12 +42,15 @@ on:
         default: false
 
 jobs:
-  build-and-push:
+  prepare:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-
+    outputs:
+      repo: ${{ steps.vars.outputs.repo }}
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.tags.outputs.revision }}
+      tags: ${{ steps.tags.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +91,28 @@ jobs:
           echo "revision=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "Publishing: $TAGS"
 
+  # One native build per platform, pushed by digest only (no tag yet).
+  build:
+    needs: prepare
+    if: inputs.retag_latest_as == ''
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -90,30 +120,114 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_ACTIONS_TOKEN }}
 
-      # A release that predates the version ARG has only :latest on ghcr; a rollback
-      # needs its :<version> tag, so this republishes the existing image under it.
-      - name: Retag :latest as a version (no build)
-        if: inputs.retag_latest_as != ''
-        run: |
-          set -euo pipefail
-          V="${{ inputs.retag_latest_as }}"
-          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::retag_latest_as is malformed: '$V'"
-            exit 1
-          fi
-          BASE="ghcr.io/${{ steps.vars.outputs.repo }}/openclaw-agent-base"
-          docker pull "${BASE}:latest"
-          docker tag  "${BASE}:latest" "${BASE}:${V}"
-          docker push "${BASE}:${V}"
-
-      - name: Build and push agent base image
-        if: inputs.retag_latest_as == ''
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: agent-templates/base-image
           file: agent-templates/base-image/Dockerfile
-          push: true
+          platforms: ${{ matrix.platform }}
           build-args: |
-            OPENCLAW_VERSION=${{ steps.version.outputs.version }}
-            IMAGE_REVISION=${{ steps.tags.outputs.revision }}
-          tags: ${{ steps.tags.outputs.tags }}
+            OPENCLAW_VERSION=${{ needs.prepare.outputs.version }}
+            IMAGE_REVISION=${{ needs.prepare.outputs.revision }}
+          outputs: type=image,name=ghcr.io/${{ needs.prepare.outputs.repo }}/openclaw-agent-base,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export the digest
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Joins the per-platform images into one manifest list under every tag.
+  merge:
+    needs: [prepare, build]
+    if: inputs.retag_latest_as == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_ACTIONS_TOKEN }}
+
+      - name: Create the manifest list for every tag
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          TAGS: ${{ needs.prepare.outputs.tags }}
+          IMAGE: ghcr.io/${{ needs.prepare.outputs.repo }}/openclaw-agent-base
+        run: |
+          set -euo pipefail
+          SOURCES=""
+          for d in *; do SOURCES="$SOURCES ${IMAGE}@sha256:$d"; done
+          [ "$(echo $SOURCES | wc -w)" -eq 2 ] || { echo "::error::expected 2 platform digests, found: $SOURCES"; exit 1; }
+          TAGARGS=""
+          IFS=',' read -ra T <<< "$TAGS"
+          for t in "${T[@]}"; do TAGARGS="$TAGARGS -t $t"; done
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $TAGARGS $SOURCES
+
+      - name: Inspect the result
+        env:
+          TAGS: ${{ needs.prepare.outputs.tags }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra T <<< "$TAGS"
+          for t in "${T[@]}"; do docker buildx imagetools inspect "$t"; done
+
+  # A release that predates the version ARG has only :latest on ghcr; a rollback
+  # needs its :<version> tag, so this republishes the existing image under it.
+  # imagetools copies the whole manifest list, so no platform is lost (a pull, tag
+  # and push would keep only the runner's own).
+  retag:
+    needs: prepare
+    if: inputs.retag_latest_as != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_ACTIONS_TOKEN }}
+
+      - name: Retag :latest as a version (no build)
+        env:
+          V: ${{ inputs.retag_latest_as }}
+          BASE: ghcr.io/${{ needs.prepare.outputs.repo }}/openclaw-agent-base
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::retag_latest_as is malformed: '$V'"
+            exit 1
+          fi
+          docker buildx imagetools create -t "${BASE}:${V}" "${BASE}:latest"
+          docker buildx imagetools inspect "${BASE}:${V}"

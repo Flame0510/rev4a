@@ -2,9 +2,9 @@ import { dockerExec, dockerExecWithInput } from './docker-exec';
 
 /**
  * Constant script that stores the gateway token inside an agent container. The token travels on
- * stdin: this write never puts it in argv (host or container). The gateway process itself still
- * receives it as `--token` from the image entrypoint (agent-templates/base-image/entrypoint.sh;
- * follow-up card SEC-13). The file is written 0600 and swapped in
+ * stdin: this write never puts it in argv (host or container). The gateway process itself receives it in
+ * OPENCLAW_GATEWAY_TOKEN from the image entrypoint (agent-templates/base-image/entrypoint.sh),
+ * not as `--token`, unless openclaw.json sets its own gateway.auth (older images: `--token`). The file is written 0600 and swapped in
  * atomically. The file format is unchanged: one line, the token (read by the entrypoint,
  * lib/agent-devices.ts and lib/gateway-cli.ts).
  */

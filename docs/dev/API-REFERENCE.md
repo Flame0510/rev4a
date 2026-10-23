@@ -1790,7 +1790,7 @@ being swallowed.
 - Writes the new token to `data/agents-token.json` (mode 0600, also on a file written by an older release)
 - Saves and agent creates are serialized by one process-wide lock (`lib/agent-token-lock.ts`): two saves end with the file and every container on the last token, and a save during a create waits for the new container to exist
 - If Docker cannot be reached the file is still written and the answer is `502 { success: false, error: "Docker is not reachable: …" }`; when some containers failed, `success` is `false` and `error` summarizes them (the page shows it)
-- Writes the token file (`/root/.agent-token`, mode 0600, replaced atomically) into every running container with `AGENT_ID` label. The token is sent on stdin to a constant script, so the write never puts it in host or container argv (the gateway process itself still receives it as `--token` from the image entrypoint, `agent-templates/base-image/entrypoint.sh`; follow-up card SEC-13); every `error` returned (per container and the outer one) has the token replaced with `***`
+- Writes the token file (`/root/.agent-token`, mode 0600, replaced atomically) into every running container with `AGENT_ID` label. The token is sent on stdin to a constant script, so the write never puts it in host or container argv (the gateway process itself receives it in `OPENCLAW_GATEWAY_TOKEN` from the image entrypoint, `agent-templates/base-image/entrypoint.sh`, not as `--token`; images built before SEC-13 and agents whose `openclaw.json` sets `gateway.auth` still use `--token`); every `error` returned (per container and the outer one) has the token replaced with `***`
 - Restarts each container so the entrypoint picks up the new token via `OPENCLAW_GATEWAY_TOKEN` env
 
 ---

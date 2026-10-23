@@ -208,6 +208,16 @@ push to `main` that touches it, and on demand. The OpenClaw release comes from
 `ARG OPENCLAW_VERSION` in the Dockerfile; a missing or malformed value fails the run
 before anything is built.
 
+Every tag is **one multi-arch manifest list** (`linux/amd64` + `linux/arm64`), so Apple
+Silicon Macs and ARM servers run agents natively. The workflow builds each platform on its
+own native runner (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64; no QEMU),
+pushes each image by digest, and a `merge` job joins the digests into the manifest list
+for every tag with `docker buildx imagetools create` and prints `imagetools inspect`. The
+revision label is baked into both images. Rev4a pulls by tag and docker picks the host's
+platform; nothing in Rev4a reads the remote manifest. The arm64 build needs a GitHub
+runner for Linux ARM (free for public repositories). Anything the Dockerfile downloads must
+be architecture-aware (`dpkg --print-architecture`), never an amd64-only URL.
+
 It publishes to `ghcr.io/<repo>/openclaw-agent-base`:
 
 - `:<version>` — the OpenClaw release; moves when the image is rebuilt for the same
@@ -254,8 +264,10 @@ Dockerfile ARG as the source of truth. The `:latest` tag still moves only with
 
 A release that predates the version ARG has only `:latest` on ghcr; a rollback still needs
 its `:<version>` tag. `retag_latest_as` republishes the existing `:latest` under that tag
-without building (the current Dockerfile may not be able to rebuild an older release —
-its pinned plugin version may not exist):
+without building, as `docker buildx imagetools create -t <new> :latest`, which copies the whole
+manifest list and so keeps both platforms (a pull, tag and push would keep only one). Retagging
+is needed because the current Dockerfile may not be able to rebuild an older release: its pinned
+plugin version may not exist.
 
 ```bash
 gh workflow run build-agent-image.yml -f retag_latest_as=<version>

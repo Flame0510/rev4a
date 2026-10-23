@@ -104,5 +104,26 @@ if [ -x /usr/local/sbin/rev4a-packages-restore ]; then
   ( /usr/local/sbin/rev4a-packages-restore </dev/null & )
 fi
 
-echo "[entrypoint] Starting gateway with auth token"
+# The token reaches the gateway in the environment, not in its arguments: a --token
+# argument is readable in /proc/*/cmdline (ps) by every process in the container. The
+# token still sits in the container's environment (Rev4a sets OPENCLAW_GATEWAY_TOKEN at
+# create, visible to docker inspect and every docker exec) and in /root/.agent-token, both
+# root-only inside the container: this removes the argv exposure only. The one exception is a config that sets its own
+# gateway.auth (token, password or another mode): the config beats the environment
+# but not --token, so --token is kept there and the agent token stays in charge.
+# An unreadable config keeps --token too. The token is never printed.
+GATEWAY_AUTH=$(/usr/local/sbin/rev4a-gateway-auth 2>/dev/null || echo "token unreadable")
+case "$GATEWAY_AUTH" in
+  env)
+    echo "[entrypoint] Starting gateway with auth token (from the environment)"
+    export OPENCLAW_GATEWAY_TOKEN="$AGENT_TOKEN"
+    exec openclaw gateway --bind lan --port 3000 --auth token --allow-unconfigured
+    ;;
+  "token configured")
+    echo "[entrypoint] openclaw.json sets gateway.auth: passing --token so the agent token stays in charge"
+    ;;
+  *)
+    echo "[entrypoint] gateway auth check failed (openclaw.json unreadable or the check could not run): passing --token so the agent token stays in charge"
+    ;;
+esac
 exec openclaw gateway --bind lan --port 3000 --auth token --token "${AGENT_TOKEN}" --allow-unconfigured

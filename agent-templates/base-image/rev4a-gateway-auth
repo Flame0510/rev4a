@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+// Decides how the entrypoint hands the agent token to the gateway.
+//
+// Prints one line and exits 0, always:
+//   env                openclaw.json sets no gateway auth of its own: pass the token in
+//                      OPENCLAW_GATEWAY_TOKEN, so it never appears in the process arguments
+//   token configured   openclaw.json sets gateway.auth.token, gateway.auth.password or a mode
+//                      other than "token" (config beats the environment, but not `--token`):
+//                      pass --token so the agent token stays in charge
+//   token unreadable   openclaw.json cannot be read: pass --token too
+//
+// The config path comes from REV4A_OPENCLAW_CONFIG (tests) or /root/.openclaw/openclaw.json.
+// A missing file is a clean state (env). Nothing here prints a token.
+const fs = require('fs');
+const file = process.env.REV4A_OPENCLAW_CONFIG || '/root/.openclaw/openclaw.json';
+try {
+  if (!fs.existsSync(file)) {
+    console.log('env');
+  } else {
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const auth = cfg && typeof cfg === 'object' ? cfg.gateway?.auth : undefined;
+    const set = (v) => v !== undefined && v !== null && v !== '';
+    const own = auth && typeof auth === 'object' && (set(auth.token) || set(auth.password) || (set(auth.mode) && auth.mode !== 'token'));
+    console.log(own ? 'token configured' : 'env');
+  }
+} catch {
+  console.log('token unreadable');
+}
