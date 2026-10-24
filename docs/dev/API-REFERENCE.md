@@ -912,6 +912,8 @@ Create a new agent container from a template. `docker run` is spawned without a 
 | `fallbacks` | no | Array of fallback model IDs |
 | `memoryLimitMb` | no | Memory limit in MB, an integer from 256 to 1048576 (1 TiB); absent, `null`, `0` or `''` mean no limit and the `docker run` command is exactly what it was. Validated before anything is created (`400` on a bad value); when set, adds `--memory <bytes> --memory-swap <bytes>` (swap equal to the limit) built from the validated integer only |
 
+**A failed create leaves nothing behind.** Once `docker run` has been attempted, any failure (a run error, the Gateway not ready in time, an unexpected error) removes the container and the data volume `agent-<container>-data`, but only when this request created the volume (it is looked up before the run; if it existed or Docker could not say, it is kept). The error message says what was removed ("The agent and its data were removed.") and the removal is logged (`[agent:create] rollback: …`). The Gateway readiness window is 120 s, or 300 s when the image's architecture differs from the Docker host's (`/images/<ref>/json` against `/info`: emulation, several times slower); the timeout error names the window used. The route allows up to 480 s.
+
 **Every agent is created with a host port mapping:**
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
 - Single port: `-p <port>:3000` — maps a single host port to container port 3000
@@ -941,7 +943,7 @@ Create a new agent container from a template. `docker run` is spawned without a 
 
 **Post-creation pipeline:**
 1. OpenClaw gateway starts with `--allow-unconfigured`, generating its own default config
-2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 120 s)
+2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 120 s, or 300 s when the image architecture differs from the Docker host's)
 3. Once ready, rewrites `openclaw.json` in one write — `gateway.controlUi`,
    `agents.defaults.model` (primary and fallbacks, always as `rev4a/<provider>/<model>`)
    and `update`; the Gateway reloads the file by itself (no restart)
@@ -2093,6 +2095,20 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
 `ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom`, `packages_failed`, `spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. Spend alarms (`spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted`; see REV4A.md, Spend and loop alarms) also carry `agent` (the agent id the proxy saw, or the container for a session), `scope` (`vendor:<name>` for the balance alarm), `resolved` (`true` for the "back to normal" note; `spend.unaccounted` has none) and `snoozedUntil` (ms, from the server, `null` when not snoozed). Optional `agent=<id>` joins `container=` (either name keeps an event); the `container` filter also matches a spend alarm whose `agent` is that name. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
+
+---
+
+## System volumes
+
+### `GET /api/system/orphan-volumes`
+Docker volumes named `agent-*-data` that no container uses, in any state (read from `GET /containers/json?all=1` on every call). Never lists `rev4a-*` or any other volume. A volume whose agent is busy (recreate, update, restore, edit, backup; `agentBusyReason`) is left out; one whose agent's latest recreate is not `done`, or latest update is not `done`/`rolled_back` (or resolved), is listed with `keptReason` and no Delete.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "volumes": [{ "name": "agent-agent_1a2b3c4d-data", "sizeBytes": 597688320, "createdAt": "2026-10-22T09:12:00Z" }] }`, newest first. `sizeBytes` is `null` when Docker has not measured it. Sizes and creation times come from `GET /system/df` (the one call that measures volumes, on Docker Desktop and Linux alike; it can take seconds on a big host), cached for 5 minutes (`type=volume`), and the cache is dropped after a delete. `502` when Docker cannot be read (every Docker read has a 10 s timeout; concurrent reads share one request).
+
+### `DELETE /api/system/orphan-volumes/<name>`
+Remove one volume. The name must match `agent-<name>-data` (`400` otherwise), the containers are read again (`409` if one, even stopped, mounts it), the volume must exist (`GET /volumes/<name>`, `404`), the agent must not be busy and its last recreate/update must have finished (`409`, checked last, right before the removal), and `docker volume rm` runs without `-f`. Nothing deletes an orphan by itself; this runs on a click in the System page. Response `{ "success": true }`; the removal is logged.
 
 ---
 

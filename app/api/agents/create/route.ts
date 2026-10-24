@@ -19,6 +19,9 @@ import { redactSecret, redactedMessage } from '@/lib/redact-secret';
 import { acquireTokenLock } from '@/lib/agent-token-lock';
 import { buildCreateRunArgs } from '@/lib/agent-create-args';
 import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
+import { agentVolumeName, isEmulated, readyTimeoutMs } from '@/lib/agent-volumes';
+import { volumeExists, removeVolume } from '@/lib/agent-volumes-server';
+import { dockerGet } from '@/lib/agent-volumes-server';
 
 
 
@@ -26,7 +29,7 @@ import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 // both offer the same ranges and the same error messages (lib/agent-ports.ts).
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // docker run (60s) + startup wait (120s) + seeding (60s)
+export const maxDuration = 480; // docker run (60s) + startup wait (120s, 300s under emulation) + seeding (60s)
 
 const TEMPLATES_DIR = templatesDir(process.cwd());
 const AGENTS_TOKEN_PATH = AGENTS_TOKEN_FILE;
@@ -80,6 +83,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let releaseTokenLock: () => void = () => {};
   // The token read under the lock (can differ from createToken if it was saved meanwhile).
   let laterToken = '';
+  // Set once `docker run` is attempted. From then on any failure removes the container and, when this
+  // request created it, the agent's data volume.
+  let rollbackTarget: { container: string; volume: string; volumeExisted: boolean } | null = null;
+  let finished = false;
   try {
     let body: CreateBody;
     try {
@@ -259,6 +266,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portArgs: portMappingArgs(portStart, portEnd),
       image,
     });
+    const volumeName = agentVolumeName(containerName);
+    rollbackTarget = { container: containerName, volume: volumeName, volumeExisted: volumeExists(volumeName) };
     let runOutput = '';
     await runDocker(runArgs, {
       env: { OPENCLAW_GATEWAY_TOKEN: agentsToken },
@@ -299,11 +308,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Wait for startup to complete (/startupz, up to 120s). Not /health, which
     // answers as soon as the HTTP server listens. If it does not come up, remove
     // the container: a zombie agent with no config is worse than an explicit failure.
-    const ready = await waitForGatewayReady(containerName);
+    // Under emulation (image and Docker host architectures differ) a first boot takes several times
+    // longer, so the window is 300 s instead of 120 s.
+    const { imageArch, hostArch } = await readArchitectures(image);
+    const emulated = isEmulated(imageArch, hostArch);
+    const readyMs = readyTimeoutMs(imageArch, hostArch);
+    if (emulated) {
+      console.log(`[agent:create] ${containerName}: image is ${imageArch}, Docker host is ${hostArch} (emulated); waiting up to ${readyMs / 1000}s for the gateway`);
+    }
+    const ready = await waitForGatewayReady(containerName, readyMs);
     if (!ready) {
-      try { execSync(`docker rm -f ${containerName}`, { timeout: 10000 }); } catch { /* best-effort */ }
+      const removed = rollbackCreate(rollbackTarget);
+      rollbackTarget = null;
       return NextResponse.json(
-        { success: false, error: `Container started but its gateway did not finish starting within 120s. Container removed — try again.` },
+        {
+          success: false,
+          error: `Container started but its gateway did not finish starting within ${readyMs / 1000}s${emulated ? ' (the image runs under emulation on this host, so it is slower)' : ''}. ${removed} Try again.`,
+        },
         { status: 500 },
       );
     }
@@ -417,6 +438,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.error('[agent:create] runtime config patch failed:', redactedMessage(e, agentsToken));
     }
 
+    finished = true;
     return NextResponse.json({
       success: true,
       containerId,
@@ -431,13 +453,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portDisplay: isBlock ? `${portStart}-${portEnd}` : String(portStart),
     });
   } catch (e: unknown) {
+    let removed = '';
+    if (rollbackTarget && !finished) {
+      removed = ' ' + rollbackCreate(rollbackTarget);
+      rollbackTarget = null;
+    }
     return NextResponse.json(
-      { success: false, error: redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) },
+      { success: false, error: redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) + removed },
       { status: 500 },
     );
   } finally {
     releaseTokenLock();
   }
+}
+
+/**
+ * Undo a create that failed after `docker run` was attempted: remove the container and, when this
+ * request created it (it did not exist before the run), its data volume. Returns the sentence for the
+ * error message. Best effort and logged; a volume that existed before is never touched.
+ */
+function rollbackCreate(t: { container: string; volume: string; volumeExisted: boolean }): string {
+  let containerGone = false;
+  try { execFileSync('docker', ['rm', '-f', t.container], { stdio: 'ignore', timeout: 30000 }); containerGone = true; } catch { /* best-effort */ }
+  if (!containerGone) {
+    console.warn(`[agent:create] rollback: could not remove container ${t.container}; its volume ${t.volume} was left in place`);
+    return 'The new container could not be removed; remove it and its data from the Containers page.';
+  }
+  if (t.volumeExisted) {
+    console.log(`[agent:create] rollback: removed container ${t.container}; volume ${t.volume} existed before this request and was kept`);
+    return 'The container was removed.';
+  }
+  if (removeVolume(t.volume)) {
+    console.log(`[agent:create] rollback: removed container ${t.container} and volume ${t.volume}`);
+    return 'The agent and its data were removed.';
+  }
+  console.warn(`[agent:create] rollback: removed container ${t.container}; could not remove volume ${t.volume}`);
+  return 'The container was removed, but its data volume could not be; delete it from the System page (Orphan agent volumes).';
+}
+
+/** Architecture of the image and of the Docker host, from the Docker API; null when unknown. */
+async function readArchitectures(image: string): Promise<{ imageArch: string | null; hostArch: string | null }> {
+  const [img, info] = await Promise.all([
+    dockerGet<{ Architecture?: string }>(`/images/${encodeURIComponent(image)}/json`).catch(() => null),
+    dockerGet<{ Architecture?: string }>('/info').catch(() => null),
+  ]);
+  return { imageArch: img?.Architecture ?? null, hostArch: info?.Architecture ?? null };
 }
 
 /** `rev4a/<provider>/<model>`, whatever form the request used. */

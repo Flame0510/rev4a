@@ -59,6 +59,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const router = useRouter();
 
   const [step, setStep] = useState<Step>('template');
+  // The create response is not streamed: after 60 s of waiting, say the start is slow, not stuck.
+  const [slowCreate, setSlowCreate] = useState(false);
+  useEffect(() => {
+    if (step !== 'creating') { setSlowCreate(false); return; }
+    const t = setTimeout(() => setSlowCreate(true), 60_000);
+    return () => clearTimeout(t);
+  }, [step]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [agentName, setAgentName] = useState('');
   const [portRange, setPortRange] = useState<string>('');
@@ -372,6 +379,11 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       {step === 'creating' && (
         <div style={{ textAlign: 'center', padding: 40 }}>
           <div style={{ fontSize: 14, color: '#888', marginBottom: 16 }}>Creating agent container...</div>
+          {slowCreate && (
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>
+              Still starting: the first start can take a few minutes (up to 5 when the agent image runs emulated on this machine).
+            </div>
+          )}
           <div style={{
             width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--violet)',
             borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto',

@@ -242,6 +242,7 @@ When the user asks you to do something on this repository:
 - Use `sudo journalctl -u rev4a -f` to view the logs (Next.js, daemon and terminal share the unit)
 - Use `npm run build` for Next.js builds
 - Never expose secrets in responses
+- Agent data volumes (`agent-*-data`) are listed, never auto-deleted, when no container uses them (System page, `/api/system/orphan-volumes`); the only automatic removal is the volume a failed create made itself
 
 ---
 
