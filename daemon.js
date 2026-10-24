@@ -25,6 +25,8 @@ const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js
 const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, failureMessage: packagesFailureMessage, splitFailed: splitPackagesFailed } = require('./lib/agent-packages.js');
 const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
 const agentSessions = require('./lib/agent-sessions.js');
+const spendAlerts = require('./lib/spend-alerts.js');
+const { telegramConfig, sendTelegramMessage } = require('./lib/alerts-send.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
 
 // Same rule as lib/rev4a-paths.ts: REV4A_DB, else <data dir>/data/events.db, where the data
@@ -1218,6 +1220,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const agentSessionsDdl = (() => {
   try {
     db.exec(agentSessions.CREATE_TABLES_SQL);
+    agentSessions.ensureAddedColumns(db);
     return true;
   } catch (e) {
     console.error(`[SESSIONS] cannot create agent_sessions: ${e.message}`);
@@ -1504,7 +1507,52 @@ if (metrics) {
 // Agent costs: first pass shortly after start (agents may still be booting), then every
 // interval. Off when costs.db failed.
 function sampleCosts() {
-  collectCosts().catch((e) => log(`[COSTS ERROR] ${e.message}`));
+  collectCosts()
+    .catch((e) => log(`[COSTS ERROR] ${e.message}`))
+    // Pure SQL on data already stored: it runs even when Docker was unreachable for the pass.
+    .finally(evaluateSpend);
+}
+
+// Spend and loop alarms (FEAT-15, lib/spend-alerts.js): one SQL pass after each costs pass.
+// Alarms only; nothing is blocked. Each one is a system_anomaly event (System -> Recent alerts)
+// and, when Telegram is configured, a message (the same env and sender as lib/alerts.ts).
+const spendConfig = spendAlerts.configFromEnv(process.env);
+let spendStats = { passes: 0, ms: 0 };
+function evaluateSpend() {
+  if (!costs || !spendConfig.enabled) return;
+  const started = process.hrtime.bigint();
+  try {
+    const containerOf = costs.db.prepare('SELECT container FROM agent_cost_sources WHERE agent_id = ? OR container = ? LIMIT 1');
+    // The rule's state is written only after deliverSpendEvent returned: a throw leaves no cooldown behind.
+    spendAlerts.runSpendPass({
+      costsDb: costs.db,
+      stateDb: db,
+      config: spendConfig,
+      gapAtMs: spendAlerts.readMeteringGap(COSTS_DB_PATH),
+      resolveContainer: (agent) => { try { return containerOf.get(agent, agent)?.container ?? null; } catch { return null; } },
+      deliver: deliverSpendEvent,
+      onError: (e, ev) => log(`[SPEND ERROR] ${ev.metric} ${ev.scope}: ${e.message}`),
+    });
+  } catch (e) {
+    log(`[SPEND ERROR] ${e.message}`);
+  }
+  spendStats.passes += 1;
+  spendStats.ms += Number(process.hrtime.bigint() - started) / 1e6;
+  if (spendStats.passes % 12 === 0) {
+    log(`[SPEND] ${spendStats.passes} passes: ${Math.round(spendStats.ms / spendStats.passes)} ms per pass`);
+  }
+}
+
+function deliverSpendEvent(ev) {
+  const extra = { agent: ev.agent, scope: ev.scope, rule: ev.rule, hour: ev.hour, resolved: ev.resolved };
+  if (ev.container) extra.container = ev.container;
+  if (ev.vendor) extra.vendor = ev.vendor;
+  if (ev.session_key) extra.session_key = ev.session_key;
+  recordAnomaly(null, ev.metric, ev.values, ev.threshold, ev.message, extra);
+  const tg = telegramConfig(process.env);
+  if (!tg.enabled || !tg.token || !tg.chatId) return;
+  sendTelegramMessage(`${ev.resolved ? '\u2705' : '\u26a0\ufe0f'} ${ev.message}`, process.env)
+    .catch((e) => log(`[SPEND] Telegram: ${e.message}`));
 }
 let costsTimer = null;
 const firstCosts = costs

@@ -98,6 +98,7 @@ CREATE TABLE agent_sessions (
   status TEXT,        -- running|done|failed|aborted|''
   last_error TEXT, model TEXT, provider TEXT,
   input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER,
+  context_tokens INTEGER,  -- the model's context window (sessions.list contextTokens); NULL when unknown; added after 1.21.2 by a guarded ADD COLUMN
   cost_usd REAL,      -- OpenClaw's estimate; NULL when unknown, never 0 for unknown
   cron_job_id TEXT,
   started_at INTEGER, updated_at INTEGER, ended_at INTEGER, archived_at INTEGER,  -- Unix ms
@@ -107,6 +108,8 @@ CREATE TABLE agent_sessions (
 -- indexes (container, updated_at) and (container, parent_key)
 CREATE TABLE agent_sessions_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
 ```
+
+`context_tokens` is what the spend alarms compare `total_tokens` with (100 %); older rows hold NULL until the collector next reads the session, and an older Rev4a ignores the column.
 
 `agent_sessions_meta.version` is bumped by every collector pass that changed something. The
 collector writes the events `session_started`, `subagent_spawned` (`data.parent_key`),
@@ -312,7 +315,12 @@ the dashboard's cold backups cover them.
 ### Other tables
 
 - `alert_state` — one row per alert key (`lib/alerts.ts`): whether it was sent and resolved, so
-  an alert is not sent twice.
+  an alert is not sent twice. The spend alarms (`lib/spend-alerts.js`, run by the daemon) use it too,
+  with three kinds of key: `spend:<rule>:<scope>` (alerted / ok, the last alarm in `last_sent_at`, the
+  clean-evaluation counter in `payload`), `spend-hour:<agent>:<hour>` (an hour that raised an alarm, kept
+  out of the 7-day median, pruned after 8 days) and `spend-snooze:<agent>` (`payload` has `until`, in ms).
+  No new table: the rows are additive and a release without them ignores them. The spend alarms read
+  `agent_sessions.context_tokens` (see below) and, from `costs.db`, a bounded 15-day range of `proxy_usage_hourly`.
 
 `events.db` is Rev4a's own record — what it did to agents (the job tables, created and
 deleted) and what it saw (anomalies, alerts). What agents do is read from OpenClaw: agent

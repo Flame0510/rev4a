@@ -652,3 +652,7 @@ overrides file stays limited to genuine divergence.
 - if the file cannot be read, the last copy this process read successfully is used;
   with no earlier copy the sync refuses to push. Orphan overrides are pruned only
   when a toggle is saved against a freshly read catalogue
+
+## Spend and loop alarms
+
+The daemon evaluates four alarm rules after each costs pass from the proxy metering (`proxy_usage_hourly`), the vendor balance (`vendor_balance`) and the session copy (`agent_sessions`): a session near its model's context window, a failing retry loop, a day of spend out of proportion, and money leaving a USD provider account outside Rev4a. Alarms only. Rules, thresholds (`REV4A_SPEND_*`), snooze and delivery are in [REV4A.md](../REV4A.md#spend-and-loop-alarms). The proxy leaves a `proxy-metering-gap` marker next to `costs.db` when it pauses its metering (`markMeteringGap` in `lib/proxy-usage.js`), so a gap is never read as zero.

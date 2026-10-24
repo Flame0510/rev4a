@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { DB_PATH, ensureDbReady } from './db';
+import { sendTelegramMessage } from './alerts-send';
 
 export type AlertKind = 'db-freshness';
 
@@ -38,18 +39,6 @@ function openWritableDb() {
   const db = new Database(DB_PATH);
   db.exec(ALERTS_TABLE);
   return db;
-}
-
-async function sendTelegramMessage(text: string): Promise<void> {
-  const { token, chatId } = getConfig();
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
-  });
-  if (!response.ok) {
-    throw new Error(`Telegram send failed (${response.status})`);
-  }
 }
 
 export async function maybeSendAlert(context: AlertContext): Promise<{ action: 'noop' | 'sent' | 'dry-run'; reason: string }> {

@@ -17,6 +17,7 @@ export interface AgentSessionRow {
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
+  context_tokens: number | null;
   cost_usd: number | null;
   cron_job_id: string | null;
   started_at: number | null;
@@ -43,6 +44,8 @@ export interface SessionDiff {
 
 export const CREATE_TABLES_SQL: string;
 export const CONTENT_COLUMNS: string[];
+export const ADDED_COLUMNS: [string, string][];
+export function ensureAddedColumns(db: { prepare(sql: string): { all(): { name: string }[] }; exec(sql: string): unknown }): void;
 export const ALL_COLUMNS: string[];
 export const TERMINAL: Set<string>;
 export const FRESH_EVENT_MS: number;

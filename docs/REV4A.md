@@ -163,6 +163,39 @@ REV4A_ALERT_SMOKE=false           # true enables GET /api/alerts/smoke (sends a 
 - Alert state (`ok` / `alerted` / `resolved`) is tracked per `alert_key` in `alert_state`, so a resolved condition sends a follow-up "✅ resolved" message instead of staying silent.
 - `REV4A_ALERT_COOLDOWN_MS` prevents repeat-sending the same stale alert while the condition persists.
 
+### Spend and loop alarms
+
+The daemon warns when an agent burns money or tokens abnormally. The case that shaped it (2026-10-07, measured by the
+proxy): a session context of ~560k tokens against a 200k window, a compaction that timed out on every Telegram
+retry, 1,417 calls in 14 hours (~101 an hour, ~64k prompt tokens each, 12 errors), $6.81 spent, while OpenClaw's own
+records showed 92 of those calls. **Alarms only: nothing is blocked or throttled.** One SQL pass runs after each costs
+pass (every 5 min; no Docker, no network, no CLI call) in `lib/spend-alerts.js`. The spend rules read ONLY the proxy's
+metering (`proxy_usage_hourly`), never the costs agents recorded, because OpenClaw does not record a failed compaction.
+
+| Metric | Fires when |
+|---|---|
+| `spend.session` | a session (cron runs excluded: their `total_tokens` is a run's usage) holds 100 % or more of its model's context window (`agent_sessions.context_tokens`, from `sessions.list` `contextTokens`; 400 000 tokens when the window is unknown) and was updated in the last 6 hours. OpenClaw compacts a session before its window (it keeps a reserve of at least 20 000 tokens), so a healthy session sits at 85-90 % at most and never alarms; one past its window is a compaction that is failing (the 2026-10-07 session was at 280 %). One warning per session. It resolves only when the session is seen again (updated after the alarm) under 90 % (the share minus 10 points, at least 5 %), never because it went idle |
+| `spend.loop` | in the last full hour errors + calls without usage are at least 10 and at least 50 % of the calls, with at least 1 000 000 prompt tokens |
+| `spend.unusual` | the rolling last 24 hours cost (tokens for an unpriced model) is over 3x the agent's median day over its active days (at least one call) of the previous 28, and over $2 (20 000 000 tokens). With fewer than 3 active days of history only a higher floor applies, $5 (50 000 000 tokens), and at most one alarm per 24 hours; otherwise the cooldown is 6 hours. When the median cost is 0 but the median tokens are not (a model priced only lately), tokens decide. A weekly batch has 28 days to show 3 active days |
+| `spend.unaccounted` | a vendor's USD balance dropped over the last two readings by more than 2x the proxy-metered cost of that provider in the window and more than $0.50. A top-up is ignored. Only USD vendors are compared (the proxy meters in USD; another currency is skipped, not converted). Never twice for the same newer reading, and no "back to normal" note (a drop that stops is not news). Alarms are counted per vendor over a rolling 7 days, not reset by a clean pass: after the 2nd, at most one per 24 hours, and the message says the key may be shared with another install |
+
+Regular work stays silent: an office-hours orchestrator, a nightly batch, a 24/7 steady orchestrator, a watchdog cron
+every 5 minutes (its day never reaches the floor) and an unpriced orchestrator are judged against their own active days.
+
+Behaviour: one alarm per agent and rule per hour at most (6 or 24 hours for `spend.unusual`, see above); a "back to normal" note after two
+clean evaluations (not for `spend.unaccounted`); the state is in `alert_state` (events.db, rows `spend:<rule>:<scope>`) and is written only after the
+alarm was recorded, so a restart repeats nothing and a failed delivery sets no cooldown. **Snooze 24 h** (System ->
+Recent alerts and the agent panel, under COSTS) calls `POST /api/alerts/snooze`; a snoozed agent is evaluated but not alerted,
+and the button then reads "Snoozed until <time>" from the server. Missing data never reads as zero: the proxy rules are
+skipped for an hour during which the proxy paused its metering (marker file `proxy-metering-gap` next to `costs.db`; a gap in
+the last 2 minutes of an hour also touches the next one) and those hours stay out of the medians; the balance rule is skipped
+when the reading is older than 2 hours. Each alarm is a `system_anomaly` event with `agent`, `container` and `scope` in its
+data, and a Telegram message when Telegram is configured (same variables; sender `lib/alerts-send.js`, shared with `lib/alerts.ts`).
+
+Thresholds: `REV4A_SPEND_*` (see `.env.example`; zero, negative or malformed values fall back to the default);
+`REV4A_SPEND_ALERTS=false` turns the rules off. Rule `spend.session` assumes OpenClaw's `totalTokens` is the current context
+of the session, not a running total. The pass reads at most 29 days of `proxy_usage_hourly`, history only for an agent over a floor (no full scan; about 4 ms, 25 ms in the worst case, on 20 agents x 3 models x 400 days). A delivery that fails is logged and skipped for that alarm only (nothing stored, so the next pass tries again); the other rules still run.
+
 ---
 
 ## Service Management

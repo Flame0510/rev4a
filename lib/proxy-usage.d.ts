@@ -1,5 +1,6 @@
 /** Types for the CommonJS proxy metering helpers shared with daemon.js. */
 
+export function markMeteringGap(costsDbPath: string, atMs?: number): void;
 export const AGENT_HEADER: string;
 export const UNKNOWN_AGENT: string;
 export const ASSISTANT_AGENT: string;

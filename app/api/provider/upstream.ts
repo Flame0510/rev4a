@@ -14,6 +14,7 @@ import {
   buildEntry,
   createAgentResolver,
   createSseUsageParser,
+  markMeteringGap,
   usageFromBody,
   type ProxyUsage,
 } from '@/lib/proxy-usage';
@@ -203,6 +204,8 @@ function pauseMetering(what: string, e: unknown): void {
   // Logged once per pause, not once per dropped call.
   if (Date.now() >= usageStoreRetryAt) console.error(`[provider/v1] ${what}:`, (e as Error).message);
   usageStoreRetryAt = Date.now() + 60_000;
+  // The spend alarms skip the hours this gap touches: dropped calls must never read as zero (lib/spend-alerts.js).
+  markMeteringGap(COSTS_DB_PATH);
 }
 
 function openUsageStore(): UsageStore | null {

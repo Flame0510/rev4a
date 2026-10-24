@@ -2092,7 +2092,7 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 ```json
 { "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
 ```
-`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
+`ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom`, `packages_failed`, `spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. Spend alarms (`spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted`; see REV4A.md, Spend and loop alarms) also carry `agent` (the agent id the proxy saw, or the container for a session), `scope` (`vendor:<name>` for the balance alarm), `resolved` (`true` for the "back to normal" note; `spend.unaccounted` has none) and `snoozedUntil` (ms, from the server, `null` when not snoozed). Optional `agent=<id>` joins `container=` (either name keeps an event); the `container` filter also matches a spend alarm whose `agent` is that name. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
 
 ---
 
@@ -3076,6 +3076,17 @@ While an update is in progress, every mutating API request (`POST`, `PUT`, `PATC
 new route is covered without anyone remembering to. Exempt: `/api/auth/*` (sign in and out),
 `/api/update-check`, `/api/update-status` and `/api/provider/*` (the agents' provider
 proxy keeps working during the update). Reads and page loads are not blocked.
+
+### `POST /api/alerts/snooze`
+Snoozes the spend and loop alarms of one agent: the daemon keeps evaluating it and does not alert until the snooze ends. Stored in `events.db` `alert_state` (`spend-snooze:<agent>`), so it survives a restart.
+
+**Auth:** browser cookie or Bearer
+
+**Body:** `{ "agent": "newsroom", "hours": 24 }` — `agent` is an agent id, a container name or `vendor:<name>` (the alarm's `scope`); `hours` is optional (default 24, at most 720).
+
+**Response:** `{ "ok": true, "agent": "newsroom", "until": 1790876025355 }` (`until` in milliseconds).
+
+**Errors:** `400` for an invalid `agent` or `hours`; `500` when the database cannot be written.
 
 ### `GET /api/alerts/smoke`
 Send a test alert, to verify the Telegram alerting path end to end.

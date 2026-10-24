@@ -9,6 +9,7 @@ import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import ModelSection from './ModelSection';
 import CostSection from './CostSection';
+import { AgentSpendAlerts } from '../system/AgentSpendAlerts';
 import ResourceSection from './ResourceSection';
 import PackagesSection from './PackagesSection';
 import CredentialsSection from './CredentialsSection';
@@ -1308,6 +1309,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="COSTS" />
         <CostSection container={agent.name} />
+        <AgentSpendAlerts container={agent.name} agentId={agent.agentId} />
       </div>
 
       {/* Resources - what this agent's container consumes (history on the System page) */}
