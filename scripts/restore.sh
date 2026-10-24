@@ -72,7 +72,7 @@ mkdir -p "$PRE_DIR"
 PRE="${PRE_DIR}/rev4a-pre-restore-$(date -u +%Y%m%d-%H%M%S).tar.gz"
 echo "Archiving the current state first: $PRE"
 set -o noclobber
-tar -C "$DATA_DIR" -czf - . > "$PRE"
+tar -C "$DATA_DIR" --exclude='./backups' -czf - . > "$PRE"
 set +o noclobber
 chmod 600 "$PRE"
 
@@ -80,18 +80,102 @@ chmod 600 "$PRE"
 # data untouched, and nothing from the current state survives into the restored one.
 PARENT="$(dirname "$DATA_DIR")"
 STAGE="$(mktemp -d "${PARENT}/.rev4a-restore.XXXXXX")"
-trap 'rm -rf "$STAGE"' EXIT
+# KEEP holds the agent backup archives (backups/) while the swap runs. It sits next to the data
+# directory, outside STAGE and outside every cleanup below: nothing in this script ever deletes it.
+KEEP="${PARENT}/.rev4a-keep-backups.$$"
+OLD="${PARENT}/.rev4a-replaced.$$"
+
+# A name for a file that must be set aside: <name>.from-restore-archive, then .1, .2, ... Never an existing name.
+free_aside_name() {
+  local base="$1.from-restore-archive" cand n=0
+  cand="$base"
+  while [[ -e "$cand" || -L "$cand" ]]; do
+    n=$((n + 1))
+    cand="$base.$n"
+  done
+  printf '%s' "$cand"
+}
+
+# Put the kept backups back into the data directory, file by file. A current file always gets its own name
+# back: a file of the same name that came out of the archive is first moved aside (see free_aside_name).
+# Nothing here relies on the exit code of `mv -n` (it differs between BSD and GNU): existence is tested first.
+# Whatever cannot be put back stays in KEEP.
+merge_kept_backups() {
+  [[ -d "$KEEP" ]] || return 0
+  [[ -d "$DATA_DIR" ]] || return 1
+  mkdir -p "$DATA_DIR/backups" && chmod 700 "$DATA_DIR/backups" || return 1
+  local f dest aside
+  for f in "$KEEP"/* "$KEEP"/.[!.]*; do
+    [[ -e "$f" || -L "$f" ]] || continue
+    dest="$DATA_DIR/backups/${f##*/}"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      aside="$(free_aside_name "$dest")"
+      mv "$dest" "$aside" || return 1
+    fi
+    [[ -e "$dest" || -L "$dest" ]] && return 1
+    mv "$f" "$dest" || return 1
+  done
+  rmdir "$KEEP" 2>/dev/null || true
+  return 0
+}
+
+SWAPPING=""
+on_exit() {
+  local rc=$?
+  # STAGE only ever holds what the archive extracted; the backups are in KEEP.
+  rm -rf "$STAGE"
+  # The swap stopped between its two moves: put the previous data directory back where it was.
+  if [[ -n "$SWAPPING" && -d "$OLD" && ! -e "$DATA_DIR" ]]; then
+    mv "$OLD" "$DATA_DIR" 2>/dev/null || true
+  fi
+  if [[ -d "$KEEP" ]]; then
+    merge_kept_backups || true
+  fi
+  if [[ "$rc" -ne 0 && -n "$SWAPPING" ]]; then
+    [[ -d "$OLD" ]] && echo "The previous data directory is in $OLD (the restore did not complete)." >&2
+    [[ -d "$DATA_DIR" ]] && echo "The data directory is $DATA_DIR." >&2
+  fi
+  if [[ -d "$KEEP" ]]; then
+    echo "Your agent backups were NOT deleted: they are in $KEEP" >&2
+    echo "Move them to $DATA_DIR/backups by hand." >&2
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
+
 echo "Restoring into: $DATA_DIR"
 tar -C "$STAGE" --no-same-owner -xzf "$ARCHIVE"
 find "$STAGE" -type d -exec chmod 700 {} +
 [[ -f "$STAGE/.env" ]] && chmod 600 "$STAGE/.env"
 [[ -d "$STAGE/data" ]] && find "$STAGE/data" -type f -exec chmod 600 {} +
 
-OLD="${PARENT}/.rev4a-replaced.$$"
+# Take the current backups out of the way first. They are not in a backup.sh archive; the swap below
+# deletes the old directory, so they must not be in it. A `backups` that is a symbolic link is not moved:
+# it is recreated after the swap (removing the old directory removes the link, never its target).
+BACKUPS_LINK=""
+if [[ -L "$DATA_DIR/backups" ]]; then
+  BACKUPS_LINK="$(readlink "$DATA_DIR/backups")"
+elif [[ -e "$DATA_DIR/backups" ]]; then
+  mv "$DATA_DIR/backups" "$KEEP"
+fi
+SWAPPING=1
 mv "$DATA_DIR" "$OLD"
 mv "$STAGE" "$DATA_DIR"
-trap - EXIT
+if [[ -n "$BACKUPS_LINK" ]]; then
+  # An archive's own backups/ is set aside, the link takes its place.
+  if [[ -e "$DATA_DIR/backups" || -L "$DATA_DIR/backups" ]]; then
+    mv "$DATA_DIR/backups" "$(free_aside_name "$DATA_DIR/backups")"
+  fi
+  ln -s "$BACKUPS_LINK" "$DATA_DIR/backups"
+fi
+merge_kept_backups
+# OLD no longer holds backups/ (moved to KEEP above, or a link), so removing it cannot delete one.
 rm -rf "$OLD"
+SWAPPING=""
+trap - EXIT
+if [[ -d "$KEEP" ]]; then
+  echo "Your agent backups were NOT deleted: they are in $KEEP" >&2
+fi
 
 echo ""
 echo "Restore complete."

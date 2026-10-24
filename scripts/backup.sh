@@ -12,8 +12,9 @@
 # overrides, the update log) and `shared/` (shared skills and rules). New files there are included
 # automatically.
 #
-# Not included: agent volumes (the cold backups in the dashboard cover those), the
-# installed package, node_modules, .next.
+# Not included: agent volumes (the cold backups in the dashboard cover those), the agent
+# backup archives in backups/ (plain agent-*.tar.gz files, often gigabytes: copy that folder
+# yourself, it is safe to copy while Rev4a runs), the installed package, node_modules, .next.
 #
 # The archive holds every Rev4a secret in plain text: it is created with mode 0600, and a
 # destination directory the script creates gets mode 0700 (an existing one is left as it
@@ -50,7 +51,7 @@ echo "  Target: $ARCHIVE"
 
 # noclobber: a second backup in the same second fails instead of overwriting the first.
 set -o noclobber
-tar -C "$DATA_DIR" -czf - . > "$ARCHIVE"
+tar -C "$DATA_DIR" --exclude='./backups' -czf - . > "$ARCHIVE"
 set +o noclobber
 chmod 600 "$ARCHIVE"
 

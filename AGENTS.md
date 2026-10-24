@@ -190,6 +190,14 @@ documentation is incomplete.
 
 - **Never commit secrets** — `.env`, tokens, passwords, API keys. Use environment variables.
 - **Destructive operations** — `rm -rf`, `docker rm`, `systemctl stop` → ask first. Trash over delete.
+- **Host safety** — Docker volumes named `rev4a-*` or `agent-*` hold users' data. Never run
+  `docker volume prune --all`, `docker system prune --volumes` or `docker volume rm` on them, in code,
+  scripts, docs or by hand. The only exceptions: the one volume a user explicitly asked to delete (deleting
+  an agent removes its own `agent-<id>-data` volume; Delete on an orphan volume in System, without `-f`), the
+  volume a failed create made itself in that same request, and Rev4a's own backups migration, which removes the
+  legacy `rev4a-backups` volume once it is empty and no container uses it. Agent backups are plain files in
+  `<REV4A_DATA>/backups` (`lib/backups.ts`): list, check and delete them with `fs`, never with a helper
+  container; containers only write an archive and restore one.
 - **Sensitive files** (`.env`, `SYSTEM.md`, `start.sh`, debug/proxy endpoints) are `untracked` — never pushed.
 
 ---

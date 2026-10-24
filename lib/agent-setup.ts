@@ -9,7 +9,7 @@
  */
 
 import * as fs from 'fs';
-import { SHARED_SKILLS_DIR, REV4A_RULES_DIR } from '@/lib/rev4a-paths';
+import { SHARED_SKILLS_DIR, REV4A_RULES_DIR, ensureBackupsDir } from '@/lib/rev4a-paths';
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
@@ -70,6 +70,7 @@ export function ensureHostDirs(): void {
   for (const vol of REV4A_VOLUMES) {
     fs.mkdirSync(vol.source, { recursive: true });
   }
+  ensureBackupsDir();
 }
 
 // ── Runtime config guarantees ────────────────────────────────────────────────

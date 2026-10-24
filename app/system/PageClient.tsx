@@ -6,6 +6,7 @@ import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatMb } from '@/lib/utils/format';
 import { Meter, meterLevel, Page, PageHeader, Pill, Surface, Tabs, TimeSeriesChart } from '../components/ui';
 import { AgentsSection } from './AgentsSection';
+import { BackupsMigrationNotice } from './BackupsMigrationNotice';
 import { MemoryLimitWarning } from './MemoryLimitWarning';
 import { OrphanVolumes } from './OrphanVolumes';
 import { RecentAlerts } from './RecentAlerts';
@@ -258,6 +259,8 @@ export default function SystemPageClient() {
         ))}
       </div>
       )}
+
+      <BackupsMigrationNotice />
 
       <MemoryLimitWarning />
 

@@ -20,10 +20,14 @@ import { promisify } from 'util';
 import { dockerFetch } from '@/lib/docker-socket';
 import { isValidAgentId } from '@/lib/container';
 import { runDocker } from '@/lib/agent-images';
+import { BACKUPS_DIR, ensureBackupsDir } from '@/lib/rev4a-paths';
+import { BACKUP_VOLUME, removeDirFile } from '@/lib/backups';
+import { helperOwnerEnv } from '@/lib/backups-volume';
 
 const execFileAsync = promisify(execFile);
 
-export const BACKUP_VOLUME = 'rev4a-backups';
+/** Kept for importers of the old name; the archives are in BACKUPS_DIR now. */
+export { BACKUP_VOLUME };
 const HELPER_PREFIX = 'rev4a-backup-';
 const LABEL_AGENT = 'rev4a.backup.agent';
 const LABEL_FILE = 'rev4a.backup.file';
@@ -65,16 +69,24 @@ const helperName = (agentId: string) => `${HELPER_PREFIX}${agentId}`;
  */
 const SCRIPT = [
   'set -u',
+  // A bind mount can succeed and still be unwritable (SELinux, user-namespace remapping): say so up front
+  // instead of ending in "tar failed". HOSTDIR is the folder's path on the host, for the message only.
+  'if ! touch "/backup/.rev4a-w.$$" 2>/dev/null; then echo "REV4A error the backups folder ${HOSTDIR:-} is not writable from the container (see Troubleshooting in docs/REV4A.md: SELinux, user-namespace remapping, Docker sharing)"; exit 6; fi',
+  'rm -f "/backup/.rev4a-w.$$"',
   'P="/backup/$FILE.partial"',
   'rm -f "$P"',
   'TOTAL=$(du -sb --exclude=.npm/_cacache /source 2>/dev/null | cut -f1)',
   'echo "REV4A total ${TOTAL:-0}"',
   'AVAIL=$(( $(df -Pk /backup | awk \'NR==2 {print $4}\') * 1024 ))',
   'NEED=$(( ${TOTAL:-0} * 6 / 10 ))',
-  'if [ "$AVAIL" -lt "$NEED" ]; then echo "REV4A error not enough space in rev4a-backups: about $NEED bytes needed, $AVAIL free"; exit 3; fi',
+  'if [ "$AVAIL" -lt "$NEED" ]; then echo "REV4A error not enough space in the backups folder: about $NEED bytes needed, $AVAIL free"; exit 3; fi',
   `if ! tar -czf "$P" --exclude=.npm/_cacache --checkpoint=${CHECKPOINT_RECORDS} --checkpoint-action=echo='REV4A progress %u' -C /source . ; then rm -f "$P"; echo "REV4A error tar failed"; exit 4; fi`,
   'if ! tar -tzf "$P" > /tmp/rev4a-list || ! grep -qx "./.openclaw/openclaw.json" /tmp/rev4a-list; then rm -f "$P"; echo "REV4A error verification failed: the archive does not read back or holds no .openclaw/openclaw.json"; exit 5; fi',
-  'mv "$P" "/backup/$FILE" && chmod 644 "/backup/$FILE"',
+  // The helper runs as root: give the archive to Rev4a's own user (OWNER=uid:gid) so Rev4a can list and
+  // delete it with plain file calls, and keep it private (600).
+  'mv "$P" "/backup/$FILE"',
+  'if [ -n "${OWNER:-}" ]; then chown "$OWNER" "/backup/$FILE" || true; fi',
+  'chmod 600 "/backup/$FILE"',
   'echo "REV4A done $(stat -c %s "/backup/$FILE")"',
 ].join('\n');
 
@@ -164,8 +176,11 @@ async function startAgentIfItWasRunning(labels: Record<string, string>, agentId:
 
 async function removePartial(file: string): Promise<void> {
   if (!file) return;
+  // The directory is Rev4a's own, so unlinking a root-written partial works; a helper
+  // container is the fallback only when fs is refused.
+  if (removeDirFile(`${file}.partial`) !== 'denied') return;
   await runDocker(
-    ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, '-e', `FILE=${file}`, 'alpine', 'sh', '-c', 'rm -f "/backup/$FILE.partial"'],
+    ['run', '--rm', '-v', `${BACKUPS_DIR}:/backup`, '-e', `FILE=${file}`, 'alpine', 'sh', '-c', 'rm -f "/backup/$FILE.partial"'],
     { timeoutMs: 60_000 },
   ).catch(() => {});
 }
@@ -273,6 +288,7 @@ export async function startColdBackup(
       .catch(() => runDocker(['kill', name], { timeoutMs: 15_000 }));
   }
 
+  ensureBackupsDir();
   try {
     await runDocker([
       'run', '-d', '--name', helperName(agentId),
@@ -282,8 +298,10 @@ export async function startColdBackup(
       '--label', `${LABEL_PREV}=${wasRunning && !opts.leaveStopped ? 'running' : 'stopped'}`,
       '--label', `${LABEL_STARTED}=${Date.now()}`,
       '-e', `FILE=${file}`,
+      '-e', `HOSTDIR=${BACKUPS_DIR}`,
+      ...helperOwnerEnv(),
       '-v', `${volume}:/source:ro`,
-      '-v', `${BACKUP_VOLUME}:/backup`,
+      '-v', `${BACKUPS_DIR}:/backup`,
       '--entrypoint', 'sh',
       container.Image,
       '-c', SCRIPT,
@@ -291,7 +309,11 @@ export async function startColdBackup(
   } catch (e) {
     await runDocker(['rm', '-f', helperName(agentId)], { timeoutMs: 30_000 }).catch(() => {});
     if (wasRunning) await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
-    throw new Error(`Could not start the backup: ${(e as Error).message}`);
+    const msg = (e as Error).message;
+    const mountHint = /mount|bind|not shared|invalid volume|permission denied|denied/i.test(msg)
+      ? ` The data folder ${BACKUPS_DIR} could not be mounted into the backup container: check that Docker can access it (snap Docker, Docker Desktop shared paths, SELinux and user-namespace remapping can block it; see Troubleshooting in docs/REV4A.md).`
+      : '';
+    throw new Error(`Could not start the backup: ${msg}.${mountHint}`);
   }
 
   finished.delete(agentId);

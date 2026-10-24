@@ -32,7 +32,8 @@ import {
   pullAgentImage,
   runDocker,
 } from '@/lib/agent-images';
-import { BACKUP_VOLUME, coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
+import { backupMountSource, locateBackup } from '@/lib/backups-volume';
+import { coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
 import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer, type AgentContainerInspect } from '@/lib/agent-recreate';
 import { applyRuntimeConfig } from '@/lib/agent-setup';
 import { probeGateway, waitForGatewayReady } from '@/lib/agent-readiness';
@@ -390,17 +391,11 @@ const ROLLBACK_READY_TIMEOUT_MS = 5 * 60 * 1000;
 const ROLLBACK_FROM: readonly AgentUpdateRow['status'][] = ['done', 'failed', 'interrupted', 'rollback_failed'];
 
 /**
- * Whether the backup file is in the backup volume. The script always exits 0 and prints its answer, so a
- * Docker failure (daemon down, timeout, image pull) throws instead of reading as "deleted".
+ * Whether the backup file exists: a plain file check in the backups folder, plus one helper container
+ * for the legacy volume only while it exists. A Docker failure there throws instead of reading as "deleted".
  */
 async function backupFileExists(file: string): Promise<boolean> {
-  let answer = '';
-  await runDocker(
-    ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'if [ -f "/backup/$FILE" ]; then echo present; else echo absent; fi'],
-    { timeoutMs: 60_000, env: { FILE: file }, onLine: (line) => { const t = line.trim(); if (t === 'present' || t === 'absent') answer = t; } },
-  );
-  if (!answer) throw new Error('The backup check gave no answer');
-  return answer === 'present';
+  return (await locateBackup(file)) !== null;
 }
 
 const BACKUP_CHECK_TTL_MS = 60_000;
@@ -493,13 +488,16 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
         .catch(() => runDocker(['kill', name], { timeoutMs: 15_000 }));
     }
 
+    // Where the archive is now: the backups folder, or the legacy volume until it is migrated.
+    const backupSource = await backupMountSource(file);
+    if (!backupSource) throw new Error(`The pre-update backup '${file}' no longer exists`);
     await runDocker(
       [
         'run', '--rm',
         '-v', `agent-${agentId}-data:/target`,
-        '-v', `${BACKUP_VOLUME}:/backup`,
+        '-v', `${backupSource}:/backup:ro`,
         'alpine', 'sh', '-c',
-        'rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf "/backup/$FILE" -C /target',
+        'test -f "/backup/$FILE" || exit 3; rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf "/backup/$FILE" -C /target',
       ],
       { timeoutMs: RESTORE_TIMEOUT_MS, env: { FILE: file } },
     );

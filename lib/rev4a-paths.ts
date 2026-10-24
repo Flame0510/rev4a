@@ -39,6 +39,13 @@ export const AGENTS_TOKEN_FILE = path.join(REV4A_DATA, 'data', 'agents-token.jso
 /** Provider API keys JSON */
 export const PROVIDER_KEYS_FILE = path.join(REV4A_DATA, 'data', 'provider-keys.json');
 
+/**
+ * Agent backups (cold, pre-update, pre-recreate): plain `agent-<id>-*.tar.gz` files on the host.
+ * They used to live in the Docker volume `rev4a-backups`, which a `docker volume prune` could
+ * delete. Helper containers bind-mount this directory only to write or restore an archive.
+ */
+export const BACKUPS_DIR = path.join(REV4A_DATA, 'backups');
+
 /* ── Host directories bind-mounted into every agent container ───── */
 
 /**
@@ -81,6 +88,17 @@ export function ensurePaths(): void {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+  }
+  ensureBackupsDir();
+}
+
+/** Create the backups directory (0700) when missing; tighten an existing one. Never throws. */
+export function ensureBackupsDir(): void {
+  try {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') fs.chmodSync(BACKUPS_DIR, 0o700);
+  } catch {
+    // Read-only home or a race: the first backup reports the real error.
   }
 }
 

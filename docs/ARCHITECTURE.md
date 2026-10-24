@@ -168,11 +168,28 @@ The central container, running the Next.js dashboard + orchestration API.
   takes the newest supported version downloaded, recreate the agent's own.
 - **Cold backups** are `lib/cold-backup.ts`. The agent is stopped and a detached helper
   container, `rev4a-backup-<id>` from the agent's own image, archives its volume to
-  `rev4a-backups` as `.partial`, reads it back and renames it; the agent is started
+  `<REV4A_DATA>/backups` (bind-mounted at `/backup`) as `.partial`, reads it back and renames it,
+  gives it to Rev4a's user (`OWNER=uid:gid`, mode 600); the agent is started
   again if it was running. The helper and its labels are the job, so no request waits
   on it and a Rev4a restart does not lose it (`reconcileColdBackups()` in
   `instrumentation.ts`). While a helper runs, the routes that change the agent answer
   409 (`isColdBackupRunning()`), and `syncAllAgents()` skips the agent.
+- **Agent backups are plain files** (`lib/backups.ts`, `lib/backups-volume.ts`): `BACKUPS_DIR` is
+  `<REV4A_DATA>/backups` (0700, created by `ensurePaths()` / `ensureHostDirs()`). Listing, size/mtime,
+  existence, deletion and the pre-recreate pruning are `fs` calls on validated names (no request path, symlinks
+  neither listed nor followed); a helper container is used only to write an archive, to restore one, and as the
+  fallback to delete a file `fs` may not (root-owned, from an older helper). Older releases kept them in the
+  Docker volume `rev4a-backups`; `lib/backups-migration.ts` (planner, resumable runner) and
+  `lib/backups-migration-host.ts` (real dependencies) move them at startup, in the background, one verified
+  file at a time (copy to `<name>.migrating`, `tar -tzf`, rename, chown/chmod, delete from the volume),
+  and remove the volume when it is empty and unused. While it runs, listings merge the folder and the volume
+  (the folder wins), and existence checks, restore and rollback read from wherever the file is.
+  A file whose copy does not verify is skipped (kept in the volume, named in the status) and the larger ones
+  still move; after "Docker did not answer" the migration retries every 5 minutes. `lib/backups-names.ts` is the
+  one parser of a backup name (`agent-<id>-<kind>-<timestamp>.tar.gz`, anchored from the right) because agent ids
+  may contain `-`: every selection of an agent's backups compares the parsed id, never a `agent-<id>-` prefix.
+  The write helper first checks it can write to the mounted folder and says so when it cannot (SELinux,
+  user-namespace remapping).
 - **Agent updates** are `lib/agent-update.ts`, with their state in the `agent_upgrades`
   table (`lib/agent-update-state.ts`). An update counts the agent's transcript events per
   session and its cron jobs, takes a cold pre-update backup, recreates the container on

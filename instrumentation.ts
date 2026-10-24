@@ -91,6 +91,12 @@ export async function register() {
     } catch {
       console.warn('[rev4a] Could not reconcile cold backups on startup');
     }
+    // Backups of older releases sit in the Docker volume rev4a-backups: move them, one verified file at a
+    // time, into <data>/backups (plain files). Resumable and idempotent; a no-op once the volume is gone.
+    // Not awaited, so it cannot delay the server start.
+    import('./lib/backups-migration-host')
+      .then(({ startBackupsMigration }) => startBackupsMigration())
+      .catch((e) => console.warn(`[rev4a] Could not start the backups migration: ${(e as Error)?.message ?? e}`));
     // Agents on an image that lost every tag: tag it by identity so its version is known
     // (a recreate then moves the agent to the pinned build) and retention can remove it later.
     // Not awaited: with many images it must not delay the server start.

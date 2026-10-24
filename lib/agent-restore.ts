@@ -9,7 +9,8 @@
  */
 import { isValidAgentId } from '@/lib/container';
 import { runDocker } from '@/lib/agent-images';
-import { BACKUP_VOLUME } from '@/lib/cold-backup';
+import { backupMountSource } from '@/lib/backups-volume';
+import { isValidBackupFile } from '@/lib/backups';
 import { inspectAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
 import { activeRestoreAgentIds, insertRestore, isRestoreActive, latestRestore, markInterruptedRestores, updateRestoreRow, type AgentRestoreRow } from '@/lib/agent-restore-state';
 import { agentBusyReason } from '@/lib/agent-busy';
@@ -19,11 +20,6 @@ import { reapplyWhenReady } from '@/lib/credentials/delivery';
 const EXTRACT_TIMEOUT_MS = 30 * 60 * 1000;
 
 export class RestoreRefusedError extends Error {}
-
-/** Archive names are `<agent>-<something>.tar.gz`; nothing that could carry shell syntax. */
-function isValidBackupFile(agentId: string, file: string): boolean {
-  return file.startsWith(`agent-${agentId}-`) && /^[A-Za-z0-9._-]+\.tar\.gz$/.test(file);
-}
 
 /** Restore jobs running in this process, so a second start for the same agent is refused. */
 const running = new Set<string>();
@@ -42,12 +38,9 @@ export async function startAgentRestore(agentId: string, file: string): Promise<
     // The archive must exist before anything is stopped or cleared. It used to be
     // shape-checked only, so a file that had been pruned or deleted made the job wipe
     // the volume and then fail, leaving the agent on an empty volume.
-    await runDocker(
-      ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'test -f "/backup/$FILE"'],
-      { timeoutMs: 30_000, env: { FILE: file } },
-    ).catch(() => {
-      throw new RestoreRefusedError(`Backup file '${file}' not found`);
-    });
+    // The archive is in the backups folder, or still in the legacy volume while the migration runs.
+    const source = await backupMountSource(file).catch(() => null);
+    if (!source) throw new RestoreRefusedError(`Backup file '${file}' not found`);
 
     const id = insertRestore(agentId, file);
     void runRestore(id, agentId, file).finally(() => running.delete(agentId));
@@ -67,13 +60,17 @@ async function runRestore(id: number, agentId: string, file: string): Promise<vo
       await runDocker(['stop', '-t', '30', name], { timeoutMs: 45_000 }).catch(() => {});
     }
 
+    // Where the archive is now (the migration may have moved it since the check).
+    const source = await backupMountSource(file);
+    if (!source) throw new Error(`Backup file '${file}' not found`);
+
     // Clear the volume, then extract. The file name reaches the container through its
     // environment and the whole command is one argv element, so it is never shell syntax.
     await runDocker(
       [
         'run', '--rm',
         '-v', `agent-${agentId}-data:/target`,
-        '-v', `${BACKUP_VOLUME}:/backup`,
+        '-v', `${source}:/backup:ro`,
         'alpine', 'sh', '-c',
         'test -f "/backup/$FILE" || exit 3; rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf "/backup/$FILE" -C /target',
       ],
@@ -152,15 +149,11 @@ export async function recoverInterruptedRestores(): Promise<number> {
   return interrupted;
 }
 
-/** Whether the archive still exists in the backup volume. */
+/** Whether the archive still exists (backups folder, or the legacy volume until it is migrated). */
 async function backupFileExists(agentId: string, file: string): Promise<boolean> {
   if (!isValidBackupFile(agentId, file)) return false;
   try {
-    await runDocker(
-      ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'test -f "/backup/$FILE"'],
-      { timeoutMs: 30_000, env: { FILE: file } },
-    );
-    return true;
+    return (await backupMountSource(file)) !== null;
   } catch {
     return false;
   }

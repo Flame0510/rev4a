@@ -8,8 +8,7 @@ import { agentEditView, EditRefusedError, startAgentEdit } from '@/lib/agent-edi
 import { DB_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { deleteAssignmentsForAgent } from '@/lib/credentials/assignments';
-
-const BACKUP_VOLUME = 'rev4a-backups';
+import { deleteAgentBackups } from '@/lib/backups-volume';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,12 +52,11 @@ export async function DELETE(request: Request,
       // volume may not exist (legacy agent) or already removed — ignore
     }
     try {
-      execSync(
-        `docker run --rm -v ${BACKUP_VOLUME}:/backup alpine sh -c 'rm -f /backup/agent-${id}-*.tar.gz'`,
-        { timeout: 20000, stdio: 'pipe' },
-      );
+      // The agent's archives in the backups folder (plain files) and, until migrated, in the legacy volume.
+      const failed = await deleteAgentBackups(id);
+      if (failed.length) console.warn(`[agents] backups of deleted agent ${id} not all removed: ${failed.join('; ')}`);
     } catch {
-      // no backups or backup volume missing — ignore
+      // no backups — ignore
     }
 
     // The agent is gone with its volume, so no credential can be switched off on it any more.

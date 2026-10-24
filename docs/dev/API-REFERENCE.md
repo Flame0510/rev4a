@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-24
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -965,8 +965,8 @@ Failures in steps 3 and 4 do not fail the request.
 
 ### `DELETE /api/agents/[id]`
 **Destructive.** Permanently deletes the agent: the container, its persistent
-volume (`agent-<id>-data`), and **all** its backups (`agent-<id>-*.tar.gz` in the
-`rev4a-backups` volume). This cannot be undone. Volume and backup removal are
+volume (`agent-<id>-data`), and **all** its backups (`agent-<id>-*.tar.gz` in `<data>/backups`, and in the legacy
+`rev4a-backups` volume while it still exists). This cannot be undone. Volume and backup removal are
 best-effort — a missing volume or absent backups do not fail the delete.
 
 The `id` is validated (`isValidAgentId`) before being interpolated into any
@@ -1068,7 +1068,9 @@ Restart an agent container (shorter than recreate — keeps everything intact). 
 ---
 
 ### `GET /api/agents/[id]/backup`
-List the agent's backup archives in Docker volume `rev4a-backups`.
+List the agent's backup archives: the plain files in `<data>/backups`, merged by name with the legacy
+Docker volume `rev4a-backups` while it still exists (the folder wins). Errors as `502` when the volume
+exists but cannot be listed, never as an empty list.
 
 **Auth:** browser cookie or bearer token
 
@@ -1084,7 +1086,9 @@ excluded the npm package cache (`~/.npm/_cacache/`). Sorted most-recent-first.
 ---
 
 ### `DELETE /api/agents/[id]/backup?file=...`
-Remove one backup archive from `rev4a-backups`.
+Remove one backup archive from `<data>/backups` with a plain file call (and from the legacy volume when
+it is there too). The name is validated (`agent-<id>-….tar.gz`, no separators or `..`) and joined to the
+folder by the server; a file `fs` may not delete falls back to one helper container.
 
 **Auth:** browser cookie
 
@@ -1098,7 +1102,7 @@ has started; the work continues in a helper container, `rev4a-backup-<id>`.
 
 1. The agent is stopped (`docker stop -t 30`, kill as a fallback) if it runs.
 2. The helper, started from the agent's own image, measures the volume (`du`),
-   refuses when `rev4a-backups` has less free space than about 60% of it, and writes
+   refuses when the backups folder has less free space than about 60% of it, and writes
    `agent-<id>-cold-<ts>.tar.gz.partial` (npm cache excluded) with GNU tar checkpoints
    for progress.
 3. `tar -tzf` reads the whole archive back and must find `.openclaw/openclaw.json`;
@@ -2010,7 +2014,7 @@ see `docs/dev/DATABASE.md`). Default range `1h`.
   "docker_storage": { "ts": 1790789645, "images_mb": 4734, "images_reclaimable_mb": 3518,
                       "build_cache_mb": 1597, "build_cache_reclaimable_mb": 1597,
                       "volumes_mb": 10120, "unused_volumes_mb": 7337, "layers_mb": 30,
-                      "unused_volumes": [ { "name": "rev4a-backups", "size_mb": 7337 } ] }
+                      "unused_volumes": [ { "name": "agent-atlas-data", "size_mb": 7337 } ] }
 }
 ```
 
@@ -2109,6 +2113,25 @@ Docker volumes named `agent-*-data` that no container uses, in any state (read f
 
 ### `DELETE /api/system/orphan-volumes/<name>`
 Remove one volume. The name must match `agent-<name>-data` (`400` otherwise), the containers are read again (`409` if one, even stopped, mounts it), the volume must exist (`GET /volumes/<name>`, `404`), the agent must not be busy and its last recreate/update must have finished (`409`, checked last, right before the removal), and `docker volume rm` runs without `-f`. Nothing deletes an orphan by itself; this runs on a click in the System page. Response `{ "success": true }`; the removal is logged.
+
+## Backups migration
+
+### `GET /api/system/backups-migration`
+State of the move of backups from the legacy Docker volume `rev4a-backups` to `<data>/backups` (started at
+every Rev4a start, in the background; see ARCHITECTURE).
+
+**Auth:** browser cookie or bearer token
+
+**Response:**
+```json
+{ "status": "pending", "reason": null, "moved": 0, "remaining": 0, "current": null, "skipped": [] }
+```
+`skipped` lists `{ name, reason }` of files whose copy did not verify: they stay in the volume while the other files
+are still moved (the run then ends `stopped` with those names in `reason`).
+`status` is `pending` (not started, or the volume still exists), `running`, `done` (no volume left) or
+`stopped` with a `reason` (not enough free space, a copy that did not verify, Docker not answering, files
+of a busy agent). A stopped migration resumes at the next start (after `Docker did not answer` it also retries by itself every 5 minutes); nothing is deleted before a verified copy.
+The System page shows a one-line notice while it is not `done`.
 
 ---
 

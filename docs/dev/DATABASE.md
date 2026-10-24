@@ -152,7 +152,7 @@ CREATE TABLE agent_upgrades (
                                  -- interrupted, rolling_back, rolled_back, rollback_failed
   from_version  TEXT,
   to_version    TEXT NOT NULL,
-  backup_file   TEXT,            -- pre-update cold backup in the rev4a-backups volume
+  backup_file   TEXT,            -- pre-update cold backup, a file in <data>/backups
   baseline_json TEXT,            -- transcript events per session and cron job names before
   verify_json   TEXT,            -- the comparison after the update
   error         TEXT,
@@ -185,7 +185,7 @@ CREATE TABLE agent_recreates (
   agent_id    TEXT NOT NULL,
   status      TEXT NOT NULL,   -- backing_up, recreating, done, failed, interrupted
   image       TEXT,            -- the image the container is rebuilt on
-  backup_file TEXT,            -- pre-recreate cold backup in the rev4a-backups volume
+  backup_file TEXT,            -- pre-recreate cold backup, a file in <data>/backups
   error       TEXT,
   started_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
@@ -209,7 +209,7 @@ CREATE TABLE agent_restores (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   agent_id    TEXT NOT NULL,
   status      TEXT NOT NULL,   -- restoring, done, failed, interrupted
-  file        TEXT,            -- the archive being applied, in the rev4a-backups volume
+  file        TEXT,            -- the archive being applied, a file in <data>/backups
   error       TEXT,
   started_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
@@ -310,7 +310,9 @@ off the machine. `restore.sh` refuses an archive with links in it and a running
 `rev4a serve`, archives the current state into `~/rev4a-backups` first, stops
 `rev4a.service` when it runs, and replaces the data directory as a whole (a leftover
 SQLite `-wal` cannot mix into the restored state), then resets the permissions. Agent volumes are not included —
-the dashboard's cold backups cover them.
+the dashboard's cold backups cover them. Those are plain `agent-<id>-*.tar.gz` files in `<data>/backups`
+(older releases: the Docker volume `rev4a-backups`, moved at startup); `backup.sh` leaves that folder out of its
+archive and `restore.sh` keeps it across the swap, so copy it separately.
 
 ### Other tables
 

@@ -16,7 +16,8 @@ import { hostPortsFromArgs } from '@/lib/agent-ports';
 import { getHostPortHolders, describeHolder, type HostPortHolder } from '@/lib/agent-ports-server';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { isValidAgentId } from '@/lib/container';
-import { BACKUP_VOLUME, coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
+import { pruneBackups } from '@/lib/backups-volume';
+import { coldBackupStatus, isColdBackupRunning, startColdBackup, waitForColdBackup } from '@/lib/cold-backup';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { activeRecreateAgentIds, insertRecreate, isRecreateActive, latestRecreate, markInterruptedRecreates, updateRecreateRow, type AgentRecreateRow } from '@/lib/agent-recreate-state';
@@ -356,23 +357,5 @@ const KEEP_PRERECREATE = 2;
  * rollback point. Returns the file names removed.
  */
 export async function prunePrerecreateBackups(agentId: string): Promise<string[]> {
-  const pattern = `agent-${agentId}-prerecreate-*.tar.gz`;
-  const stale: string[] = [];
-  await runDocker(
-    // $PATTERN stays unquoted so the shell expands the wildcard; agent ids are
-    // validated, so the pattern carries no shell metacharacters beyond the glob.
-    ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c',
-      'cd /backup && ls -1t $PATTERN 2>/dev/null | tail -n +3'],
-    { timeoutMs: 60_000, env: { PATTERN: pattern }, onLine: (line) => {
-      const name = line.trim();
-      if (name.endsWith('.tar.gz')) stale.push(name);
-    } },
-  ).catch(() => {});
-  for (const file of stale) {
-    await runDocker(
-      ['run', '--rm', '-v', `${BACKUP_VOLUME}:/backup`, 'alpine', 'sh', '-c', 'rm -f "/backup/$FILE"'],
-      { timeoutMs: 60_000, env: { FILE: file } },
-    ).catch(() => {});
-  }
-  return stale;
+  return pruneBackups(agentId, 'prerecreate', KEEP_PRERECREATE);
 }
