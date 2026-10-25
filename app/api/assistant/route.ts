@@ -98,7 +98,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
   '/lineage': {
     title: 'Lineage',
     description: 'Interactive graph of the sessions of every agent, read from each agent\'s own container. Each node is a session, edges show who spawned whom (sub-agents) and which cron job a run belongs to.',
-    actions: ['View the session hierarchy tree', 'Select a time period (1d, 3d, 7d, 15d, 30d or all) to filter the view', 'Click any session node to inspect its details', 'Zoom and pan through the graph'],
+    actions: ['View the session hierarchy tree', 'Select a time period (15m, 1h, 6h, 1d, 7d, 30d or all) to filter the view', 'Click any session node to inspect its details', 'Zoom and pan through the graph'],
     hints: 'Nothing is registered by hand: when an agent spawns a child agent to do work, that relationship is shown here on its own. Use the period selector to see recent activity.',
   },
   '/memory': {
@@ -140,7 +140,7 @@ Navigation links inside Rev4a:
 - Costs (what each agent spent) → /costs
 - System (CPU, RAM, disk of the server) → /system
 - Config → /config
-- Lineage → /lineage?period=7d
+- Lineage → /lineage
 - Context → /memory
 - Workspace → /workspace
 - Plugins → /plugins

@@ -31,7 +31,7 @@ export default function LineageGraphPage({ initialCosts }: LineageGraphPageProps
     selectSession,
     hasSessionsLoaded,
     hasCostLoaded,
-  } = useDashboard({ initialCosts });
+  } = useDashboard({ initialCosts, defaultPeriod: '1d', rememberPeriod: true });
 
   const topologyRef = useRef<SessionTopologyHandle>(null);
   const isMobile = useResponsive('md');

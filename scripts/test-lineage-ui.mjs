@@ -299,5 +299,69 @@ test('labels: truncation keeps the full text on the node and ends with an ellips
   assert.equal(P.nodeLabel({ ...mk('Atlas'), _agentNode: true, stopped: true }), 'Atlas (stopped)');
 });
 
+test('periods: PERIOD_MS and the cutoff of each', () => {
+  assert.deepEqual(P.PERIOD_MS, { '15m': 15 * MIN, '1h': 60 * MIN, '6h': 360 * MIN, '1d': DAY, '7d': 7 * DAY, '30d': 30 * DAY });
+  for (const [p, ms] of Object.entries(P.PERIOD_MS)) assert.equal(P.periodCutoff(p, NOW), NOW - ms);
+  assert.equal(P.periodCutoff('all', NOW), 0);
+});
+
+test('periods: a session just inside / just outside 15m, 1h, 6h', () => {
+  const at = (age) => row('c1', 'agent:main:subagent:p' + age, { kind: 'subagent', started_at: NOW - age, updated_at: NOW - age });
+  for (const [p, ms] of [['15m', 15 * MIN], ['1h', 60 * MIN], ['6h', 360 * MIN]]) {
+    assert.equal(P.filterSessions([at(ms - MIN)], cfg({ period: p }), NOW).length, 1, p + ' inside');
+    assert.equal(P.filterSessions([at(ms + MIN)], cfg({ period: p }), NOW).length, 0, p + ' outside');
+  }
+  assert.equal(P.filterSessions([at(10 * MIN)], cfg({ period: '15m' }), NOW).length, 1);
+  assert.equal(P.filterSessions([at(20 * MIN)], cfg({ period: '15m' }), NOW).length, 0);
+});
+
+test('periods: parsing, old links, garbage, default, remembered value', () => {
+  for (const p of ['15m', '1h', '6h', '1d', '7d', '30d', 'all']) assert.equal(P.parsePeriod(p), p);
+  assert.equal(P.parsePeriod('3d'), '7d');
+  assert.equal(P.parsePeriod('15d'), '30d');
+  for (const g of ['', null, undefined, 'x', '2h', 'toString', '__proto__']) assert.equal(P.parsePeriod(g), null);
+  assert.equal(P.DEFAULT_PERIOD, '1d');
+  assert.equal(P.resolvePeriod(null, null), '1d');
+  assert.equal(P.resolvePeriod('garbage', 'garbage'), '1d');
+  assert.equal(P.resolvePeriod(null, '6h'), '6h');
+  assert.equal(P.resolvePeriod('15m', '6h'), '15m');
+  assert.equal(P.resolvePeriod('3d', '6h'), '7d');
+  assert.equal(P.resolvePeriod('garbage', '1h'), '1h');
+});
+
+test('options: the home page keeps 7d and never reads storage; Lineage uses 1d and remembers', () => {
+  assert.deepEqual(P.resolveDashboardOptions(), { defaultPeriod: '7d', rememberPeriod: false });
+  let reads = 0;
+  const spy = () => { reads++; return '6h'; };
+  assert.equal(P.startPeriod(null, spy), '7d');
+  assert.equal(P.startPeriod(null, spy, {}), '7d');
+  assert.equal(P.startPeriod('3d', spy), '7d');
+  assert.equal(P.startPeriod('1h', spy), '1h');
+  assert.equal(reads, 0, 'home never reads storage');
+  const lin = { defaultPeriod: '1d', rememberPeriod: true };
+  assert.equal(P.startPeriod(null, spy, lin), '6h');
+  assert.equal(reads, 1);
+  assert.equal(P.startPeriod('15m', spy, lin), '15m');
+  assert.equal(P.startPeriod(null, () => 'junk', lin), '1d');
+  assert.equal(P.startPeriod(null, () => null, lin), '1d');
+});
+
+test('options: the default period is left out of the URL (1d on Lineage, 7d on home)', () => {
+  assert.equal(P.filterToParams(cfg({ period: '1d' }), '1d').toString(), '');
+  assert.equal(P.filterToParams(cfg({ period: '7d' }), '1d').toString(), 'period=7d');
+  assert.equal(P.filterToParams(cfg({ period: '7d' })).toString(), '');
+  assert.equal(P.filterToParams(cfg({ period: '1d' })).toString(), 'period=1d');
+  assert.equal(P.filterToParams(cfg({ period: '15m', showCron: false }), '1d').toString(), 'period=15m&cron=0');
+});
+
+test('clock: a 10-minute-old session is in 15m at T and out at T+6min with the same data', () => {
+  const s = [row('c1', 'agent:main:subagent:old', { kind: 'subagent', started_at: NOW - 10 * MIN, updated_at: NOW - 10 * MIN })];
+  const c = cfg({ period: '15m' });
+  assert.equal(P.filterSessions(s, c, NOW).length, 1);
+  assert.equal(P.filterSessions(s, c, NOW + 6 * MIN).length, 0);
+  assert.ok(P.isShortPeriod('15m') && P.isShortPeriod('1h') && P.isShortPeriod('6h'));
+  assert.ok(!P.isShortPeriod('1d') && !P.isShortPeriod('all'));
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

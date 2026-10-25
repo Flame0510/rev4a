@@ -15,31 +15,30 @@ import {
   isSessionActive,
   resolveAgentFilter,
   PERIOD_MS,
+  isShortPeriod,
+  parsePeriod,
+  resolveDashboardOptions,
+  filterToParams,
+  startPeriod,
+  type DashboardOptions,
 } from '../patterns/sessionPresentation';
-import { PERIODS } from '../types';
 import { adaptCosts } from '../patterns/ApiAdapter';
 import { apiFetch } from '../apiFetch';
+
+const PERIOD_STORAGE_KEY = 'rev4a.lineage.period';
 
 function filterFromParams(params: URLSearchParams): Partial<FilterConfig> {
   const patch: Partial<FilterConfig> = {};
   const agent = params.get('agent');
   if (agent) patch.agent = agent;
   const period = params.get('period');
-  if (period && (PERIODS as readonly string[]).includes(period)) patch.period = period as Period;
+  const parsed = parsePeriod(period);
+  if (parsed) patch.period = parsed;
   const active = params.get('active');
   if (active !== null) patch.showOnlyActive = active === '1';
   const cron = params.get('cron');
   if (cron !== null) patch.showCron = cron !== '0';
   return patch;
-}
-
-function filterToParams(filter: FilterConfig): URLSearchParams {
-  const p = new URLSearchParams();
-  if (filter.agent !== 'all') p.set('agent', filter.agent);
-  if (filter.period !== '7d') p.set('period', filter.period);
-  if (filter.showOnlyActive) p.set('active', '1');
-  if (!filter.showCron) p.set('cron', '0');
-  return p;
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -101,11 +100,12 @@ function reducer(state: DashboardState, action: Action): DashboardState {
 
 // ── Hook ──────────────────────────────────────────────────────────────────
 
-interface UseDashboardOptions {
+interface UseDashboardOptions extends DashboardOptions {
   initialCosts?: Partial<Costs>;
 }
 
-export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
+export function useDashboard({ initialCosts, defaultPeriod: wantedDefault, rememberPeriod: wantRemember }: UseDashboardOptions = {}) {
+  const { defaultPeriod, rememberPeriod } = resolveDashboardOptions({ defaultPeriod: wantedDefault, rememberPeriod: wantRemember });
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -114,7 +114,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     agent: 'all',
     showOnlyActive: false,
     showCron: true,
-    period: '7d',
+    period: defaultPeriod,
     ...filterFromParams(searchParams),
   };
 
@@ -209,10 +209,22 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     };
   }, []);
 
+  // The remembered period (Lineage only), read once on mount; a `?period=` in the URL wins over it.
+  useEffect(() => {
+    if (!rememberPeriod) return;
+    const remembered = startPeriod(
+      searchParams.get('period'),
+      () => { try { return window.localStorage.getItem(PERIOD_STORAGE_KEY); } catch { return null; } },
+      { defaultPeriod, rememberPeriod },
+    );
+    if (remembered !== defaultPeriod) dispatch({ type: 'SET_FILTER', patch: { period: remembered } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A period longer than the stream's 7 days is read from the API (and re-read, since the stream does not carry it).
   const { period } = state.filter;
   useEffect(() => {
-    if (period === '1d' || period === '3d' || period === '7d') {
+    if (period !== 'all' && period !== '30d') {
       dispatch({ type: 'SET_HISTORY', sessions: [] });
       return;
     }
@@ -233,6 +245,17 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
       clearInterval(t);
     };
   }, [period]);
+
+  // A clock for the short periods: sessions leave the window even when no data arrives.
+  const [now, setNow] = useState(() => Date.now());
+  const shortPeriod = isShortPeriod(period);
+  useEffect(() => {
+    if (!shortPeriod) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [shortPeriod, period]);
+  const clock = shortPeriod ? now : undefined;
 
   // The stream is current; history only adds what the stream does not carry.
   const allSessions = useMemo(() => {
@@ -255,7 +278,7 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
     [state.filter, agentsKnown, availableAgents, allSessions],
   );
 
-  const visibleLeafSessions = useMemo(() => buildFilterStrategy(filter).filter(allSessions), [allSessions, filter]);
+  const visibleLeafSessions = useMemo(() => buildFilterStrategy(filter, clock).filter(allSessions), [allSessions, filter, clock]);
 
   const visibleSessions = useMemo(() => {
     const expanded = expandWithParents(allSessions, visibleLeafSessions, { showCron: filter.showCron });
@@ -265,16 +288,18 @@ export function useDashboard({ initialCosts }: UseDashboardOptions = {}) {
   const decoratedEvents = useMemo(() => decorateEvents(state.events, allSessions), [state.events, allSessions]);
 
   const visibleEvents = useMemo(() => {
-    const now = Date.now();
-    return decoratedEvents.filter((e) => eventMatchesFilter(e, filter, visibleLeafSessions, now)).slice(0, 20);
-  }, [decoratedEvents, filter, visibleLeafSessions]);
+    return decoratedEvents.filter((e) => eventMatchesFilter(e, filter, visibleLeafSessions, clock)).slice(0, 20);
+  }, [decoratedEvents, filter, visibleLeafSessions, clock]);
 
   const setFilter = useCallback((patch: Partial<FilterConfig>) => {
     dispatch({ type: 'SET_FILTER', patch });
+    if (patch.period && rememberPeriod) {
+      try { window.localStorage.setItem(PERIOD_STORAGE_KEY, patch.period); } catch {}
+    }
     const next: FilterConfig = { ...filter, ...patch };
-    const qs = filterToParams(next).toString();
+    const qs = filterToParams(next, defaultPeriod).toString();
     router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [filter, router, pathname]);
+  }, [filter, router, pathname, rememberPeriod, defaultPeriod]);
 
   const selectSession = useCallback((id: string | null) => {
     dispatch({ type: 'SELECT_SESSION', id });

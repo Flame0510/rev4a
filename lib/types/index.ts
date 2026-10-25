@@ -93,9 +93,9 @@ export interface FilterConfig {
   period: Period;
 }
 
-export type Period = '1d' | '3d' | '7d' | '15d' | '30d' | 'all';
+export type Period = '15m' | '1h' | '6h' | '1d' | '7d' | '30d' | 'all';
 
-export const PERIODS: Period[] = ['1d', '3d', '7d', '15d', '30d', 'all'];
+export const PERIODS: Period[] = ['15m', '1h', '6h', '1d', '7d', '30d', 'all'];
 
 export { PERIOD_MS } from '../patterns/sessionPresentation';
 

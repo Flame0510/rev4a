@@ -11,12 +11,74 @@ import type {
 } from '../types';
 
 export const PERIOD_MS: Record<Exclude<Period, 'all'>, number> = {
+  '15m': 900_000,
+  '1h': 3_600_000,
+  '6h': 21_600_000,
   '1d': 86_400_000,
-  '3d': 259_200_000,
   '7d': 604_800_000,
-  '15d': 1_296_000_000,
   '30d': 2_592_000_000,
 };
+
+export const DEFAULT_PERIOD: Period = '1d';
+
+/** Periods removed from the toolbar whose old links keep working: the nearest period that still contains them. */
+const LEGACY_PERIODS: Record<string, Period> = { '3d': '7d', '15d': '30d' };
+
+/** A `?period=` or stored value to a period; null when it is not one (the caller keeps its default). */
+export function parsePeriod(raw: string | null | undefined): Period | null {
+  if (!raw) return null;
+  if (raw === 'all') return 'all';
+  if (Object.prototype.hasOwnProperty.call(PERIOD_MS, raw)) return raw as Period;
+  if (Object.prototype.hasOwnProperty.call(LEGACY_PERIODS, raw)) return LEGACY_PERIODS[raw];
+  return null;
+}
+
+/** The period to start with: the URL wins over the remembered one, which wins over the default. */
+export function resolvePeriod(urlValue: string | null | undefined, storedValue: string | null | undefined): Period {
+  return parsePeriod(urlValue) ?? parsePeriod(storedValue) ?? DEFAULT_PERIOD;
+}
+
+/** The periods shorter than a day: their window moves fast enough that a clock must re-evaluate it. */
+export function isShortPeriod(period: Period): boolean {
+  return period === '15m' || period === '1h' || period === '6h';
+}
+
+/** How a page uses the dashboard hook: which period it starts on and whether the choice is remembered. */
+export interface DashboardOptions {
+  defaultPeriod?: Period;
+  rememberPeriod?: boolean;
+}
+
+/** The home page passes nothing: period 7d, nothing stored. Lineage passes { defaultPeriod: '1d', rememberPeriod: true }. */
+export function resolveDashboardOptions(opts: DashboardOptions = {}): Required<DashboardOptions> {
+  return { defaultPeriod: opts.defaultPeriod ?? '7d', rememberPeriod: opts.rememberPeriod === true };
+}
+
+/**
+ * The period to start on: the URL wins over the remembered one, which wins over the default.
+ * `readStored` is only called when the page remembers its period.
+ */
+export function startPeriod(
+  urlValue: string | null | undefined,
+  readStored: () => string | null | undefined,
+  opts: DashboardOptions = {},
+): Period {
+  const { defaultPeriod, rememberPeriod } = resolveDashboardOptions(opts);
+  const fromUrl = parsePeriod(urlValue);
+  if (fromUrl) return fromUrl;
+  if (!rememberPeriod) return defaultPeriod;
+  return parsePeriod(readStored()) ?? defaultPeriod;
+}
+
+/** The URL of a filter: every value that is the default is left out. */
+export function filterToParams(filter: FilterConfig, defaultPeriod: Period = '7d'): URLSearchParams {
+  const p = new URLSearchParams();
+  if (filter.agent !== 'all') p.set('agent', filter.agent);
+  if (filter.period !== defaultPeriod) p.set('period', filter.period);
+  if (filter.showOnlyActive) p.set('active', '1');
+  if (!filter.showCron) p.set('cron', '0');
+  return p;
+}
 
 // ── Time ───────────────────────────────────────────────────────────────────
 
