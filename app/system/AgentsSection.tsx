@@ -17,6 +17,8 @@ interface ContainerRow {
   name: string;
   agent_id: string | null;
   is_agent: boolean;
+  /** A cold-backup helper, listed only while it runs. */
+  is_backup?: boolean;
   running: boolean;
   last_seen: number;
   now: {
@@ -236,8 +238,8 @@ export function AgentsSection({
                 title={
                   <>
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
-                    <Pill tone={c.is_agent ? 'accent' : 'neutral'}>{c.is_agent ? 'agent' : 'container'}</Pill>
-                    {status && <Pill tone="warning">{status}</Pill>}
+                    <Pill tone={c.is_agent ? 'accent' : 'neutral'}>{c.is_agent ? 'agent' : c.is_backup ? 'backup' : 'container'}</Pill>
+                    {status && (!c.is_backup || status === 'not current') && <Pill tone="warning">{status}</Pill>}
                     {c.name !== c.container && (
                       <span className="ui-muted" style={{ fontSize: 11, fontFamily: 'var(--font-mono-stack)' }}>{c.container}</span>
                     )}

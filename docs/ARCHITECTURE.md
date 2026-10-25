@@ -829,7 +829,10 @@ strings — and writes `container_metrics` into `metrics.db` (schema in `docs/de
 The socket path rules (env, `/var/run`, Docker Desktop's `~/.docker/run`, `docker context`) live
 once, in `lib/docker-socket-path.js`, required by both the daemon and `lib/docker-socket.ts`. A
 Docker that is down is logged once and recovered from by itself; a failed disk reading leaves the
-previous one in place. `lib/container-metrics.ts` reads it all for `GET /api/metrics/containers`
+previous one in place. A running cold-backup helper (name `rev4a-backup-…` with the label
+`rev4a.backup.agent`, identified in `lib/backup-helper.js`) is named "Backup of <agent> (<kind>)" by the sampler
+(the agent's `AGENT_NAME`, else its id; cached per container id) and stays a non-agent row; the read side lists
+it only while it runs. `lib/container-metrics.ts` reads it all for `GET /api/metrics/containers`
 (the System page's *Agents and containers* section, the agent panel's RESOURCES, the Containers
 page). Anomalies per container (processes, sustained memory) are not raised yet.
 

@@ -23,15 +23,13 @@ import { runDocker } from '@/lib/agent-images';
 import { BACKUPS_DIR, ensureBackupsDir } from '@/lib/rev4a-paths';
 import { BACKUP_VOLUME, removeDirFile } from '@/lib/backups';
 import { helperOwnerEnv } from '@/lib/backups-volume';
+import { HELPER_PREFIX, LABEL_AGENT, LABEL_KIND } from '@/lib/backup-helper';
 
 const execFileAsync = promisify(execFile);
 
 /** Kept for importers of the old name; the archives are in BACKUPS_DIR now. */
 export { BACKUP_VOLUME };
-const HELPER_PREFIX = 'rev4a-backup-';
-const LABEL_AGENT = 'rev4a.backup.agent';
 const LABEL_FILE = 'rev4a.backup.file';
-const LABEL_KIND = 'rev4a.backup.kind';
 const LABEL_PREV = 'rev4a.backup.prev-state';
 const LABEL_STARTED = 'rev4a.backup.started-at';
 /** GNU tar counts checkpoints in records of 10 240 bytes of the uncompressed stream. */

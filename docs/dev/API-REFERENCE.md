@@ -2021,6 +2021,13 @@ see `docs/dev/DATABASE.md`). Default range `1h`.
 }
 ```
 
+- `is_backup` is true for a cold-backup helper (`rev4a-backup-<agentId>`, see `lib/cold-backup.ts`);
+  its `name` reads "Backup of <agent name> (manual | before update | before recreate)" while it runs.
+  A helper is listed only while it runs: `running`, or seen by Docker on the latest passes without a sample yet
+  (its first pass, or a stats call that fails); once it is neither, it is left out of `containers` whatever the
+  range. The read side recognises a helper by its container name alone (`lib/backup-helper.js`), so a container of
+  your own named `rev4a-backup-…` is treated the same way. Its rows stay in `metrics.db` until the daemon prunes them. It is
+  never an agent (`is_agent` false, `agent_id` null).
 - `cpu_percent` is a share of Docker's cores (`host.ncpu`), `mem_percent` of Docker's memory —
   on Docker Desktop that is its VM, on the VPS the machine. `cpu_cores` is the raw figure.
 - `now` is `null` for a container that is not running (no sample within 3 intervals of the

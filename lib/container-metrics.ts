@@ -8,6 +8,7 @@
  * with its share of Docker's memory next to it.
  */
 import type Database from 'better-sqlite3';
+import { isBackupHelperName } from './backup-helper';
 
 /** How often daemon.js samples containers, and reads Docker's disk (seconds). */
 export const CONTAINER_INTERVAL_S = 60;
@@ -67,6 +68,8 @@ export interface ContainerRow {
   name: string;
   agent_id: string | null;
   is_agent: boolean;
+  /** A cold-backup helper (`rev4a-backup-<agent>`): listed only while it runs. */
+  is_backup: boolean;
   running: boolean;
   last_seen: number;
   now: ContainerNow | null;
@@ -228,6 +231,7 @@ export function readContainerOverview(
       name: s.name || s.container,
       agent_id: s.agent_id,
       is_agent: s.is_agent === 1,
+      is_backup: isBackupHelperName(s.container),
       running,
       last_seen: s.last_seen,
       now,
@@ -245,6 +249,15 @@ export function readContainerOverview(
       },
     };
   });
+
+  // A backup helper is removed when its job ends: it is listed while it runs, never as a stopped
+  // container for the whole range. (Its rows stay in the database until the daemon prunes them.)
+  // "Runs" also covers a helper seen on the latest passes without a sample yet (its first pass, or
+  // a stats call that fails): Docker listed it, so the backup is happening.
+  const seenLately = (lastSeen: number) => reference !== null && lastSeen >= reference - RUNNING_WITHIN_INTERVALS * CONTAINER_INTERVAL_S;
+  const visible = containers.filter((c) => !c.is_backup || c.running || seenLately(c.last_seen));
+  containers.length = 0;
+  containers.push(...visible);
 
   containers.sort((a, b) =>
     Number(b.running) - Number(a.running)

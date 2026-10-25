@@ -207,6 +207,54 @@ await test('sampler: the agent name is fetched beside the stats call, not after 
   await S.createContainerSampler({ request: d.request, now: () => d.clock }).sample();
   assert.ok(Date.now() - t0 < 4 * 150, `4 inspects of 150 ms took ${Date.now() - t0} ms: they ran one after another`);
 });
+// A cold-backup helper: named for its agent while it runs, still a plain (non-agent) row.
+function helperDocker(labels, name = 'rev4a-backup-agent_a', { agentFound = true } = {}) {
+  const d = fakeDocker();
+  d.list = [{ Id: 'H', Names: [`/${name}`], Labels: labels, Mounts: [] }];
+  d.stats = { H: { cpu: 0, rx: 0 } };
+  d.agentFound = agentFound;
+  const base = d.request;
+  d.request = async (m, p, t) => {
+    if (p.startsWith('/containers/json?all=true')) {
+      d.calls.push(p);
+      if (!d.agentFound) throw new Error('lookup failed');
+      assert.ok(decodeURIComponent(p).includes('"AGENT_ID=agent_a"'), p);
+      return [{ Id: 'A', Names: ['/agent_a'] }];
+    }
+    return base(m, p, t);
+  };
+  return d;
+}
+for (const [kind, text] of [['manual', 'manual'], ['preupdate', 'before update'], ['prerecreate', 'before recreate'], ['weird', 'manual'], [undefined, 'manual']]) {
+  await test(`sampler: a running backup helper (${kind}) is "Backup of <agent> (${text})" and not an agent`, async () => {
+    const labels = { 'rev4a.backup.agent': 'agent_a' };
+    if (kind) labels['rev4a.backup.kind'] = kind;
+    const d = helperDocker(labels);
+    const sampler = S.createContainerSampler({ request: d.request, now: () => d.clock });
+    const src = (await sampler.sample()).sources[0];
+    assert.equal(src.name, `Backup of My Agent Two (${text})`);
+    assert.equal(src.is_agent, 0);
+    assert.equal(src.agent_id, null);
+    assert.equal(src.container, 'rev4a-backup-agent_a');
+    await sampler.sample();
+    assert.equal(d.calls.filter((p) => p === '/containers/H/json').length, 0, 'the helper itself is never inspected');
+    assert.equal(d.calls.filter((p) => p.startsWith('/containers/json?all=true')).length, 1, 'cached per container id');
+  });
+}
+await test('sampler: a failed agent lookup falls back to the agent id and is asked again next pass', async () => {
+  const d = helperDocker({ 'rev4a.backup.agent': 'agent_a', 'rev4a.backup.kind': 'manual' }, 'rev4a-backup-agent_a', { agentFound: false });
+  const sampler = S.createContainerSampler({ request: d.request, now: () => d.clock });
+  assert.equal((await sampler.sample()).sources[0].name, 'Backup of agent_a (manual)');
+  d.agentFound = true;
+  assert.equal((await sampler.sample()).sources[0].name, 'Backup of My Agent Two (manual)');
+  assert.equal(d.calls.filter((p) => p.startsWith('/containers/json?all=true')).length, 2);
+});
+await test('sampler: a helper without the label, or a labelled container with another name, keeps its container name', async () => {
+  const noLabel = helperDocker({});
+  assert.equal((await S.createContainerSampler({ request: noLabel.request, now: () => noLabel.clock }).sample()).sources[0].name, 'rev4a-backup-agent_a');
+  const other = helperDocker({ 'rev4a.backup.agent': 'agent_a' }, 'something-else');
+  assert.equal((await S.createContainerSampler({ request: other.request, now: () => other.clock }).sample()).sources[0].name, 'something-else');
+});
 await test('sampler: no containers is an empty pass; Docker down throws', async () => {
   const d = fakeDocker();
   d.list = [];
