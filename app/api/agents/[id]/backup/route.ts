@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isValidAgentId } from '@/lib/container';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { deleteBackupFile, listAgentBackups } from '@/lib/backups-volume';
+import { BackupsMigratingError, deleteBackupFile, listAgentBackups } from '@/lib/backups-volume';
 import { isValidBackupFile } from '@/lib/backups';
 import { forgetBackupAvailability } from '@/lib/agent-update';
 
@@ -73,6 +73,7 @@ export async function GET(request: Request,
  * The name is validated against a strict character set first (only
  * `agent-<id>-<timestamp>.tar.gz` shapes) and joined to the backups directory by the server;
  * no path from the request is ever used. The file is removed with plain file calls.
+ * 409 while the backups migration is copying files out of the legacy volume (nothing is deleted then).
  */
 export async function DELETE(request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -93,7 +94,12 @@ export async function DELETE(request: Request,
       return NextResponse.json({ error: 'Invalid backup file name' }, { status: 400 });
     }
 
-    await deleteBackupFile(file);
+    try {
+      await deleteBackupFile(file);
+    } catch (e) {
+      if (e instanceof BackupsMigratingError) return NextResponse.json({ error: e.message }, { status: 409 });
+      throw e;
+    }
 
     // The panel's rollback offer depends on this file: forget what it knew about it.
     forgetBackupAvailability(id);

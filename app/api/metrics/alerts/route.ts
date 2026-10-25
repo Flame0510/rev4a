@@ -17,7 +17,9 @@ interface AnomalyData { vendor?: unknown; metric?: unknown; message?: unknown; t
  * by daemon.js into events.db), newest first. A `container_oom` event (a process in an agent
  * container killed for lack of memory) also carries `container`, the container's name.
  * Optional `container=<name>` keeps only the events of that container (the events written
- * with a `container` field, or a spend alarm whose `agent` is that name; the machine-wide ones carry none). Other params are ignored. Nothing else in `events`: the generic
+ * with a `container` field, or a spend alarm whose `agent` is that name; the machine-wide ones carry none).
+ * Optional `metric=<name>` keeps only the events of that metric (exact match, `^[a-z_.]{1,64}$`, 400 otherwise);
+ * the limit then counts matches only. Other params are ignored. Nothing else in `events`: the generic
  * /api/events has no type filter.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -26,6 +28,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const container = request.nextUrl.searchParams.get('container');
   const agentId = request.nextUrl.searchParams.get('agent');
+  // An empty `metric=` is ignored, like an empty `container=`.
+  const metric = request.nextUrl.searchParams.get('metric') || null;
+  if (metric !== null && !/^[a-z_.]{1,64}$/.test(metric)) {
+    return NextResponse.json({ error: 'Invalid metric' }, { status: 400 });
+  }
   // Either name keeps an event: the container's name, or the agent id a spend alarm was raised under.
   const filterNames = [container, agentId].filter((v): v is string => Boolean(v));
   const parsed = Number.parseInt(request.nextUrl.searchParams.get('limit') ?? String(DEFAULT_LIMIT), 10);
@@ -36,13 +43,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // The container filter runs on the stored JSON, so it is applied in SQL by name
       // (json_extract, the name is a bound parameter) and the limit counts matches only.
       const marks = filterNames.map(() => '?').join(', ');
-      const rows = (filterNames.length
-        ? db
-          .prepare(`SELECT ts, data FROM events WHERE type = 'system_anomaly' AND json_valid(data) AND (json_extract(data, '$.container') IN (${marks}) OR json_extract(data, '$.agent') IN (${marks})) ORDER BY ts DESC LIMIT ?`)
-          .all(...filterNames, ...filterNames, limit)
-        : db
-          .prepare("SELECT ts, data FROM events WHERE type = 'system_anomaly' ORDER BY ts DESC LIMIT ?")
-          .all(limit)) as { ts: number; data: string | null }[];
+      const where: string[] = ["type = 'system_anomaly'"];
+      const params: (string | number)[] = [];
+      if (filterNames.length) {
+        where.push(`json_valid(data) AND (json_extract(data, '$.container') IN (${marks}) OR json_extract(data, '$.agent') IN (${marks}))`);
+        params.push(...filterNames, ...filterNames);
+      }
+      if (metric !== null) {
+        // Exact match on the stored metric, so a busy metric cannot crowd out a rare one inside the limit.
+        where.push("json_valid(data) AND json_extract(data, '$.metric') = ?");
+        params.push(metric);
+      }
+      const rows = db
+        .prepare(`SELECT ts, data FROM events WHERE ${where.join(' AND ')} ORDER BY ts DESC LIMIT ?`)
+        .all(...params, limit) as { ts: number; data: string | null }[];
       const alerts = rows.map((row) => {
         let data: AnomalyData = {};
         try { data = JSON.parse(row.data ?? '{}') as AnomalyData; } catch { /* keep the bare event */ }

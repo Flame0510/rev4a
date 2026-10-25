@@ -20,7 +20,7 @@ import { acquireTokenLock } from '@/lib/agent-token-lock';
 import { buildCreateRunArgs } from '@/lib/agent-create-args';
 import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 import { agentVolumeName, isEmulated, readyTimeoutMs } from '@/lib/agent-volumes';
-import { volumeExists, removeVolume } from '@/lib/agent-volumes-server';
+import { volumeExists, removeVolume, invalidateVolumesCache } from '@/lib/agent-volumes-server';
 import { dockerGet } from '@/lib/agent-volumes-server';
 
 
@@ -475,6 +475,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 function rollbackCreate(t: { container: string; volume: string; volumeExisted: boolean }): string {
   let containerGone = false;
   try { execFileSync('docker', ['rm', '-f', t.container], { stdio: 'ignore', timeout: 30000 }); containerGone = true; } catch { /* best-effort */ }
+  // Whatever happens next, the cached volume list (5 minutes) is out of date: the System page must see a kept volume at its next poll.
+  invalidateVolumesCache();
   if (!containerGone) {
     console.warn(`[agent:create] rollback: could not remove container ${t.container}; its volume ${t.volume} was left in place`);
     return 'The new container could not be removed; remove it and its data from the Containers page.';

@@ -88,7 +88,7 @@ function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
     try {
       const [res, alertsRes] = await Promise.all([
         apiFetch(url, { signal: controller.signal }),
-        apiFetch(`/api/metrics/alerts?limit=5&container=${encodeURIComponent(container)}`, { signal: controller.signal }).catch((e) => {
+        apiFetch(`/api/metrics/alerts?metric=container_oom&limit=1&container=${encodeURIComponent(container)}`, { signal: controller.signal }).catch((e) => {
           if (e?.name === 'AbortError') throw e;
           return null;
         }),

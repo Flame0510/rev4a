@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import { dockerFetch } from '@/lib/docker-socket';
 import { runDocker } from '@/lib/agent-images';
 import { BACKUPS_DIR } from '@/lib/rev4a-paths';
+import { recordedMigrationState } from '@/lib/backups-migration';
 import {
   BACKUP_VOLUME,
   LEGACY_VOLUME_ENABLED,
@@ -47,8 +48,27 @@ export async function legacyVolumeExists(): Promise<boolean | null> {
   }
 }
 
-/** The volume's existence, or a thrown error when Docker cannot answer (never "absent" by default). */
+/** Thrown by a delete while the migration is copying: a file removed now could be copied back from the volume. */
+export class BackupsMigratingError extends Error {
+  constructor() {
+    super('Backups are being moved to the data folder; try again when it ends');
+    this.name = 'BackupsMigratingError';
+  }
+}
+
+/** Whether the migration is copying files out of the volume right now. */
+function migrationRunning(): boolean {
+  return recordedMigrationState()?.status === 'running';
+}
+
+/**
+ * The volume's existence, or a thrown error when Docker cannot answer (never "absent" by default).
+ * Once the migration reported `done` with the volume removed, nothing can be in it and Docker is not asked:
+ * plain-file backup operations keep working with Docker down.
+ */
 async function legacyVolumeExistsOrThrow(): Promise<boolean> {
+  const recorded = recordedMigrationState();
+  if (recorded?.status === 'done' && recorded.volumeRemoved === true) return false;
   const exists = await legacyVolumeExists();
   if (exists === null) throw new Error('Docker did not answer: the legacy backups volume could not be checked');
   return exists;
@@ -129,9 +149,11 @@ const VOLUME_RM_SCRIPT = [
  * Remove an archive from the directory (fs, helper fallback) and from the legacy volume when it is there.
  * Throws, before deleting anything, when Docker cannot say whether the volume exists. A volume file with the
  * same name as a directory file but another size is a conflict copy of the migration and is left alone.
+ * Throws BackupsMigratingError, deleting nothing, while the migration is copying (the copy would come back).
  */
 export async function deleteBackupFile(file: string, dir: string = BACKUPS_DIR): Promise<void> {
   if (!isArchiveName(file)) throw new Error('Invalid backup file name');
+  if (migrationRunning()) throw new BackupsMigratingError();
   const volume = await legacyVolumeExistsOrThrow();
   let dirSize: number | null = null;
   try {
@@ -172,6 +194,8 @@ export async function deleteAgentBackups(agentId: string, dir: string = BACKUPS_
 
 /** Delete the agent's archives of one kind older than the newest `keep`; returns the names removed. */
 export async function pruneBackups(agentId: string, kindMarker: string, keep: number, dir: string = BACKUPS_DIR): Promise<string[]> {
+  // While the migration copies, a pruned file could be copied back: skip, the next prune catches up.
+  if (migrationRunning()) return [];
   let entries: BackupEntry[];
   try {
     entries = await listAgentBackups(agentId, dir);

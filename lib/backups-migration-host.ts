@@ -155,5 +155,5 @@ export async function backupsMigrationStatus(): Promise<MigrationState> {
   const recorded = recordedMigrationState();
   if (recorded) return recorded;
   const exists = await legacyVolumeExists();
-  return { status: exists === false ? 'done' : 'pending', reason: null, moved: 0, remaining: 0, current: null, skipped: [] };
+  return { status: exists === false ? 'done' : 'pending', reason: null, moved: 0, remaining: 0, current: null, skipped: [], ...(exists === false ? { volumeRemoved: true } : {}) };
 }

@@ -51,7 +51,9 @@ echo "  Target: $ARCHIVE"
 
 # noclobber: a second backup in the same second fails instead of overwriting the first.
 set -o noclobber
-tar -C "$DATA_DIR" --exclude='./backups' -czf - . > "$ARCHIVE"
+# Only the top-level backups entry is left out. --exclude would match a directory named
+# backups at any depth on bsdtar (macOS), so the top-level entries are listed instead (NUL-separated).
+(cd "$DATA_DIR" && find . -mindepth 1 -maxdepth 1 ! -name backups -print0) | tar -C "$DATA_DIR" --null -T - -czf - > "$ARCHIVE"
 set +o noclobber
 chmod 600 "$ARCHIVE"
 

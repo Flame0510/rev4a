@@ -39,6 +39,15 @@ export const DOCKER_READ_TIMEOUT_MS = 10_000;
 
 let cache: { at: number; volumes: DockerVolume[] } | null = null;
 let inflight: Promise<DockerVolume[]> | null = null;
+/** Bumped by an invalidation: a read that started before it must not store its (older) answer. */
+let generation = 0;
+
+/** Forget the cached volume list, so the next read asks Docker again (a rollback that kept a volume, for one). */
+export function invalidateVolumesCache(): void {
+  cache = null;
+  inflight = null;
+  generation++;
+}
 
 /** GET against the Docker API with the shared timeout. */
 export function dockerGet<T>(apiPath: string): Promise<T> {
@@ -79,14 +88,17 @@ async function allContainers(): Promise<DockerContainerMounts[]> {
 
 function loadVolumes(): Promise<DockerVolume[]> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return Promise.resolve(cache.volumes);
-  inflight ??= dockerGet<{ Volumes?: DockerVolume[] | null }>('/system/df?type=volume')
+  if (inflight) return inflight;
+  const started = generation;
+  const read: Promise<DockerVolume[]> = dockerGet<{ Volumes?: DockerVolume[] | null }>('/system/df?type=volume')
     .then((df) => {
       const volumes = Array.isArray(df?.Volumes) ? df.Volumes : [];
-      cache = { at: Date.now(), volumes };
+      if (started === generation) cache = { at: Date.now(), volumes };
       return volumes;
     })
-    .finally(() => { inflight = null; });
-  return inflight;
+    .finally(() => { if (inflight === read) inflight = null; });
+  inflight = read;
+  return read;
 }
 
 /** `'busy'`, a reason to keep it, or null. Fails closed: an unreadable state keeps the volume. */

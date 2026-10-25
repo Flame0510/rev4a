@@ -72,7 +72,8 @@ mkdir -p "$PRE_DIR"
 PRE="${PRE_DIR}/rev4a-pre-restore-$(date -u +%Y%m%d-%H%M%S).tar.gz"
 echo "Archiving the current state first: $PRE"
 set -o noclobber
-tar -C "$DATA_DIR" --exclude='./backups' -czf - . > "$PRE"
+# Top-level entries except backups, NUL-separated: --exclude would also drop nested backups/ on bsdtar.
+(cd "$DATA_DIR" && find . -mindepth 1 -maxdepth 1 ! -name backups -print0) | tar -C "$DATA_DIR" --null -T - -czf - > "$PRE"
 set +o noclobber
 chmod 600 "$PRE"
 

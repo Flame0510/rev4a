@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-25
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -16,7 +16,7 @@ A pre-built configuration used when creating a new agent. Each template ships it
 A small inline label component used for status indicators and channel chips. Six tones: neutral, accent, success, warning, danger, info. Used for the Telegram chip on the agent list and pairing status in the Channel Manager. There is no WhatsApp support anywhere in Rev4a.
 
 ## Backup (Agent)
-A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache to keep sizes small (~1.5 MB). Stored as plain files in Rev4a's data directory (`~/.config/rev4a/backups`), which can be copied like any file. Used for restore operations and auto-created before each recreate.
+A compressed archive (`.tar.gz`) of an agent's persistent volume (`/root/`). Backups exclude the npm cache; the size depends on the agent (from hundreds of MB to several GB). Stored as plain files in Rev4a's data directory (`~/.config/rev4a/backups`), which can be copied like any file. Used for restore operations and auto-created before each recreate.
 
 ## Browser Access
 Which browsers may open an agent's Control UI. On OpenClaw 9.x every new browser must be approved once; the approval is remembered per browser. Managed in the "BROWSER ACCESS" section of the agent detail panel: approve or reject waiting browsers, rename or revoke approved ones. The Open button uses a one-time link that skips the approval. The Invite link button gives a link for someone else: their browser still waits for approval.

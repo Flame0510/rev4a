@@ -54,8 +54,8 @@ export function AgentSpendAlerts({ container, agentId }: { container: string; ag
   if (!alerts.length) return null;
   return (
     <div style={{ borderTop: '1px solid var(--border)' }}>
-      {alerts.map((a) => (
-        <div key={`${a.ts}-${a.metric}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 14px', fontSize: 11 }}>
+      {alerts.map((a, i) => (
+        <div key={`${a.ts}-${a.metric}-${a.agent ?? a.scope}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 14px', fontSize: 11 }}>
           <span style={{ color: 'var(--yellow)' }}>{a.displayMessage ?? a.message}</span>
           {(a.agent ?? a.scope) ? <SnoozeButton target={(a.agent ?? a.scope) as string} snoozedUntil={a.snoozedUntil} running={snooze.running} onSnooze={(t) => { void snooze.run(t); }} /> : null}
         </div>

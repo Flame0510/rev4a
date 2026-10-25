@@ -29,6 +29,13 @@ export interface MigrationState {
   current: string | null;
   /** Files left in the volume because their copy did not verify; the rest of the files were still moved. */
   skipped: { name: string; reason: string }[];
+  /**
+   * True once the legacy volume is known to be gone (it never existed, or the migration removed it).
+   * Optional and additive: absent means "not known to be gone", so a volume that may still hold backups is
+   * never skipped. A `done` state with this unset means the volume was kept (a container uses it, or it
+   * holds other files).
+   */
+  volumeRemoved?: boolean;
 }
 
 /** A copy that did not read back or has another size. The file stays in the volume and the migration goes on with the next one. */
@@ -45,8 +52,11 @@ export interface MigrationStep extends FileSize {
   action: MigrationAction;
 }
 
-/** Free space kept beyond the file being copied. */
-export const MIGRATION_HEADROOM_BYTES = 64 * 1024 * 1024;
+/**
+ * Free space kept beyond the file being copied. 1 GiB: the data folder and Docker's storage can be on
+ * different filesystems, so the copy grows the data filesystem and must leave it room to breathe.
+ */
+export const MIGRATION_HEADROOM_BYTES = 1024 * 1024 * 1024;
 
 /**
  * What to do, from the archives in the volume and the files in the directory (finished archives and
@@ -140,6 +150,7 @@ export async function runMigration(deps: MigrationDeps, report: (s: MigrationSta
     if (exists === null) return stop(DOCKER_SILENT_REASON);
     if (exists === false) {
       state.status = 'done';
+      state.volumeRemoved = true;
       push();
       return state;
     }
@@ -232,6 +243,7 @@ export async function runMigration(deps: MigrationDeps, report: (s: MigrationSta
         deps.log('Backups migration: the rev4a-backups volume is empty but a container still uses it; it is kept');
       } else {
         await deps.removeVolume();
+        state.volumeRemoved = true;
         deps.log('Backups migration done: the empty rev4a-backups volume is removed');
       }
     } else {

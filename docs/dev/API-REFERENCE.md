@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-24
+> **Last updated:** 2026-10-25
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -1099,6 +1099,8 @@ folder by the server; a file `fs` may not delete falls back to one helper contai
 
 **Error (400):** invalid or path-traversing file name.
 
+**Error (409):** the backups migration is running (`Backups are being moved to the data folder; try again when it ends`); nothing is deleted.
+
 ### `POST /api/agents/[id]/cold-backup`
 Cold backup of the agent's volume (`lib/cold-backup.ts`). Returns `202` once the job
 has started; the work continues in a helper container, `rev4a-backup-<id>`.
@@ -2011,7 +2013,8 @@ see `docs/dev/DATABASE.md`). Default range `1h`.
       "now": { "cpu_cores": 0.022, "cpu_percent": 0.22, "mem_mb": 668, "mem_percent": 8.5, "pids": 12,
                "net_rx_bps": 0, "net_tx_bps": 0, "blk_read_bps": 0, "blk_write_bps": 0 },
       "range": { "cpu_avg_percent": 1.02, "cpu_max_percent": 2.17, "mem_avg_mb": 679, "mem_max_mb": 701 },
-      "storage": { "volume_mb": 1544, "layer_mb": 10, "total_mb": 1554, "ts": 1790789645 } }
+      "storage": { "volume_mb": 1544, "layer_mb": 10, "total_mb": 1554, "ts": 1790789645 },
+      "is_backup": false }
   ],
   "rest": { "cpu_percent": 42.26, "mem_mb": 11864 },
   "docker_storage": { "ts": 1790789645, "images_mb": 4734, "images_reclaimable_mb": 3518,
@@ -2097,17 +2100,20 @@ The agent's memory limit, read from the container inspect.
 ### `GET /api/settings` / `PUT /api/settings`
 `{ "timezone": "Europe/Rome", "source": "saved" }`: the time zone every dashboard page shows times in. `source` is `"saved"` when one was saved; otherwise `"env"` when `REV4A_TIMEZONE` holds a valid zone, else `"server"` (the server's own zone, `"UTC"` if it cannot tell). `PUT { "timezone": "Europe/Rome" }` accepts only an IANA name the runtime knows (the `Intl.supportedValuesOf("timeZone")` list, `UTC`, or an alias it resolves, such as `Asia/Kolkata`); anything else is `400`. The name is stored and returned in canonical spelling (`europe/rome` becomes `Europe/Rome`, `utc` becomes `UTC`). `PUT { "timezone": null }` forgets the saved zone and answers with the default now in effect. Stored in `settings.json` (see DATABASE.md). **Auth:** browser cookie or Bearer `REV4A_TOKEN`.
 
-### `GET /api/metrics/alerts?limit=10`
+### `GET /api/metrics/alerts?limit=10&metric=&container=&agent=`
 The latest `system_anomaly` events: the machine (CPU above 85 % or memory above 90 % on two
 samples in a row, a disk at 90 %) and the containers (`container_pids`: 1 000 processes on two
-samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed for lack of memory, at most one alert per container per 10 minutes; `packages_failed`: an agent could not reinstall some of its recorded apt packages after a start, `container` field set, `values` the failed package names), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` and `packages_failed` ones); unknown params are ignored.
+samples in a row; `container_memory`: 90 % of Docker's memory on five; `container_oom`: a process was killed for lack of memory, at most one alert per container per 10 minutes; `packages_failed`: an agent could not reinstall some of its recorded apt packages after a start, `container` field set, `values` the failed package names), newest first, from `events.db`. `limit` 1–50, default 10. Optional `container=<name>` keeps only the events written with that `container` field (today the `container_oom` and `packages_failed` ones); unknown params are ignored. Optional `metric=<name>` keeps only the events of that metric (exact match; it must match `^[a-z_.]{1,64}$`, `400` `Invalid metric` otherwise) and the limit then counts matches only, so a frequent metric cannot crowd a rare one such as `container_oom` out of a short list; without it the behaviour is unchanged.
 
 **Auth:** browser cookie or Bearer
 
 **Response:**
 ```json
-{ "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94] } ] }
+{ "alerts": [ { "ts": 1790789625355, "metric": "disk", "message": "Disk high: / 94% used", "threshold": 90, "values": [94],
+               "container": null, "scope": null, "agent": null, "resolved": false, "snoozedUntil": null,
+               "agentName": null, "displayMessage": "Disk high: / 94% used" } ] }
 ```
+Every alert carries `container`, `scope`, `agent`, `resolved` and `snoozedUntil` (`null`, or `false` for `resolved`, when not set).
 `ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom`, `packages_failed`, `spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. Spend alarms (`spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted`; see REV4A.md, Spend and loop alarms) also carry `agent` (the agent id the proxy saw, or the container for a session), `scope` (`vendor:<name>` for the balance alarm), `resolved` (`true` for the "back to normal" note; `spend.unaccounted` has none) and `snoozedUntil` (ms, from the server, `null` when not snoozed). Optional `agent=<id>` joins `container=` (either name keeps an event); the `container` filter also matches a spend alarm whose `agent` is that name. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
 
 ---
@@ -2115,14 +2121,14 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 ## System volumes
 
 ### `GET /api/system/orphan-volumes`
-Docker volumes named `agent-*-data` that no container uses, in any state (read from `GET /containers/json?all=1` on every call). Never lists `rev4a-*` or any other volume. A volume whose agent is busy (recreate, update, restore, edit, backup; `agentBusyReason`) is left out; one whose agent's latest recreate is not `done`, or latest update is not `done`/`rolled_back` (or resolved), is listed with `keptReason` and no Delete.
+Docker volumes named `agent-*-data` that no container uses, in any state (also a volume Rev4a did not make, which is why Delete asks for confirmation) (read from `GET /containers/json?all=1` on every call). Never lists `rev4a-*` or any other volume. A volume whose agent is busy (recreate, update, restore, edit, backup; `agentBusyReason`) is left out; one whose agent's latest recreate is not `done`, or latest update is not `done`/`rolled_back` (or resolved), is listed with `keptReason` and no Delete (an **edit** that failed or was interrupted keeps its volume the same way).
 
 **Auth:** browser cookie or bearer token
 
 **Response:** `{ "volumes": [{ "name": "agent-agent_1a2b3c4d-data", "sizeBytes": 597688320, "createdAt": "2026-10-22T09:12:00Z" }] }`, newest first. `sizeBytes` is `null` when Docker has not measured it. Sizes and creation times come from `GET /system/df` (the one call that measures volumes, on Docker Desktop and Linux alike; it can take seconds on a big host), cached for 5 minutes (`type=volume`), and the cache is dropped after a delete. `502` when Docker cannot be read (every Docker read has a 10 s timeout; concurrent reads share one request).
 
 ### `DELETE /api/system/orphan-volumes/<name>`
-Remove one volume. The name must match `agent-<name>-data` (`400` otherwise), the containers are read again (`409` if one, even stopped, mounts it), the volume must exist (`GET /volumes/<name>`, `404`), the agent must not be busy and its last recreate/update must have finished (`409`, checked last, right before the removal), and `docker volume rm` runs without `-f`. Nothing deletes an orphan by itself; this runs on a click in the System page. Response `{ "success": true }`; the removal is logged.
+Remove one volume. The name must match `agent-<name>-data` (`400` otherwise), the containers are read again (`409` if one, even stopped, mounts it), the volume must exist (`GET /volumes/<name>`, `404`), the agent must not be busy and its last recreate/update must have finished (`409`, checked last, right before the removal), and `docker volume rm` runs without `-f`. Nothing deletes an orphan by itself; this runs on a click in the System page. Response `{ "success": true }`; the removal is logged. `500` with the error text when Docker fails to remove it.
 
 ## Backups migration
 
@@ -2136,11 +2142,13 @@ every Rev4a start, in the background; see ARCHITECTURE).
 ```json
 { "status": "pending", "reason": null, "moved": 0, "remaining": 0, "current": null, "skipped": [] }
 ```
+`volumeRemoved` (optional, additive) is `true` once the legacy volume is known to be gone; only then do backup listing, reading and deleting skip asking Docker, so they keep working with Docker down.
 `skipped` lists `{ name, reason }` of files whose copy did not verify: they stay in the volume while the other files
 are still moved (the run then ends `stopped` with those names in `reason`).
-`status` is `pending` (not started, or the volume still exists), `running`, `done` (no volume left) or
-`stopped` with a `reason` (not enough free space, a copy that did not verify, Docker not answering, files
-of a busy agent). A stopped migration resumes at the next start (after `Docker did not answer` it also retries by itself every 5 minutes); nothing is deleted before a verified copy.
+`status` is `pending` (not started, or the volume still exists), `running`, `done` (nothing left to move: the volume is removed, or kept because a container still uses it or it holds other files) or
+`stopped` with a `reason` (not enough free space (the file plus 1 GiB of headroom, the data folder can be on another filesystem than Docker), a copy that did not verify, Docker not answering, files
+of a busy agent, files that exist in both places with different sizes, a leftover temporary copy in the backups folder that could not be removed). `*.partial` leftovers of older releases are deleted from the volume so it can empty.
+While it is `running`, `DELETE /api/agents/[id]/backup?file=` answers `409` (`Backups are being moved to the data folder; try again when it ends`) and deletes nothing, and the automatic pruning of old backups skips and catches up at the next run (a file removed mid-copy would otherwise be copied back). Deleting an agent still removes its backups; in the rare case it runs while a copy of one of its files is in flight, that file can reappear in the folder and is listed there. A stopped migration resumes at the next start (after `Docker did not answer` it also retries by itself every 5 minutes); nothing is deleted before a verified copy.
 The System page shows a one-line notice while it is not `done`.
 
 ---

@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-25
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not

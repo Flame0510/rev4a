@@ -521,6 +521,57 @@ await test('delete with the volume absent (404) removes the directory file', asy
   await vol.deleteBackupFile('agent-a1-cold-2026-10-24_000000001.tar.gz', dir);
   assert.ok(!fs.existsSync(path.join(dir, 'agent-a1-cold-2026-10-24_000000001.tar.gz')));
 });
+const stateOf = (o) => ({ status: 'pending', reason: null, moved: 0, remaining: 0, current: null, skipped: [], ...o });
+await test('delete during a running migration is refused with BackupsMigratingError and deletes nothing', async () => {
+  dockerMode = 404;
+  const dir = tmp();
+  put(dir, 'agent-a1-cold-2026-10-24_000000001.tar.gz', 7);
+  mig.recordMigrationState(stateOf({ status: 'running' }));
+  await assert.rejects(vol.deleteBackupFile('agent-a1-cold-2026-10-24_000000001.tar.gz', dir), (e) => e instanceof vol.BackupsMigratingError && /try again when it ends/.test(e.message));
+  assert.ok(fs.existsSync(path.join(dir, 'agent-a1-cold-2026-10-24_000000001.tar.gz')));
+});
+await test('prune during a running migration skips and returns []; after it ends it prunes again', async () => {
+  dockerMode = 404;
+  const dir = tmp();
+  for (const n of ['1', '2', '3']) put(dir, `agent-a1-cold-2026-10-24_00000000${n}.tar.gz`, 7);
+  mig.recordMigrationState(stateOf({ status: 'running' }));
+  assert.deepEqual(await vol.pruneBackups('a1', 'cold', 1, dir), []);
+  assert.equal(fs.readdirSync(dir).length, 3);
+  mig.recordMigrationState(stateOf({ status: 'done', volumeRemoved: true }));
+  assert.equal((await vol.pruneBackups('a1', 'cold', 1, dir)).length, 2);
+});
+await test('done with the volume removed: plain-file operations work with Docker down', async () => {
+  dockerMode = 500;
+  const dir = tmp();
+  put(dir, 'agent-a1-cold-2026-10-24_000000001.tar.gz', 7);
+  mig.recordMigrationState(stateOf({ status: 'done', volumeRemoved: true }));
+  assert.deepEqual((await vol.listAgentBackups('a1', dir)).map((x) => x.name), ['agent-a1-cold-2026-10-24_000000001.tar.gz']);
+  assert.equal(await vol.locateBackup('agent-a1-cold-2026-10-24_000000001.tar.gz', dir), 'dir');
+  await vol.deleteBackupFile('agent-a1-cold-2026-10-24_000000001.tar.gz', dir);
+  assert.equal(fs.readdirSync(dir).length, 0);
+});
+await test('done but the volume was kept (no volumeRemoved), or stopped: Docker down still fails loudly', async () => {
+  dockerMode = 500;
+  const dir = tmp();
+  for (const st of [stateOf({ status: 'done' }), stateOf({ status: 'stopped', reason: 'x', volumeRemoved: true }), stateOf({ status: 'pending' })]) {
+    mig.recordMigrationState(st);
+    await assert.rejects(vol.listAgentBackups('a1', dir), /did not answer/);
+  }
+});
+await test('the migration marks volumeRemoved when the volume is gone or removed, not when it is kept', async () => {
+  assert.equal((await mig.runMigration(fakeHost({ exists: false }).deps)).volumeRemoved, true);
+  assert.equal((await mig.runMigration(fakeHost({ volume: {} }).deps)).volumeRemoved, true);
+  assert.notEqual((await mig.runMigration(fakeHost({ volume: {}, inUse: true }).deps)).volumeRemoved, true);
+  assert.notEqual((await mig.runMigration(fakeHost({ volume: {}, volumeOther: 1 }).deps)).volumeRemoved, true);
+});
+await test('the migration headroom is 1 GiB and the stop message names the free space', async () => {
+  assert.equal(mig.MIGRATION_HEADROOM_BYTES, 1024 * 1024 * 1024);
+  const h = fakeHost({ volume: { 'agent-a-cold-2026-10-24_000000001.tar.gz': 100 }, free: 500 * 1024 * 1024 });
+  const s = await mig.runMigration(h.deps);
+  assert.equal(s.status, 'stopped');
+  assert.match(s.reason, /not enough free space/);
+});
+mig.recordMigrationState(stateOf({}));
 dockerSrv.close();
 
 // ── Migration: busy re-check, temps, space with a leftover, stop reasons ─────
