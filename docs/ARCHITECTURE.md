@@ -778,7 +778,7 @@ rows missing from a complete listing get `gone_at` too. `agent_sessions_meta.ver
 by every pass that changed something. Retention: rows idle for 30 days are deleted, cron jobs
 and runs after 7 days (hourly, in batches of 5000).
 
-The old `sessions` and `lineage` tables are left as they are and no longer written.
+The old `sessions` and `lineage` tables are dropped by the bootstrap (`lib/db-bootstrap.mjs`, LIN-6) and no longer created.
 Costs per session stay in `costs.db`; `agent_sessions.cost_usd` is OpenClaw's estimate or NULL.
 
 ### System Metrics
@@ -923,12 +923,7 @@ every host. The 7-day cron-session retention in the poll is separate.
 
 ### Migrations
 
-The daemon applies these migrations at startup if columns don't exist:
-
-```sql
-ALTER TABLE sessions ADD COLUMN trello_card_url TEXT;
-ALTER TABLE sessions ADD COLUMN ended_at INTEGER;
-```
+Schema steps live in `lib/db-bootstrap.mjs` and are idempotent; since LIN-6 it also drops the old `sessions` and `lineage` tables. See `docs/dev/DATABASE.md`.
 
 ---
 

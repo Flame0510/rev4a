@@ -60,23 +60,9 @@ process.on('uncaughtException', (err) => {
   // Do NOT exit — the watchdog reads this from the healthcheck
 });
 
+// The old host-poll `sessions` and `lineage` tables are not created here any more: the dashboard
+// bootstrap (lib/db-bootstrap.mjs) is their only dropper (LIN-6). Nothing reads or writes them.
 db.exec(`
-CREATE TABLE IF NOT EXISTS sessions (
-  session_id TEXT PRIMARY KEY,
-  parent_id TEXT,
-  label TEXT,
-  model TEXT,
-  tokens_in INTEGER DEFAULT 0,
-  tokens_out INTEGER DEFAULT 0,
-  cost_usd REAL DEFAULT 0,
-  status TEXT DEFAULT 'idle',
-  task_preview TEXT,
-  started_at INTEGER,
-  ended_at INTEGER,
-  updated_at INTEGER,
-  trello_card_url TEXT
-);
-
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -86,22 +72,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, ts);
-CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
 `);
-
-// Add trello_card_url column if it doesn't exist (migration)
-try {
-  db.exec(`ALTER TABLE sessions ADD COLUMN trello_card_url TEXT`);
-} catch (e) {
-  // Column already exists — ignore
-}
-
-// Fix 1 — Add ended_at column (migration safe)
-try {
-  db.exec(`ALTER TABLE sessions ADD COLUMN ended_at INTEGER`);
-} catch (e) {
-  // Column already exists — ignore
-}
 
 const insertEvent = db.prepare(`
   INSERT INTO events (ts, session_id, type, data) VALUES (@ts, @session_id, @type, @data)
@@ -116,7 +87,7 @@ const insertEvent = db.prepare(`
 
 /**
  * Machine metrics live in their own database next to events.db, so the event log stays
- * sessions and events only and the history can be dropped without touching them. The
+ * the event log and the agents' session copy only, and the history can be dropped without touching them. The
  * daemon is its only writer; GET /api/metrics reads it (lib/metrics-db.ts, same path).
  * Anomalies are still events, in events.db, where the live feed reads them.
  *

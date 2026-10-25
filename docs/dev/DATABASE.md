@@ -1,9 +1,9 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-25
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
-`events.db` (sessions and events, below), `metrics.db` (machine and container metrics, see
+`events.db` (events and the agents' sessions, below), `metrics.db` (machine and container metrics, see
 [Metrics Database](#metrics-database-metricsdb)), `costs.db` (what the agents spent, see
 [Costs Database](#costs-database-costsdb)) and `credentials.db` (see
 [Credentials Database](#credentials-database-credentialsdb)).
@@ -28,32 +28,6 @@ PRAGMA synchronous = NORMAL;
 - WAL files (`*.db-shm`, `*.db-wal`) — do not delete while the daemon is running
 
 ## Tables
-
-### `sessions` — primary session tracking (legacy)
-
-No longer written: the daemon fills `agent_sessions` instead. Kept untouched so a rollback still finds it.
-
-```sql
-CREATE TABLE sessions (
-  session_id   TEXT PRIMARY KEY,
-  parent_id    TEXT,
-  label        TEXT,
-  model        TEXT,
-  tokens_in    INTEGER DEFAULT 0,
-  tokens_out   INTEGER DEFAULT 0,
-  cost_usd     REAL    DEFAULT 0,  -- always 0 since 2026-09-27: agent costs are in costs.db
-  status       TEXT    DEFAULT 'idle',
-  task_preview TEXT,
-  started_at   INTEGER,           -- Unix ms
-  ended_at     INTEGER,           -- Unix ms, null if active
-  updated_at   INTEGER,           -- Unix ms, updated only on real changes
-  trello_card_url TEXT
-);
-
-CREATE INDEX idx_sessions_updated ON sessions(updated_at);
-```
-
-**Status values:** `idle` / `working` / `completed` / `error`
 
 ### `events` — lifecycle events
 
@@ -115,19 +89,6 @@ CREATE TABLE agent_sessions_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version
 collector writes the events `session_started`, `subagent_spawned` (`data.parent_key`),
 `session_ended`, `session_failed` and `session_aborted` into `events` (`session_id` = the
 session key, `data.container` = the container). A session that finished and starts a new turn writes `session_started` again; a cron job's own row writes no event (its runs do). A listing is marked complete only when its distinct session keys reach the largest `totalCount` the agent reported; otherwise no row is marked gone. On start, rows of containers that are no longer running get `gone_at`. Retention: rows not returned by any listing for 30 days (`last_seen_at`), cron runs and cron job rows 7 days; a row the agent still lists is never deleted. `/api/stream` rebuilds and sends the sessions frame only when `version` changes or when `costs.db` `agent_cost_sessions` changes (one `COUNT`/`TOTAL(cost)` read per poll; costs are filled at read time), with the same window and cap (2,000) as `GET /api/sessions`. `cost_usd` is NULL when OpenClaw did not price the session (never 0); `GET /api/sessions` fills a NULL from `costs.db` `agent_cost_sessions` by `(container, session_id)` when that row has a cost above 0.
-
-### `lineage` — explicit parent→child declarations (legacy)
-
-```sql
-CREATE TABLE lineage (
-  child_id    TEXT PRIMARY KEY,
-  parent_id   TEXT,
-  agent_name  TEXT,
-  declared_at INTEGER            -- Unix ms
-);
-```
-
-Legacy: no longer written since the `agent_sessions` collector, and no longer read by the API (the previous version still reads it, so it stays until a later release drops it).
 
 The daemon also writes a `system_anomaly` event (session `system`) when the machine
 crosses a threshold — see [Metrics Database](#metrics-database-metricsdb). The System
@@ -327,12 +288,12 @@ archive and `restore.sh` keeps it across the swap, so copy it separately.
 `events.db` is Rev4a's own record — what it did to agents (the job tables, created and
 deleted) and what it saw (anomalies, alerts). What agents do is read from OpenClaw: agent
 spend is in `costs.db`; sessions are in `agent_sessions` (above), and the old
-`sessions` and `lineage` tables are left untouched until a later release drops them.
+`sessions` and `lineage` tables are dropped at startup (see Migrations).
 
 ## Metrics Database (`metrics.db`)
 
 Machine metrics of the host — CPU, RAM, swap, storage — kept apart from `events.db`, so
-the event log holds sessions and events only and the history can be dropped on its own.
+the event log holds events and the agents' session copy only, and the history can be dropped on its own.
 
 **Location:** `data/metrics.db`, next to `events.db` (it follows `REV4A_DB`'s directory; both
 the daemon and the API resolve the data directory the same way, `REV4A_DATA_DIR` included).
@@ -641,14 +602,24 @@ through no route or view.
 
 ## Migrations
 
-The daemon applies these migrations safely at startup:
+**Dropped in 1.22 (LIN-6): `sessions` and `lineage`.** Since 1.21 Lineage reads `agent_sessions`, and the old
+host-poll tables had no reader and no writer. `initializeRev4aDb()` (`lib/db-bootstrap.mjs`, run by the
+dashboard at startup, through `instrumentation.ts`; a busy database is retried on the next `openDb`) is the only dropper:
 
 ```sql
-ALTER TABLE sessions ADD COLUMN trello_card_url TEXT;  -- idempotent
-ALTER TABLE sessions ADD COLUMN ended_at INTEGER;       -- idempotent
+DROP INDEX IF EXISTS idx_sessions_updated;
+DROP INDEX IF EXISTS idx_sessions_started;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS lineage;
 ```
 
-For future schema changes, add a `try/catch` ALTER TABLE block in `daemon.js` following the same pattern.
+It first looks in `sqlite_master` and does nothing, with no write lock, when they are gone, so it is safe to run
+twice and on a half-migrated file. One log line when something was dropped. No `VACUUM`: SQLite frees the
+pages of a dropped table in one transaction without rewriting the file, and later writes reuse them (the file
+does not shrink). The daemon no longer creates the tables. The obsolete host-poll history is lost; 1.21.x is
+unaffected, 1.20.x and earlier then show an empty old Lineage.
+
+For future schema changes, add a guarded, idempotent step to `lib/db-bootstrap.mjs` (additive columns) or a `try/catch` ALTER TABLE block in `daemon.js` for tables only the daemon owns.
 
 ## Integrity Check
 
