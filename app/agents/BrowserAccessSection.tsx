@@ -145,9 +145,11 @@ const metaStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-dim)',
  * this a plain navigation: no blank tab to fill in after an `await`, nothing for a
  * popup blocker to stop.
  *
- * `gateway` is the Gateway state from `/api/agents/gateway`: only `starting` disables the
- * button (the route would answer a 503 page). `ready`, `not_ready`, `unknown` or no data
- * yet leave it enabled: a wrong or failed probe never locks anyone out of the Control UI.
+ * `gateway` is the Gateway state from `/api/agents/gateway` and `blocksOpen` its flag: only
+ * `blocksOpen === true` (the Gateway itself answered 503) disables the button, as the route
+ * would answer a 503 page. A `starting` state without it (no answer yet) keeps the button
+ * enabled with a title saying the Gateway may still be starting; `ready`, `not_ready`,
+ * `unknown` or no data leave it enabled too: a wrong or failed probe never locks anyone out.
  */
 export function OpenControlUiButton({
   agentId,
@@ -155,6 +157,7 @@ export function OpenControlUiButton({
   variant = 'primary',
   stopPropagation = false,
   gateway,
+  blocksOpen = false,
 }: {
   agentId: string;
   label?: string;
@@ -162,13 +165,15 @@ export function OpenControlUiButton({
   /** For buttons inside a clickable row. */
   stopPropagation?: boolean;
   gateway?: GatewayState;
+  /** From `/api/agents/gateway`: the Gateway answered 503 inside its budget. */
+  blocksOpen?: boolean;
 }) {
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
     window.open(`/api/agents/${encodeURIComponent(agentId)}/open-control-ui`, '_blank', 'noopener');
   };
 
-  const starting = gateway === 'starting';
+  const starting = gateway === 'starting' && blocksOpen === true;
   return (
     <Button
       variant={variant}
@@ -176,6 +181,7 @@ export function OpenControlUiButton({
       onClick={open}
       disabled={starting}
       title={starting ? "The agent's Gateway is still starting"
+        : gateway === 'starting' ? 'The Gateway may still be starting — the Control UI might not answer yet'
         : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
         : 'Open the agent Control UI'}
     >

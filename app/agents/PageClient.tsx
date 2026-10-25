@@ -16,6 +16,7 @@ import CredentialsSection from './CredentialsSection';
 import BrowserAccessSection, { Elapsed, OpenControlUiButton, type GatewayState } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
 import { validatePortInput } from '@/lib/agent-ports';
+import { GATEWAY_POLL_STUCK_MS, skipGatewayTick } from '@/lib/gateway-state';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
   LinkIcon, ArchiveIcon, RotateIcon, PackageIcon,
@@ -179,7 +180,7 @@ function compactPorts(ports: string): string {
 }
 
 /** One agent's Gateway state from `/api/agents/gateway`. */
-type GatewayInfo = { state: GatewayState; startedAtMs: number | null };
+type GatewayInfo = { state: GatewayState; startedAtMs: number | null; blocksOpen?: boolean };
 
 /** Shared agent list-item used in both mobile and desktop views. */
 function AgentListItem({
@@ -299,7 +300,7 @@ function AgentListItem({
       toggling={loading}
       toggleDisabled={agent.state === 'unknown' || !!busy}
       onToggle={() => { void onLifecycle(); }}
-      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation gateway={gw?.state} /> : undefined}
+      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
       meta={[
         imageLabel(agent),
         compactPorts(agent.ports),
@@ -334,6 +335,8 @@ export default function AgentsPageClient() {
   const gwAbortRef = useRef<AbortController | null>(null);
   /** Consecutive failed Gateway fetches: three clear the stored states, so a stale lock cannot linger. */
   const gwFailures = useRef(0);
+  /** When the Gateway request in flight started (null: none): interval ticks skip instead of aborting it. */
+  const gwInFlight = useRef<number | null>(null);
   const [imageReady, setImageReady] = useState(true);
   // null = not checked yet. Keeping "unknown" distinct from "none configured" is
   // the whole point: `false` as the initial value makes an unanswered check look
@@ -441,13 +444,20 @@ export default function AgentsPageClient() {
 
   /**
    * Gateway readiness per agent. Decorates the cards and the Open buttons, so a failure
-   * leaves the last answer in place and never blocks anything. A newer call aborts the
-   * one still in flight.
+   * leaves the last answer in place and never blocks anything. An explicit call aborts the
+   * one still in flight; an interval tick (`fromTimer`) skips instead, so a slow probe is
+   * never aborted every tick and its answer can arrive. A request older than 20 s counts as stuck:
+   * it is aborted and counted as a failure, so three of them clear the states and Open is enabled.
    */
-  const refreshGateway = useCallback(async () => {
+  const refreshGateway = useCallback(async (fromTimer = false) => {
+    if (fromTimer && skipGatewayTick(gwInFlight.current, Date.now())) return;
+    const since = gwInFlight.current;
+    if (since !== null && Date.now() - since >= GATEWAY_POLL_STUCK_MS
+      && ++gwFailures.current >= 3) setGwSummary((prev) => (Object.keys(prev).length ? {} : prev));
     gwAbortRef.current?.abort();
     const controller = new AbortController();
     gwAbortRef.current = controller;
+    gwInFlight.current = Date.now();
     try {
       const res = await fetch('/api/agents/gateway', { signal: controller.signal });
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -458,6 +468,9 @@ export default function AgentsPageClient() {
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
       if (++gwFailures.current >= 3) setGwSummary((prev) => (Object.keys(prev).length ? {} : prev));
+    } finally {
+      // Only the newest request owns the flag: an aborted older one must not clear it.
+      if (gwAbortRef.current === controller) gwInFlight.current = null;
     }
   }, []);
 
@@ -471,7 +484,7 @@ export default function AgentsPageClient() {
   const gwFast = anyGatewayStarting || gwBoostUntil > 0;
   useEffect(() => {
     void refreshGateway();
-    const i = setInterval(() => { void refreshGateway(); }, gwFast ? 3000 : 30000);
+    const i = setInterval(() => { void refreshGateway(true); }, gwFast ? 3000 : 30000);
     return () => clearInterval(i);
   }, [gwFast, refreshGateway]);
   useEffect(() => () => gwAbortRef.current?.abort(), []);
@@ -512,7 +525,8 @@ export default function AgentsPageClient() {
       void refreshModelSummary();
       void refreshDeviceSummary();
       void refreshBackupSummary();
-      void refreshGateway();
+      // Like a tick: the 15 s list poll must not abort a slow Gateway request that is still young.
+      void refreshGateway(true);
     } catch (e: any) {
       setError(e.message || 'Loading error');
     } finally {
@@ -1286,7 +1300,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
         <div style={{ padding: '12px 14px' }}>
           {agent.state === 'running' && agent.controlPort && (
             <div style={{ marginBottom: 8 }}>
-              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" gateway={gateway?.state} />
+              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
               {gateway?.state === 'starting' && (
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway starting… <Elapsed startedAtMs={gateway.startedAtMs} /></div>
               )}

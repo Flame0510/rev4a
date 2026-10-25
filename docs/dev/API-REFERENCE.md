@@ -774,9 +774,9 @@ this one runs a readiness probe inside each running container.
 ```json
 {
   "agents": {
-    "prometheus": { "state": "ready", "startedAtMs": 1760000000000, "checkedAtMs": 1760000123456 },
-    "atlas": { "state": "starting", "startedAtMs": 1760000100000, "checkedAtMs": 1760000123456 },
-    "argus": { "state": "stopped", "startedAtMs": null, "checkedAtMs": 1760000123456 }
+    "prometheus": { "state": "ready", "startedAtMs": 1760000000000, "blocksOpen": false, "checkedAtMs": 1760000123456 },
+    "atlas": { "state": "starting", "startedAtMs": 1760000100000, "blocksOpen": true, "checkedAtMs": 1760000123456 },
+    "argus": { "state": "stopped", "startedAtMs": null, "blocksOpen": false, "checkedAtMs": 1760000123456 }
   }
 }
 ```
@@ -785,8 +785,11 @@ this one runs a readiness probe inside each running container.
 - `state` is `stopped`, `starting`, `ready`, `not_ready` or `unknown` (`lib/gateway-state.ts`).
   `ready` is the `/startupz` rule of `lib/agent-readiness.ts` (`probeGateway`): HTTP 200 with
   `status: "started"`. A running agent that is not ready is `starting` for 10 minutes after
-  `State.StartedAt`, then `not_ready`. `unknown` means the exec, the probe or the inspect failed for that
+  the budget anchor (below), then `not_ready`; a 503 and no answer at all (refused, timeout) both count as not ready. An HTTP answer that is neither (a 200 without `started`, a 404: `probeGateway` answered `unexpected`) is `unknown`. `unknown` also means the exec, the probe or the inspect failed for that
   agent (`probeGateway` answered `error`, which is never cached); the UI treats it like `ready`.
+- `blocksOpen` (additive boolean) is true only when the Gateway answered 503, the state is `starting`, `RestartCount` is 0 and the start time is readable: the same cases the Open route refuses. No answer, `unexpected`, `error`, `not_ready` and `stopped` are false. The page disables Open only on `blocksOpen === true`.
+- `startedAtMs` is the budget anchor: the first start Rev4a saw for the container id. Docker resets `State.StartedAt` at every restart-policy restart, so a crash loop would otherwise stay `starting`; the anchor stays while `RestartCount` grows and moves to the new `StartedAt` when it drops (or is 0 with a new start time: a manual restart or start). It is cleared when the Gateway is ready, dropped when the container disappears, and kept in memory only: after a Rev4a restart a container with `RestartCount` 0 is anchored again at its `StartedAt` (same clock), while a policy-restarted one starts a new 10 minutes. Known limit: a loop whose Gateway becomes ready for a moment in each run clears the anchor every time, so it never reaches `not_ready`. For `stopped` the field is null; for `ready` it is Docker's `StartedAt`.
+- A container Docker lists as `restarting` is not probed (no `docker exec` into it): it counts as running with no answer, so it shows `starting`, then `not_ready` by the anchor, with `blocksOpen` false, instead of `stopped`.
 - A stopped container is `stopped` and is never probed. Running containers are probed
   asynchronously (`docker exec` through `execFile`, never a blocking call), at most 4 at a time, 3 s each.
 - Cached per container and `StartedAt` (a restart starts over): a `ready` answer for 60 s,
@@ -1658,9 +1661,9 @@ agent's published port — never a parameter, so the link cannot be sent to anot
   (`/root/.agent-token`, then `OPENCLAW_GATEWAY_TOKEN`).
 
 Before resolving the link the route runs one readiness probe (`probeGateway`, 3 s). Only a Gateway that
-is `starting` (not ready, inside 10 minutes of the container's `StartedAt`) gets a `503` page
-instead of a redirect to a dead port; `ready`, `not_ready`, a failed probe or an unreadable
-`StartedAt` resolve the link as usual.
+answers 503 on `/startupz` inside 10 minutes of the container's `StartedAt` gets a `503` page
+instead of a redirect to a dead port. `ready`, `not_ready`, no answer or a timeout, an unexpected answer, a failed probe, an
+unreadable `StartedAt` and a container with `RestartCount > 0` (restarted by its policy, not a fresh start) resolve the link as usual.
 
 A navigation, not a JSON call: the button opens this URL inside the click, so no tab
 is left blank after an `await` and no popup can be blocked.

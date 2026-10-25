@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
  * GET /api/agents/gateway
  *
  * Whether each agent's Gateway has finished starting: `{ agents: { [agentId]: { state,
- * startedAtMs, checkedAtMs } } }`. Separate from the list route on purpose: the list
+ * startedAtMs, blocksOpen, checkedAtMs } } }`. Separate from the list route on purpose: the list
  * answers from Docker alone, this one runs a probe inside each running container.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {

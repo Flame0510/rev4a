@@ -83,14 +83,19 @@ function asJson(body: string): Record<string, unknown> | null {
   }
 }
 
-/** The answer of one probe: `ready` only for 200 + `status: "started"`; `error` when the exec itself failed. */
-export type GatewayProbe = 'ready' | 'starting' | 'no_answer' | 'error';
+/**
+ * The answer of one probe: `ready` only for 200 + `status: "started"`; `starting` for a 503;
+ * `no_answer` when no HTTP code came back at all; `unexpected` for an HTTP answer that is
+ * neither (a 200 without `started`, a 404, any other code); `error` when the exec itself failed.
+ */
+export type GatewayProbe = 'ready' | 'starting' | 'no_answer' | 'unexpected' | 'error';
 
 /**
  * One attempt at `/startupz`. `ready` for HTTP 200 with JSON `status === "started"`,
- * `starting` for a 503 (starting or draining), `no_answer` for anything else: no
- * answer, a timeout, a truncated reply or any other code; `error` when `docker exec` itself
- * fails (container gone, Docker error). Never throws.
+ * `starting` for a 503 (starting or draining), `no_answer` when no HTTP code came back
+ * (refused, timeout, truncated reply), `unexpected` for any other HTTP answer (a 200
+ * without `started`, a 404, ...); `error` when `docker exec` itself fails (container gone,
+ * Docker error). The waiting callers only compare with `'ready'`. Never throws.
  */
 export async function probeGateway(container: string, timeoutMs = ATTEMPT_TIMEOUT_MS): Promise<GatewayProbe> {
   const startupz = await probe(container, '/startupz', timeoutMs);
@@ -99,10 +104,11 @@ export async function probeGateway(container: string, timeoutMs = ATTEMPT_TIMEOU
     const json = asJson(startupz.body);
     // Accept only the answer that means startup finished. A 200 with any other body
     // is not a ready Gateway.
-    return json && json.status === 'started' ? 'ready' : 'no_answer';
+    return json && json.status === 'started' ? 'ready' : 'unexpected';
   }
   if (startupz.status === 503) return 'starting';
-  return 'no_answer';
+  if (startupz.status === 0) return 'no_answer';
+  return 'unexpected';
 }
 
 /**

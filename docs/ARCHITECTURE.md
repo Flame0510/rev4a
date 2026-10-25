@@ -126,13 +126,13 @@ The central container, running the Next.js dashboard + orchestration API.
   session store and wants `doctor --fix` — answers 200 on `/health` while draining, so
   `/health` is never accepted as "ready": it would let callers configure an agent that
   is still migrating. Do not reimplement the wait in
-  a route. The single attempt is `probeGateway()` (`ready` / `starting` / `no_answer` / `error`; `error` = the `docker exec` itself failed, treated as "not yet" by the wait), the one
+  a route. The single attempt is `probeGateway()` (`ready` = 200 + `started`; `starting` = 503; `no_answer` = no HTTP code at all: refused, timeout, truncated; `unexpected` = any other HTTP answer, such as a 200 without `started` or a 404; `error` = the `docker exec` itself failed; the wait treats everything but `ready` as "not yet"), the one
   place the `/startupz` rule lives; `waitForGatewayReady()` polls it, `GET /api/agents/gateway`
   (`lib/gateway-status.ts`) calls it once per running container for the Agents page (async, at most 4 probes at a time), and
-  `open-control-ui` calls it once before redirecting and refuses only while the state is `starting`. `lib/gateway-status.ts` keeps a
+  `open-control-ui` calls it once before redirecting and refuses only on a real 503 inside the budget (`blocksOpen()`), never for a container with `RestartCount > 0`. `lib/gateway-status.ts` keeps a
   module-level cache keyed by container id and `StartedAt`: `ready` for 60 s, `starting` or no
   answer for 2 s, `error` never, one shared in-flight probe per container. `lib/gateway-state.ts` is the pure
-  decision (`stopped` / `starting` / `ready` / `not_ready` / `unknown`; `not_ready` after 10 minutes).
+  decision (`stopped` / `starting` / `ready` / `not_ready` / `unknown`; `starting` for a 503 or no answer, `not_ready` after 10 minutes, `unknown` for `unexpected` and `error`). The 10 minutes count from a per-container anchor (`nextStartAnchor()`, memory only), not from Docker's `StartedAt`, which every restart-policy restart resets: it moves only on a manual restart or start (the restart count drops, or is 0 with a new start time) and is cleared when the Gateway is ready, so a crash loop ends in `not_ready`. A container Docker lists as `restarting` is not probed and counts as running with `no_answer`. After a Rev4a restart a container with `RestartCount` 0 is anchored at its `StartedAt` again (same clock); a policy-restarted one gets a new 10 minutes. A loop whose Gateway is ready for a moment in each run clears the anchor every time and never reaches `not_ready` (known limit). The page and the route block Open in the same cases: a 503 inside the budget, `RestartCount` 0, a readable start time.
 - **The model catalogue** is read only through `lib/model-catalogue.ts`:
   `loadModelsConfig()`, `loadOfferedModels()` (enabled after overrides, provider has
   a key), `isModelOffered()` (enforced by the proxy and the assistant) and

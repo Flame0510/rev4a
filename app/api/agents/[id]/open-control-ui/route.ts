@@ -10,9 +10,10 @@
  * signed-in browser to open this URL can at most open the Control UI in that same
  * browser, never send the link to another host.
  *
- * While the Gateway is still starting (`/startupz`, one probe, inside its 10-minute budget
- * from the container's `StartedAt`) the answer is a 503 page, not a redirect to a dead port.
- * Any other outcome, or a failure to find out, never blocks.
+ * While the Gateway answers 503 on `/startupz` (one probe) inside its 10-minute budget from the
+ * container's `StartedAt`, the answer is a 503 page, not a redirect to a dead port. Only a real
+ * 503 blocks (`blocksOpen`): no answer, a timeout, an unexpected answer, a failure to find out,
+ * or a container the restart policy already restarted (`RestartCount > 0`) opens as usual.
  *
  * A navigation rather than a fetch on purpose: the button opens this URL inside the
  * click, so nothing is left to assign to a blank tab after an `await`, and there is
@@ -21,7 +22,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { probeGateway } from '@/lib/agent-readiness';
-import { gatewayState } from '@/lib/gateway-state';
+import { gatewayState, blocksOpen } from '@/lib/gateway-state';
 import { dockerFetch } from '@/lib/docker-socket';
 import { findAgentContainer, hostnameFromHostHeader, resolveControlUiUrl } from '@/lib/agent-devices';
 
@@ -53,14 +54,16 @@ export async function GET(
   if (!agent) return page(404, `No agent '${id}'.`);
   if (!agent.running || !agent.controlPort) return page(409, 'The agent is not running or publishes no Control UI port.');
 
-  // Only a Gateway that is still starting (inside its 10-minute budget) gets the 503 page.
-  // Every other outcome, and any failure to find out, opens the Control UI as before.
+  // Only a Gateway that answers 503 inside its 10-minute budget gets the 503 page. Every other
+  // outcome, a policy-restarted container and any failure to find out open the Control UI.
   try {
     const inspect: any = await dockerFetch('GET', `/containers/${encodeURIComponent(agent.name)}/json`);
     const startedAtMs = Date.parse(inspect?.State?.StartedAt || '');
-    if (Number.isFinite(startedAtMs) && startedAtMs > 0) {
+    const restartCount = Number(inspect?.RestartCount) || 0;
+    if (Number.isFinite(startedAtMs) && startedAtMs > 0 && restartCount === 0) {
       const probe = await probeGateway(agent.name, 3_000);
-      if (gatewayState({ running: true, startedAtMs, probe, nowMs: Date.now() }) === 'starting') {
+      const state = gatewayState({ running: true, startedAtMs, probe, nowMs: Date.now() });
+      if (blocksOpen(probe, state)) {
         return page(503, "The agent's Gateway is still starting. Try again in a moment.");
       }
     }
