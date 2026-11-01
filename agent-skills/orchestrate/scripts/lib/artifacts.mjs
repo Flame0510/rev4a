@@ -2,11 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const ARTIFACT_DEFAULTS = { enabled: false, minFreeBytes: 0, disposable: [] };
+// keepDays: how long the scopes of a parked or set-aside run are kept before the cleanup deletes them.
+export const ARTIFACT_DEFAULTS = { enabled: false, minFreeBytes: 0, disposable: [], keepDays: 14 };
 
 export function validatePolicy(policy) {
   if (typeof policy.enabled !== 'boolean' || !Number.isSafeInteger(policy.minFreeBytes) || policy.minFreeBytes < 0
-    || !Array.isArray(policy.disposable)) throw new Error('invalid artifacts policy');
+    || !Array.isArray(policy.disposable) || (policy.keepDays !== undefined && !(Number.isFinite(policy.keepDays) && policy.keepDays >= 0))) throw new Error('invalid artifacts policy');
   for (const p of policy.disposable) {
     // Only explicit build/dependency directory names, under a newly allocated temporary scope.
     if (typeof p !== 'string' || !/^(?:[A-Za-z0-9_.-]+|\*)(?:\/(?:[A-Za-z0-9_.-]+|\*))*\/(?:\.next|node_modules)$/.test(p)
@@ -65,7 +66,8 @@ export function beginArtifacts(policy, cwd = process.cwd()) {
   const scope = fs.mkdtempSync(path.join(root, 'command-'));
   const temp = path.join(scope, 'tmp');
   fs.mkdirSync(temp, { mode: 0o700 });
-  const receipt = { version: 1, ownerPid: process.pid, cwd, startedAt: new Date().toISOString(), status: 'running', temp, disposable: policy.disposable };
+  // run: the orch run the command belongs to ("<id> r<round>", set by orch for gates and merges), for its later cleanup.
+  const receipt = { version: 1, ownerPid: process.pid, cwd, run: process.env.ORCH_RUN || null, startedAt: new Date().toISOString(), status: 'running', temp, disposable: policy.disposable };
   writeReceipt(scope, receipt);
   return { scope, temp, receipt, policy };
 }

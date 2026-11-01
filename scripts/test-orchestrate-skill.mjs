@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const skill = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-skills', 'orchestrate');
-const SUITES = ['unit', 'artifacts', 'e2e', 'e2e-fast', 'e2e-recovery', 'e2e-card', 'e2e-trello', 'e2e-keeper'];
+const SUITES = ['unit', 'artifacts', 'e2e', 'e2e-fast', 'e2e-recovery', 'e2e-card', 'e2e-trello', 'e2e-keeper', 'e2e-lean'];
 
 const run = name => new Promise(resolve => {
   const child = spawn(process.execPath, [path.join(skill, 'test', `${name}.mjs`)], { cwd: skill, stdio: ['ignore', 'pipe', 'pipe'] });

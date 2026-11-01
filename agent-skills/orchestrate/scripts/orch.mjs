@@ -21,12 +21,14 @@
 //   orch harness <name> [--in <id>]                          run one harness now (base branch, or a task's worktree)
 //   orch card new|split|check|normalise …                    create and fix cards in the skill's format (lib/card-cmd.mjs)
 //   orch card set-aside <id>                                 set a card's run aside (done by split; reruns a half-done one)
+//   orch artifacts [gc [--unowned]]                          command scopes: list, delete what merged/older runs left
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  configFile, DEFAULTS, event, loadConfig, loadState, orchDir, primaryRoot, runDir, saveConfig, saveState, setPath,
+  artifactsDir, configFile, DEFAULTS, event, loadConfig, loadState, orchDir, primaryRoot, runDir, saveConfig, saveState, setPath,
 } from './lib/config.mjs';
 import { matchesAny } from './lib/glob.mjs';
 import {
@@ -37,12 +39,13 @@ import { cardRules } from './lib/card.mjs';
 import { CAMPAIGN_DEFAULTS, decide, wakeMessage } from './lib/keeper.mjs';
 import { cmdCard } from './lib/card-cmd.mjs';
 import { validatePolicy } from './lib/artifacts.mjs';
+import { applyGc, planGc, scopeBytes } from './lib/artifact-gc.mjs';
 import { ensurePr, fetchBase, gh, mergePr, postStatus, prView, pushExact, remoteSha } from './lib/forge.mjs';
 import { evaluate } from './lib/select.mjs';
 import { excludeOnce, fill, git, lastLines, minutes, now, OrchError, readJson, redactSecrets, sh, writeAtomic, writeJson } from './lib/util.mjs';
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BOOL = new Set(['force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run']);
+const BOOL = new Set(['force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned']);
 
 function parseArgs(argv) {
   const pos = []; const flags = { set: [] };
@@ -312,6 +315,8 @@ async function cmdConfig(root, { flags }) {
   const cfg = loadConfig(root, { requireConfirmed: false });
   for (const s of flags.set) setPath(cfg, s);
   if (!['owner', 'coordinator'].includes(cfg.limits.atRoundLimit)) throw new OrchError('limits.atRoundLimit must be "owner" or "coordinator"');
+  if (!['always', 'if-changed'].includes(cfg.merge.recheck)) throw new OrchError('merge.recheck must be "always" or "if-changed"');
+  for (const h of cfg.harnesses ?? []) if (h.kind !== undefined && !['check', 'suite'].includes(h.kind)) throw new OrchError(`harness ${h.name}: kind must be "check" or "suite"`);
   validatePolicy(cfg.artifacts); // reject invalid assignments before they can poison the saved config
   // Merge policy: only on the owner's word. It does not unconfirm the rest of the config.
   if (typeof flags['standing-approval'] === 'string') {
@@ -426,6 +431,7 @@ function testsBrief(cfg, task) {
   const lines = hs.length
     ? hs.map(h => {
       const specs = focusedSpecs(task);
+      if (isCheck(h)) return `- Check ${h.name}: the gate runs \`${h.command}\` when you change ${(h.paths ?? ['**']).join(', ')}; run it yourself before you report only if you changed those files.`;
       const atGate = h.fast
         ? `the gate runs your spec files plus the critical ones (${(h.fast.critical ?? []).join(', ') || 'none'}), and the whole suite only for a closure card or when you change ${(cfg.risk?.paths ?? []).join(', ') || 'risky paths'}`
         : `the gate runs the whole suite (\`${h.command}\`)`;
@@ -434,6 +440,7 @@ function testsBrief(cfg, task) {
         + `${specs.length ? ' (the spec files you own)' : ''}, and quote the result.`;
     })
     : ['- No end-to-end harness covers these files.'];
+  if (hs.length && hs.every(isCheck)) lines.push('- No end-to-end harness covers these files.');
   const rules = cardRules(task, cfg);
   if (rules) lines.push(rules);
   if (task.noTests) lines.push(`- The owner says this task needs no new test: ${task.noTests}`);
@@ -443,16 +450,27 @@ function testsBrief(cfg, task) {
   return lines.join('\n');
 }
 
-/** The cards merged into the base branch since the last whole-suite pass, to find which one broke it. */
-function mergedSinceGreen(root, cfg) {
-  const green = readJson(path.join(orchDir(root), 'runs', '_suite.json'), null);
+// A harness's last whole run that passed: runs/_suite-<name>.json, and for a suite (not kind "check") also the older
+// runs/_suite.json that earlier releases read.
+const suiteMarker = (root, h) => path.join(orchDir(root), 'runs', `_suite-${String(h.name).replace(/[^A-Za-z0-9._-]/g, '_')}.json`);
+const isCheck = h => h?.kind === 'check';
+
+/** The cards merged into the base branch since the last whole-suite pass of a harness, to find which one broke it. */
+// What decides a verdict besides the tree: the checks and harness definitions. A merge may skip its checks on an
+// identical tree only while this is unchanged since the gate.
+function checksHash(cfg, task) {
+  return createHash('sha256').update(JSON.stringify({ checks: checksFor(cfg, task), harnesses: cfg.harnesses })).digest('hex').slice(0, 16);
+}
+
+function mergedSinceGreen(root, cfg, h) {
+  const green = readJson(suiteMarker(root, h), null) ?? (isCheck(h) ? null : readJson(path.join(orchDir(root), 'runs', '_suite.json'), null));
   if (!green?.base) return 'no whole-suite pass recorded yet: compare with the cards merged today';
   const r = git(['log', '--merges', '--format=%s', `${green.base}..${cfg.baseBranch}`], root, { allowFail: true });
   // The green run was on that card's own tree: only the cards merged after it can have broken the suite.
   const cards = r.code === 0
     ? r.out.split('\n').map(s => s.match(/^Merge orch\/([^:\s]+)/)?.[1]).filter(c => c && c !== green.card)
     : [];
-  return `last whole-suite pass: ${green.card} (${green.at}); cards merged into ${cfg.baseBranch} since: ${cards.length ? cards.reverse().join(', ') : 'none'}`;
+  return `last whole-suite pass${isCheck(h) ? ` of ${h.name}` : ''}: ${green.card} (${green.at}); cards merged into ${cfg.baseBranch} since: ${cards.length ? cards.reverse().join(', ') : 'none'}`;
 }
 
 /** The e2e spec files a task owns (literal spec/test paths, or globs naming them), to keep workers and checkers on them. */
@@ -520,6 +538,7 @@ async function cmdGate(root, { pos }) {
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (['merged', 'parked'].includes(st.phase)) throw new OrchError(`${st.id} is ${st.phase}`);
+  process.env.ORCH_RUN = `${st.id} r${st.round}`; // the commands' artifact scopes belong to this run (their cleanup)
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
   const dir = runDir(root, st.id);
@@ -561,7 +580,7 @@ async function cmdGate(root, { pos }) {
     writeAtomic(path.join(dir, 'logs', `gate-r${st.round}-check-${i + 1}.log`), `$ ${cmd}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
     if (r.infra) { infra ??= r.infra; lines.push(`INFRA check ${i + 1}: ${cmd} -> ${r.infra}`); }
     else if (r.code === 0) { checksPassed++; pass(`check ${i + 1}: ${cmd} (${minutes(r.ms)})`); }
-    else bad(`check ${i + 1}: ${cmd} -> exit ${r.code}${r.timedOut ? ' (timeout)' : ''}: ${lastLines(r.out, 3).replace(/\s*\n\s*/g, ' | ').slice(0, 300)}`);
+    else bad(`check ${i + 1}: ${cmd} -> exit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}: ${lastLines(r.out, 3).replace(/\s*\n\s*/g, ' | ').slice(0, 300)}`);
   });
   const rule = testRule(cfg, task, files);
   if (rule.level === 'pass') pass(rule.text); else if (rule.level === 'warn') warn(rule.text); else if (rule.level === 'fail') bad(rule.text);
@@ -571,6 +590,11 @@ async function cmdGate(root, { pos }) {
   const risky = riskyFiles(cfg, files);
   const harnesses = closure ? cfg.harnesses.filter(h => (h.when ?? 'gate') === 'gate') : harnessesFor(cfg, task, files, 'gate');
   const worktreeFiles = harnesses.some(h => h.fast) ? git(['ls-files', '-co', '--exclude-standard'], wt).split('\n').filter(Boolean) : [];
+  // A harness the change does not reach is skipped, and said so (never silent). It is not in harnessRuns: an earlier
+  // release's merge would read any entry there as a whole run.
+  for (const h of cfg.harnesses.filter(h => (h.when ?? 'gate') === 'gate' && !harnesses.includes(h))) {
+    lines.push(`SKIP  harness ${h.name}: no changed file under its paths (${(h.paths ?? ['**']).slice(0, 4).join(', ')}${(h.paths ?? []).length > 4 ? ' …' : ''})`);
+  }
   const harnessRuns = [];
   let harnessPassed = 0;
   // Fail fast: when the scope, a check or the test rule already fails the gate, a harness run (minutes for a whole
@@ -579,11 +603,13 @@ async function cmdGate(root, { pos }) {
   for (const h of harnesses) {
     if (failedBefore || infra) { lines.push(`SKIP  harness ${h.name}: not run, the gate already fails above (it runs once the rest passes)`); continue; }
     const plan = harnessPlan(h, { closure, risky, specs: cardSpecFiles(h, task, files, worktreeFiles) });
-    harnessRuns.push({ name: h.name, mode: plan.mode, specs: plan.specs });
+    const run = { name: h.name, mode: plan.mode, specs: plan.specs };
+    harnessRuns.push(run);
     if (plan.mode === 'skip') { harnessPassed++; pass(`harness ${h.name}: fast gate, nothing to run (${plan.reason})`); continue; }
     const command = plan.mode === 'full' ? h.command : `${h.command} ${plan.specs.map(shq).join(' ')}`;
     const log = path.join(dir, 'logs', `gate-r${st.round}-harness-${h.name}.log`);
     let r = runHarness(root, { ...h, command }, wt);
+    run.ms = r.ms;
     writeAtomic(log, `$ ${command}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
     let flaky = [];
     if (r.infra) { infra ??= r.infra; lines.push(`INFRA harness ${h.name} (${plan.mode}): ${command} -> ${r.infra}`); continue; }
@@ -603,10 +629,14 @@ async function cmdGate(root, { pos }) {
       harnessPassed++;
       pass(`${label}: ${command} (${minutes(r.ms)})`);
       if (flaky.length) warn(`flaky: ${flaky.join(', ')} failed in the full run and passed on a rerun`);
-      if (plan.mode === 'full') writeJson(path.join(orchDir(root), 'runs', '_suite.json'), { base: st.base, card: st.id, harness: h.name, at: now() });
+      if (plan.mode === 'full') {
+        const green = { base: st.base, card: st.id, harness: h.name, at: now() };
+        writeJson(suiteMarker(root, h), green);
+        if (!isCheck(h)) writeJson(path.join(orchDir(root), 'runs', '_suite.json'), green);
+      }
     } else {
-      bad(`${label}: ${command} -> exit ${r.code}${r.timedOut ? ' (timeout)' : ''}: ${lastLines(r.out, 4).replace(/\s*\n\s*/g, ' | ').slice(0, 400)}`);
-      if (plan.mode === 'full') lines.push(`INFO  ${mergedSinceGreen(root, cfg)}`);
+      bad(`${label}: ${command} -> exit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}: ${lastLines(r.out, 4).replace(/\s*\n\s*/g, ' | ').slice(0, 400)}`);
+      if (plan.mode === 'full') lines.push(`INFO  ${mergedSinceGreen(root, cfg, h)}`);
     }
   }
   const later = harnessesFor(cfg, task, files, 'merge');
@@ -628,6 +658,7 @@ async function cmdGate(root, { pos }) {
   st.gate = {
     pass: !fail, tree, files: files.length, added, removed, checksRun: checks.length, checksPassed,
     harnessesRun: harnesses.length, harnessesPassed: harnessPassed, harnessRuns, tests: rule.level, round: st.round, at: now(),
+    cfgHash: checksHash(cfg, task),
   };
   const text = [`gate ${st.id} round ${st.round}: ${files.length} file(s), +${added} -${removed}`, ...lines, '', `GATE: ${fail ? 'FAIL' : 'PASS'}`].join('\n');
   writeAtomic(path.join(dir, `gate-r${st.round}.txt`), `${text}\n`);
@@ -671,11 +702,12 @@ function checkerHarnesses(cfg, task, st) {
       ...(st.gate?.harnessRuns ?? hs.map(h => ({ name: h.name, mode: 'full', specs: [] }))).map((x) => {
         const h = cfg.harnesses.find(y => y.name === x.name);
         const cmd = h ? h.command : x.name;
-        return x.mode === 'full' ? `\`${cmd}\` (whole suite)` : x.mode === 'fast' ? `\`${cmd} ${x.specs.join(' ')}\` (fast gate)` : `${x.name}: nothing to run`;
+        return x.mode === 'full' ? `\`${cmd}\` (${isCheck(h) ? 'scoped check' : 'whole suite'})` : x.mode === 'fast' ? `\`${cmd} ${x.specs.join(' ')}\` (fast gate)` : `${x.name}: nothing to run`;
       }),
     ].join(', ')}.`,
+    ...(() => { const skipped = (cfg.harnesses ?? []).filter(h => (h.when ?? 'gate') === 'gate' && st.gate?.harnessRuns && !st.gate.harnessRuns.some(x => x.name === h.name)); return skipped.length ? [`Not run at the gate (the change does not reach their paths): ${skipped.map(h => h.name).join(', ')}.`] : []; })(),
     'Do not run the whole e2e suite again, even if the project notes ask for the E2E harness. Run the checks that are fast, and the harness only on the specs that cover',
-    `the change${hs.length ? `, e.g. \`${hs[0].command} ${specs.length ? specs.join(' ') : '<spec files>'}\`` : ''} (in \`${st.worktree}\`).`,
+    `the change${(() => { const e2e = hs.find(h => !isCheck(h)); return e2e ? `, e.g. \`${e2e.command} ${specs.length ? specs.join(' ') : '<spec files>'}\`` : ''; })()} (in \`${st.worktree}\`).`,
     'Then test what they do not cover: for a page or flow the task changes, run the harness on the spec for that page',
     '(or write a throwaway one outside the repository) and quote it. If the change alters behaviour, check that a test',
     'covers it and that the test fails without the change (for example by running it on the base commit).',
@@ -712,6 +744,7 @@ async function cmdFix(root, { pos }) {
   st.prompt = file; st.phase = 'working';
   event(st, 'fix', { round: st.round });
   saveState(root, st);
+  cleanRun(root, cfg, st.id); // the rounds before the last two
   tracker.setStatus(st.id, cfg.tracker.status.inProgress);
   tracker.comment(st.id, `correction round ${st.round}/${cfg.limits.correctionRounds}`);
   out(`round ${st.round}/${cfg.limits.correctionRounds}: ${file}`, `next: ${nextAction(st, cfg)}`);
@@ -731,6 +764,7 @@ async function cmdFinish(root, { pos, flags }) {
   const who = given ?? (standingApproval(cfg) ? `standing approval of ${cfg.merge.standing.by} (${cfg.merge.standing.at})` : null);
   if (!who) throw new OrchError('finish merges: it needs --approved-by <the owner who said ok> (no standing approval in the config)');
   const st = activeState(root, id);
+  process.env.ORCH_RUN = `${st.id} r${st.round}`; // the merge checks' artifact scopes belong to this run
   // A finish that stopped after the merge commit (killed, timed out, tracker down) resumes at the step it missed.
   if (st.phase === 'merged') {
     if (!st.finishPending?.length) throw new OrchError(`${st.id} is already merged`);
@@ -748,14 +782,19 @@ async function cmdFinish(root, { pos, flags }) {
   if (git(['diff', '--cached', '--quiet'], root, { allowFail: true }).code !== 0) throw new OrchError('the main checkout has staged changes: they would end up in the merge commit. Look at git status; if they are left over from an interrupted merge (not someone\'s work), git reset --merge clears them');
   const tracker = await trackerFor(root, cfg);
 
-  // The worker's result becomes one commit on the task branch.
-  if (git(['diff', '--cached', '--quiet', 'HEAD'], st.worktree, { allowFail: true }).code !== 0) {
-    git(['commit', '-q', '-m', `${st.id}: ${st.title}`], st.worktree);
+  // The worker's result becomes one commit on the task branch, made from the gated tree itself: a commit hook in the
+  // worktree cannot change or block what was checked. Reused when HEAD already has that tree (a rerun).
+  const wtHead = git(['rev-parse', 'HEAD'], st.worktree);
+  if (git(['rev-parse', `${wtHead}^{tree}`], st.worktree) !== st.gate.tree) {
+    // Signed like a plain commit would be when the user signs commits (commit-tree does not read commit.gpgsign).
+    const sign = git(['config', '--bool', 'commit.gpgsign'], st.worktree, { allowFail: true }).out === 'true' ? ['-S'] : [];
+    const sha = git(['commit-tree', ...sign, st.gate.tree, '-p', wtHead, '-m', `${st.id}: ${st.title}`], st.worktree);
+    git(['reset', '-q', '--soft', sha], st.worktree);
   }
   const m = git(['merge', '--no-ff', '--no-commit', st.branch], root, { allowFail: true });
   if (m.code !== 0) {
-    git(['merge', '--abort'], root, { allowFail: true });
-    throw new OrchError(`merge of ${st.branch} into ${st.baseBranch} does not apply cleanly: ${(m.err || m.out).split('\n')[0]}. Nothing was merged`);
+    const stuck = abortMerge(root);
+    throw new OrchError(`merge of ${st.branch} into ${st.baseBranch} does not apply cleanly: ${(m.err || m.out).split('\n')[0]}. Nothing was merged.${stuck}`);
   }
   // The checks again, on the merged result, before the merge commit exists. Harnesses: the "merge" ones, and the
   // "gate" ones too when the base branch moved since the start (the merged tree is then not the gated tree).
@@ -765,24 +804,34 @@ async function cmdFinish(root, { pos, flags }) {
   const head = git(['rev-parse', 'HEAD'], root);
   const inert = head !== st.base && baseChangeInert(root, cfg, st.base, head);
   const moved = head !== st.base && !inert;
-  if (inert) recovered.notes.push(`${st.baseBranch} moved only in ${inert}: the gate's harnesses were not repeated (project checks ran)`);
-  const runs = mergeRuns(root, cfg, st, task, changed, moved, root);
+  const same = identicalToGate(root, cfg, st, task, root);
+  if (same.same) recovered.notes.push(`the merged tree is the gated one${same.files.length ? ` (plus ${same.files.length} inert file(s))` : ''}: checks and gate harnesses not repeated (merge.recheck if-changed)`);
+  else if (inert) recovered.notes.push(`${st.baseBranch} moved only in ${inert}: the gate's harnesses were not repeated (project checks ran)`);
+  const runs = mergeRuns(root, cfg, st, task, changed, moved, root, { lean: same.same });
   for (const x of runs) {
     const r = x.run();
-    writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''}\n\n${r.out}`);
+    writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
     if (r.code !== 0) {
-      git(['merge', '--abort'], root, { allowFail: true });
+      const stuck = abortMerge(root);
       event(st, 'merge-check', { pass: false, what: x.label }); saveState(root, st);
-      if (r.infra) throw new OrchError(`${x.label} was stopped by the machine on the merged result (${r.infra}). Merge aborted, nothing changed on ${st.baseBranch}: run orch finish ${st.id} again`, 3);
-      throw new OrchError(`${x.label} fails on the merged result (exit ${r.code}): ${lastLines(r.out, 2).replace(/\n/g, ' | ')}. Merge aborted, nothing changed on ${st.baseBranch}`, 2);
+      if (r.infra) throw new OrchError(`${x.label} was stopped by the machine on the merged result (${r.infra}). ${stuck || ` Merge aborted, nothing changed on ${st.baseBranch}: run orch finish ${st.id} again.`}`, 3);
+      throw new OrchError(`${x.label} fails on the merged result (exit ${r.code}): ${lastLines(r.out, 2).replace(/\n/g, ' | ')}.${stuck || ` Merge aborted, nothing changed on ${st.baseBranch}.`}`, 2);
     }
   }
+  // On record before the commit: what was merged and whether its checks were skipped, so a recovery can tell a merge
+  // a commit hook changed.
+  st.mergeIntent = { tree: same.tree, skipped: same.same }; saveState(root, st);
   const c = git(['commit', '-q', '-m', `Merge ${st.branch}: ${st.id} ${st.title}`, '-m', `Approved by ${who}.${override ? ` Accepted without a checker PASS: ${override}` : ''}`], root, { allowFail: true });
   if (c.code !== 0) {
-    git(['merge', '--abort'], root, { allowFail: true });
-    throw new OrchError(`the merge commit was refused (a git hook?): ${(c.err || c.out).split('\n')[0]}. Merge aborted, nothing changed on ${st.baseBranch}`, 2);
+    const stuck = abortMerge(root);
+    throw new OrchError(`the merge commit was refused (a git hook?): ${(c.err || c.out).split('\n')[0]}.${stuck || ` Merge aborted, nothing changed on ${st.baseBranch}.`}`, 2);
   }
   const merged = git(['rev-parse', 'HEAD'], root);
+  // A commit hook changed the merged files: what is on the base is not what was checked. Recorded, never rewritten.
+  if (git(['rev-parse', `${merged}^{tree}`], root) !== same.tree) {
+    st.untestedMerge = true;
+    recovered.notes.push(`a commit hook changed the merge ${merged.slice(0, 9)}: the merged files are not the checked ones; run the checks on ${st.baseBranch}, then orch resolve ${st.id} --checked "<what passed>"`);
+  }
   st.phase = 'merged'; st.merge = merged; st.approvedBy = who; st.override = override ?? undefined;
   st.finishPending = ['tracker', 'cleanup'];
   event(st, 'merge', { sha: merged.slice(0, 9), checksMs: Date.now() - t0 });
@@ -878,7 +927,8 @@ async function finishPr(root, cfg, st, who, override) {
   // A base merge an interruption left behind: in progress (abort it) or committed (adopt it, push it if needed).
   const mergeHead = path.join(git(['rev-parse', '--path-format=absolute', '--git-dir'], wt), 'MERGE_HEAD');
   if (fs.existsSync(mergeHead)) {
-    git(['merge', '--abort'], wt, { allowFail: true });
+    const stuck = abortMerge(wt);
+    if (stuck) throw new OrchError(`an interrupted finish left a base merge in progress in ${wt}.${stuck}`);
     notes.push('aborted a base merge left in progress by an interrupted finish');
   }
   if (st.baseMerge) {
@@ -899,6 +949,7 @@ async function finishPr(root, cfg, st, who, override) {
   if (there !== st.sha) throw new OrchError(`the remote branch ${st.branch} is at ${there?.slice(0, 9) ?? '(missing)'}, not the checked ${st.sha.slice(0, 9)}: someone else pushed. Nothing was merged`);
 
   const task = tracker.get(st.id);
+  let checkedMerged = false; // the "merge" harnesses ran on a base-merged tree in the loop below
   for (let i = 0; ; i++) {
     const baseNow = fetchBase(root, remote, st.baseBranch);
     if (git(['merge-base', '--is-ancestor', baseNow, st.sha], root, { allowFail: true }).code === 0) break;
@@ -906,21 +957,24 @@ async function finishPr(root, cfg, st, who, override) {
     st.baseMerge = { base: baseNow }; saveState(root, st); // intent on record
     const m = git(['merge', '--no-ff', '--no-commit', baseNow], wt, { allowFail: true });
     if (m.code !== 0) {
-      git(['merge', '--abort'], wt, { allowFail: true });
+      const stuck = abortMerge(wt);
       delete st.baseMerge; saveState(root, st);
-      throw new OrchError(`${st.baseBranch} moved and does not merge cleanly into ${st.branch}: ${(m.err || m.out).split('\n')[0]}. Nothing was merged: park the task, or start a small card that resolves it`, 2);
+      throw new OrchError(`${st.baseBranch} moved and does not merge cleanly into ${st.branch}: ${(m.err || m.out).split('\n')[0]}. Nothing was merged: park the task, or start a small card that resolves it.${stuck}`, 2);
     }
     const changed = git(['diff', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\n').filter(Boolean);
     const inert = baseChangeInert(root, cfg, st.base, baseNow);
-    if (inert) notes.push(`${st.baseBranch} moved only in ${inert}: the gate's harnesses were not repeated (project checks ran)`);
-    for (const x of mergeRuns(root, cfg, st, task, changed, !inert, wt)) {
+    const same = identicalToGate(root, cfg, st, task, wt);
+    if (same.same) notes.push(`${st.baseBranch} moved only in inert files: checks and gate harnesses not repeated (merge.recheck if-changed)`);
+    else if (inert) notes.push(`${st.baseBranch} moved only in ${inert}: the gate's harnesses were not repeated (project checks ran)`);
+    checkedMerged = true;
+    for (const x of mergeRuns(root, cfg, st, task, changed, !inert, wt, { lean: same.same })) {
       const r = x.run();
-      writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''}\n\n${r.out}`);
+      writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
       if (r.code !== 0) {
-        git(['merge', '--abort'], wt, { allowFail: true });
+        const stuck = abortMerge(wt);
         delete st.baseMerge; event(st, 'merge-check', { pass: false, what: x.label }); saveState(root, st);
-        if (r.infra) throw new OrchError(`${x.label} was stopped by the machine on the merged result (${r.infra}). Nothing was merged: run orch finish ${st.id} again`, 3);
-        throw new OrchError(`${x.label} fails with ${st.baseBranch} merged in (exit ${r.code}): ${lastLines(r.out, 2).replace(/\n/g, ' | ')}. Nothing was merged`, 2);
+        if (r.infra) throw new OrchError(`${x.label} was stopped by the machine on the merged result (${r.infra}). Nothing was merged: run orch finish ${st.id} again.${stuck}`, 3);
+        throw new OrchError(`${x.label} fails with ${st.baseBranch} merged in (exit ${r.code}): ${lastLines(r.out, 2).replace(/\n/g, ' | ')}. Nothing was merged.${stuck}`, 2);
       }
     }
     git(['commit', '-q', '--no-verify', '-m', `Merge ${st.baseBranch} into ${st.branch}`], wt);
@@ -930,7 +984,23 @@ async function finishPr(root, cfg, st, who, override) {
     Object.assign(st, { sha, mergedTree: git(['rev-parse', 'HEAD^{tree}'], wt), base: baseNow });
     delete st.baseMerge;
     event(st, 'base-merged', { sha: sha.slice(0, 9) }); saveState(root, st);
-    postStatus(root, sha, 'orch/gate', 'success', `checks passed with ${st.baseBranch} merged in`);
+    postStatus(root, sha, 'orch/gate', 'success', same.same ? `${st.baseBranch} merged in (inert files only): identical checked tree` : `checks passed with ${st.baseBranch} merged in`);
+  }
+  // "merge" harnesses run on what GitHub will merge even when the base did not move (the branch already contains it).
+  if (!checkedMerged) {
+    const changed = git(['diff', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\n').filter(Boolean);
+    for (const x of mergeRuns(root, cfg, st, task, changed, false, wt, { lean: true })) {
+      const r = x.run();
+      writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
+      if (r.code !== 0) {
+        event(st, 'merge-check', { pass: false, what: x.label }); saveState(root, st);
+        if (r.infra) throw new OrchError(`${x.label} was stopped by the machine (${r.infra}). Nothing was merged: run orch finish ${st.id} again`, 3);
+        throw new OrchError(`${x.label} fails on the branch to merge (exit ${r.code}): ${lastLines(r.out, 2).replace(/\n/g, ' | ')}. Nothing was merged`, 2);
+      }
+    }
+    if (git(['status', '--porcelain', '--untracked-files=all'], wt).trim()) {
+      throw new OrchError(`a "merge" harness left files in ${wt} (a report folder not ignored?): nothing was merged. Make the harness write outside the checkout or ignore its output, clean the worktree, then orch finish ${st.id} again`, 2);
+    }
   }
 
   st.approvedBy = who; st.override = override ?? undefined;
@@ -999,7 +1069,28 @@ function baseChangeInert(root, cfg, from, to) {
 // The checks on a merged tree in `cwd`, before its merge commit exists. Harnesses: the "merge" ones, and the "gate" ones
 // too when the base branch moved since the start (the merged tree is then not the gated tree), in the mode the gate
 // used (its fast specs, or the whole suite).
-function mergeRuns(root, cfg, st, task, changed, moved, cwd) {
+// git merge --abort, saying so when it could not abort (a lock file, a file locally modified on top of the merge):
+// never claim an abort that did not happen.
+function abortMerge(cwd) {
+  // A merge git refused before starting (an untracked file in the way) left nothing to abort.
+  if (!fs.existsSync(path.join(git(['rev-parse', '--path-format=absolute', '--git-dir'], cwd), 'MERGE_HEAD'))) return '';
+  const r = git(['merge', '--abort'], cwd, { allowFail: true });
+  return r.code === 0 ? '' : ` The merge could NOT be aborted (${(r.err || r.out).split('\n')[0]}): look at git status in ${cwd} before anything else.`;
+}
+
+// merge.recheck "if-changed": the merged index differs from the gated tree only in inert paths (tracker, .orchestrate
+// except its config, merge.inertPaths) and the checks and harnesses are those of the gate. The same bytes give the
+// same verdict, so the checks and the gate harnesses are not repeated; "merge" harnesses always run.
+function identicalToGate(root, cfg, st, task, cwd) {
+  if (cfg.merge.recheck !== 'if-changed' || !st.gate?.tree || !st.gate.cfgHash || st.gate.cfgHash !== checksHash(cfg, task)) return { same: false, tree: git(['write-tree'], cwd) };
+  const tree = git(['write-tree'], cwd);
+  const files = git(['diff', '--no-renames', '--name-only', st.gate.tree, tree], cwd).split('\n').filter(Boolean);
+  const inertGlobs = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**', ...(cfg.merge.inertPaths ?? [])];
+  return { same: files.every(f => matchesAny(inertGlobs, f) && f !== '.orchestrate/config.json'), tree, files };
+}
+
+function mergeRuns(root, cfg, st, task, changed, moved, cwd, { lean = false } = {}) {
+  if (lean) return harnessesFor(cfg, task, changed, 'merge').map(h => ({ label: `harness ${h.name}`, log: `merge-harness-${h.name}.log`, run: () => runHarness(root, h, cwd) }));
   return [
     ...checksFor(cfg, task).map((cmd, i) => ({ label: `check "${cmd}"`, log: `merge-check-${i + 1}.log`, run: () => sh(cmd, { cwd, timeoutSec: cfg.limits.checkTimeoutSec }) })),
     ...harnessesFor(cfg, task, changed, 'merge')
@@ -1041,6 +1132,8 @@ function completeFinish(root, cfg, st, tracker, notes) {
       const here = git(['branch', '--show-current'], root);
       if (here === st.baseBranch && git(['merge', '-q', '--ff-only', `${remote}/${st.baseBranch}`], root, { allowFail: true }).code !== 0) warnings.push(`local ${st.baseBranch} not fast-forwarded to ${remote}/${st.baseBranch}: update it by hand`);
     }
+    const swept = cleanRun(root, cfg, st.id, { merged: true });
+    if (swept.deleted) warnings.push(`artifacts: ${swept.deleted} scope(s) of ${st.id} deleted, ${gb(swept.freed)} freed`);
     pending.delete('cleanup');
     st.finishPending = [...pending]; st.metrics = metrics(st); saveState(root, st);
   }
@@ -1082,7 +1175,8 @@ function recoverInterruptedMerge(root, st) {
   if (!head) return { merged: false, notes };
   const mergeHead = path.join(git(['rev-parse', '--path-format=absolute', '--git-dir'], root), 'MERGE_HEAD');
   if (fs.existsSync(mergeHead) && fs.readFileSync(mergeHead, 'utf8').trim() === head) {
-    git(['merge', '--abort'], root, { allowFail: true });
+    const stuck = abortMerge(root);
+    if (stuck) throw new OrchError(`an interrupted finish left a merge of ${st.branch} in progress.${stuck}`);
     event(st, 'merge-recovered', { what: 'aborted an interrupted merge' }); saveState(root, st);
     notes.push('aborted a merge left in progress by an interrupted finish');
     return { merged: false, notes };
@@ -1093,6 +1187,11 @@ function recoverInterruptedMerge(root, st) {
     st.phase = 'merged'; st.merge = commit;
     st.approvedBy = (msg.match(/Approved by (.+?)\.(?:\s|$)/) ?? [])[1] ?? 'unknown (recovered)';
     st.finishPending = ['tracker', 'cleanup'];
+    // Killed between the merge commit and its tree check: compare with what was recorded before the commit.
+    if (st.mergeIntent?.tree && git(['rev-parse', `${commit}^{tree}`], root) !== st.mergeIntent.tree) {
+      st.untestedMerge = true;
+      notes.push(`a commit hook changed the merge ${commit.slice(0, 9)}: the merged files are not the checked ones; run the checks on ${st.baseBranch}, then orch resolve ${st.id} --checked "<what passed>"`);
+    }
     event(st, 'merge', { sha: commit.slice(0, 9), recovered: true }); saveState(root, st);
     notes.push(`the merge ${commit.slice(0, 9)} was already on ${st.baseBranch} (an interrupted finish): recorded it`);
     return { merged: true, notes };
@@ -1431,6 +1530,14 @@ async function cmdKeeper(root, { flags }) {
   const before = readCampaign(root);
   const d = await keeperDecision(root, cfg, before);
   if (!before?.active) return print(d);
+  // The owner is told once when free disk falls below twice the reserve the checks need.
+  if (cfg.artifacts.enabled && cfg.artifacts.minFreeBytes > 0) {
+    try {
+      const s = fs.statfsSync(path.dirname(artifactsDir(root)));
+      const free = s.bavail * s.bsize;
+      if (free < 2 * cfg.artifacts.minFreeBytes) (d.escalations ??= []).push({ key: 'disk:low', reason: `only ${gb(free)} free on the disk of the checks (reserve ${gb(cfg.artifacts.minFreeBytes)}); orch artifacts shows what can be removed` });
+    } catch { /* no statfs */ }
+  }
   const r = withCampaignLock(root, () => {
     const campaign = readCampaign(root);
     if (!campaign?.active || campaign.startedAt !== before.startedAt) return { action: 'off', reason: 'the campaign was stopped or restarted during this check' };
@@ -1462,6 +1569,9 @@ async function cmdKeeper(root, { flags }) {
     return result;
   });
   print(r.locked ? { action: 'wait', reason: 'the campaign is being changed by another orch command' } : r.value);
+  // Housekeeping after the decision is out: the scopes merged runs, earlier rounds and expired parked or set-aside runs
+  // left, at most 100 per tick (the first tick after an update may find many).
+  try { applyGc(gcPlan(root, cfg), { max: 100 }); } catch { /* never in the way of the decision */ }
 }
 
 // `orch card`, plus what a split means for a card that already has a run (for example one at its round limit, where
@@ -1540,10 +1650,77 @@ function setAside(root, cfg, tracker, st) {
     `${st.id} is back in ${cfg.tracker.status.todo} and starts again only when its split cards are done`);
 }
 
+// ---------------------------------------------------------------------------------------------------- artifacts cleanup
+
+// What the cleanup knows about each run: its phase and round, when its previous round started (that round and the
+// current one keep their scopes), when it was parked; and the runs a split set aside (archive/<id>-before-split-*).
+function gcRuns(root) {
+  const runs = {}; const archived = {};
+  const runsDir = path.join(orchDir(root), 'runs');
+  for (const d of fs.existsSync(runsDir) ? fs.readdirSync(runsDir) : []) {
+    const st = readJson(path.join(runsDir, d, 'state.json'), null);
+    if (!st?.id) continue;
+    const starts = st.events.filter(e => ['start', 'fix'].includes(e.kind)).map(e => Date.parse(e.t) || 0);
+    // Parked without a park event (an unsafe merge parks itself): the time of its last event, never "long ago".
+    const parked = [...st.events].reverse().find(e => e.kind === 'park') ?? st.events.at(-1);
+    runs[st.id.toUpperCase()] = {
+      phase: st.phase, round: st.round, finishPending: st.finishPending, startedAt: starts[0] ?? 0,
+      keepFrom: starts.at(-2) ?? starts.at(-1) ?? 0, parkedAt: Date.parse(parked?.t ?? '') || Date.now(),
+      hold: unresolvedUnsafe(st) || unresolvedUntested(st),
+    };
+  }
+  const archive = path.join(orchDir(root), 'archive');
+  for (const d of fs.existsSync(archive) ? fs.readdirSync(archive) : []) {
+    const id = d.split('-before-split-')[0].toUpperCase();
+    const at = Date.parse(readJson(path.join(archive, d, 'state.json'), null)?.setAside?.at ?? '') || fs.statSync(path.join(archive, d)).mtimeMs;
+    archived[id] = Math.max(archived[id] ?? 0, at);
+  }
+  return { runs, archived };
+}
+
+function gcPlan(root, cfg, { merged = null, only = null } = {}) {
+  const dir = artifactsDir(root);
+  if (!fs.existsSync(dir)) return [];
+  const { runs, archived } = gcRuns(root);
+  if (merged) runs[merged.toUpperCase()] = { ...runs[merged.toUpperCase()], phase: 'merged', finishPending: [], hold: false }; // its finish is cleaning up now
+  return planGc({ artifactsDir: fs.realpathSync(dir), worktreeRoot: path.resolve(root, cfg.worktreeRoot), runs, archived, keepDays: cfg.artifacts.keepDays ?? 14, only: only?.toUpperCase() ?? null });
+}
+
+// The cleanup of one run's scopes (a merge, a new round); never fails the command that calls it.
+function cleanRun(root, cfg, id, { merged = false } = {}) {
+  try { return applyGc(gcPlan(root, cfg, { merged: merged ? id : null, only: id })); } catch { return { deleted: 0, freed: 0 }; }
+}
+
+const gb = n => `${(n / 1e9).toFixed(1)} GB`;
+
+// `orch artifacts`: what the command scopes hold and what the cleanup would do. `orch artifacts gc`: delete what belongs to
+// merged runs, earlier rounds and expired parked runs. `--unowned` also deletes the scopes no run owns (older releases,
+// the main checkout): only on the owner's explicit request.
+async function cmdArtifacts(root, { pos, flags }) {
+  const cfg = loadConfig(root, { requireConfirmed: false });
+  const plan = gcPlan(root, cfg);
+  if (pos[0] === 'gc') {
+    const r = applyGc(plan, { unowned: flags.unowned === true });
+    out(`deleted ${r.deleted} scope(s), ${gb(r.freed)} freed${flags.unowned ? ' (unowned included, on the owner\'s request)' : ''}`);
+    return;
+  }
+  if (pos[0]) throw new OrchError('orch artifacts [gc [--unowned]]');
+  const groups = {};
+  for (const x of plan) {
+    const k = x.action === 'unowned' ? 'unowned' : x.action === 'delete' ? 'deletable' : 'kept';
+    (groups[k] ??= { n: 0, bytes: 0 }).n++;
+    groups[k].bytes += scopeBytes(x.scope);
+  }
+  out(`artifacts in ${artifactsDir(root)}: ${plan.length} scope(s)`,
+    ...['deletable', 'kept', 'unowned'].filter(k => groups[k]).map(k => `  ${k.padEnd(9)} ${String(groups[k].n).padStart(5)}  ${gb(groups[k].bytes)}`),
+    groups.deletable ? 'next: orch artifacts gc (the keeper also runs it)' : null,
+    groups.unowned ? 'unowned scopes are deleted only on the owner\'s request: orch artifacts gc --unowned' : null);
+}
+
 function need(v, what) { if (!v) throw new OrchError(`missing ${what}`); return v; }
 
 const COMMANDS = { init: cmdInit, config: cmdConfig, next: cmdNext, start: cmdStart, record: cmdRecord, gate: cmdGate, push: cmdPush, resolve: cmdResolve, campaign: cmdCampaign, keeper: cmdKeeper, fix: cmdFix, finish: cmdFinish, park: cmdPark, status: cmdStatus, prompt: cmdPrompt, harness: cmdHarness,
-  card: cmdCardWithRuns,
+  card: cmdCardWithRuns, artifacts: cmdArtifacts,
 };
 
 export async function runCli() {

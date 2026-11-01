@@ -81,7 +81,14 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   ssh-agent and known_hosts work, passphrase and unknown-host prompts are refused.
 - Both modes: when the base moved since the start, the merge runs the project checks again; it repeats the gate's
   harnesses only if something besides the in-repo tracker, `.orchestrate/` and `merge.inertPaths` (globs that cannot
-  change a build or a test, empty by default) moved.
+  change a build or a test, empty by default) moved. With `merge.recheck: "if-changed"` (default "always") the merge
+  does not repeat the checks and the gate's harnesses when the merged tree is the gated one apart from those inert
+  paths and the checks and harnesses are unchanged since the gate (same bytes, same verdict); `when: merge` harnesses
+  always run. A harness the card did not trigger is not run at the merge for a change that came only from the base.
+  Keep the scripts that checks and harnesses run outside `.orchestrate/` (it counts as inert); in PR mode the
+  `when: merge` harnesses now run on every finish, in the worktree, and must not leave files there.
+- The task-branch commit is made from the gated tree itself: worktree commit hooks no longer run on it. A commit hook
+  that changes the merge commit in the main checkout makes it an untested merge (the queue waits for `orch resolve`).
 
 ## Tests and harnesses
 - **Artifact lifecycle (opt-in):** `artifacts.enabled=true`, `artifacts.minFreeBytes=<bytes>` and
@@ -96,9 +103,18 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   Workers/checkers use `node <skill>/scripts/managed-check.mjs "<command>" <timeoutSeconds>` for their own checks;
   raw shell commands bypass this protection. Retention warnings require an owner decision, not infinite retries.
   No model, cron, result cache or skipped test is involved. See `ARTIFACTS.md` for limits and upgrade safety.
+  **Cleanup:** every scope records its run; `orch finish` deletes all scopes of the merged run, `orch fix` those of
+  the rounds before the last two, and the campaign keeper runs `$ORCH artifacts gc` on every tick (also parked or
+  set-aside runs after `artifacts.keepDays`, default 14). `$ORCH artifacts` lists what is kept, deletable and
+  unowned; unowned scopes (older releases) go only with `$ORCH artifacts gc --unowned`, on the owner's request.
 - **Checks** (`checks`) run at every gate. **Harnesses** run at the gate (or only at the merge, `when: merge`) when
   the change touches their `paths`, or when the task names them in `harnesses:`. One harness runs at a time, and none
-  runs when the scope, a check or the test rule already failed the gate.
+  runs when the scope, a check or the test rule already failed the gate. A gate harness the change does not reach is
+  reported as `SKIP`, never silently.
+- **A slow check belongs in `harnesses`** with `kind: "check"` and the `paths` that can change its result (keep the
+  fast ones in `checks`): it then runs only for cards that touch those paths and for closure cards. Its paths include
+  the tool's global inputs (package.json, the lockfile, the tool's config, tsconfig, `.orchestrate/config.json`). The
+  gate shows how long every check and harness took: one that takes most of the gate is the one to move.
 - **Fast gate** (a harness with `fast: { critical: [...] }`): the gate runs the card's own spec files plus the critical
   ones. The whole suite runs only for a **closure card** (a card other cards name as `parent_task_id`) and when the change
   touches `risk.paths` (database, migrations, shared code). A whole-suite failure is rerun once on the failed specs

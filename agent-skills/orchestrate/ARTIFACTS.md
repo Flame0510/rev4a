@@ -47,5 +47,20 @@ evidence can still grow and requires an explicit retention policy after project 
 5. Rollback: restore the saved skill and config; old code can read existing run state. New artifact receipts are
    independent of run state. All source/evidence remains; removed builds can be recreated from the retained source.
 
+## Automatic cleanup (2026-11-01)
+
+A receipt records its run (`ORCH_RUN`, "<id> r<round>", set by orch for gates and merges); a scope without a label is
+attributed by its working directory (the run's worktree). Only receipts written by this release (they carry the `run`
+field) are attributed: scopes of older releases have no ownership proof and are never deleted automatically, nor are
+commands left `running` or `cleaning` (they need a diagnosis); both are listed as unowned. `orch finish` deletes every scope of the merged run,
+`orch fix` the scopes of rounds before the last two (the last failed attempt stays for diagnosis), and the campaign
+keeper runs the same collection on every tick, which also deletes the scopes of parked or set-aside runs older than
+`artifacts.keepDays` (default 14). A scope is deleted only when it finished, its owner process is not alive and, on Linux, no
+process uses it (one /proc pass per collection); on other systems only the owner process is checked. A run that waits
+for the owner (an unsafe or untested merge) keeps its scopes. The keeper deletes at most 100 scopes per tick, after
+its decision is out. Scopes no run owns are listed by `orch artifacts` and deleted
+only with `orch artifacts gc --unowned`, on the owner's request. The keeper tells the owner once when free disk falls
+below twice `minFreeBytes`.
+
 Historical cleanup is a separate, exact inventory and approval. This extension safely contains future managed
 runs; it cannot automatically repair unowned legacy artifacts without proving their ownership and inactivity.

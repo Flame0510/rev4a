@@ -34,7 +34,9 @@ export const DEFAULTS = {
   delivery: { mode: 'local', remote: 'origin' },
   // inertPaths: globs whose changes cannot affect a build or a test. When the base moved only in them (plus an in-repo
   // tracker and .orchestrate/), a merge does not repeat the gate's harnesses; project checks always run.
-  merge: { approval: 'owner', standing: null, protectedBranches: ['main', 'master', 'production'], inertPaths: [] },
+  // recheck: 'always' re-runs the checks on the merged result; 'if-changed' skips them (and the gate harnesses) when the
+  // merged tree is the gated one apart from inert paths, with the same checks and harnesses as at the gate.
+  merge: { approval: 'owner', standing: null, protectedBranches: ['main', 'master', 'production'], inertPaths: [], recheck: 'always' },
   roles: { coordinator: null, worker: null, checker: null },
   env: { strip: [], keep: [] },
   artifacts: ARTIFACT_DEFAULTS,
@@ -63,6 +65,11 @@ export const orchDir = root => path.join(root, '.orchestrate');
 export const configFile = root => path.join(orchDir(root), 'config.json');
 export const runDir = (root, id) => path.join(orchDir(root), 'runs', id.toUpperCase());
 
+// Where this project's command scopes live: outside every checkout, so retained .ts snapshots never become input to the
+// project's compiler or test scan.
+export const artifactsDir = root => path.join(path.dirname(root), '.orchestrate-artifacts',
+  `${path.basename(root)}-${createHash('sha256').update(fs.realpathSync(root)).digest('hex').slice(0, 12)}`);
+
 export function loadConfig(root, { requireConfirmed = true } = {}) {
   const file = configFile(root);
   if (!fs.existsSync(file)) throw new OrchError(`no ${path.relative(root, file)}: run "orch init" first`);
@@ -72,8 +79,7 @@ export function loadConfig(root, { requireConfirmed = true } = {}) {
   setNetworkTimeout(cfg.limits.networkTimeoutSec);
   validatePolicy(cfg.artifacts);
   // Outside every checkout: retained .ts snapshots must not become input to the project's compiler or test scan.
-  const artifactId = `${path.basename(root)}-${createHash('sha256').update(fs.realpathSync(root)).digest('hex').slice(0, 12)}`;
-  setArtifactPolicy({ ...cfg.artifacts, root: path.join(path.dirname(root), '.orchestrate-artifacts', artifactId) });
+  setArtifactPolicy({ ...cfg.artifacts, root: artifactsDir(root) });
   if (requireConfirmed && !cfg.confirmed) {
     throw new OrchError('the config is not confirmed yet: show it to the owner ("orch config"), then "orch config --confirm"', 3);
   }

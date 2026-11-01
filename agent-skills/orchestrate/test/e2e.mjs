@@ -357,7 +357,7 @@ has(o, /SKIP {2}harness e2e: not run, the gate already fails above/, 'a failing 
 assert.ok(fs.existsSync(path.join(REPO, '.orchestrate/harness.lock')), 'the skipped harness did not touch the lock');
 write('src/e/e.test.mjs', "import { e } from './e.mjs'; if (e !== 'fine') process.exit(1);\n", WT9);
 o = orch(['gate', 'SB-9'], { code: 2 });
-has(o, /FAIL {2}harness e2e \(full\): node scripts\/fake-e2e\.mjs -> exit 1: .*page e is broken/, 'harness failure with its tail');
+has(o, /FAIL {2}harness e2e \(full\): node scripts\/fake-e2e\.mjs -> exit 1 in [^:]+: .*page e is broken/, 'harness failure with its tail');
 assert.ok(!fs.existsSync(path.join(REPO, '.orchestrate/harness.lock')), 'stale lock taken over and released');
 assert.ok(!/changed files in the worktree/.test(o), 'the harness report folder does not count as a change');
 has(read('.orchestrate/runs/SB-9/logs/gate-r0-harness-e2e.log'), /e2e: page e is broken/, 'harness log kept');
