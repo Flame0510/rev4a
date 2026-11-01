@@ -1678,12 +1678,13 @@ function gcRuns(root) {
   return { runs, archived };
 }
 
-function gcPlan(root, cfg, { merged = null, only = null } = {}) {
+function gcPlan(root, cfg, { merged = null, only = null, unowned = false } = {}) {
   const dir = artifactsDir(root);
   if (!fs.existsSync(dir)) return [];
   const { runs, archived } = gcRuns(root);
-  if (merged) runs[merged.toUpperCase()] = { ...runs[merged.toUpperCase()], phase: 'merged', finishPending: [], hold: false }; // its finish is cleaning up now
-  return planGc({ artifactsDir: fs.realpathSync(dir), worktreeRoot: path.resolve(root, cfg.worktreeRoot), runs, archived, keepDays: cfg.artifacts.keepDays ?? 14, only: only?.toUpperCase() ?? null });
+  // Its finish is cleaning up now; a merge nobody checked yet (untested) still keeps its scopes for the owner.
+  if (merged) runs[merged.toUpperCase()] = { ...runs[merged.toUpperCase()], phase: 'merged', finishPending: [] };
+  return planGc({ artifactsDir: fs.realpathSync(dir), worktreeRoot: path.resolve(root, cfg.worktreeRoot), runs, archived, keepDays: cfg.artifacts.keepDays ?? 14, only: only?.toUpperCase() ?? null, unowned });
 }
 
 // The cleanup of one run's scopes (a merge, a new round); never fails the command that calls it.
@@ -1698,7 +1699,7 @@ const gb = n => `${(n / 1e9).toFixed(1)} GB`;
 // the main checkout): only on the owner's explicit request.
 async function cmdArtifacts(root, { pos, flags }) {
   const cfg = loadConfig(root, { requireConfirmed: false });
-  const plan = gcPlan(root, cfg);
+  const plan = gcPlan(root, cfg, { unowned: pos[0] === 'gc' && flags.unowned === true });
   if (pos[0] === 'gc') {
     const r = applyGc(plan, { unowned: flags.unowned === true });
     out(`deleted ${r.deleted} scope(s), ${gb(r.freed)} freed${flags.unowned ? ' (unowned included, on the owner\'s request)' : ''}`);

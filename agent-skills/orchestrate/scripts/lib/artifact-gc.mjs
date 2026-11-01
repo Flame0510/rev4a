@@ -30,6 +30,11 @@ function bytes(p) {
 export function scopeRun(receipt, worktreeRoot) {
   const label = String(receipt.run ?? '').match(/^(\S+) r(\d+)$/);
   if (label) return { id: label[1].toUpperCase(), round: Number(label[2]) };
+  // A worktree a split set aside (orch-<id>-before-split-<time>) belongs to that earlier run, not to a new one.
+  if (/\/orch-[^/]+-before-split-\d+/.test(String(receipt.cwd ?? ''))) {
+    const m = String(receipt.cwd).match(/\/orch-([^/]+?)-before-split-\d+/);
+    return { id: m[1].toUpperCase(), round: null, setAside: true };
+  }
   const cwd = String(receipt.cwd ?? '');
   const rel = worktreeRoot ? path.relative(worktreeRoot, cwd) : '';
   const m = !rel.startsWith('..') && rel.match(/^orch-([^/]+?)(?:-before-split-\d+(?:-\d+)?)?(?:\/|$)/);
@@ -48,6 +53,8 @@ export function referencedScopes(artifactsDir) {
     for (const pid of fs.readdirSync('/proc').filter(n => /^\d+$/.test(n) && Number(n) !== process.pid)) {
       const dir = `/proc/${pid}`;
       try {
+        // Only this user's processes can carry its scopes (the commands run as this user); others are not readable.
+        if (process.getuid && fs.statSync(dir).uid !== process.getuid()) continue;
         for (const v of fs.readFileSync(`${dir}/environ`).toString().split('\0')) if (v.startsWith('ORCH_ARTIFACTS_DIR=')) add(v.slice(19));
         for (const f of ['cwd', ...fs.readdirSync(`${dir}/fd`).map(x => `fd/${x}`)]) {
           try { add(fs.readlinkSync(`${dir}/${f}`)); } catch (e) { if (!['ENOENT', 'ESRCH'].includes(e.code)) return null; }
@@ -62,9 +69,9 @@ export function referencedScopes(artifactsDir) {
  * What to do with every scope. runs: id -> { phase, round, finishPending, keepFrom (ms: start of the previous round),
  * startedAt (ms: this run's start), parkedAt (ms), hold (bool: kept whatever its age, e.g. an unsafe merge awaiting the
  * owner) } for runs in runs/; archived: id -> ms when a run of that id was set aside by a split. only: an id, to plan
- * that run's scopes alone. Returns [{ scope, receipt, run, busy, action: 'delete'|'keep'|'unowned', why }].
+ * that run's scopes alone. unowned: the owner asked to delete unowned scopes too (they are then inspected). Returns [{ scope, receipt, run, busy, action: 'delete'|'keep'|'unowned', why }].
  */
-export function planGc({ artifactsDir, worktreeRoot, runs, archived, keepDays, now = Date.now(), only = null }) {
+export function planGc({ artifactsDir, worktreeRoot, runs, archived, keepDays, now = Date.now(), only = null, unowned = false }) {
   if (!fs.existsSync(artifactsDir)) return [];
   const out = [];
   for (const name of fs.readdirSync(artifactsDir).filter(n => n.startsWith('command-'))) {
@@ -84,7 +91,7 @@ export function planGc({ artifactsDir, worktreeRoot, runs, archived, keepDays, n
     const st = runs[run.id];
     const setAside = id => (archived[id] ? (now - archived[id] > keepDays * DAY ? 'delete' : 'keep') : 'unowned');
     // A scope older than this run's start belongs to an earlier run of the same id (set aside by a split).
-    if (!st || (st.startedAt && at < st.startedAt - 60_000)) { out.push(entry(setAside(run.id), `${run.id}: an earlier run, set aside`)); continue; }
+    if (!st || run.setAside || (st.startedAt && at < st.startedAt - 60_000)) { out.push(entry(setAside(run.id), `${run.id}: an earlier run, set aside`)); continue; }
     if (st.hold) { out.push(entry('keep', `${run.id}: waits for the owner`)); continue; }
     if (st.phase === 'merged' && !st.finishPending?.length) { out.push(entry('delete', `${run.id} is merged`)); continue; }
     if (st.phase === 'parked') { out.push(entry(st.parkedAt && now - st.parkedAt > keepDays * DAY ? 'delete' : 'keep', `${run.id} parked`)); continue; }
@@ -93,7 +100,7 @@ export function planGc({ artifactsDir, worktreeRoot, runs, archived, keepDays, n
     out.push(entry(earlier ? 'delete' : 'keep', earlier ? `${run.id}: a round before the last two` : `${run.id}: one of its last two rounds`));
   }
   // Process inspection once, and only when something would be deleted.
-  if (out.some(x => x.action !== 'keep' && !x.busy)) {
+  if (out.some(x => !x.busy && (x.action === 'delete' || (unowned && x.action === 'unowned')))) {
     const used = referencedScopes(artifactsDir);
     for (const x of out) if (used === null || used.has(path.join(fs.realpathSync(artifactsDir), path.basename(x.scope)))) x.busy = true;
   }
