@@ -16,6 +16,11 @@
 export const CAMPAIGN_DEFAULTS = { idleMinutes: 10, graceMinutes: 10, backoffMinutes: [10, 20, 40], maxWakesWithoutProgress: 3 };
 
 const min = ms => Math.round(ms / 60000);
+// Labels as the coordinator typed them: case and spacing may differ from orch's, and it may add a suffix ("(retry)").
+const norm = l => String(l ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+const sameLabel = (actual, expected) => norm(actual) === norm(expected) || norm(actual).startsWith(`${norm(expected)} `);
+// Ended as OpenClaw counts it: a terminal status or an end time. Anything else (running, queued, yielded, none) is live.
+const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.status) || Boolean(s.endedAt);
 
 /**
  * ctx: { now, campaign, runs (open run states in scope: id, phase, round, events, finishPending), lastActivity (ms),
@@ -23,7 +28,9 @@ const min = ms => Math.round(ms / 60000);
  * run outside the scope is within its time limit), blocked ([{ id, why }]), eligible ([{ id }]), waiting ([{ id,
  * reasons }] cards in scope that cannot start or have no run), remaining (cards in scope not finished), standing (bool),
  * limits, nextFor (run → its next: line), progress (fingerprint), reports ({ [run id]: [{ tag, mtime }] } reports a
- * sub-agent left in the run's inbox and nobody recorded yet) }
+ * sub-agent left in the run's inbox and nobody recorded yet), sessions (null when unknown, else the runtime's sessions:
+ * [{ label, status, updatedAt }]), expected ({ [run id]: { opened, labels: [{ label, who }] } }: the sub-agents the
+ * run waits for and when its phase opened) }
  * The result always carries `progress`; `partial: true` means the runs were not looked at (something is running), so
  * escalations reported before must not be taken as cleared.
  */
@@ -80,6 +87,31 @@ function decideAll(ctx) {
       const limit = (st.phase === 'working' ? ctx.limits.workerTimeoutSec : ctx.limits.checkerTimeoutSec) * 1000 + c.graceMinutes * 60000;
       // The clock restarts at the last wake for this run: the coordinator may have started the sub-agent again, which
       // no orch command records, so it gets a full time limit before the next wake.
+      // A sub-agent the run waits for but that is not running: never started (the coordinator ended its turn first) or
+      // ended without a report. Known only when the runtime's sessions could be read; checked once the phase has been
+      // open for idleMinutes and the coordinator is quiet.
+      const exp = ctx.expected?.[st.id];
+      if (ctx.sessions && exp && quiet && ctx.now - exp.opened >= c.idleMinutes * 60000) {
+        // A label with a report in the inbox (any age) has finished: the report rule handles it. Otherwise the label is
+        // live when any of its sessions since the phase opened is live (a restart leaves the ended one in the list),
+        // and ended when its latest one ended.
+        const reported = new Set((ctx.reports?.[st.id] ?? []).map(r => r.tag ?? null));
+        const gone = exp.labels.filter(x => !reported.has(x.tag ?? null)).map(x => {
+          const mine = ctx.sessions.filter(s => sameLabel(s.label, x.label) && (s.updatedAt ?? 0) >= exp.opened - 60000);
+          return { ...x, s: mine.find(s => !ended(s)) ?? mine.sort((a, b) => b.updatedAt - a.updatedAt)[0] };
+        }).filter(x => !x.s || ended(x.s));
+        if (gone.length) {
+          const never = gone.filter(x => !x.s).map(x => `"${x.label}"`);
+          const ended = gone.filter(x => x.s).map(x => `"${x.label}"`);
+          due.push({ reason: [
+            never.length ? `${st.id}: no OpenClaw session ${never.join(', ')} was started for this ${who === 'worker' ? 'round' : 'gate'}` : null,
+            ended.length ? `${st.id}: the session ${ended.join(', ')} ended without leaving a report` : null,
+          ].filter(Boolean).join('; '), next: ended.length && !never.length
+            ? `read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise start it again: ${ctx.nextFor(st)}`
+            : `start it now: ${ctx.nextFor(st)}`, overdue: st.id }); // the restarted sub-agent gets a full time limit
+          continue;
+        }
+      }
       const since = Math.max(last, c.overdue?.[st.id] ?? 0);
       if (ctx.now - since < limit) { running = true; waits.push(`${st.id}: ${who} within its time limit`); continue; }
       due.push({ overdue: st.id, reason: `${st.id}: no step from the ${who} for ${min(ctx.now - last)} min, past its time limit; check its session: if it still works, wait for it, if it is gone, start it again (${ctx.nextFor(st)})`, next: `check the ${who} session of ${st.id}; start it again only if it is gone` });

@@ -15,10 +15,12 @@ const REPO = path.join(base, 'p');
 fs.mkdirSync(REPO, { recursive: true });
 
 let n = 0;
+const SESSIONS = path.join(base, 'sessions.json');
 const T0 = Date.now();
 const at = minutes => String(T0 + minutes * 60000);
 const orch = (args, { code = 0, now } = {}) => {
-  const r = spawnSync(process.execPath, [ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ...(now ? { ORCH_NOW: now } : {}) } });
+  // The runtime's sessions come from SESSIONS (none by default: unknown), never from an openclaw on this machine.
+  const r = spawnSync(process.execPath, [ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, ...(now ? { ORCH_NOW: now } : {}) } });
   assert.equal(r.status, code, `orch ${args.join(' ')} exited ${r.status}:\n${r.stdout}${r.stderr}`); n++;
   return r.stdout + r.stderr;
 };
@@ -224,7 +226,7 @@ assert.equal(d.notify, undefined); n++;
 const slow = path.join(base, 'slow.mjs');
 fs.writeFileSync(slow, "import fs from 'node:fs';\nconst o = fs.readdirSync;\nfs.readdirSync = function (p, ...a) { if (String(p).endsWith('/runs')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000); return o.call(this, p, ...a); };\n");
 const late = new Promise(resolve => {
-  const c = spawn(process.execPath, ['--import', slow, ORCH, 'keeper', '--json'], { cwd: REPO, env: { ...process.env, HOME: base, ORCH_NOW: at(nowMin() + 60) } });
+  const c = spawn(process.execPath, ['--import', slow, ORCH, 'keeper', '--json'], { cwd: REPO, env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, ORCH_NOW: at(nowMin() + 60) } });
   let o = ''; c.stdout.on('data', x => { o += x; }); c.on('close', () => resolve(o));
 });
 await new Promise(r => setTimeout(r, 1000));
@@ -271,7 +273,7 @@ for (const f of fs.readdirSync(path.join(REPO, 'backlog/tasks')).filter(x => x.s
 }
 // Three keeper checks at once (a manual run beside the job): one wake, not three.
 const runKeeper = () => new Promise(resolve => {
-  const c = spawn(process.execPath, [ORCH, 'keeper', '--json'], { cwd: REPO, env: { ...process.env, HOME: base, ORCH_NOW: at(nowMin() + 30) } });
+  const c = spawn(process.execPath, [ORCH, 'keeper', '--json'], { cwd: REPO, env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, ORCH_NOW: at(nowMin() + 30) } });
   let o = ''; c.stdout.on('data', x => { o += x; }); c.on('close', () => resolve(JSON.parse(o.trim().split('\n').at(-1))));
 });
 const three = await Promise.all([runKeeper(), runKeeper(), runKeeper()]);
@@ -319,6 +321,35 @@ d = keeper(nowMin() + 31); // after the backoff of the wake above
 is(d, 'wake', /SB-2: the checker left its report \d+ min ago/, 'this round\'s checker report: wake');
 assert.equal(d.next, 'orch record SB-2 checker --tag a'); n++;
 has(orch(['record', 'SB-2', 'checker']), /checker a: PASS/, 'this round\'s report recorded');
+
+// 21. The runtime's sessions show a sub-agent the run waits for that is not running: never started (the coordinator
+// ended its turn first) or ended without a report. Sessions of another runtime (no coordinator session in the list)
+// are ignored.
+orch(['campaign', 'stop']);
+orch(['campaign', 'start', '--session', 'S', '--scope', 'SB-5']);
+orch(['start', 'SB-5.1']);
+const sessions = rows => fs.writeFileSync(SESSIONS, JSON.stringify({ sessions: rows }));
+sessions([{ key: 'agent:other:main', label: null, status: 'done', updatedAt: Date.now() }]);
+is(keeper(nowMin() + 20), 'wait', /SB-5\.1: worker within its time limit/, 'another runtime: unknown');
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }]);
+d = keeper(nowMin() + 20);
+is(d, 'wake', /SB-5\.1: no OpenClaw session "SB-5\.1 worker r0" was started for this round/, 'never started: wake');
+assert.match(d.next, /^start it now: delegate the worker/); n++;
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'running', updatedAt: Date.now() }]);
+is(keeper(nowMin() + 31), 'wait', /SB-5\.1: worker within its time limit/, 'running: wait');
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'done', updatedAt: Date.now() }]);
+d = keeper(nowMin() + 45);
+is(d, 'wake', /SB-5\.1: the session "SB-5\.1 worker r0" ended without leaving a report/, 'ended without report: wake');
+assert.match(d.next, /^read its last answer \(sessions_history\)/); n++;
+// Restarted with the same label: OpenClaw lists the newest first; the running one counts, not the ended one.
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w2', label: 'SB-5.1 worker r0 (retry)', status: 'running', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'done', updatedAt: Date.now() - 1000 }]);
+is(keeper(nowMin() + 70), 'wait', /SB-5\.1: worker within its time limit/, 'restarted: the running session counts');
+// Ended with a report just written: not "ended without a report" (the report rule takes it once it is idleMinutes old).
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'done', updatedAt: Date.now() }]);
+write('.orchestrate/runs/SB-5.1/inbox/worker.md', 'done\n');
+d = keeper(nowMin() + 70);
+assert.doesNotMatch(d.reason, /ended without leaving a report/, `fresh report: ${JSON.stringify(d)}`); n++;
+fs.rmSync(SESSIONS);
 
 function has(t, re, label) { assert.match(t, re, label); n++; }
 console.log(`e2e-keeper: ${n} checks passed in ${REPO}`);

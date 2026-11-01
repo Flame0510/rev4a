@@ -21,6 +21,7 @@
 //   orch harness <name> [--in <id>]                          run one harness now (base branch, or a task's worktree)
 //   orch card new|split|check|normalise …                    create and fix cards in the skill's format (lib/card-cmd.mjs)
 //   orch card set-aside <id>                                 set a card's run aside (done by split; reruns a half-done one)
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1316,6 +1317,28 @@ function inboxReports(root, st) {
   });
 }
 
+// The runtime's sessions, to see whether a sub-agent a run waits for is running: `openclaw sessions --json` when the
+// openclaw CLI is there (ORCH_SESSIONS_JSON: a file with that output, for tests). null when unknown, and when the
+// list does not hold the campaign's coordinator session (another runtime than the one running this project): the
+// keeper then only relies on time limits and inbox reports, as without a runtime.
+function liveSessions(coordinator) {
+  try {
+    const text = process.env.ORCH_SESSIONS_JSON ? fs.readFileSync(process.env.ORCH_SESSIONS_JSON, 'utf8')
+      : (() => { const r = spawnSync('openclaw', ['sessions', '--active', '1440', '--limit', 'all', '--json'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? r.stdout : ''; })();
+    const json = JSON.parse(text.slice(text.indexOf('{')));
+    const rows = Array.isArray(json) ? json : json.sessions;
+    if (!Array.isArray(rows) || !rows.some(s => s?.key === coordinator)) return null;
+    return rows.filter(s => typeof s?.label === 'string').map(s => ({ label: s.label, status: s.status, endedAt: s.endedAt ?? null, updatedAt: Number(s.updatedAt) || 0 }));
+  } catch { return null; }
+}
+
+// The sub-agents each working or checking run waits for: its worker, or the checkers of this round not recorded yet.
+function expectedSubAgents(st) {
+  if (st.phase === 'working') return { opened: phaseOpenedAt(st), labels: [{ label: `${st.id} worker r${st.round}`, who: 'worker' }] };
+  const done = new Set(currentVerdicts(st).map(v => v.tag));
+  return { opened: phaseOpenedAt(st), labels: (st.checkerPrompts ?? []).filter(p => !done.has(p.tag)).map(p => ({ label: `${st.id} checker ${p.tag} r${st.round}`, who: 'checker', tag: p.tag })) };
+}
+
 async function keeperDecision(root, cfg, campaign) {
   if (!campaign?.active) return decide({ campaign });
   if (campaign.scope !== 'all' && !(Array.isArray(campaign.scope) && campaign.scope.every(x => typeof x === 'string'))) return { action: 'off', reason: 'campaign.json has no scope: orch campaign start again', escalations: [] };
@@ -1345,8 +1368,9 @@ async function keeperDecision(root, cfg, campaign) {
   }
   const now_ = Number(process.env.ORCH_NOW) || Date.now();
   const busy = busyNow(root, cfg);
+  const activity = lastActivity(root, cfg, campaign, states.map(s => s.mtime));
   return decide({
-    now: now_, campaign, runs: open, lastActivity: lastActivity(root, cfg, campaign, states.map(s => s.mtime)),
+    now: now_, campaign, runs: open, lastActivity: activity,
     busy, busySince: busy && campaign.busy?.what === busy ? campaign.busy.since : null,
     othersRunning: states.some(({ st }) => !inScope(st.id) && ['working', 'checking'].includes(st.phase)
       && now_ - (Date.parse(st.events.at(-1)?.t ?? 0) || 0) < (st.phase === 'working' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000),
@@ -1355,6 +1379,15 @@ async function keeperDecision(root, cfg, campaign) {
     standing: Boolean(standingApproval(cfg)), limits: cfg.limits, nextFor: st => nextAction(st, cfg),
     progress: `${Math.max(0, ...states.filter(s => inScope(s.st.id)).map(s => s.mtime))}|${doneInScope}`,
     reports: Object.fromEntries(open.filter(st => ['working', 'checking'].includes(st.phase)).map(st => [st.id, inboxReports(root, st)])),
+    ...(() => {
+      const waiting = open.filter(st => ['working', 'checking'].includes(st.phase));
+      if (!waiting.length || busy) return { sessions: null };
+      // The CLI takes seconds: only asked when the rule can fire (coordinator quiet, a phase open for idleMinutes).
+      const idle = (campaign.idleMinutes ?? CAMPAIGN_DEFAULTS.idleMinutes) * 60000;
+      const expected = Object.fromEntries(waiting.map(st => [st.id, expectedSubAgents(st)]));
+      const can = now_ - activity >= idle && Object.values(expected).some(e => e.labels.length && now_ - e.opened >= idle);
+      return can ? { sessions: liveSessions(campaign.session), expected } : { sessions: null };
+    })(),
   });
 }
 

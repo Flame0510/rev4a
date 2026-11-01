@@ -166,7 +166,11 @@ end a turn while work remains, nothing moves. Two rules and one helper:
   person must decide: an unsafe or unchecked merge, a run at its round limit, every remaining card waiting, a command
   running longer than any sub-agent may, or 3 wakes without progress), `done` (the campaign ends itself), `off`. A
   ready card without consent is reported to the owner while the other cards keep moving. A sub-agent report left in the
-  run's inbox and not recorded for `idleMinutes` (its completion never reached you) wakes you to `orch record` it. A
+  run's inbox and not recorded for `idleMinutes` (its completion never reached you) wakes you to `orch record` it. On
+  OpenClaw the keeper also reads the runtime's sessions (`openclaw sessions`, the coordinator's own agent): a worker or
+  checker that was never started, or whose session ended without a report, wakes you once the phase has been open for
+  `idleMinutes`; keep the labels `orch` gives ("<id> worker r<n>", "<id> checker <t> r<n>"), a suffix after a space is
+  fine. A
   sub-agent past its time
   limit wakes you once per time limit: check its session, and start it again only if it is gone. Cards split from a
   card in the scope are in the scope. Wakes back off 10, 20, 40 minutes; each escalation is reported once, again only
