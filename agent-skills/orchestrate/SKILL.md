@@ -18,8 +18,9 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    edit `.orchestrate/runs/`. To know where you are: `$ORCH status`.
 3. **Judge code, not paperwork.** The gate counts files and lines; the checker judges the code and must quote
    `EXECUTED:` evidence. Never send work back because a report is worded badly.
-4. **At most two correction rounds.** Then stop and decide with the owner: accept (only after a gate PASS),
-   split, or park.
+4. **At most `limits.correctionRounds` correction rounds** (`orch config` shows them). Then stop and decide with
+   the owner: accept (only after a gate PASS), split, or park — or, when the owner set `limits.atRoundLimit` to
+   `coordinator`, decide yourself as "When it does not converge" says.
 5. **Merge only with the owner's consent**: their explicit ok for this task (`finish --approved-by <name>`), or a
    standing approval they gave for this project (`orch config` shows it; then `finish <id>` alone). Only the owner
    grants or revokes it (`$ORCH config --standing-approval <name>` / `--owner-approval`), never you on your own.
@@ -31,6 +32,10 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    failed; open a log tail only if you must explain it to the owner.
 8. **Do not change this skill.** It belongs to Rev4a and is replaced on update. A lesson goes to the owner as a
    proposal, not into a new local rule. The project's own settings live in `.orchestrate/config.json`.
+9. **The config is the owner's.** Never change it (`config --set`, editing the file) and never `config --confirm`
+   it on your own, not even under a broad autonomy mandate or to undo a change you remember making: propose the
+   change to the owner and wait for their ok. A limit raised for one task stays as the owner leaves it. The campaign
+   keeper reports every config change to the owner.
 
 ## Setup (once per project)
 1. `$ORCH init` reads the tracker, the check command (`npm run check` if it exists), the base branch and the

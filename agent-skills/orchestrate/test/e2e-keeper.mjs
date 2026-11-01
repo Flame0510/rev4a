@@ -73,6 +73,31 @@ assert.equal(d.session, 'agent:main:dashboard:coord', 'notices name the session'
 assert.match(d.notify, /needs the owner/); n++;
 is(keeper(95), 'wait', /already reported to the owner/, 'reported once');
 
+// 3b. The config is the owner's: every change is reported once, also one that leaves it unconfirmed.
+const saved = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'), 'utf8');
+write('.orchestrate/config.json', JSON.stringify({ ...JSON.parse(saved), limits: { ...JSON.parse(saved).limits, correctionRounds: 5 } }));
+d = keeper(96);
+assert.match(d.notify ?? '', /The orch config changed: limits\.correctionRounds: (2|\(none\)) -> 5\. Only the owner changes it/, JSON.stringify(d)); n++;
+assert.equal(d.session, 'agent:main:dashboard:coord'); n++;
+assert.equal(keeper(97).notify, undefined, 'a config change is reported once'); n++;
+orch(['config', '--set', 'limits.checkers=2']);
+d = keeper(98);
+assert.equal(d.action, 'off'); assert.match(d.notify ?? '', /changed and is not confirmed: limits\.checkers: (1|\(none\)) -> 2\. The campaign waits/, JSON.stringify(d)); n += 2;
+assert.equal(keeper(99).notify, undefined, 'reported once while unconfirmed'); n++;
+// Unconfirmed with nothing changed (a --set to the same value): the owner is told once that the campaign waits.
+orch(['config', '--confirm']); keeper(99.1);
+orch(['config', '--set', 'limits.checkers=2']);
+d = keeper(99.2);
+assert.match(d.notify ?? '', /The orch config is not confirmed\. The campaign waits/, JSON.stringify(d)); n++;
+assert.equal(keeper(99.3).notify, undefined); n++;
+// Environment values never reach the notice.
+write('.orchestrate/config.json', JSON.stringify({ ...JSON.parse(saved), harnesses: [{ ...(JSON.parse(saved).harnesses?.[0] ?? { name: 'h', command: 'true' }), env: { DB_PASSWORD: 'hunter2-very-secret' } }] }));
+d = keeper(99.4);
+assert.match(d.notify ?? '', /env\.DB_PASSWORD: \(none\) -> \(hidden\)/, JSON.stringify(d)); assert.doesNotMatch(d.notify, /hunter2/); n += 2;
+write('.orchestrate/config.json', saved);
+keeper(99.5); // the owner's restore is reported too; the next look is quiet
+assert.equal(keeper(99.7).notify, undefined); n++;
+
 // 4. Progress resets the count; a worker within its time limit is waited for, past it the coordinator is woken.
 orch(['start', 'SB-1']);
 const nowMin = () => Math.ceil((Date.now() - T0) / 60000);
@@ -362,7 +387,9 @@ fs.rmSync(path.join(REPO, '.orchestrate/runs/SB-5.1/inbox/worker.md'), { force: 
 has(orch(['status', 'SB-5.1']), /round limit reached \(2\/2\): you decide, by the owner's standing rule .*orch prompt SB-5\.1 advisor.*Never orch finish it/, 'status: you decide');
 d = keeper(nowMin() + 15);
 is(d, 'wake', /SB-5\.1 waits for the coordinator \(rejected\)/, 'at the limit: wake, not escalate');
-assert.match(d.next, /you decide/); assert.equal(d.notify, undefined); n += 2;
+assert.match(d.next, /you decide/); n++;
+// The only notice is the owner's own config change, reported once; nothing about the round limit.
+assert.match(d.notify ?? '', /^\[orch keeper\] The orch config changed: limits\.atRoundLimit: "owner" -> "coordinator"\. Only the owner/, JSON.stringify(d)); n++;
 const brief5 = orch(['prompt', 'SB-5.1', 'advisor']).split('\n')[0].trim();
 assert.match(fs.readFileSync(brief5, 'utf8'), /^# Advise on task SB-5\.1 .*round limit 2\/2/); n++;
 sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:a', label: 'SB-5.1 advisor r2', status: 'running', updatedAt: Date.now() }]);

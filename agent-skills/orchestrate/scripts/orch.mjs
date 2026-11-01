@@ -1353,6 +1353,7 @@ async function cmdCampaign(root, { pos, flags }) {
         ...CAMPAIGN_DEFAULTS, idleMinutes: idle, active: true, scope, scopeLabel: scope === 'all' ? 'every To Do card' : scope.join(', '), session,
         by: typeof flags.by === 'string' ? flags.by : null, startedAt: new Date().toISOString(), wakes: { count: 0, at: 0, progress: null }, reported: {},
       });
+      configChanges(root); // the config the owner started the campaign with
     });
     if (r.locked) throw new OrchError('the campaign is being changed by another orch command: try again');
     out(`campaign started: ${scope === 'all' ? 'every To Do card' : scope.join(', ')} · coordinator ${session}`, 'next: install the keeper job (orch campaign job-script), then orch next');
@@ -1539,6 +1540,38 @@ async function keeperDecision(root, cfg, campaign) {
   });
 }
 
+// The config is the owner's (SKILL.md rule 9): what changed in it since the keeper last looked, as "path: old -> new"
+// (at most six), or null. The first look, and a campaign start, only record it.
+const configSeenFile = root => path.join(orchDir(root), 'config-seen.json');
+function flatConfig(root) {
+  const out = {};
+  const walk = (v, p) => {
+    if (v && typeof v === 'object' && Object.keys(v).length) { for (const k of Object.keys(v)) walk(v[k], p ? `${p}.${k}` : k); return; }
+    out[p] = JSON.stringify(v);
+  };
+  // The effective config (defaults filled in), so a rewrite by config --set is not a change in itself.
+  let cfg;
+  try { cfg = loadConfig(root, { requireConfirmed: false }); } catch { cfg = readJson(configFile(root), {}); }
+  walk(cfg, '');
+  delete out.confirmed;
+  return out;
+}
+function configChanges(root, { record = true } = {}) {
+  let now_;
+  try { now_ = flatConfig(root); } catch { return null; } // unreadable: the next look reports it
+  const seen = readJson(configSeenFile(root), null);
+  if (record) {
+    writeJson(configSeenFile(root), now_);
+    try { excludeOnce(root, '/.orchestrate/config-seen.json'); } catch { /* not a git checkout */ }
+  }
+  if (!seen) return null;
+  const keys = [...new Set([...Object.keys(seen), ...Object.keys(now_)])].filter(k => seen[k] !== now_[k]).sort();
+  if (!keys.length) return null;
+  // Environment values (harness env may hold a password) are never echoed into a chat notice.
+  const v = (k, x) => (x === undefined ? '(none)' : /(^|\.)env\./.test(k) ? '(hidden)' : redactSecrets(x.length > 60 ? `${x.slice(0, 57)}...` : x));
+  return keys.slice(0, 6).map(k => `${k}: ${v(k, seen[k])} -> ${v(k, now_[k])}`).join('; ') + (keys.length > 6 ? ` (and ${keys.length - 6} more)` : '');
+}
+
 // `orch keeper [--json]`: the decision for the automation. Under the campaign lock it re-reads the campaign before
 // writing: a campaign stopped or restarted during the check is left alone and nobody is woken. It records wakes (for
 // the backoff) and the escalations already reported (each key once, again only after it went away), and ends the
@@ -1546,7 +1579,21 @@ async function keeperDecision(root, cfg, campaign) {
 async function cmdKeeper(root, { flags }) {
   const print = d => { if (flags.json) console.log(JSON.stringify(d)); else out(`keeper: ${d.action} (${d.reason})`, d.message ? `message: ${d.message}` : null, d.notify ? `owner: ${d.notify}` : null); };
   const cfg = loadConfig(root, { requireConfirmed: false });
-  if (!cfg.confirmed) return print({ action: 'off', reason: 'the orch config is not confirmed' });
+  if (!cfg.confirmed) {
+    // A campaign stops while the config waits for the owner's confirmation: they are told why, and what changed.
+    const campaign = readCampaign(root);
+    const off = { action: 'off', reason: 'the orch config is not confirmed' };
+    if (!campaign?.active) return print(off);
+    const r = withCampaignLock(root, () => {
+      const changed = configChanges(root);
+      const current = readCampaign(root);
+      if (!changed && current?.unconfirmedReported) return null;
+      if (current?.active) writeJson(campaignFile(root), { ...current, unconfirmedReported: now() });
+      return changed ? `changed and is not confirmed: ${changed}` : 'is not confirmed';
+    });
+    const what = r.locked ? null : r.value;
+    return print(what ? { ...off, session: campaign.session, notify: `[orch keeper] The orch config ${what}. The campaign waits until the owner confirms it (orch config --confirm) or the change is undone.` } : off);
+  }
   const before = readCampaign(root);
   const d = await keeperDecision(root, cfg, before);
   if (!before?.active) return print(d);
@@ -1584,6 +1631,11 @@ async function cmdKeeper(root, { flags }) {
       result.notify = `[orch keeper] Campaign "${campaign.scopeLabel}" is complete: ${d.reason}.`;
       Object.assign(next, { active: false, stoppedAt: now(), stopReason: 'done' });
     }
+    // Unconfirmed since the decision started: the next look reports it on the unconfirmed path, with its own notice.
+    const confirmedNow = (() => { try { return readJson(configFile(root), {}).confirmed === true; } catch { return false; } })();
+    const changed = confirmedNow ? configChanges(root) : null;
+    delete next.unconfirmedReported;
+    if (changed) result.notify = [result.notify, `[orch keeper] The orch config changed: ${changed}. Only the owner changes it: if they did not ask for this, it must be undone with their ok.`].filter(Boolean).join('\n');
     if (result.notify) result.session = campaign.session;
     writeJson(campaignFile(root), next);
     return result;
