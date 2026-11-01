@@ -30,13 +30,11 @@ function bytes(p) {
 export function scopeRun(receipt, worktreeRoot) {
   const label = String(receipt.run ?? '').match(/^(\S+) r(\d+)$/);
   if (label) return { id: label[1].toUpperCase(), round: Number(label[2]) };
-  // A worktree a split set aside (orch-<id>-before-split-<time>) belongs to that earlier run, not to a new one.
-  if (/\/orch-[^/]+-before-split-\d+/.test(String(receipt.cwd ?? ''))) {
-    const m = String(receipt.cwd).match(/\/orch-([^/]+?)-before-split-\d+/);
-    return { id: m[1].toUpperCase(), round: null, setAside: true };
-  }
   const cwd = String(receipt.cwd ?? '');
   const rel = worktreeRoot ? path.relative(worktreeRoot, cwd) : '';
+  // A worktree a split set aside (orch-<id>-before-split-<time>) belongs to that earlier run, not to a new one.
+  const aside = !rel.startsWith('..') && rel.match(/^orch-([^/]+?)-before-split-\d+(?:-\d+)?(?:\/|$)/);
+  if (aside) return { id: aside[1].toUpperCase(), round: null, setAside: true };
   const m = !rel.startsWith('..') && rel.match(/^orch-([^/]+?)(?:-before-split-\d+(?:-\d+)?)?(?:\/|$)/);
   return m ? { id: m[1].toUpperCase(), round: null } : null;
 }
@@ -53,13 +51,17 @@ export function referencedScopes(artifactsDir) {
     for (const pid of fs.readdirSync('/proc').filter(n => /^\d+$/.test(n) && Number(n) !== process.pid)) {
       const dir = `/proc/${pid}`;
       try {
-        // Only this user's processes can carry its scopes (the commands run as this user); others are not readable.
-        if (process.getuid && fs.statSync(dir).uid !== process.getuid()) continue;
+        // A non-root user sees only its own processes (the commands run as this user; others are not readable). Root
+        // reads every process, including a command that dropped to another user, and skips only what it cannot read.
+        if (process.getuid && process.getuid() !== 0 && fs.statSync(dir).uid !== process.getuid()) continue;
         for (const v of fs.readFileSync(`${dir}/environ`).toString().split('\0')) if (v.startsWith('ORCH_ARTIFACTS_DIR=')) add(v.slice(19));
         for (const f of ['cwd', ...fs.readdirSync(`${dir}/fd`).map(x => `fd/${x}`)]) {
           try { add(fs.readlinkSync(`${dir}/${f}`)); } catch (e) { if (!['ENOENT', 'ESRCH'].includes(e.code)) return null; }
         }
-      } catch (e) { if (!['ENOENT', 'ESRCH'].includes(e.code)) return null; }
+      } catch (e) {
+        if (e.code === 'EACCES' && process.getuid?.() === 0) continue; // root without ptrace rights in a container
+        if (!['ENOENT', 'ESRCH'].includes(e.code)) return null;
+      }
     }
   } catch { return null; }
   return used;
