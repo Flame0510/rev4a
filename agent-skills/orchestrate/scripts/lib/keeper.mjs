@@ -67,7 +67,7 @@ function decideAll(ctx) {
       escalations.push({ key: `ready:${st.id}:r${st.round ?? 0}`, reason: `${st.id} is ready and waits for the owner's merge ok` });
       continue;
     }
-    if (['rejected', 'gate-failed'].includes(st.phase) && (st.round ?? 0) >= rounds) {
+    if (['rejected', 'gate-failed'].includes(st.phase) && (st.round ?? 0) >= rounds && !ctx.selfDecides) {
       // Only the owner can go on (accept, split or park): waking the coordinator would only make it ask.
       escalations.push({ key: `limit:${st.id}:r${st.round}`, reason: `${st.id} reached the round limit (${st.phase}): ${ctx.nextFor(st)}` });
       continue;
@@ -115,6 +115,18 @@ function decideAll(ctx) {
       const since = Math.max(last, c.overdue?.[st.id] ?? 0);
       if (ctx.now - since < limit) { running = true; waits.push(`${st.id}: ${who} within its time limit`); continue; }
       due.push({ overdue: st.id, reason: `${st.id}: no step from the ${who} for ${min(ctx.now - last)} min, past its time limit; check its session: if it still works, wait for it, if it is gone, start it again (${ctx.nextFor(st)})`, next: `check the ${who} session of ${st.id}; start it again only if it is gone` });
+      continue;
+    }
+    // A run at its round limit that the coordinator decides itself: while its advisor sub-agent is at work, it waits.
+    // Only a session since the run reached its limit counts, and only for a worker's time limit: a hung advisor
+    // does not hold the campaign.
+    // The window opens at the limit, or later when the advisor's brief was written later (a slow coordinator).
+    const limitAt = Math.max(Date.parse(st.events.at(-1)?.t ?? 0) || 0, ctx.advisorBriefAt?.[st.id] ?? 0);
+    if (ctx.selfDecides && !st.setAside && ['rejected', 'gate-failed'].includes(st.phase) && (st.round ?? 0) >= rounds
+      && ctx.now - limitAt < ctx.limits.workerTimeoutSec * 1000 + c.graceMinutes * 60000
+      && ctx.sessions?.some(s => sameLabel(s.label, `${st.id} advisor r${st.round}`) && !ended(s) && (s.updatedAt ?? 0) >= limitAt - 60000)) {
+      running = true; // a sub-agent at work: a legitimate end of turn, like a worker's
+      waits.push(`${st.id}: its advisor is at work`);
       continue;
     }
     // A step the coordinator owns (worked, gated, gate-failed, rejected, ready with consent, a merge with steps left).

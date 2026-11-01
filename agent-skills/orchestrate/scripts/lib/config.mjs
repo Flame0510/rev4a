@@ -38,7 +38,9 @@ export const DEFAULTS = {
   roles: { coordinator: null, worker: null, checker: null },
   env: { strip: [], keep: [] },
   artifacts: ARTIFACT_DEFAULTS,
-  limits: { correctionRounds: 2, checkers: 1, checkTimeoutSec: 900, maxOwnedShare: 0.5, workerTimeoutSec: 3600, checkerTimeoutSec: 1800, networkTimeoutSec: 120 },
+  // atRoundLimit: who decides a run that used all its correction rounds: 'owner' (the run waits for them) or
+  // 'coordinator' (the owner's standing rule: it asks an advisor sub-agent, then splits or parks the card and goes on).
+  limits: { correctionRounds: 2, atRoundLimit: 'owner', checkers: 1, checkTimeoutSec: 900, maxOwnedShare: 0.5, workerTimeoutSec: 3600, checkerTimeoutSec: 1800, networkTimeoutSec: 120 },
 };
 
 function merge(base, over) {

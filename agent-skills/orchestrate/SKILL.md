@@ -187,6 +187,11 @@ end a turn while work remains, nothing moves. Two rules and one helper:
 ## When it does not converge
 - Round limit reached: `$ORCH status <id>` lists the choices. Accepting without a checker PASS needs the owner's ok
   and `--override "<why>"`; a failing gate is never merged.
+- When the owner lets you decide at the limit (`limits.atRoundLimit: "coordinator"`, set with `$ORCH config --set
+  limits.atRoundLimit=coordinator` and confirmed by the owner), you do not wait for them: `$ORCH prompt <id> advisor`
+  writes an advisor's brief; delegate it to one sub-agent (label `<id> advisor r<n>`), then split the card (`$ORCH card
+  split`) or park it, tell the owner in one line what you decided and why, and go on with `$ORCH next`. Never merge it:
+  a card is merged only after a gate PASS and a checker PASS. The keeper wakes you for it instead of the owner.
 - Blocked by something outside the task: `$ORCH park <id> --reason "<why>"` (status Blocked, worktree kept) and tell
   the owner.
 - Merge refused (conflict, checks fail on the merged result): nothing was merged. Park it, or start a new small task

@@ -119,16 +119,24 @@ function activeState(root, id) {
   return st;
 }
 
+// Whether the coordinator decides a run at its round limit itself (the owner's standing rule) instead of the owner.
+const selfDecides = cfg => cfg.limits.atRoundLimit === 'coordinator';
+
 function nextAction(st, cfg) {
   const id = st.id; const max = cfg.limits.correctionRounds;
   if (st.setAside) return `orch card set-aside ${id} (a split set this run aside half-way: finish that; the card then waits for its split cards)`;
   const roundsLeft = st.round < max;
-  const decide = `round limit reached (${st.round}/${max}): decide with the owner — accept (orch finish ${id} --approved-by <name> --override "<why>", only after a gate PASS), split the task, or orch park ${id} --reason "<why>"`;
+  const selfDecide = `round limit reached (${st.round}/${max}): you decide, by the owner's standing rule (limits.atRoundLimit "coordinator"). `
+    + `orch prompt ${id} advisor writes the advisor's brief: delegate it to one sub-agent (label "${id} advisor r${st.round}") and wait for its report. `
+    + `Then either split the card (orch card split ${id} --from <cards.json>: small cards that do not overlap) or orch park ${id} --reason "<why>". `
+    + `Never orch finish it: a card is merged only after a gate PASS and a checker PASS. Tell the owner in one line what you decided and why, then orch next`;
+  const decide = selfDecides(cfg) ? selfDecide
+    : `round limit reached (${st.round}/${max}): decide with the owner — accept (orch finish ${id} --approved-by <name> --override "<why>", only after a gate PASS), split the task, or orch park ${id} --reason "<why>"`;
   switch (st.phase) {
     case 'working': return `${spawnLine(cfg, 'worker', st, st.prompt, cfg.limits.workerTimeoutSec)} When it has finished: orch record ${id} worker`;
     case 'worked': return `orch gate ${id}`;
     case 'gated': return `orch push ${id}`;
-    case 'gate-failed': return roundsLeft ? `orch fix ${id}` : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
+    case 'gate-failed': return roundsLeft ? `orch fix ${id}` : selfDecides(cfg) ? selfDecide : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
     case 'rejected': return roundsLeft ? `orch fix ${id}` : decide;
     case 'checking': {
       const done = new Set(currentVerdicts(st).map(v => v.tag));
@@ -295,7 +303,7 @@ function showConfig(cfg, models) {
     ...(cfg.harnesses.length ? cfg.harnesses.map(h => `harness ${h.name}: ${h.command} · on ${h.when ?? 'gate'} when a change touches ${(h.paths ?? ['**']).join(', ')} · ${h.timeoutSec ?? 1800} s`) : ['harnesses: none']),
     `tests: rule ${cfg.tests.rule} (a source change needs a changed test file) · test files ${cfg.tests.paths.join(', ')}`,
     `merge: ${cfg.merge.approval === 'standing' && cfg.merge.standing ? `standing approval of ${cfg.merge.standing.by} since ${cfg.merge.standing.at}` : 'the owner\'s ok for each task'} · never on ${cfg.merge.protectedBranches.join(', ')}`,
-    `limits: ${cfg.limits.correctionRounds} correction rounds · ${cfg.limits.checkers} checker(s) · ${cfg.limits.checkTimeoutSec} s per check · a task may own at most ${Math.round(cfg.limits.maxOwnedShare * 100)}% of the tracked files`,
+    `limits: ${cfg.limits.correctionRounds} correction rounds · ${cfg.limits.checkers} checker(s) · ${cfg.limits.checkTimeoutSec} s per check · a task may own at most ${Math.round(cfg.limits.maxOwnedShare * 100)}% of the tracked files · at the round limit the ${selfDecides(cfg) ? 'coordinator decides (advisor, then split or park; never merges)' : 'owner decides'}`,
     `confirmed: ${cfg.confirmed ? 'yes' : 'no'}`,
   ].filter(Boolean).join('\n');
 }
@@ -303,6 +311,7 @@ function showConfig(cfg, models) {
 async function cmdConfig(root, { flags }) {
   const cfg = loadConfig(root, { requireConfirmed: false });
   for (const s of flags.set) setPath(cfg, s);
+  if (!['owner', 'coordinator'].includes(cfg.limits.atRoundLimit)) throw new OrchError('limits.atRoundLimit must be "owner" or "coordinator"');
   validatePolicy(cfg.artifacts); // reject invalid assignments before they can poison the saved config
   // Merge policy: only on the owner's word. It does not unconfirm the rest of the config.
   if (typeof flags['standing-approval'] === 'string') {
@@ -717,6 +726,8 @@ async function cmdFinish(root, { pos, flags }) {
     throw new OrchError(`${cfg.baseBranch} is a protected branch: every merge needs --approved-by <the owner who said ok>`);
   }
   if (override && !given) throw new OrchError('--override accepts work without a checker PASS: it always needs --approved-by <the owner who said ok for this task>');
+  // The coordinator decides at the round limit without the owner, so nothing it runs may merge work that did not pass.
+  if (override && selfDecides(cfg)) throw new OrchError('limits.atRoundLimit is "coordinator": no --override, a card is merged only after a gate PASS and a checker PASS. To accept it anyway the owner sets limits.atRoundLimit=owner and confirms the config first');
   const who = given ?? (standingApproval(cfg) ? `standing approval of ${cfg.merge.standing.by} (${cfg.merge.standing.at})` : null);
   if (!who) throw new OrchError('finish merges: it needs --approved-by <the owner who said ok> (no standing approval in the config)');
   const st = activeState(root, id);
@@ -1117,7 +1128,22 @@ async function cmdStatus(root, { pos, flags }) {
 
 async function cmdPrompt(root, { pos }) {
   const st = loadState(root, need(pos[0], 'task id'));
-  const role = need(pos[1], 'worker|checker');
+  const role = need(pos[1], 'worker|checker|advisor');
+  if (role === 'advisor') {
+    // The brief for the sub-agent that advises the coordinator on a run at its round limit (split or park).
+    const cfg = loadConfig(root);
+    const atLimit = ['rejected', 'gate-failed'].includes(st.phase) && st.round >= cfg.limits.correctionRounds;
+    if (!atLimit) throw new OrchError(`${st.id} is not at its round limit (${st.phase}, round ${st.round}/${cfg.limits.correctionRounds}): no advisor needed`);
+    const task = (await trackerFor(root, cfg)).get(st.id);
+    const file = path.join(runDir(root, st.id), 'prompts', `advisor-r${st.round}.md`);
+    writeAtomic(file, fill(tpl('advisor'), {
+      id: st.id, title: st.title, round: st.round, maxRounds: cfg.limits.correctionRounds, worktree: st.worktree, base: st.base,
+      runDir: runDir(root, st.id), description: task.description || '(no description)', acceptance: task.acceptance || '(none)',
+      owned: block(task.ownedFiles), reportPath: path.join(runDir(root, st.id), 'inbox', `advisor-r${st.round}.md`),
+    }));
+    out(file, `next: delegate it to one sub-agent (label "${st.id} advisor r${st.round}", task "Read ${file} and do what it says."), wait for its report, then decide: split or park`);
+    return;
+  }
   out(role === 'worker' ? st.prompt : st.checkerPrompts.map(p => `${p.tag}: ${p.prompt}`).join('\n') || 'no checker prompt yet (it comes with a gate PASS)');
 }
 
@@ -1376,16 +1402,19 @@ async function keeperDecision(root, cfg, campaign) {
       && now_ - (Date.parse(st.events.at(-1)?.t ?? 0) || 0) < (st.phase === 'working' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000),
     blocked: untestedRuns(root).map(s => ({ id: s.id, why: unresolvedUnsafe(s) ? 'unsafe merge' : 'merged result never checked' })),
     eligible: evals.filter(r => !r.reasons.length).map(r => ({ id: r.task.id })), waiting, remaining,
-    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, nextFor: st => nextAction(st, cfg),
+    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, selfDecides: selfDecides(cfg),
+    advisorBriefAt: Object.fromEntries(open.map(st => { try { return [st.id, fs.statSync(path.join(runDir(root, st.id), 'prompts', `advisor-r${st.round}.md`)).mtimeMs]; } catch { return [st.id, 0]; } })), nextFor: st => nextAction(st, cfg),
     progress: `${Math.max(0, ...states.filter(s => inScope(s.st.id)).map(s => s.mtime))}|${doneInScope}`,
     reports: Object.fromEntries(open.filter(st => ['working', 'checking'].includes(st.phase)).map(st => [st.id, inboxReports(root, st)])),
     ...(() => {
       const waiting = open.filter(st => ['working', 'checking'].includes(st.phase));
-      if (!waiting.length || busy) return { sessions: null };
+      // Runs at their round limit decided by the coordinator: their advisor sub-agent may be at work.
+      const advised = selfDecides(cfg) && open.some(st => ['rejected', 'gate-failed'].includes(st.phase) && st.round >= cfg.limits.correctionRounds);
+      if ((!waiting.length && !advised) || busy) return { sessions: null };
       // The CLI takes seconds: only asked when the rule can fire (coordinator quiet, a phase open for idleMinutes).
       const idle = (campaign.idleMinutes ?? CAMPAIGN_DEFAULTS.idleMinutes) * 60000;
       const expected = Object.fromEntries(waiting.map(st => [st.id, expectedSubAgents(st)]));
-      const can = now_ - activity >= idle && Object.values(expected).some(e => e.labels.length && now_ - e.opened >= idle);
+      const can = now_ - activity >= idle && (advised || Object.values(expected).some(e => e.labels.length && now_ - e.opened >= idle));
       return can ? { sessions: liveSessions(campaign.session), expected } : { sessions: null };
     })(),
   });

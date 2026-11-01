@@ -351,5 +351,38 @@ d = keeper(nowMin() + 70);
 assert.doesNotMatch(d.reason, /ended without leaving a report/, `fresh report: ${JSON.stringify(d)}`); n++;
 fs.rmSync(SESSIONS);
 
+// 22. limits.atRoundLimit "coordinator": a run at its round limit is the coordinator's to decide (advisor, then split or
+// park), not the owner's: the keeper wakes it instead of escalating, and waits while the advisor works.
+orch(['config', '--set', 'limits.atRoundLimit=bogus'], { code: 1 });
+write('.orchestrate/config.json', JSON.stringify({ ...cfg, limits: { ...cfg.limits, correctionRounds: 2, atRoundLimit: 'coordinator' } }));
+const sf5 = path.join(REPO, '.orchestrate/runs/SB-5.1/state.json');
+const st5 = JSON.parse(fs.readFileSync(sf5, 'utf8'));
+fs.writeFileSync(sf5, JSON.stringify({ ...st5, phase: 'rejected', round: 2, events: [...st5.events, { t: new Date().toISOString(), kind: 'checker', round: 2, tag: 'a', verdict: 'FAIL' }] }));
+fs.rmSync(path.join(REPO, '.orchestrate/runs/SB-5.1/inbox/worker.md'), { force: true });
+has(orch(['status', 'SB-5.1']), /round limit reached \(2\/2\): you decide, by the owner's standing rule .*orch prompt SB-5\.1 advisor.*Never orch finish it/, 'status: you decide');
+d = keeper(nowMin() + 15);
+is(d, 'wake', /SB-5\.1 waits for the coordinator \(rejected\)/, 'at the limit: wake, not escalate');
+assert.match(d.next, /you decide/); assert.equal(d.notify, undefined); n += 2;
+const brief5 = orch(['prompt', 'SB-5.1', 'advisor']).split('\n')[0].trim();
+assert.match(fs.readFileSync(brief5, 'utf8'), /^# Advise on task SB-5\.1 .*round limit 2\/2/); n++;
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:a', label: 'SB-5.1 advisor r2', status: 'running', updatedAt: Date.now() }]);
+is(keeper(nowMin() + 30), 'wait', /SB-5\.1: its advisor is at work/, 'advisor at work: wait');
+// An advisor session older than the limit, or a hung one past a worker's time limit, does not hold the campaign.
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:a', label: 'SB-5.1 advisor r2', status: 'running', updatedAt: Date.now() - 5 * 86400000 }]);
+assert.doesNotMatch(keeper(nowMin() + 35).reason, /advisor is at work/, 'stale advisor session'); n++;
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:a', label: 'SB-5.1 advisor r2', status: 'running', updatedAt: Date.now() }]);
+assert.doesNotMatch(keeper(nowMin() + 200).reason, /advisor is at work/, 'hung advisor past the time limit'); n++;
+fs.rmSync(SESSIONS);
+// Nothing may merge a run that did not pass when the coordinator decides.
+// A late advisor: its window opens when its brief was written.
+fs.utimesSync(brief5, new Date(T0 + (nowMin() + 150) * 60000), new Date(T0 + (nowMin() + 150) * 60000));
+sessions([{ key: 'S', status: 'done', updatedAt: T0 + (nowMin() + 150) * 60000 }, { key: 'agent:main:subagent:a', label: 'SB-5.1 advisor r2', status: 'running', updatedAt: T0 + (nowMin() + 151) * 60000 }]);
+is(keeper(nowMin() + 180), 'wait', /SB-5\.1: its advisor is at work/, 'late advisor: window from its brief');
+fs.rmSync(SESSIONS);
+has(orch(['finish', 'SB-5.1', '--approved-by', 'Owner', '--override', 'coordinator decided'], { code: 1 }), /limits\.atRoundLimit is "coordinator": no --override/, 'no override in coordinator mode');
+has(orch(['config']), /at the round limit the coordinator decides/, 'config shows the mode');
+orch(['prompt', 'SB-2', 'advisor'], { code: 1 }); // not at its limit
+write('.orchestrate/config.json', JSON.stringify(cfg));
+
 function has(t, re, label) { assert.match(t, re, label); n++; }
 console.log(`e2e-keeper: ${n} checks passed in ${REPO}`);
