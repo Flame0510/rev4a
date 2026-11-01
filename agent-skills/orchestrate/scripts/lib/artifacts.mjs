@@ -3,11 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // keepDays: how long the scopes of a parked or set-aside run are kept before the cleanup deletes them.
+// tmpSweep (opt-in, absent by default): { days, dir?, keep? } — the keeper also clears the system temporary folder of
+// what is older than `days` and unused (see sweepTemp in artifact-gc.mjs).
 export const ARTIFACT_DEFAULTS = { enabled: false, minFreeBytes: 0, disposable: [], keepDays: 14 };
 
 export function validatePolicy(policy) {
   if (typeof policy.enabled !== 'boolean' || !Number.isSafeInteger(policy.minFreeBytes) || policy.minFreeBytes < 0
     || !Array.isArray(policy.disposable) || (policy.keepDays !== undefined && !(Number.isFinite(policy.keepDays) && policy.keepDays >= 0))) throw new Error('invalid artifacts policy');
+  const t = policy.tmpSweep;
+  if (t !== undefined && t !== null && (typeof t !== 'object' || Array.isArray(t) || !(Number.isFinite(t.days) && t.days >= 1)
+    || (t.dir !== undefined && !(typeof t.dir === 'string' && path.isAbsolute(t.dir) && path.resolve(t.dir) !== '/'))
+    || (t.keep !== undefined && !(Array.isArray(t.keep) && t.keep.every(k => typeof k === 'string' && /^[^/*]+\*?$/.test(k))))
+    || Object.keys(t).some(k => !['days', 'dir', 'keep'].includes(k)))) {
+    throw new Error('invalid artifacts.tmpSweep: { "days": >= 1, "dir": an absolute folder (default: the system temporary folder), "keep": ["name", "prefix*"] }');
+  }
   for (const p of policy.disposable) {
     // Only explicit build/dependency directory names, under a newly allocated temporary scope.
     if (typeof p !== 'string' || !/^(?:[A-Za-z0-9_.-]+|\*)(?:\/(?:[A-Za-z0-9_.-]+|\*))*\/(?:\.next|node_modules)$/.test(p)

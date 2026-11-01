@@ -17,9 +17,10 @@ A PASS without EXECUTED lines is not accepted: if you could not run something, u
 {{harnesses}}
 
 When `artifacts.enabled` is true, execute checks with `node <skill>/scripts/managed-check.mjs "<command>" <timeoutSeconds>`
-(the script beside this skill's `scripts/orch.mjs`). Keep TMPDIR as assigned. Do not clean historical runs or shared
+(the script beside this skill's `scripts/orch.mjs`). Do not clean historical runs or shared
 dependencies. The wrapper preserves evidence and sources; it removes only declared new build directories after
 success and verified process shutdown. Never overlap a full suite with the gate or another full suite.
+{{tempRule}}
 
 ## Judge the code, not the paperwork
 Judge the changed code and its behaviour against the task below. The worker's report is not evidence and not a

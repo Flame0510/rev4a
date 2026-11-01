@@ -107,6 +107,16 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   the rounds before the last two, and the campaign keeper runs `$ORCH artifacts gc` on every tick (also parked or
   set-aside runs after `artifacts.keepDays`, default 14). `$ORCH artifacts` lists what is kept, deletable and
   unowned; unowned scopes (older releases) go only with `$ORCH artifacts gc --unowned`, on the owner's request.
+  **Temporary files of sub-agents:** worker, fix and checker briefs assign each run its own
+  `.orchestrate-artifacts/<project-id>/run-<ID>/tmp` and tell the sub-agent to export it as TMPDIR in every command;
+  it is deleted with the run's scopes when the run is merged (parked or set-aside runs after `keepDays`).
+  **System temp backstop (opt-in):** `artifacts.tmpSweep: { "days": 2, "dir": "/tmp", "keep": ["name", "prefix*"] }`
+  (`dir` defaults to `/tmp`) makes the keeper, on every tick, and `$ORCH artifacts gc` delete the top-level entries
+  of that folder that have nothing changed inside for `days` days and that no process uses (Linux only, and only when
+  every process can be inspected — in practice a keeper running as root, as in Rev4a agent containers). Hidden and
+  system names, links, mounts, folders holding a socket or pipe, the checkout, its worktrees and `keep` entries are
+  never touched. `$ORCH artifacts` previews it (or says why it cannot run); deletions are logged in
+  `.orchestrate/housekeeping.log`.
 - **Checks** (`checks`) run at every gate. **Harnesses** run at the gate (or only at the merge, `when: merge`) when
   the change touches their `paths`, or when the task names them in `harnesses:`. One harness runs at a time, and none
   runs when the scope, a check or the test rule already failed the gate. A gate harness the change does not reach is

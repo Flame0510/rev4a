@@ -34,6 +34,34 @@ raw unwrapped worker commands, detached tasks still running, or all failed attem
 database fixtures: a harness must finish and verify its own fixture cleanup before reporting success. Persistent
 evidence can still grow and requires an explicit retention policy after project acceptance requirements are known.
 
+## Temporary files of sub-agents (2026-11-01)
+
+Sub-agents often run tests and tools directly, not through managed-check, and their temporary files then land in the
+system /tmp, outside any scope (on Tourguide 2,870 folders, 16.6 GB, in two weeks). Two measures, both generic:
+
+- **A temporary folder per run.** With `artifacts.enabled`, the worker, fix and checker briefs assign the run
+  `../.orchestrate-artifacts/<project-id>/run-<ID>/tmp` and tell the sub-agent to start every command with
+  `export TMPDIR=… TMP=… TEMP=…;`. It follows its run: kept while the run is open (every round), deleted when it is
+  merged, after `keepDays` when parked or set aside, never while a process uses it (its cwd, an open file or a TMPDIR
+  pointing inside it). The folder of a run with no state left is unowned, deleted only with `--unowned`.
+- **A backstop for the system temporary folder (opt-in).** `artifacts.tmpSweep: { days, dir?, keep? }`; absent by
+  default. The keeper (after its decision, at most 200 deletions and 20 seconds per tick) and `orch artifacts gc`
+  delete the top-level entries of `dir` (default `/tmp`, never the caller's TMPDIR) that are regular files or real
+  folders on the same filesystem (not links, devices or mounts), of this user (any user when running as root), whose
+  names are not hidden, system (`systemd-private-*`, `tmux-*`, `ssh-*`, …) or in `keep` (exact names, or
+  prefixes ending in `*`), that hold no socket or pipe, in which nothing was modified or changed for `days` days
+  (a tree of more than 50,000 entries counts as recent), and that no process uses: its working or root directory,
+  open or mapped files, absolute paths in its arguments or environment, bound unix sockets. Every process must be
+  readable for that check; when one is not (another user's process, a root without the right to inspect it) nothing
+  is swept and `orch artifacts` says why. The checkout, its worktrees and the artifacts are never swept: an entry
+  holding one is skipped, and a `dir` inside one sweeps nothing. Linux only: elsewhere it deletes nothing. Choose
+  `dir` with care: every idle entry there goes. `orch artifacts` previews it; every deletion is logged in
+  `.orchestrate/housekeeping.log`.
+
+Upgrade safety: the run folder is new and additive; runs started before the update keep their briefs (no folder,
+same behaviour as before) and get it at their next fix round. The backstop is off until the owner sets it.
+Rollback: an older release ignores `run-*` folders and `tmpSweep` (it leaves them in place).
+
 ## Upgrade safety
 
 1. Existing data: additive optional config only; databases, credentials, agent volumes and old runs are untouched.

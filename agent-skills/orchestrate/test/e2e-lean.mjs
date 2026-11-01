@@ -81,6 +81,14 @@ assert.ok(state('SB-1').gate.cfgHash, 'config fingerprint recorded'); n++;
 assert.ok(fs.existsSync(path.join(REPO, '.orchestrate/runs/_suite-e2e.json')) && fs.existsSync(path.join(REPO, '.orchestrate/runs/_suite.json'))); n++;
 has(fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-1/prompts/checker-r0-a.md'), 'utf8'), /Not run at the gate \(the change does not reach their paths\): i18n\./, 'checker brief names the skipped check');
 assert.ok(scopes().some(s => s.r.run === 'SB-1 r0'), 'gate scopes carry their run'); n++;
+const runTmp = id => path.join(ARTS(), `run-${id}`, 'tmp');
+for (const brief of ['worker-r0.md', 'checker-r0-a.md']) {
+  const text = fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-1/prompts', brief), 'utf8');
+  const given = text.match(/export TMPDIR='([^']+)' TMP='\1' TEMP='\1';/)?.[1];
+  assert.ok(given && fs.realpathSync(given) === fs.realpathSync(runTmp('SB-1')), `${brief} assigns the run's temporary folder`); n++;
+}
+assert.ok(fs.statSync(runTmp('SB-1')).isDirectory(), 'the run temporary folder exists'); n++;
+write('leftover/big.bin', 'x'.repeat(1000), runTmp('SB-1'));
 
 // 2. The task-branch commit is the gated tree: a worktree pre-commit hook cannot block or change it. Identical merged
 // tree: checks and gate harnesses not repeated, the "merge" harness runs; the run's scopes are deleted.
@@ -93,6 +101,7 @@ assert.equal(runs('check'), 1); assert.equal(runs('e2e'), 1); assert.equal(runs(
 assert.equal(g('show', 'develop:app/a.mjs'), '// changed', 'the gated change is merged'); n++;
 assert.ok(!scopes().some(s => s.r.run?.startsWith('SB-1 ') || s.r.cwd === W('SB-1')), 'scopes of the merged run deleted'); n++;
 has(o, /artifacts: \d+ scope\(s\) of SB-1 deleted/, 'finish reports the cleanup');
+assert.ok(!fs.existsSync(path.join(ARTS(), 'run-SB-1')), 'the merged run temporary folder deleted'); n++;
 fs.rmSync(path.join(REPO, '.git/hooks/pre-commit'));
 
 // 3. The base moved only in inert files (the tracker): still not repeated.
@@ -137,6 +146,8 @@ write('.orchestrate/runs/SB-6/inbox/worker.md', 'again\n'); orch(['record', 'SB-
 orch(['gate', 'SB-6'], 2); orch(['fix', 'SB-6']);
 assert.ok(!scopes().some(s => s.r.run === 'SB-6 r0'), 'round 0 scopes deleted at round 2'); n++;
 assert.ok(scopes().some(s => s.r.run === 'SB-6 r1'), 'round 1 scopes kept (the last failed round)'); n++;
+assert.ok(fs.existsSync(runTmp('SB-6')), 'an open run keeps its temporary folder at every round'); n++;
+has(fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-6/prompts/fix-r2.md'), 'utf8'), /export TMPDIR=.*run-SB-6\/tmp/, 'the fix brief assigns it too');
 
 // 8. A scope no run owns (an older release) is listed, never deleted by the cleanup, only on request.
 const old = path.join(ARTS(), 'command-legacy');
@@ -157,6 +168,31 @@ orch(['artifacts', 'gc']);
 assert.ok(fs.existsSync(old), 'unowned scope kept by gc'); n++;
 has(orch(['artifacts', 'gc', '--unowned']), /deleted [1-9]\d* scope\(s\)/, 'deleted on request');
 assert.ok(!fs.existsSync(old)); n++;
+// The temporary folder of a run nobody has any more (its state is gone) is unowned: kept, deleted only on request.
+write('x', 'x', path.join(ARTS(), 'run-SB-99', 'tmp'));
+orch(['artifacts', 'gc']);
+assert.ok(fs.existsSync(path.join(ARTS(), 'run-SB-99')), 'an unknown run temporary folder kept'); n++;
+orch(['artifacts', 'gc', '--unowned']);
+assert.ok(!fs.existsSync(path.join(ARTS(), 'run-SB-99')) && fs.existsSync(runTmp('SB-6')), 'deleted on request; the open run keeps its own'); n++;
+
+// 8b. The opt-in system temp backstop: previewed by orch artifacts, applied by gc, logged (Linux only; elsewhere nothing).
+const SYSTMP = path.join(base, 'systmp');
+write('old-test-dir/f.txt', 'x'.repeat(2000), SYSTMP); write('.hidden/f', 'x', SYSTMP);
+const saved = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'), 'utf8');
+write('.orchestrate/config.json', JSON.stringify({ ...JSON.parse(saved), artifacts: { ...cfg.artifacts, tmpSweep: { days: 2, dir: SYSTMP } } }));
+const later = { ...process.env, ORCH_NOW: String(Date.now() + 3 * 86_400_000) };
+const orchAt = args => { const r = spawnSync(process.execPath, [ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: later }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+if (process.platform === 'linux') {
+  has(orchAt(['artifacts']), /temporary folder .*systmp \(artifacts\.tmpSweep\): 1 unused entry older than 2 day/, 'sweep previewed');
+  assert.ok(fs.existsSync(path.join(SYSTMP, 'old-test-dir')), 'preview deletes nothing'); n++;
+  has(orchAt(['artifacts', 'gc']), /temporary folder .*: deleted 1 entry older than 2 day/, 'gc applies the sweep');
+  assert.ok(!fs.existsSync(path.join(SYSTMP, 'old-test-dir')) && fs.existsSync(path.join(SYSTMP, '.hidden')), 'old entry gone, hidden kept'); n++;
+  has(fs.readFileSync(path.join(REPO, '.orchestrate/housekeeping.log'), 'utf8'), /deleted 1 temporary entry, [\d.]+ GB: old-test-dir/, 'deletion logged');
+} else {
+  has(orchAt(['artifacts', 'gc']), /deleted 0 entries/, 'no sweep off Linux');
+  assert.ok(fs.existsSync(path.join(SYSTMP, 'old-test-dir'))); n++;
+}
+write('.orchestrate/config.json', saved);
 
 // 9. Config values are checked.
 orch(['config', '--set', 'merge.recheck=sometimes'], 1);

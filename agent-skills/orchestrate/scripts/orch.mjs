@@ -39,7 +39,7 @@ import { cardRules } from './lib/card.mjs';
 import { CAMPAIGN_DEFAULTS, decide, wakeMessage } from './lib/keeper.mjs';
 import { cmdCard } from './lib/card-cmd.mjs';
 import { validatePolicy } from './lib/artifacts.mjs';
-import { applyGc, planGc, scopeBytes } from './lib/artifact-gc.mjs';
+import { applyGc, planGc, scopeBytes, sweepTemp } from './lib/artifact-gc.mjs';
 import { ensurePr, fetchBase, gh, mergePr, postStatus, prView, pushExact, remoteSha } from './lib/forge.mjs';
 import { evaluate } from './lib/select.mjs';
 import { excludeOnce, fill, git, lastLines, minutes, now, OrchError, readJson, redactSecrets, sh, writeAtomic, writeJson } from './lib/util.mjs';
@@ -413,6 +413,25 @@ function writeWorkerPrompt(root, cfg, task, st) {
   return file;
 }
 
+// The temporary folder of a run's sub-agents (with artifacts enabled): every command they run sets TMPDIR to it, so what
+// tests and tools leave there is deleted with the run's scopes when it is merged, not left in the system /tmp.
+function runTemp(root, cfg, id) {
+  if (!cfg.artifacts.enabled) return null;
+  const dir = path.join(artifactsDir(root), `run-${id.toUpperCase()}`, 'tmp');
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { return null; } // no folder: the brief says nothing
+  return dir;
+}
+
+function tempRule(root, cfg, id) {
+  const dir = runTemp(root, cfg, id);
+  const q = dir && `'${dir.replaceAll("'", "'\\''")}'`;
+  return dir
+    ? `- Temporary files go to \`${dir}\`, never to /tmp: start every command you run with `
+      + `\`export TMPDIR=${q} TMP=${q} TEMP=${q};\` (each command runs in a new shell, so repeat it every time). `
+      + 'managed-check sets its own. orch deletes this folder when the task is merged.'
+    : '';
+}
+
 function workerBrief(root, cfg, task, st) {
   const notesFile = path.join(orchDir(root), 'NOTES.md');
   const notes = fs.existsSync(notesFile) ? fs.readFileSync(notesFile, 'utf8').trim().slice(0, 4000) : '';
@@ -423,6 +442,7 @@ function workerBrief(root, cfg, task, st) {
     plan: task.plan || '(none)', owned: block(task.ownedFiles), checks: block(checksFor(cfg, task)),
     tests: testsBrief(cfg, task),
     trackerDir: cfg.tracker.dir ?? '.orchestrate', reportPath: path.join(runDir(root, st.id), 'inbox', 'worker.md'),
+    tempRule: tempRule(root, cfg, st.id),
   });
 }
 
@@ -684,7 +704,7 @@ function writeCheckerPrompts(root, cfg, task, st, gateText) {
       id: st.id, title: st.title, worktree: st.worktree, base: st.base, round: st.round,
       gateSummary: gateText.split('\n').map(l => `    ${l}`).join('\n'),
       description: task.description || '(no description)', acceptance: task.acceptance || '(none)', owned: block(task.ownedFiles),
-      harnesses: checkerHarnesses(cfg, task, st),
+      harnesses: checkerHarnesses(cfg, task, st), tempRule: tempRule(root, cfg, st.id),
       reportPath: path.join(runDir(root, st.id), 'inbox', `checker-r${st.round}-${tag}.md`), // per round: a late checker of an earlier round never passes for this one
     }));
     return { tag, prompt };
@@ -1571,7 +1591,35 @@ async function cmdKeeper(root, { flags }) {
   print(r.locked ? { action: 'wait', reason: 'the campaign is being changed by another orch command' } : r.value);
   // Housekeeping after the decision is out: the scopes merged runs, earlier rounds and expired parked or set-aside runs
   // left, at most 100 per tick (the first tick after an update may find many).
-  try { applyGc(gcPlan(root, cfg), { max: 100 }); } catch { /* never in the way of the decision */ }
+  let gc = null; let swept = null;
+  try { gc = applyGc(gcPlan(root, cfg), { max: 100 }); } catch { /* never in the way of the decision */ }
+  try { if (cfg.artifacts.tmpSweep) swept = sweepTemp(tempSweepArgs(root, cfg, { apply: true })); } catch { /* idem */ }
+  housekeepingLog(root, gc, swept);
+}
+
+// The system temporary folder is /tmp, not the caller's TMPDIR (a sub-agent shell may have exported its run folder). The
+// checkout, its worktrees and the artifacts are never swept, whatever `dir` says.
+const tempSweepArgs = (root, cfg, extra) => ({
+  dir: cfg.artifacts.tmpSweep.dir ?? '/tmp', days: cfg.artifacts.tmpSweep.days, keep: cfg.artifacts.tmpSweep.keep ?? [],
+  protect: [root, path.resolve(root, cfg.worktreeRoot), artifactsDir(root)], now: Number(process.env.ORCH_NOW) || Date.now(), ...extra,
+});
+
+// The sweep for orch artifacts: its result, or why it could not run (it never stops the command).
+function sweepFor(root, cfg, extra) {
+  try { return sweepTemp(tempSweepArgs(root, cfg, extra)); } catch (e) { return { entries: [], deleted: 0, freed: 0, blocked: e.message }; }
+}
+
+// What the housekeeping deleted, one line per tick that deleted something, in .orchestrate/housekeeping.log (kept under 1 MB).
+function housekeepingLog(root, gc, swept) {
+  const parts = [];
+  if (gc?.deleted) parts.push(`${gc.deleted} scope(s), ${gb(gc.freed)}`);
+  if (swept?.deleted) parts.push(`${swept.deleted} temporary entr${swept.deleted === 1 ? 'y' : 'ies'}, ${gb(swept.freed)}: ${swept.entries.slice(0, swept.deleted).map(e => path.basename(e.path)).join(' ')}`);
+  if (!parts.length) return;
+  try {
+    const file = path.join(orchDir(root), 'housekeeping.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 1e6) fs.writeFileSync(file, fs.readFileSync(file, 'utf8').slice(-500_000));
+    fs.appendFileSync(file, `${now()} deleted ${parts.join('; ')}\n`);
+  } catch { /* read-only checkout */ }
 }
 
 // `orch card`, plus what a split means for a card that already has a run (for example one at its round limit, where
@@ -1702,7 +1750,10 @@ async function cmdArtifacts(root, { pos, flags }) {
   const plan = gcPlan(root, cfg, { unowned: pos[0] === 'gc' && flags.unowned === true });
   if (pos[0] === 'gc') {
     const r = applyGc(plan, { unowned: flags.unowned === true });
-    out(`deleted ${r.deleted} scope(s), ${gb(r.freed)} freed${flags.unowned ? ' (unowned included, on the owner\'s request)' : ''}`);
+    const t = cfg.artifacts.tmpSweep ? sweepFor(root, cfg, { apply: true, max: Infinity, budgetMs: Infinity }) : null;
+    housekeepingLog(root, r, t);
+    out(`deleted ${r.deleted} scope(s), ${gb(r.freed)} freed${flags.unowned ? ' (unowned included, on the owner\'s request)' : ''}`,
+      t ? `temporary folder ${tempSweepArgs(root, cfg).dir}: deleted ${t.deleted} entr${t.deleted === 1 ? 'y' : 'ies'} older than ${cfg.artifacts.tmpSweep.days} day(s), ${gb(t.freed)} freed${t.blocked ? ` (not swept: ${t.blocked})` : ''}` : null);
     return;
   }
   if (pos[0]) throw new OrchError('orch artifacts [gc [--unowned]]');
@@ -1716,6 +1767,10 @@ async function cmdArtifacts(root, { pos, flags }) {
     ...['deletable', 'kept', 'unowned'].filter(k => groups[k]).map(k => `  ${k.padEnd(9)} ${String(groups[k].n).padStart(5)}  ${gb(groups[k].bytes)}`),
     groups.deletable ? 'next: orch artifacts gc (the keeper also runs it)' : null,
     groups.unowned ? 'unowned scopes are deleted only on the owner\'s request: orch artifacts gc --unowned' : null);
+  if (cfg.artifacts.tmpSweep) {
+    const t = sweepFor(root, cfg, { budgetMs: Infinity });
+    out(`temporary folder ${tempSweepArgs(root, cfg).dir} (artifacts.tmpSweep): ${t.blocked ? `not swept: ${t.blocked}` : `${t.entries.length} unused entr${t.entries.length === 1 ? 'y' : 'ies'} older than ${cfg.artifacts.tmpSweep.days} day(s), ${gb(t.entries.reduce((n, e) => n + e.bytes, 0))}${t.entries.length ? ' (orch artifacts gc, and the keeper, delete them)' : ''}`}`);
+  }
 }
 
 function need(v, what) { if (!v) throw new OrchError(`missing ${what}`); return v; }

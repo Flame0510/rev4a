@@ -3,6 +3,9 @@
 //   - its run is merged (and finished): everything goes, successful and failed attempts alike;
 //   - its run is open and the scope is from an earlier round (the last failed round stays for diagnosis);
 //   - its run is parked or set aside by a split for longer than artifacts.keepDays.
+// The temporary folder of a run (run-<id>, the TMPDIR its sub-agents' briefs assign) follows its run the same way, except
+// that an open run keeps it whatever the round. sweepTemp is the opt-in backstop for what still lands in the system
+// temporary folder (artifacts.tmpSweep).
 // A scope is attributed to a run by the ORCH_RUN label orch records in its receipt, or by its working directory (the
 // run's worktree; receipts of this release only). Scopes of older releases (no ownership proof), interrupted commands
 // (they need a diagnosis) and the main checkout are only listed, and deleted on the owner's explicit request. A scope
@@ -40,7 +43,7 @@ export function scopeRun(receipt, worktreeRoot) {
 }
 
 // The scopes some live process uses (Linux): one pass over /proc for all of them, by the ORCH_ARTIFACTS_DIR marker a
-// command inherits and by working directories and open files under the artifacts dir. null when /proc cannot be read
+// command inherits, a TMPDIR that points inside one, and working directories and open files under the artifacts dir. null when /proc cannot be read
 // with certainty: every scope then counts as in use.
 export function referencedScopes(artifactsDir) {
   if (process.platform !== 'linux') return new Set();
@@ -54,7 +57,10 @@ export function referencedScopes(artifactsDir) {
         // A non-root user sees only its own processes (the commands run as this user; others are not readable). Root
         // reads every process, including a command that dropped to another user, and skips only what it cannot read.
         if (process.getuid && process.getuid() !== 0 && fs.statSync(dir).uid !== process.getuid()) continue;
-        for (const v of fs.readFileSync(`${dir}/environ`).toString().split('\0')) if (v.startsWith('ORCH_ARTIFACTS_DIR=')) add(v.slice(19));
+        for (const v of fs.readFileSync(`${dir}/environ`).toString().split('\0')) {
+          const m = v.match(/^(?:ORCH_ARTIFACTS_DIR|TMPDIR|TMP|TEMP)=(.*)$/s);
+          if (m) add(m[1]);
+        }
         for (const f of ['cwd', ...fs.readdirSync(`${dir}/fd`).map(x => `fd/${x}`)]) {
           try { add(fs.readlinkSync(`${dir}/${f}`)); } catch (e) { if (!['ENOENT', 'ESRCH'].includes(e.code)) return null; }
         }
@@ -76,8 +82,21 @@ export function referencedScopes(artifactsDir) {
 export function planGc({ artifactsDir, worktreeRoot, runs, archived, keepDays, now = Date.now(), only = null, unowned = false }) {
   if (!fs.existsSync(artifactsDir)) return [];
   const out = [];
-  for (const name of fs.readdirSync(artifactsDir).filter(n => n.startsWith('command-'))) {
+  for (const name of fs.readdirSync(artifactsDir).filter(n => n.startsWith('command-') || n.startsWith('run-'))) {
     const scope = path.join(artifactsDir, name);
+    if (name.startsWith('run-')) {
+      const id = name.slice(4).toUpperCase();
+      if (only && id !== only) continue;
+      const st = runs[id];
+      const entry = (action, why) => ({ scope, receipt: null, run: { id, round: null, temp: true }, busy: false, action, why });
+      const expired = at => now - at > keepDays * DAY;
+      if (!st) out.push(entry(archived[id] ? (expired(archived[id]) ? 'delete' : 'keep') : 'unowned', `${id}: temporary folder of a run set aside or gone`));
+      else if (st.hold) out.push(entry('keep', `${id}: waits for the owner`));
+      else if (st.phase === 'merged' && !st.finishPending?.length) out.push(entry('delete', `${id} is merged`));
+      else if (st.phase === 'parked') out.push(entry(st.parkedAt && expired(st.parkedAt) ? 'delete' : 'keep', `${id} parked`));
+      else out.push(entry('keep', `${id}: temporary folder of an open run`));
+      continue;
+    }
     let receipt;
     try { receipt = JSON.parse(fs.readFileSync(path.join(scope, 'receipt.json'), 'utf8')); } catch { receipt = null; }
     if (!receipt) { if (!only) out.push({ scope, receipt, run: null, busy: false, action: 'unowned', why: 'no readable receipt' }); continue; }
@@ -115,7 +134,7 @@ export function applyGc(plan, { unowned = false, max = Infinity } = {}) {
   let deleted = 0; let freed = 0;
   for (const x of plan) {
     if (deleted >= max) break;
-    const ok = x.action === 'delete' || (unowned && x.action === 'unowned' && x.receipt && !x.busy);
+    const ok = x.action === 'delete' || (unowned && x.action === 'unowned' && (x.receipt || x.run?.temp) && !x.busy);
     if (!ok) continue;
     const n = bytes(x.scope);
     fs.rmSync(x.scope, { recursive: true, force: true });
@@ -125,3 +144,92 @@ export function applyGc(plan, { unowned = false, max = Infinity } = {}) {
 }
 
 export { bytes as scopeBytes };
+
+// Names in the system temporary folder that belong to the system or to long-lived sessions, never swept.
+const SYSTEM_TEMP = /^(?:\.|systemd-private-|snap-private-tmp$|tmux-|ssh-|pulse-|krb5cc|hsperfdata_|lost\+found$)/;
+const nameMatch = (name, pattern) => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern);
+
+// Whether anything in the tree changed since `since` (ms), by modification and change time; stops at the first one.
+// A socket or pipe (a live server may own it), another filesystem (a mount) or a tree larger than `budget` entries also
+// counts as recent: it is left alone rather than judged.
+function changedSince(p, since, dev, budget = { n: 50_000 }) {
+  let s;
+  try { s = fs.lstatSync(p); } catch { return false; }
+  if (Math.max(s.mtimeMs, s.ctimeMs) >= since || --budget.n < 0 || s.dev !== dev || s.isSocket() || s.isFIFO()) return true;
+  if (!s.isDirectory()) return false;
+  let names;
+  try { names = fs.readdirSync(p); } catch { return true; }
+  return names.some(n => changedSince(path.join(p, n), since, dev, budget));
+}
+
+// The top-level entries of `base` that any live process uses: its working and root directory, open files, mapped files,
+// absolute paths in its arguments and its temporary-folder variables, plus bound unix sockets. Every process must be
+// readable: when one is not (another user's, without the right to inspect it), null — nothing can be ruled out.
+function entriesInUse(base) {
+  const used = new Set();
+  const add = p => { if (typeof p === 'string' && p.startsWith(`${base}/`)) used.add(path.join(base, p.slice(base.length + 1).split('/')[0])); };
+  const gone = e => ['ENOENT', 'ESRCH'].includes(e.code);
+  try {
+    for (const line of fs.readFileSync('/proc/net/unix', 'utf8').split('\n').slice(1)) add(line.trim().split(/\s+/)[7]);
+    for (const pid of fs.readdirSync('/proc').filter(n => /^\d+$/.test(n) && Number(n) !== process.pid)) {
+      const dir = `/proc/${pid}`;
+      try {
+        for (const l of ['cwd', 'root']) { try { add(fs.readlinkSync(`${dir}/${l}`)); } catch (e) { if (!gone(e)) throw e; } }
+        for (const fd of fs.readdirSync(`${dir}/fd`)) { try { add(fs.readlinkSync(`${dir}/fd/${fd}`)); } catch (e) { if (!gone(e)) throw e; } }
+        for (const line of fs.readFileSync(`${dir}/maps`, 'utf8').split('\n')) add(line.slice(line.indexOf('/')).replace(/ \(deleted\)$/, ''));
+        for (const a of fs.readFileSync(`${dir}/cmdline`, 'utf8').split('\0')) { add(a); add(a.slice(a.indexOf('=') + 1)); }
+        for (const v of fs.readFileSync(`${dir}/environ`, 'utf8').split('\0')) add(v.slice(v.indexOf('=') + 1));
+      } catch (e) { if (!gone(e)) return null; }
+    }
+  } catch { return null; }
+  return used;
+}
+
+/**
+ * The opt-in backstop for the system temporary folder (artifacts.tmpSweep): the top-level entries of `dir` that are
+ * regular files or real folders on its own filesystem (never links, sockets, devices or mounts), belong to this user (any
+ * owner when running as root), are not system names or in `keep`, hold no socket or pipe, have nothing modified or
+ * changed inside for `days` days, and that no process uses. Linux only, and only when every process can be inspected:
+ * otherwise nothing is swept. `protect`: folders (the checkout, worktrees, artifacts) never touched — an entry holding
+ * one is skipped, and a `dir` inside one sweeps nothing. Plans only unless `apply`; then deletes at most `max`
+ * entries, measures only what it deletes and stops after `budgetMs`. Returns { entries: [{ path, bytes }], deleted, freed, blocked? }.
+ */
+export function sweepTemp({ dir, days, keep = [], protect = [], apply = false, max = 200, budgetMs = 20_000, now = Date.now() }) {
+  const result = { entries: [], deleted: 0, freed: 0 };
+  if (process.platform !== 'linux' || !(days >= 1)) return result;
+  let base; let baseDev;
+  try { base = fs.realpathSync(dir); baseDev = fs.statSync(base).dev; } catch { return result; }
+  if (base === '/') return result;
+  const guarded = new Set();
+  for (const p of protect) {
+    let real;
+    try { real = fs.realpathSync(p); } catch { continue; }
+    if (real === base || base.startsWith(`${real}/`)) return { ...result, blocked: `${base} is inside ${real}` };
+    if (real.startsWith(`${base}/`)) guarded.add(path.join(base, real.slice(base.length + 1).split('/')[0]));
+  }
+  const t0 = Date.now();
+  const since = now - days * 86_400_000;
+  const uid = process.getuid?.();
+  const candidates = [];
+  for (const name of fs.readdirSync(base)) {
+    if (SYSTEM_TEMP.test(name) || keep.some(k => nameMatch(name, k))) continue;
+    const p = path.join(base, name);
+    let s;
+    try { s = fs.lstatSync(p); } catch { continue; }
+    if (!(s.isFile() || s.isDirectory()) || s.dev !== baseDev || guarded.has(p) || (uid !== 0 && s.uid !== uid)) continue;
+    if (Date.now() - t0 > budgetMs) break;
+    if (!changedSince(p, since, baseDev)) candidates.push(p);
+  }
+  if (!candidates.length) return result;
+  const used = entriesInUse(base);
+  if (used === null) return { ...result, blocked: 'not every process can be inspected: run the keeper as the user that runs every process, or as root with CAP_SYS_PTRACE (a container runs without it by default)' };
+  for (const p of candidates) {
+    if (used.has(p)) continue;
+    if (!apply) { result.entries.push({ path: p, bytes: bytes(p) }); continue; }
+    if (result.deleted >= max || Date.now() - t0 > budgetMs) break;
+    const n = bytes(p);
+    try { fs.rmSync(p, { recursive: true, force: true }); } catch { continue; /* left for the next pass */ }
+    result.entries.push({ path: p, bytes: n }); result.deleted++; result.freed += n;
+  }
+  return result;
+}

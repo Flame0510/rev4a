@@ -40,6 +40,7 @@ Run them yourself in the folder above before you finish; they must pass.
   private temporary directory, disk preflight and declared build cleanup. Do not replace TMPDIR with /tmp, delete
   old runs or prune containers/volumes. A failed or interrupted command retains its evidence. This wrapper does
   not serialize arbitrary manual checks: never overlap a full suite with the gate or another full suite.
+{{tempRule}}
 - Do not commit, push, merge, rebase, stash, reset or switch branches. Leave your changes uncommitted: the scripts
   handle git.
 - Do not edit the task tracker and do not write audit files, inventories, line counts, file lists or history.
