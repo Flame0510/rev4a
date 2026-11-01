@@ -98,6 +98,10 @@ access to them.
 |---|---|
 | `rev4a-deep-review` | Deep anti-regression review: 4 parallel read-only reviewers (regressions, failure modes, security, docs & language), every finding validated against code and a running instance |
 
+Skills Rev4a develops **for the agents it runs** live in `agent-skills/` (not shipped in the npm
+package, not installed by Rev4a yet): today `orchestrate`, the generic sub-agent orchestration skill with its
+campaign keeper. See `agent-skills/README.md`; its suites run under `npm test`.
+
 ---
 
 ### 2.2b Design System (UI)

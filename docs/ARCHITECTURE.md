@@ -677,6 +677,7 @@ This keeps the layout simple and avoids hierarchy debates at this stage.
 - The agent base image (`openclaw-agent-base`) pre-configures `skills.load.extraDirs: ["/data/.openclaw/shared-skills"]` so every new agent discovers shared skills automatically.
 - Both create and recreate routes guarantee this via `applyRuntimeConfig()` from `lib/agent-setup.ts`.
 - Rev4a's own shared skills live in the package under `rev4a-skills/<name>/SKILL.md` (names start with `rev4a-`; today `rev4a-mongodb`). `rev4a serve` copies each one into this directory at start when its text differs (`ensureRev4aSkills()` in `bin/rev4a.js`), and a MongoDB switch-on does the same through `ensureRev4aSkill()` in `lib/rev4a-skills.ts`. Other skills in the directory are never touched; nothing is copied into a container.
+- Skills Rev4a develops for its agents but does not install live in `agent-skills/` (not in the npm package): today `orchestrate`, the sub-agent orchestration skill (worker, gate, checker, merge; campaign keeper as an OpenClaw script job). It is installed on an agent by hand as an immutable release folder; see `agent-skills/README.md`.
 - No manual setup: `rev4a serve` creates both shared directories during
   preflight (`ensureRev4aRules()` in `bin/rev4a.js`). They live under
   `REV4A_DATA`, so a plain `mkdir` suffices — no `sudo`, no permission
