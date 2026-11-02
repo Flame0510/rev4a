@@ -18,16 +18,16 @@ export const CAMPAIGN_DEFAULTS = { idleMinutes: 10, graceMinutes: 10, backoffMin
 const min = ms => Math.round(ms / 60000);
 // Labels as the coordinator typed them: case and spacing may differ from orch's, and it may add a suffix ("(retry)").
 const norm = l => String(l ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
-const sameLabel = (actual, expected) => norm(actual) === norm(expected) || norm(actual).startsWith(`${norm(expected)} `);
+export const sameLabel = (actual, expected) => norm(actual) === norm(expected) || norm(actual).startsWith(`${norm(expected)} `);
 // Ended as OpenClaw counts it: a terminal status or an end time. Anything else (running, queued, yielded, none) is live.
-const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.status) || Boolean(s.endedAt);
+export const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.status) || Boolean(s.endedAt);
 
 /**
  * ctx: { now, campaign, runs (open run states in scope: id, phase, round, events, finishPending), lastActivity (ms),
  * busy (string or null), busySince (ms, when that same thing was first seen running), othersRunning (a sub-agent of a
  * run outside the scope is within its time limit), blocked ([{ id, why }]), eligible ([{ id }]), waiting ([{ id,
  * reasons }] cards in scope that cannot start or have no run), remaining (cards in scope not finished), standing (bool),
- * limits, nextFor (run → its next: line), progress (fingerprint), reports ({ [run id]: [{ tag, mtime }] } reports a
+ * limits, nextFor (run → its next: line), recheckable (run → its checkers only lacked evidence: orch recheck first), progress (fingerprint), reports ({ [run id]: [{ tag, mtime }] } reports a
  * sub-agent left in the run's inbox and nobody recorded yet), sessions (null when unknown, else the runtime's sessions:
  * [{ label, status, updatedAt }]), expected ({ [run id]: { opened, labels: [{ label, who }] } }: the sub-agents the
  * run waits for and when its phase opened) }
@@ -64,7 +64,8 @@ function decideAll(ctx) {
   // At its limit: the run's own limit (scope rounds granted), unless a gate that failed on files outside the card can
   // still get its scope round (the coordinator adds the files and fixes).
   const atLimit = st => (st.round ?? 0) >= rounds + (st.scopeRounds ?? 0)
-    && !(st.phase === 'gate-failed' && (st.gate?.outside ?? 0) > 0 && (st.scopeRounds ?? 0) < (ctx.scopeRoundsMax ?? 1));
+    && !(st.phase === 'gate-failed' && (st.gate?.outside ?? 0) > 0 && (st.scopeRounds ?? 0) < (ctx.scopeRoundsMax ?? 1))
+    && !ctx.recheckable?.(st); // checkers that only lacked evidence run again first: the coordinator's step
   for (const st of ctx.runs) {
     const last = Date.parse(st.events.at(-1)?.t ?? 0) || 0;
     if (st.phase === 'ready' && !ctx.standing) {

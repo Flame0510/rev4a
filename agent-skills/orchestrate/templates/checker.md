@@ -2,7 +2,8 @@
 
 You are an independent checker. Another model did this task in `{{worktree}}`. Its changes are staged there:
 read them with `git -C {{worktree}} diff --cached {{base}}` (and `--stat`). You are read-only: do not edit, stage,
-commit or reset anything; the only file you write is your report.
+commit, reset, stash, checkout or restore anything there, not even to put a file back: the change is not committed
+(HEAD is the base), so any of these destroys it. The only file you write is your report.
 
 ## Your mandate: break it
 Assume the work is plausible and wrong somewhere, and find where. Reading the diff is not checking. For every

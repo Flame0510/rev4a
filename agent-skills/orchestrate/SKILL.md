@@ -40,6 +40,16 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    it on your own, not even under a broad autonomy mandate or to undo a change you remember making: propose the
    change to the owner and wait for their ok. A limit raised for one task stays as the owner leaves it. The campaign
    keeper reports every config change to the owner.
+11. **A report is only ever the sub-agent's own.** A completion is this sub-agent's only when its label (or
+   taskName) is exactly the one the `next:` line gave; completions of other batches are not it. Never write a report
+   in a sub-agent's place, not even a placeholder: during a campaign `record` refuses while the runtime shows that sub-agent running (at most for its time limit). A
+   sub-agent that ended without a report and without an answer is started again with the same brief, in the same
+   round. `orch status` shows a LATE REPORT (a checker report nobody recorded: it came after its round was closed,
+   or after another checker's FAIL): its findings go to the worker (`sessions_send` if one is running; the next `orch fix` brief carries them anyway).
+12. **Nobody changes a worktree after its gate.** When `record` or `finish` says the worktree changed after the gate,
+   look at what changed (the message says): if nobody meant it (a sub-agent's "undo"), `$ORCH restore <id>` puts back
+   what the gate passed, keeps a copy of what it replaced, and the recorded verdicts stay; then record again. Run
+   `$ORCH gate <id>` again only for a change that is wanted.
 
 ## Setup (once per project)
 1. `$ORCH init` reads the tracker, the check command (`npm run check` if it exists), the base branch and the
@@ -169,7 +179,9 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    the same way (`sessions_spawn`, configured checker model, always a new sub-agent) with `Read <checker brief> and do
    what it says.`
 6. When it announces: `$ORCH record <id> checker` (`--tag b` for a second checker).
-   FAIL or NEEDS EVIDENCE → `$ORCH fix <id>`. PASS → ready.
+   FAIL → `$ORCH fix <id>`. NEEDS EVIDENCE with no FAIL → `$ORCH recheck <id>`: no checker found a defect, so the
+   checkers run again in the same round, once, without using a correction round (`fix` refuses until then, unless the
+   worker really must add something checkable: `fix --anyway`; after a second NEEDS EVIDENCE it is `fix`). PASS → ready.
 7. Tell the owner in three lines: task, gate numbers, checker verdict. Without a standing approval, ask for the
    merge ok and wait.
 8. On their ok: `$ORCH finish <id> --approved-by <name>` (with a standing approval: `$ORCH finish <id>`, then
@@ -186,8 +198,9 @@ the config adjust the list).
 If `finish` stops half-way (killed, a tracker error), run it again: it never merges twice, it does only the steps
 that are missing (`orch status` lists them).
 
-If a sub-agent answered only in chat and wrote no report file, save its final answer to the path the brief named
-(or pass `--from <file>`). If it ran out of time or failed, `record` what you have and let the gate decide.
+If a sub-agent answered only in chat and wrote no report file, save its final answer, unchanged, to the path the brief
+named (or pass `--from <file>`). If it ran out of time or failed without an answer, start it again with the same brief
+(rule 11): a worker's partial work is still in the worktree, and the gate decides on it.
 
 ## Campaigns: working a queue to the end
 When the owner asks to work a set of cards to the end, the runtime does not start your next turn by itself: if you

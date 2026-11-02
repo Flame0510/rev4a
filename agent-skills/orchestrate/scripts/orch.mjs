@@ -9,7 +9,9 @@
 //   orch start <id> [--force]                                worktree + branch, status In Progress, worker prompt
 //   orch record <id> worker|checker [--tag a] [--from f] [--tokens n]   save a sub-agent's report
 //   orch gate <id>                                           scope, counts, checks; on PASS the checker prompts
-//   orch fix <id>                                            next correction round (at most limits.correctionRounds)
+//   orch fix <id> [--anyway]                                 next correction round (at most limits.correctionRounds)
+//   orch recheck <id>                                        checkers again, same round, when they only lacked evidence
+//   orch restore <id>                                        put back the tree the gate passed (changed after it)
 //   orch push <id>                                           delivery pr: commit the gated tree, push, open/update the PR
 //   orch resolve <id> --checked <what>                       record that an unchecked merged result was checked
 //   orch campaign start|stop|status|job-script               the owner's mandate to work cards to the end, one coordinator
@@ -36,7 +38,7 @@ import {
   runHarness, shq, testRule,
 } from './lib/harness.mjs';
 import { cardRules } from './lib/card.mjs';
-import { CAMPAIGN_DEFAULTS, decide, wakeMessage } from './lib/keeper.mjs';
+import { CAMPAIGN_DEFAULTS, decide, sameLabel, wakeMessage } from './lib/keeper.mjs';
 import { cmdCard } from './lib/card-cmd.mjs';
 import { validatePolicy } from './lib/artifacts.mjs';
 import { applyGc, planGc, scopeBytes, sweepTemp } from './lib/artifact-gc.mjs';
@@ -45,7 +47,7 @@ import { evaluate } from './lib/select.mjs';
 import { excludeOnce, fill, git, lastLines, minutes, now, OrchError, readJson, redactSecrets, sh, writeAtomic, writeJson } from './lib/util.mjs';
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BOOL = new Set(['force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned']);
+const BOOL = new Set(['anyway', 'force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned']);
 
 function parseArgs(argv) {
   const pos = []; const flags = { set: [] };
@@ -82,6 +84,21 @@ function stageAndTree(wt) {
   return git(['write-tree'], wt);
 }
 
+// The tree a gate passed, pinned in a commit under refs/orch/<id>/gate until the run is merged: git gc keeps it, and
+// orch restore puts it back when something changed the worktree after the gate (a checker's "undo", 2026-11-02).
+// HEAD is not moved. Best effort: a run without the ref still has the tree object, only not safe from gc.
+const gateRef = id => `refs/orch/${id}/gate`;
+function pinGate(st) {
+  const c = git(['-c', 'user.name=orch', '-c', 'user.email=orch@localhost', 'commit-tree', st.gate.tree, '-p', st.base, '-m', `orch: ${st.id} gate round ${st.round}`], st.worktree, { allowFail: true });
+  if (c.code === 0) git(['update-ref', gateRef(st.id), c.out], st.worktree, { allowFail: true });
+}
+
+// What changed in the worktree since the gate, for the refusals that send the coordinator to orch restore.
+function changedSinceGate(st, tree, want = st.gate.tree) {
+  const stat = git(['diff', '--stat', '--no-renames', want, tree], st.worktree, { allowFail: true }).out.split('\n');
+  return `the worktree changed after the gate (${stat.at(-1)?.trim() || 'changed'}): if nobody meant to change it (a sub-agent's "undo"), orch restore ${st.id} puts back what the gate passed; if the change is wanted, run orch gate ${st.id} again`;
+}
+
 function checksFor(cfg, task) { return [...cfg.checks, ...task.checks]; }
 
 // ---------------------------------------------------------------------------------------------------- next action
@@ -89,7 +106,7 @@ function checksFor(cfg, task) { return [...cfg.checks, ...task.checks]; }
 // When the current phase was opened: a report older than that belongs to an earlier round. Working opens with start or
 // fix, checking with the gate (local) or the push (PR).
 function phaseOpenedAt(st) {
-  const kinds = st.phase === 'working' ? ['start', 'fix'] : ['gate', 'push'];
+  const kinds = st.phase === 'working' ? ['start', 'fix'] : ['gate', 'push', 'recheck'];
   return Date.parse([...st.events].reverse().find(e => kinds.includes(e.kind))?.t ?? 0) || 0;
 }
 
@@ -148,7 +165,8 @@ function nextAction(st, cfg) {
     case 'gated': return `orch push ${id}`;
     case 'gate-failed': return roundsLeft ? `orch fix ${id}` : scopeFixable(st)
       ? `round limit reached (${st.round}/${max}), but the gate failed on files outside the card: if the change really needs them, add exactly those files (orch card normalise ${id} --from <card.json>), then orch fix ${id} (that round does not count, once per run); otherwise ${selfDecides(cfg) ? 'decide as the advisor path says' : 'decide with the owner'}` : selfDecides(cfg) ? selfDecide : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
-    case 'rejected': return roundsLeft ? `orch fix ${id}` : decide;
+    case 'rejected': return recheckable(st) ? `orch recheck ${id} (no checker found a defect, they could not verify: they run again in this round, no correction round used)`
+      : roundsLeft ? `orch fix ${id}` : decide;
     case 'checking': {
       const done = new Set(currentVerdicts(st).map(v => v.tag));
       const todo = st.checkerPrompts.filter(p => !done.has(p.tag));
@@ -186,7 +204,7 @@ function spawnLine(cfg, role, st, prompt, timeoutSec) {
     + `required by this skill and its owner (own lifecycle, completion delivered to you, visible to the owner), not internal `
     + `legwork, so use the OpenClaw tool sessions_spawn and NOT a native spawn_agent: runtime "subagent", `
     + `label "${label}", taskName "${taskName}", model "${model ?? 'see config'}", cwd "${cwd}", runTimeoutSeconds ${timeoutSec ?? 3600}, `
-    + `task "Read ${prompt} and do what it says."; then wait with sessions_yield (no polling).`;
+    + `task "Read ${prompt} and do what it says."; then wait with sessions_yield (no polling). Its completion is the one labelled "${label}", no other.`;
 }
 
 const currentVerdicts = st => (st.gate ? st.verdicts.filter(v => v.tree === st.gate.tree && v.round === st.round) : []);
@@ -518,11 +536,24 @@ async function cmdRecord(root, { pos, flags }) {
     : !fs.existsSync(box(`checker-r${st.round}-${tag}.md`)) && fs.existsSync(box(`checker-${tag}.md`)) && legacyCheckerName(root, st, tag) ? box(`checker-${tag}.md`) : box(`checker-r${st.round}-${tag}.md`);
   const src = flags.from ? path.resolve(flags.from) : inbox;
   if (!fs.existsSync(src)) throw new OrchError(`no report at ${src}: if the sub-agent only answered in chat, save its answer there (or pass --from <file>)`);
+  // A report recorded while its sub-agent still runs is not its report (tourguide, 2026-11-02: a report the
+  // coordinator wrote in a checker's place cost a round; the checker's own came two minutes later). A sub-agent ends
+  // before its completion reaches the coordinator, so this costs a retry at most. Asked only during a campaign (the CLI
+  // takes seconds); unknown (no runtime, no campaign) means allowed.
+  {
+    const label = `${st.id} ${role}${tag ? ` ${tag}` : ''} r${st.round}`;
+    const campaign = readCampaign(root);
+    const session = campaign?.active ? campaign.session : null;
+    const limitMs = (role === 'worker' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000; // a hung session past its limit does not block
+    const live = (session ? liveSessions(session) : null)?.find(s => sameLabel(s.label, label) && ['running', 'queued'].includes(s.status) && !s.endedAt && s.updatedAt >= phaseOpenedAt(st) - 60000 && Date.now() - s.updatedAt < limitMs);
+    if (live) throw new OrchError(`the sub-agent "${label}" is still running: wait for its completion, it writes its own report to ${inbox}. Never record a report written in its place`);
+  }
   // Every check before the report leaves the inbox: a refused record keeps it where it was.
   if (role === 'worker' && st.phase !== 'working') throw new OrchError(`${st.id} is in phase ${st.phase}, not waiting for a worker`);
   if (role === 'checker') {
     if (!['checking', 'ready', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: checkers come after a gate PASS`);
-    if (stageAndTree(st.worktree) !== st.gate.tree) throw new OrchError('the worktree changed after the gate: the checker saw another state. Run orch gate again');
+    const tree = stageAndTree(st.worktree);
+    if (tree !== st.gate.tree) throw new OrchError(`${changedSinceGate(st, tree)}; then record again`);
   }
   if (!flags.from && path.basename(inbox) !== `checker-r${st.round}-${tag}.md` && ['working', 'checking'].includes(st.phase) && fs.statSync(src).mtimeMs < phaseOpenedAt(st) - 1000) {
     throw new OrchError(`the report in ${src} is older than this round (${st.phase === 'working' ? 'its start' : 'its gate'}): a leftover of an earlier round. Wait for this round's ${role}, or pass --from <file> if you are sure`);
@@ -691,6 +722,7 @@ async function cmdGate(root, { pos }) {
   const text = [`gate ${st.id} round ${st.round}: ${files.length} file(s), +${added} -${removed}`, ...lines, '', `GATE: ${fail ? 'FAIL' : 'PASS'}`].join('\n');
   writeAtomic(path.join(dir, `gate-r${st.round}.txt`), `${text}\n`);
   event(st, 'gate', { round: st.round, pass: !fail, files: files.length, added, removed, ms: Date.now() - t0 });
+  if (!fail) pinGate(st);
   if (!fail && st.delivery === 'pr') st.phase = 'gated'; // the checker comes after the push: it gets the PR and the sha
   else if (!fail) {
     st.phase = 'checking';
@@ -712,14 +744,18 @@ function writeCheckerPrompts(root, cfg, task, st, gateText) {
       id: st.id, title: st.title, worktree: st.worktree, base: st.base, round: st.round,
       gateSummary: gateText.split('\n').map(l => `    ${l}`).join('\n'),
       description: task.description || '(no description)', acceptance: task.acceptance || '(none)', owned: block(task.ownedFiles),
-      harnesses: checkerHarnesses(cfg, task, st), tempRule: tempRule(root, cfg, st.id),
+      harnesses: checkerHarnesses(cfg, task, st, tag, runTemp(root, cfg, st.id)), tempRule: tempRule(root, cfg, st.id),
       reportPath: path.join(runDir(root, st.id), 'inbox', `checker-r${st.round}-${tag}.md`), // per round: a late checker of an earlier round never passes for this one
     }));
     return { tag, prompt };
   });
 }
 
-function checkerHarnesses(cfg, task, st) {
+// A checker's own copy of the base, one per run, round and checker: two checkers never share one.
+// Under the run's temp folder when there is one, written out: it does not depend on the checker's TMPDIR.
+const baseCopy = (st, tag, tmp) => `${tmp ?? '${TMPDIR:-/tmp}'}/orch-base-${`${st.id}-r${st.round}-${tag}`.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+
+function checkerHarnesses(cfg, task, st, tag = 'a', tmp = null) {
   const hs = harnessesCovering(cfg, task);
   const specs = focusedSpecs(task);
   const rules = cardRules(task, cfg, 'checker');
@@ -738,15 +774,21 @@ function checkerHarnesses(cfg, task, st) {
     `the change${(() => { const e2e = hs.find(h => !isCheck(h)); return e2e ? `, e.g. \`${e2e.command} ${specs.length ? specs.join(' ') : '<spec files>'}\`` : ''; })()} (in \`${st.worktree}\`).`,
     'Then test what they do not cover: for a page or flow the task changes, run the harness on the spec for that page',
     '(or write a throwaway one outside the repository) and quote it. If the change alters behaviour, check that a test',
-    'covers it and that the test fails without the change (for example by running it on the base commit).',
+    'covers it and that the test fails without the change. Never do that inside the worktree: the change is not committed',
+    'there (HEAD is the base), so git checkout, restore, stash or reset there destroys it. Use your own copy of the base,',
+    'at a path written out in full in every command (shell variables do not survive between commands):',
+    `\`git -C ${shq(st.worktree)} worktree remove --force "${baseCopy(st, tag, tmp)}" 2>/dev/null; git -C ${shq(st.worktree)} worktree add --detach "${baseCopy(st, tag, tmp)}" ${st.base.slice(0, 12)}${(st.links ?? []).map(l => ` && ln -s ${shq(path.join(st.worktree, l))} "${baseCopy(st, tag, tmp)}/"${shq(l)}`).join('')}\``,
+    'then copy the test into that folder and run it there (`git show <base>:<path>` prints a file as it was), and at the end',
+    `\`git -C ${shq(st.worktree)} worktree remove --force "${baseCopy(st, tag, tmp)}"\`.`,
   ].join('\n');
 }
 
-async function cmdFix(root, { pos }) {
+async function cmdFix(root, { pos, flags }) {
   const id = need(pos[0], 'task id');
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (!['gate-failed', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: a fix follows a failed gate or a rejecting checker`);
+  if (recheckable(st) && !flags.anyway) throw new OrchError(`no checker of round ${st.round} found a defect, they could not verify (NEEDS EVIDENCE): orch recheck ${st.id} runs them again without using a round. Only when the worker must add something checkable: orch fix ${st.id} --anyway`);
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
   // Files the card was given since the last round (orch card normalise): that round does not count, once per run.
@@ -768,6 +810,8 @@ async function cmdFix(root, { pos }) {
     }
   }
   if (added.length) findings.unshift('### Files added to this task', `You may now also change: ${added.join(', ')}`);
+  // A checker of an earlier round that reported after its round was closed: its findings are still about this work.
+  for (const l of lateReports(root, st)) findings.push(`### Checker ${l.tag} of round ${l.round} (reported, never recorded): ${l.verdict}`, fs.readFileSync(l.file, 'utf8').slice(0, 6000));
   setAsideInbox(root, st);
   st.round += 1;
   const file = path.join(dir, 'prompts', `fix-r${st.round}.md`);
@@ -783,6 +827,57 @@ async function cmdFix(root, { pos }) {
   tracker.setStatus(st.id, cfg.tracker.status.inProgress);
   tracker.comment(st.id, `correction round ${st.round}/${roundLimit(st, cfg)}${scope ? ' (files added to the card: this round does not count)' : ''}`);
   out(`round ${st.round}/${roundLimit(st, cfg)}${scope ? ` (files added: ${added.join(', ')}; this round does not count)` : ''}: ${file}`, `next: ${nextAction(st, cfg)}`);
+}
+
+// Puts back the tree the gate passed when something changed the worktree after it: a sub-agent's "undo" with
+// git checkout HEAD (HEAD is the base: the work is never committed), a stray formatter. Whatever it replaces is copied
+// to runs/<id>/restored-<time>/ first. The verdicts already recorded stay: they are on that same tree.
+async function cmdRestore(root, { pos }) {
+  const id = need(pos[0], 'task id');
+  const st = activeState(root, id);
+  if (!st.gate?.pass || !['gated', 'checking', 'ready', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: restore puts back the tree of a gate that passed, before a correction round or the merge`);
+  const want = expectedTree(st);
+  const wt = st.worktree;
+  const tree = stageAndTree(wt);
+  if (tree === want) { out(`${st.id}: the worktree already holds what the gate passed`, `next: ${nextAction(st, loadConfig(root))}`); return; }
+  if (git(['cat-file', '-e', `${want}^{tree}`], wt, { allowFail: true }).code !== 0) throw new OrchError(`the gated tree ${want.slice(0, 9)} is no longer in the repository: run orch gate ${st.id} again`);
+  const changed = git(['diff', '-z', '--name-only', '--no-renames', want, tree], wt).split('\0').filter(Boolean); // -z: any file name, as it is
+  const aside = path.join(runDir(root, st.id), `restored-${now().replace(/[^0-9]/g, '')}`);
+  for (const f of changed) {
+    const src = path.join(wt, f);
+    const kind = (() => { try { return fs.lstatSync(src); } catch { return null; } })(); // gone: nothing to keep
+    if (!kind?.isFile() && !kind?.isSymbolicLink()) continue;
+    fs.mkdirSync(path.dirname(path.join(aside, f)), { recursive: true });
+    if (kind.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(src), path.join(aside, f)); else fs.copyFileSync(src, path.join(aside, f));
+  }
+  fs.mkdirSync(aside, { recursive: true });
+  writeAtomic(path.join(aside, 'CHANGED.txt'), `${git(['diff', '--stat', '--no-renames', want, tree], wt)}\n`);
+  git(['read-tree', '--reset', '-u', want], wt);
+  if (stageAndTree(wt) !== want) throw new OrchError(`the worktree still differs from the gated tree after the restore: look at ${wt} (what was there is in ${aside})`);
+  event(st, 'restore', { round: st.round, files: changed.length });
+  saveState(root, st);
+  out(`${st.id}: put back what the gate passed (${changed.length} file(s); what was there is in ${aside})`, `next: ${nextAction(st, loadConfig(root))}`);
+}
+
+// A round whose checkers found no defect but could not verify (NEEDS EVIDENCE: a checker that could not run something,
+// or a report nobody really wrote): nothing for a worker to fix. The checkers are run again in the same round, once.
+const RECHECKS = 1;
+const onlyUnverified = st => { const bad = currentVerdicts(st).filter(v => v.verdict !== 'PASS'); return bad.length > 0 && bad.every(v => v.verdict === 'NEEDS EVIDENCE'); };
+const recheckable = st => st.phase === 'rejected' && onlyUnverified(st) && (st.rechecks?.[st.round] ?? 0) < RECHECKS;
+
+async function cmdRecheck(root, { pos }) {
+  const id = need(pos[0], 'task id');
+  const cfg = loadConfig(root);
+  const st = activeState(root, id);
+  if (!recheckable(st)) throw new OrchError(st.phase !== 'rejected' || !onlyUnverified(st)
+    ? `${st.id} is not a round rejected only for NEEDS EVIDENCE: nothing to check again` : `${st.id}: the checkers already ran again in round ${st.round}: orch fix ${st.id}`);
+  const tags = currentVerdicts(st).filter(v => v.verdict === 'NEEDS EVIDENCE').map(v => v.tag);
+  st.verdicts = st.verdicts.filter(v => !(v.round === st.round && tags.includes(v.tag)));
+  st.rechecks = { ...st.rechecks, [st.round]: (st.rechecks?.[st.round] ?? 0) + 1 };
+  st.phase = 'checking';
+  event(st, 'recheck', { round: st.round, tags });
+  saveState(root, st);
+  out(`${st.id}: checker${tags.length > 1 ? 's' : ''} ${tags.join(', ')} of round ${st.round} run again (no correction round used)`, `next: ${nextAction(st, cfg)}`);
 }
 
 async function cmdFinish(root, { pos, flags }) {
@@ -812,7 +907,8 @@ async function cmdFinish(root, { pos, flags }) {
   const recovered = recoverInterruptedMerge(root, st);
   if (recovered.merged) return completeFinish(root, cfg, st, await trackerFor(root, cfg), recovered.notes);
   if (!st.gate?.pass) throw new OrchError(`${st.id} has no passing gate: never merged`);
-  if (stageAndTree(st.worktree) !== st.gate.tree) throw new OrchError('the worktree changed after the gate: run orch gate again');
+  const nowTree = stageAndTree(st.worktree);
+  if (nowTree !== st.gate.tree) throw new OrchError(changedSinceGate(st, nowTree));
   if (st.phase !== 'ready' && !override) throw new OrchError(`${st.id} is in phase ${st.phase}, not ready: the checkers have not all passed (--override "<why>" only with the owner's ok)`);
   if (git(['diff', '--cached', '--quiet'], root, { allowFail: true }).code !== 0) throw new OrchError('the main checkout has staged changes: they would end up in the merge commit. Look at git status; if they are left over from an interrupted merge (not someone\'s work), git reset --merge clears them');
   const tracker = await trackerFor(root, cfg);
@@ -888,7 +984,7 @@ async function cmdPush(root, { pos }) {
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
   const wt = st.worktree;
-  if (stageAndTree(wt) !== st.gate.tree) throw new OrchError('the worktree changed after the gate: run orch gate again');
+  if (stageAndTree(wt) !== st.gate.tree) throw new OrchError(changedSinceGate(st, stageAndTree(wt)));
   const parent = st.sha ?? st.base;
   const isOurs = c => git(['rev-parse', `${c}^{tree}`], wt) === st.gate.tree && git(['rev-parse', `${c}^1`], wt, { allowFail: true }).out === parent;
   let sha = null;
@@ -978,7 +1074,8 @@ async function finishPr(root, cfg, st, who, override) {
     delete st.baseMerge; saveState(root, st);
   }
 
-  if (stageAndTree(wt) !== expectedTree(st)) throw new OrchError('the worktree changed after the gate: run orch gate again');
+  const wtTree = stageAndTree(wt);
+  if (wtTree !== expectedTree(st)) throw new OrchError(changedSinceGate(st, wtTree, expectedTree(st)));
   if (git(['rev-parse', 'HEAD'], wt) !== st.sha) throw new OrchError('the worktree has commits after the push: run orch gate, then orch push');
   const there = remoteSha(root, remote, st.branch);
   if (there !== st.sha) throw new OrchError(`the remote branch ${st.branch} is at ${there?.slice(0, 9) ?? '(missing)'}, not the checked ${st.sha.slice(0, 9)}: someone else pushed. Nothing was merged`);
@@ -1167,6 +1264,7 @@ function completeFinish(root, cfg, st, tracker, notes) {
       const here = git(['branch', '--show-current'], root);
       if (here === st.baseBranch && git(['merge', '-q', '--ff-only', `${remote}/${st.baseBranch}`], root, { allowFail: true }).code !== 0) warnings.push(`local ${st.baseBranch} not fast-forwarded to ${remote}/${st.baseBranch}: update it by hand`);
     }
+    git(['update-ref', '-d', gateRef(st.id)], root, { allowFail: true }); // merged: the gated tree is in the history
     const swept = cleanRun(root, cfg, st.id, { merged: true });
     if (swept.deleted) warnings.push(`artifacts: ${swept.deleted} scope(s) of ${st.id} deleted, ${gb(swept.freed)} freed`);
     pending.delete('cleanup');
@@ -1257,7 +1355,8 @@ async function cmdStatus(root, { pos, flags }) {
   const ids = pos[0] ? [pos[0].toUpperCase()] : fs.existsSync(runs) ? fs.readdirSync(runs).filter(d => fs.existsSync(path.join(runs, d, 'state.json'))) : [];
   const states = ids.map(i => loadState(root, i)).filter(s => pos[0] || flags.all || s.phase !== 'merged' || s.finishPending?.length || unresolvedUntested(s));
   if (flags.json) { console.log(JSON.stringify(states.map(s => ({ id: s.id, phase: s.phase, round: s.round, gate: s.gate, verdicts: s.verdicts, untestedMerge: unresolvedUntested(s) || undefined, unsafeMerge: unresolvedUnsafe(s) ? s.unsafeMerge : undefined, next: nextAction(s, cfg), metrics: metrics(s) })), null, 2)); return; }
-  out(states.length ? states.map(s => statusLine(s, cfg)).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
+  const late = s => lateReports(root, s).map(l => `  LATE REPORT: checker ${l.tag} of round ${l.round}, never recorded (${l.verdict}): ${l.file}. ${l.round === s.round && s.phase === 'rejected' ? `Record it: orch record ${s.id} checker --tag ${l.tag}` : `${s.phase === 'working' ? 'Send its findings to the worker now (sessions_send); ' : ''}the next orch fix gives it to the worker`}`);
+  out(states.length ? states.map(s => [statusLine(s, cfg), ...late(s)].join('\n')).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
 }
 
 async function cmdPrompt(root, { pos }) {
@@ -1462,6 +1561,23 @@ function lastActivity(root, cfg, campaign, stateMtimes) {
   return Math.max(...times);
 }
 
+// Checker reports in the inbox that nobody recorded and no longer will: of an earlier round (the checker finished after
+// its round was closed), or of this round once it is closed (rejected or failed: a second checker that reported after
+// the first one's FAIL), or under the older releases' name. Shown by orch status; the next fix brief carries them.
+function lateReports(root, st) {
+  const dir = path.join(runDir(root, st.id), 'inbox');
+  const closed = !['working', 'checking'].includes(st.phase);
+  return (fs.existsSync(dir) ? fs.readdirSync(dir) : []).flatMap(n => {
+    const m = n.match(/^checker-(?:r(\d+)-)?([a-z0-9]+)\.md$/i);
+    if (!m) return [];
+    const round = m[1] === undefined ? null : Number(m[1]);
+    if (round === null ? st.phase === 'checking' : round > st.round || (round === st.round && !closed)) return [];
+    const file = path.join(dir, n);
+    const v = [...fs.readFileSync(file, 'utf8').matchAll(/VERDICT:\s*\**\s*(PASS WITH NOTES|PASS|FAIL|NEEDS EVIDENCE)/gi)].at(-1);
+    return [{ file, round: round ?? '?', tag: m[2], verdict: v ? v[1].toUpperCase() : 'no VERDICT line' }];
+  });
+}
+
 // Reports a sub-agent left in a run's inbox that orch record has not taken yet (record moves them to reports/).
 function inboxReports(root, st) {
   const dir = path.join(runDir(root, st.id), 'inbox');
@@ -1537,7 +1653,7 @@ async function keeperDecision(root, cfg, campaign) {
       && now_ - (Date.parse(st.events.at(-1)?.t ?? 0) || 0) < (st.phase === 'working' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000),
     blocked: untestedRuns(root).map(s => ({ id: s.id, why: unresolvedUnsafe(s) ? 'unsafe merge' : 'merged result never checked' })),
     eligible: evals.filter(r => !r.reasons.length).map(r => ({ id: r.task.id })), waiting, remaining,
-    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, selfDecides: selfDecides(cfg), scopeRoundsMax: SCOPE_ROUNDS,
+    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, selfDecides: selfDecides(cfg), scopeRoundsMax: SCOPE_ROUNDS, recheckable,
     advisorBriefAt: Object.fromEntries(open.map(st => { try { return [st.id, fs.statSync(path.join(runDir(root, st.id), 'prompts', `advisor-r${st.round}.md`)).mtimeMs]; } catch { return [st.id, 0]; } })), nextFor: st => nextAction(st, cfg),
     progress: `${Math.max(0, ...states.filter(s => inScope(s.st.id)).map(s => s.mtime))}|${doneInScope}`,
     reports: Object.fromEntries(open.filter(st => ['working', 'checking'].includes(st.phase)).map(st => [st.id, inboxReports(root, st)])),
@@ -1842,7 +1958,7 @@ async function cmdArtifacts(root, { pos, flags }) {
 
 function need(v, what) { if (!v) throw new OrchError(`missing ${what}`); return v; }
 
-const COMMANDS = { init: cmdInit, config: cmdConfig, next: cmdNext, start: cmdStart, record: cmdRecord, gate: cmdGate, push: cmdPush, resolve: cmdResolve, campaign: cmdCampaign, keeper: cmdKeeper, fix: cmdFix, finish: cmdFinish, park: cmdPark, status: cmdStatus, prompt: cmdPrompt, harness: cmdHarness,
+const COMMANDS = { init: cmdInit, config: cmdConfig, next: cmdNext, start: cmdStart, record: cmdRecord, gate: cmdGate, push: cmdPush, resolve: cmdResolve, campaign: cmdCampaign, keeper: cmdKeeper, fix: cmdFix, recheck: cmdRecheck, restore: cmdRestore, finish: cmdFinish, park: cmdPark, status: cmdStatus, prompt: cmdPrompt, harness: cmdHarness,
   card: cmdCardWithRuns, artifacts: cmdArtifacts,
 };
 

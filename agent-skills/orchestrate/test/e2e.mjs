@@ -222,7 +222,10 @@ orch(['finish', 'SB-2'], { code: 1 });
 has(orch(['finish', 'SB-2', '--approved-by', 'the maintainer'], { code: 1 }), /not ready/, 'no merge after a rejecting checker');
 
 // ---------------------------------------------------------------- round 2: evidence, then the merge
-orch(['fix', 'SB-2']);
+// No checker found a defect: the next step is a recheck, and fix refuses unless told the worker must add something.
+has(orch(['status', 'SB-2']), /next: orch recheck SB-2/, 'unverified only: recheck first');
+has(orch(['fix', 'SB-2'], { code: 1 }), /orch fix SB-2 --anyway/, 'fix refuses without --anyway');
+orch(['fix', 'SB-2', '--anyway']);
 write('src/a/greet.mjs', "export const greet = (name = 'guest') => `Hello, ${name}`;\nexport const thanks = () => 'Thanks';\n", WT);
 write('.orchestrate/runs/SB-2/inbox/worker.md', 'Changed: default name\n');
 orch(['record', 'SB-2', 'worker']);
