@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { matches, patternsOverlap } from '../scripts/lib/glob.mjs';
 import { parseFrontMatter, yamlScalar } from '../scripts/lib/frontmatter.mjs';
+import { decide } from '../scripts/lib/keeper.mjs';
 import { focusedSpecs, proposeRoles } from '../scripts/orch.mjs';
 import { cardSpecFiles, DEFAULT_TEST_PATHS, failedSpecFiles, harnessesFor, harnessPlan, ownsTestFile, riskyFiles, shq, testRule } from '../scripts/lib/harness.mjs';
 
@@ -147,5 +148,18 @@ eq(failedSpecFiles('  1) tests/e2e/02-orders.spec.ts:14:3 › orders ───�
 eq(failedSpecFiles('  ✓  22 tests/e2e/10-room.spec.ts:12:5 › ok (10.4s)'), [], 'a passed test is not a failure');
 
 eq(shq("a b'c"), "'a b'\\''c'", 'shell quoting');
+
+// Keeper at the round limit: a gate that failed on files outside the card still gets its scope round (wake the
+// coordinator); once used, or on any other failure, the owner decides.
+{
+  const now = Date.now(); const t = new Date(now - 3.6e6).toISOString();
+  const ctx = { campaign: { active: true, startedAt: t }, now, lastActivity: now - 3.6e6, blocked: [], eligible: [], selfDecides: false,
+    limits: { correctionRounds: 2, workerTimeoutSec: 3600, checkerTimeoutSec: 1800 }, scopeRoundsMax: 1, nextFor: st => `next ${st.id}`, progress: 'p' };
+  const run = extra => ({ id: 'X', phase: 'gate-failed', round: 2, events: [{ t, kind: 'gate' }], ...extra });
+  eq(decide({ ...ctx, runs: [run({ gate: { outside: 1 } })] }).action, 'wake', 'scope failure at the limit: the coordinator adds the files');
+  eq(decide({ ...ctx, runs: [run({ gate: { outside: 1 }, scopeRounds: 1, round: 3 })] }).action, 'escalate', 'scope round used: the owner');
+  eq(decide({ ...ctx, runs: [run({ gate: { outside: 0 } })] }).action, 'escalate', 'other failure at the limit: the owner');
+  eq(decide({ ...ctx, runs: [run({ gate: { outside: 0 }, scopeRounds: 1, round: 2 })] }).action, 'wake', 'a granted round raises the limit');
+}
 
 console.log(`unit: ${n} assertions passed`);

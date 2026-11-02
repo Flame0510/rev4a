@@ -122,11 +122,18 @@ function activeState(root, id) {
   return st;
 }
 
+// The correction rounds a run may use: the configured limit, plus one round granted when its card was given files it
+// needed (orch card normalise adds them, then orch fix; at most SCOPE_ROUNDS per run).
+const SCOPE_ROUNDS = 1;
+const roundLimit = (st, cfg) => cfg.limits.correctionRounds + (st.scopeRounds ?? 0);
+// A gate that failed on files outside the card can still get that round, at the limit too.
+const scopeFixable = st => st.phase === 'gate-failed' && (st.gate?.outside ?? 0) > 0 && (st.scopeRounds ?? 0) < SCOPE_ROUNDS;
+
 // Whether the coordinator decides a run at its round limit itself (the owner's standing rule) instead of the owner.
 const selfDecides = cfg => cfg.limits.atRoundLimit === 'coordinator';
 
 function nextAction(st, cfg) {
-  const id = st.id; const max = cfg.limits.correctionRounds;
+  const id = st.id; const max = roundLimit(st, cfg);
   if (st.setAside) return `orch card set-aside ${id} (a split set this run aside half-way: finish that; the card then waits for its split cards)`;
   const roundsLeft = st.round < max;
   const selfDecide = `round limit reached (${st.round}/${max}): you decide, by the owner's standing rule (limits.atRoundLimit "coordinator"). `
@@ -139,7 +146,8 @@ function nextAction(st, cfg) {
     case 'working': return `${spawnLine(cfg, 'worker', st, st.prompt, cfg.limits.workerTimeoutSec)} When it has finished: orch record ${id} worker`;
     case 'worked': return `orch gate ${id}`;
     case 'gated': return `orch push ${id}`;
-    case 'gate-failed': return roundsLeft ? `orch fix ${id}` : selfDecides(cfg) ? selfDecide : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
+    case 'gate-failed': return roundsLeft ? `orch fix ${id}` : scopeFixable(st)
+      ? `round limit reached (${st.round}/${max}), but the gate failed on files outside the card: if the change really needs them, add exactly those files (orch card normalise ${id} --from <card.json>), then orch fix ${id} (that round does not count, once per run); otherwise ${selfDecides(cfg) ? 'decide as the advisor path says' : 'decide with the owner'}` : selfDecides(cfg) ? selfDecide : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
     case 'rejected': return roundsLeft ? `orch fix ${id}` : decide;
     case 'checking': {
       const done = new Set(currentVerdicts(st).map(v => v.tag));
@@ -212,7 +220,7 @@ function statusLine(st, cfg) {
   const m = metrics(st);
   return [
     `${st.id}  ${st.title}`,
-    `  phase ${st.phase} · round ${st.round}/${cfg.limits.correctionRounds} · ${g} · checkers ${m.checkerVerdicts}`,
+    `  phase ${st.phase} · round ${st.round}/${roundLimit(st, cfg)} · ${g} · checkers ${m.checkerVerdicts}`,
     `  elapsed ${m.elapsed} · gate runs ${m.gates} (${m.gateFails} failed)${m.tokens ? ` · tokens ${m.tokens}` : ''} · worktree ${st.worktree}`,
     ...(st.pr ? [`  PR #${st.pr.number} ${st.pr.url} · pushed ${st.sha?.slice(0, 9) ?? '-'}`] : []),
     ...(unresolvedUntested(st) ? [`  ATTENTION: the merged result ${st.merge?.slice(0, 9)} on ${st.baseBranch} is not the checked tree: run the checks on ${st.baseBranch}, then orch resolve ${st.id} --checked "<what passed>"`] : []),
@@ -395,7 +403,7 @@ async function cmdStart(root, { pos, flags }) {
   }
   const st = {
     id: task.id, title: task.title, branch, worktree, base, baseBranch: cfg.baseBranch, links, delivery: cfg.delivery.mode,
-    phase: 'working', round: 0, gate: null, verdicts: [], checkerPrompts: [], events: [],
+    phase: 'working', round: 0, gate: null, verdicts: [], checkerPrompts: [], events: [], owned: [...(task.ownedFiles ?? [])].sort(),
     forced: ev.reasons.length ? ev.reasons : undefined,
   };
   st.prompt = writeWorkerPrompt(root, cfg, task, st);
@@ -677,7 +685,7 @@ async function cmdGate(root, { pos }) {
   delete st.mergedTree; // a new gate is on the worker's tree, not on an earlier base merge
   st.gate = {
     pass: !fail, tree, files: files.length, added, removed, checksRun: checks.length, checksPassed,
-    harnessesRun: harnesses.length, harnessesPassed: harnessPassed, harnessRuns, tests: rule.level, round: st.round, at: now(),
+    harnessesRun: harnesses.length, harnessesPassed: harnessPassed, harnessRuns, tests: rule.level, round: st.round, at: now(), outside: outside.length,
     cfgHash: checksHash(cfg, task),
   };
   const text = [`gate ${st.id} round ${st.round}: ${files.length} file(s), +${added} -${removed}`, ...lines, '', `GATE: ${fail ? 'FAIL' : 'PASS'}`].join('\n');
@@ -739,9 +747,15 @@ async function cmdFix(root, { pos }) {
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (!['gate-failed', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: a fix follows a failed gate or a rejecting checker`);
-  if (st.round >= cfg.limits.correctionRounds) throw new OrchError(nextAction(st, cfg), 3);
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
+  // Files the card was given since the last round (orch card normalise): that round does not count, once per run.
+  const owned = [...(task.ownedFiles ?? [])].sort();
+  const added = st.owned ? owned.filter(f => !st.owned.includes(f)) : [];
+  const scope = added.length > 0 && (st.scopeRounds ?? 0) < SCOPE_ROUNDS;
+  if (st.round >= roundLimit(st, cfg) + (scope ? 1 : 0)) throw new OrchError(nextAction(st, cfg), 3);
+  if (scope) st.scopeRounds = (st.scopeRounds ?? 0) + 1;
+  st.owned = owned;
   const dir = runDir(root, st.id);
   const findings = [];
   if (st.phase === 'gate-failed') {
@@ -753,21 +767,22 @@ async function cmdFix(root, { pos }) {
       findings.push(`### Checker ${v.tag}: ${v.verdict}`, fs.readFileSync(v.file, 'utf8').slice(0, 6000));
     }
   }
+  if (added.length) findings.unshift('### Files added to this task', `You may now also change: ${added.join(', ')}`);
   setAsideInbox(root, st);
   st.round += 1;
   const file = path.join(dir, 'prompts', `fix-r${st.round}.md`);
   writeAtomic(file, fill(tpl('fix'), {
-    id: st.id, round: st.round, maxRounds: cfg.limits.correctionRounds, worktree: st.worktree,
+    id: st.id, round: st.round, maxRounds: roundLimit(st, cfg), worktree: st.worktree,
     findings: findings.join('\n\n'), reportPath: path.join(dir, 'inbox', 'worker.md'),
     workerBrief: workerBrief(root, cfg, task, st),
   }));
   st.prompt = file; st.phase = 'working';
-  event(st, 'fix', { round: st.round });
+  event(st, 'fix', { round: st.round, ...(added.length ? { added, free: scope } : {}) });
   saveState(root, st);
   cleanRun(root, cfg, st.id); // the rounds before the last two
   tracker.setStatus(st.id, cfg.tracker.status.inProgress);
-  tracker.comment(st.id, `correction round ${st.round}/${cfg.limits.correctionRounds}`);
-  out(`round ${st.round}/${cfg.limits.correctionRounds}: ${file}`, `next: ${nextAction(st, cfg)}`);
+  tracker.comment(st.id, `correction round ${st.round}/${roundLimit(st, cfg)}${scope ? ' (files added to the card: this round does not count)' : ''}`);
+  out(`round ${st.round}/${roundLimit(st, cfg)}${scope ? ` (files added: ${added.join(', ')}; this round does not count)` : ''}: ${file}`, `next: ${nextAction(st, cfg)}`);
 }
 
 async function cmdFinish(root, { pos, flags }) {
@@ -1251,12 +1266,12 @@ async function cmdPrompt(root, { pos }) {
   if (role === 'advisor') {
     // The brief for the sub-agent that advises the coordinator on a run at its round limit (split or park).
     const cfg = loadConfig(root);
-    const atLimit = ['rejected', 'gate-failed'].includes(st.phase) && st.round >= cfg.limits.correctionRounds;
-    if (!atLimit) throw new OrchError(`${st.id} is not at its round limit (${st.phase}, round ${st.round}/${cfg.limits.correctionRounds}): no advisor needed`);
+    const atLimit = ['rejected', 'gate-failed'].includes(st.phase) && st.round >= roundLimit(st, cfg);
+    if (!atLimit) throw new OrchError(`${st.id} is not at its round limit (${st.phase}, round ${st.round}/${roundLimit(st, cfg)}): no advisor needed`);
     const task = (await trackerFor(root, cfg)).get(st.id);
     const file = path.join(runDir(root, st.id), 'prompts', `advisor-r${st.round}.md`);
     writeAtomic(file, fill(tpl('advisor'), {
-      id: st.id, title: st.title, round: st.round, maxRounds: cfg.limits.correctionRounds, worktree: st.worktree, base: st.base,
+      id: st.id, title: st.title, round: st.round, maxRounds: roundLimit(st, cfg), worktree: st.worktree, base: st.base,
       runDir: runDir(root, st.id), description: task.description || '(no description)', acceptance: task.acceptance || '(none)',
       owned: block(task.ownedFiles), reportPath: path.join(runDir(root, st.id), 'inbox', `advisor-r${st.round}.md`),
     }));
@@ -1522,14 +1537,14 @@ async function keeperDecision(root, cfg, campaign) {
       && now_ - (Date.parse(st.events.at(-1)?.t ?? 0) || 0) < (st.phase === 'working' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000),
     blocked: untestedRuns(root).map(s => ({ id: s.id, why: unresolvedUnsafe(s) ? 'unsafe merge' : 'merged result never checked' })),
     eligible: evals.filter(r => !r.reasons.length).map(r => ({ id: r.task.id })), waiting, remaining,
-    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, selfDecides: selfDecides(cfg),
+    standing: Boolean(standingApproval(cfg)), limits: cfg.limits, selfDecides: selfDecides(cfg), scopeRoundsMax: SCOPE_ROUNDS,
     advisorBriefAt: Object.fromEntries(open.map(st => { try { return [st.id, fs.statSync(path.join(runDir(root, st.id), 'prompts', `advisor-r${st.round}.md`)).mtimeMs]; } catch { return [st.id, 0]; } })), nextFor: st => nextAction(st, cfg),
     progress: `${Math.max(0, ...states.filter(s => inScope(s.st.id)).map(s => s.mtime))}|${doneInScope}`,
     reports: Object.fromEntries(open.filter(st => ['working', 'checking'].includes(st.phase)).map(st => [st.id, inboxReports(root, st)])),
     ...(() => {
       const waiting = open.filter(st => ['working', 'checking'].includes(st.phase));
       // Runs at their round limit decided by the coordinator: their advisor sub-agent may be at work.
-      const advised = selfDecides(cfg) && open.some(st => ['rejected', 'gate-failed'].includes(st.phase) && st.round >= cfg.limits.correctionRounds);
+      const advised = selfDecides(cfg) && open.some(st => ['rejected', 'gate-failed'].includes(st.phase) && st.round >= roundLimit(st, cfg));
       if ((!waiting.length && !advised) || busy) return { sessions: null };
       // The CLI takes seconds: only asked when the rule can fire (coordinator quiet, a phase open for idleMinutes).
       const idle = (campaign.idleMinutes ?? CAMPAIGN_DEFAULTS.idleMinutes) * 60000;
@@ -1540,7 +1555,7 @@ async function keeperDecision(root, cfg, campaign) {
   });
 }
 
-// The config is the owner's (SKILL.md rule 9): what changed in it since the keeper last looked, as "path: old -> new"
+// The config is the owner's (SKILL.md rule 10): what changed in it since the keeper last looked, as "path: old -> new"
 // (at most six), or null. The first look, and a campaign start, only record it.
 const configSeenFile = root => path.join(orchDir(root), 'config-seen.json');
 function flatConfig(root) {

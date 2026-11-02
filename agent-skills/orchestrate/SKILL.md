@@ -32,7 +32,11 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    failed; open a log tail only if you must explain it to the owner.
 8. **Do not change this skill.** It belongs to Rev4a and is replaced on update. A lesson goes to the owner as a
    proposal, not into a new local rule. The project's own settings live in `.orchestrate/config.json`.
-9. **The config is the owner's.** Never change it (`config --set`, editing the file) and never `config --confirm`
+9. **A card that lacks files gets them, without losing a round.** When the worker reports it cannot finish inside
+   the card's files (it names them), or the gate fails only on scope, add exactly the files needed with
+   `$ORCH card normalise <id> --from <card.json>` (the card's rules still apply), then `$ORCH fix <id>`: the fix
+   brief names the new files, and that round does not count toward the limit (once per run).
+10. **The config is the owner's.** Never change it (`config --set`, editing the file) and never `config --confirm`
    it on your own, not even under a broad autonomy mandate or to undo a change you remember making: propose the
    change to the owner and wait for their ok. A limit raised for one task stays as the owner leaves it. The campaign
    keeper reports every config change to the owner.
@@ -96,6 +100,10 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   that changes the merge commit in the main checkout makes it an untested merge (the queue waits for `orch resolve`).
 
 ## Tests and harnesses
+- **Checks must see what the worker sees.** The worker never commits or stages: its new files are untracked until the
+  gate stages them. A project check that lists files with git (`git ls-files`, a census or ownership test) must include
+  untracked files (`git ls-files --cached --others --exclude-standard`), or it passes for the worker and fails at the
+  gate (Tourguide: 28 failed gates from one such check). Tell the owner when you see one.
 - **Artifact lifecycle (opt-in):** `artifacts.enabled=true`, `artifacts.minFreeBytes=<bytes>` and
   `artifacts.disposable=["*/runtime/.next","*/node_modules"]`. Gate, merge and harness commands receive a unique
   TMPDIR under a sibling `.orchestrate-artifacts/<project-id>/command-*/tmp`, outside the checkout so retained

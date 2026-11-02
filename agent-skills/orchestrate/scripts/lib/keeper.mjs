@@ -61,13 +61,17 @@ function decideAll(ctx) {
   const quiet = idleFor >= c.idleMinutes * 60000;
   const due = []; const waits = []; let running = Boolean(ctx.othersRunning);
   const rounds = ctx.limits.correctionRounds ?? Infinity;
+  // At its limit: the run's own limit (scope rounds granted), unless a gate that failed on files outside the card can
+  // still get its scope round (the coordinator adds the files and fixes).
+  const atLimit = st => (st.round ?? 0) >= rounds + (st.scopeRounds ?? 0)
+    && !(st.phase === 'gate-failed' && (st.gate?.outside ?? 0) > 0 && (st.scopeRounds ?? 0) < (ctx.scopeRoundsMax ?? 1));
   for (const st of ctx.runs) {
     const last = Date.parse(st.events.at(-1)?.t ?? 0) || 0;
     if (st.phase === 'ready' && !ctx.standing) {
       escalations.push({ key: `ready:${st.id}:r${st.round ?? 0}`, reason: `${st.id} is ready and waits for the owner's merge ok` });
       continue;
     }
-    if (['rejected', 'gate-failed'].includes(st.phase) && (st.round ?? 0) >= rounds && !ctx.selfDecides) {
+    if (['rejected', 'gate-failed'].includes(st.phase) && atLimit(st) && !ctx.selfDecides) {
       // Only the owner can go on (accept, split or park): waking the coordinator would only make it ask.
       escalations.push({ key: `limit:${st.id}:r${st.round}`, reason: `${st.id} reached the round limit (${st.phase}): ${ctx.nextFor(st)}` });
       continue;
@@ -122,7 +126,7 @@ function decideAll(ctx) {
     // does not hold the campaign.
     // The window opens at the limit, or later when the advisor's brief was written later (a slow coordinator).
     const limitAt = Math.max(Date.parse(st.events.at(-1)?.t ?? 0) || 0, ctx.advisorBriefAt?.[st.id] ?? 0);
-    if (ctx.selfDecides && !st.setAside && ['rejected', 'gate-failed'].includes(st.phase) && (st.round ?? 0) >= rounds
+    if (ctx.selfDecides && !st.setAside && ['rejected', 'gate-failed'].includes(st.phase) && atLimit(st)
       && ctx.now - limitAt < ctx.limits.workerTimeoutSec * 1000 + c.graceMinutes * 60000
       && ctx.sessions?.some(s => sameLabel(s.label, `${st.id} advisor r${st.round}`) && !ended(s) && (s.updatedAt ?? 0) >= limitAt - 60000)) {
       running = true; // a sub-agent at work: a legitimate end of turn, like a worker's

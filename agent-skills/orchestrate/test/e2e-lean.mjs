@@ -194,6 +194,43 @@ if (process.platform === 'linux') {
 }
 write('.orchestrate/config.json', saved);
 
+// 10. A card given the files it needed (card normalise, here: its file edited) gets one round that does not count.
+write('backlog/tasks/sb-7 - Card.md', card('SB-7', 'lib/g.mjs')); write('lib/g.mjs', '// g\n'); g('add', '-A'); g('commit', '-q', '-m', 'sb7');
+orch(['start', 'SB-7']);
+write('lib/g.mjs', '// changed\n', W('SB-7')); write('lib/h.mjs', '// new\n', W('SB-7'));
+write('.orchestrate/runs/SB-7/inbox/worker.md', 'BLOCKED: needs lib/h.mjs\n'); orch(['record', 'SB-7', 'worker']);
+has(orch(['gate', 'SB-7'], 2), /FAIL +scope: 1 file\(s\) outside the owned files: lib\/h\.mjs/, 'scope failure');
+write('backlog/tasks/sb-7 - Card.md', card('SB-7', 'lib/g.mjs').replace('  - lib/g.mjs', '  - lib/g.mjs\n  - lib/h.mjs'));
+o = orch(['fix', 'SB-7']);
+has(o, /round 1\/3 \(files added: lib\/h\.mjs; this round does not count\)/, 'free round on a scope extension');
+assert.equal(state('SB-7').scopeRounds, 1); n++;
+has(fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-7/prompts/fix-r1.md'), 'utf8'), /You may now also change: lib\/h\.mjs/, 'the fix brief names the new files');
+assert.deepEqual(state('SB-7').events.at(-1), { ...state('SB-7').events.at(-1), kind: 'fix', round: 1, added: ['lib/h.mjs'], free: true }); n++;
+has(orch(['status', 'SB-7']), /round 1\/3/, 'status shows the larger limit');
+// A second extension is not free (once per run).
+write('.orchestrate/runs/SB-7/inbox/worker.md', 'again\n'); orch(['record', 'SB-7', 'worker']);
+write('lib/z.mjs', '// z\n', W('SB-7'));
+orch(['gate', 'SB-7'], 2);
+write('backlog/tasks/sb-7 - Card.md', card('SB-7', 'lib/g.mjs').replace('  - lib/g.mjs', '  - lib/g.mjs\n  - lib/h.mjs\n  - lib/z.mjs'));
+o = orch(['fix', 'SB-7']);
+has(o, /round 2\/3: /, 'a second extension counts'); hasNot(o, /does not count/, 'not free twice');
+write('lib/new-file.mjs', '// n\n', W('SB-7'));
+write('.orchestrate/runs/SB-7/inbox/worker.md', 'third\n'); orch(['record', 'SB-7', 'worker']);
+has(orch(['gate', 'SB-7'], 2), /FAIL +scope: 1 file\(s\) outside the owned files: lib\/new-file\.mjs/, 'a later scope failure is reported as usual');
+
+// 11. At the round limit, a gate that failed on files outside the card still gets its scope round (not the owner).
+write('backlog/tasks/sb-8 - Card.md', card('SB-8', 'lib/k.mjs')); write('lib/k.mjs', '// k\n'); g('add', '-A'); g('commit', '-q', '-m', 'sb8');
+orch(['start', 'SB-8']);
+write('lib/k.mjs', '// changed\n', W('SB-8')); write('lib/k2.mjs', '// new\n', W('SB-8'));
+for (let r = 0; r < 2; r++) {
+  write('.orchestrate/runs/SB-8/inbox/worker.md', `r${r}\n`); orch(['record', 'SB-8', 'worker']); orch(['gate', 'SB-8'], 2); orch(['fix', 'SB-8']);
+}
+write('.orchestrate/runs/SB-8/inbox/worker.md', 'r2\n'); orch(['record', 'SB-8', 'worker']); orch(['gate', 'SB-8'], 2);
+has(orch(['status', 'SB-8']), /round limit reached \(2\/2\), but the gate failed on files outside the card: .*orch card normalise SB-8/, 'at the limit: the scope path is offered');
+orch(['fix', 'SB-8'], 3); // nothing added yet: still at the limit
+write('backlog/tasks/sb-8 - Card.md', card('SB-8', 'lib/k.mjs').replace('  - lib/k.mjs', '  - lib/k.mjs\n  - lib/k2.mjs'));
+has(orch(['fix', 'SB-8']), /round 3\/3 \(files added: lib\/k2\.mjs; this round does not count\)/, 'scope round granted at the limit');
+
 // 9. Config values are checked.
 orch(['config', '--set', 'merge.recheck=sometimes'], 1);
 
