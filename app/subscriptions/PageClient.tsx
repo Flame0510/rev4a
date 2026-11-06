@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Accordion, Button, ConfirmModal, Modal, Page, PageHeader, Pill, showToast } from '@/app/components/ui';
+import { Accordion, Button, ConfirmModal, Input, Modal, Page, PageHeader, Pill, showToast } from '@/app/components/ui';
+import type { SubscriptionProfileReference } from '@/lib/subscriptions-parse';
 import { Skeleton } from '@/app/components/Skeleton';
 import UsageBlock from './UsageBlock';
 import {
@@ -20,6 +21,7 @@ interface SubAgent extends ListAgent {
   email: string | null;
   plan: string | null;
   expiresAt: string | null;
+  profileReferences?: SubscriptionProfileReference[];
   usesSubscription: boolean;
   primary: string | null;
   fallbacks: string[];
@@ -36,7 +38,8 @@ interface Row {
   /** The message of a failed action, until the next one. */
   notice: string | null;
 }
-interface Models { list: SubModel[]; error: string | null; loading: boolean }
+/** `pending`: an account is connected but its agent is still loading the ChatGPT catalogue. */
+interface Models { list: SubModel[]; error: string | null; loading: boolean; pending: boolean }
 
 type LoginState = 'starting' | 'waiting' | 'connected' | 'failed' | 'expired' | 'cancelled';
 interface Login {
@@ -50,6 +53,9 @@ interface Login {
 }
 
 const POLL_MS = 1500;
+/** How often, and for how long, to ask again while the ChatGPT catalogue is still loading after Connect. */
+const MODELS_RETRY_MS = 5_000;
+const MODELS_WAIT_MS = 3 * 60_000;
 const POLL_BACKOFF_MAX_MS = 15000;
 const POLL_GIVE_UP_MS = 2 * 60 * 1000;
 const EMPTY_ROW: Row = { status: null, loading: true, error: null, job: null, notice: null };
@@ -77,7 +83,7 @@ const JOB_PATH = '/api/subscriptions/openai/logout';
 export default function SubscriptionsPageClient() {
   const [agents, setAgents] = useState<ListAgent[] | null>(null);
   const [rows, setRows] = useState<Record<string, Row>>({});
-  const [models, setModels] = useState<Models>({ list: [], error: null, loading: true });
+  const [models, setModels] = useState<Models>({ list: [], error: null, loading: true, pending: false });
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({ [PROVIDER_ID]: true });
   const [connectAgent, setConnectAgent] = useState<string | null>(null);
@@ -90,6 +96,7 @@ export default function SubscriptionsPageClient() {
   const pollAbort = useRef(new Map<string, AbortController>());
   const pollTimer = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const modelsAbort = useRef<AbortController | null>(null);
+  const modelsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   // Agents with an action being started: guards a double click before React commits the disabled buttons.
   const starting = useRef(new Set<string>());
@@ -101,18 +108,46 @@ export default function SubscriptionsPageClient() {
 
   const loadModels = useCallback(async () => {
     modelsAbort.current?.abort();
+    if (modelsTimer.current) clearTimeout(modelsTimer.current);
     const controller = new AbortController();
     modelsAbort.current = controller;
-    setModels((m) => ({ ...m, loading: true }));
-    try {
-      const json = await readJson<{ models: SubModel[]; error: string | null }>(
-        await fetch('/api/subscriptions/models', { signal: controller.signal }),
-      );
-      setModels({ list: json.models ?? [], error: json.error ?? null, loading: false });
-    } catch (e) {
-      if ((e as Error)?.name === 'AbortError') return;
-      setModels({ list: [], error: 'Could not read the models.', loading: false });
-    }
+    const startedAt = Date.now();
+    setModels((m) => ({ ...m, loading: true, pending: false }));
+    const expire = () => {
+      controller.abort();
+      if (alive.current) setModels((m) => ({ ...m, error: 'ChatGPT models are still unavailable. Refresh to try again.', loading: false, pending: false }));
+    };
+    // Abort an outstanding request/body read at the deadline, not just between retries.
+    const deadline = setTimeout(expire, MODELS_WAIT_MS);
+    controller.signal.addEventListener('abort', () => {
+      clearTimeout(deadline);
+      if (modelsTimer.current) clearTimeout(modelsTimer.current);
+    }, { once: true });
+    // Right after Connect the agent needs about a minute to load the ChatGPT catalogue: the server
+    // answers `pending` until then. Show that, and ask again until the models arrive.
+    const read = async () => {
+      if (!alive.current || controller.signal.aborted) return;
+      if (Date.now() - startedAt >= MODELS_WAIT_MS) {
+        expire();
+        return;
+      }
+      try {
+        const json = await readJson<{ models: SubModel[]; error: string | null; pending?: boolean }>(
+          await fetch('/api/subscriptions/models', { signal: controller.signal }),
+        );
+        if (!alive.current || controller.signal.aborted) return;
+        if (Date.now() - startedAt >= MODELS_WAIT_MS) { expire(); return; }
+        const waiting = !!json.pending && Date.now() - startedAt < MODELS_WAIT_MS;
+        setModels({ list: json.models ?? [], error: json.error ?? (json.pending && !waiting ? 'ChatGPT models are still unavailable. Refresh to try again.' : null), loading: false, pending: waiting });
+        if (waiting) modelsTimer.current = setTimeout(() => { void read(); }, Math.min(MODELS_RETRY_MS, MODELS_WAIT_MS - (Date.now() - startedAt)));
+        else clearTimeout(deadline);
+      } catch (e) {
+        if (!alive.current || controller.signal.aborted || (e as Error)?.name === 'AbortError') return;
+        clearTimeout(deadline);
+        setModels({ list: [], error: 'Could not read the models.', loading: false, pending: false });
+      }
+    };
+    await read();
   }, []);
 
   const stopPoll = useCallback((agentId: string) => {
@@ -139,11 +174,12 @@ export default function SubscriptionsPageClient() {
       const json = await readJson<{ agent: SubAgent; action: Job | null }>(
         await fetch(`/api/subscriptions?agentId=${encodeURIComponent(agentId)}`, { signal: controller.signal }),
       );
+      if (!alive.current || controller.signal.aborted || rowAbort.current.get(agentId) !== controller) return;
       const running = json.action?.state === 'running' ? json.action : null;
       patchRow(agentId, { status: json.agent, loading: false, error: null, job: running });
       if (running) api.current.pollJob(agentId);
     } catch (e) {
-      if ((e as Error)?.name === 'AbortError') return;
+      if (!alive.current || controller.signal.aborted || rowAbort.current.get(agentId) !== controller || (e as Error)?.name === 'AbortError') return;
       patchRow(agentId, { loading: false, error: (e as Error).message || 'Could not read this agent.' });
     }
   };
@@ -233,6 +269,7 @@ export default function SubscriptionsPageClient() {
       alive.current = false;
       listAbort.current?.abort();
       modelsAbort.current?.abort();
+      if (modelsTimer.current) clearTimeout(modelsTimer.current);
       rowAborts.forEach((c) => c.abort());
       pollAborts.forEach((c) => c.abort());
       timers.forEach((t) => clearTimeout(t));
@@ -304,7 +341,12 @@ export default function SubscriptionsPageClient() {
               ) : (
                 <>
                   <div style={{ fontSize: 10, color: 'var(--text-dim, #888)', letterSpacing: '0.06em', marginBottom: 6 }}>MODELS</div>
-                  {models.list.length === 0 ? (
+                  {models.list.length === 0 && models.pending ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-dim, #888)' }}>
+                      <Pill>Loading ChatGPT models…</Pill>
+                      The agent is loading the ChatGPT catalogue after Connect; this takes about a minute.
+                    </div>
+                  ) : models.list.length === 0 ? (
                     <div style={{ fontSize: 12, color: 'var(--text-dim, #888)' }}>
                       {models.error ?? 'Connect an agent to see the models your account offers.'}
                     </div>
@@ -318,6 +360,11 @@ export default function SubscriptionsPageClient() {
                       ))}
                     </div>
                   )}
+                  {models.list.length > 0 && (models.pending || models.error) ? (
+                    <div role="status" style={{ fontSize: 12, color: 'var(--text-dim, #888)', marginTop: 6 }}>
+                      {models.pending ? 'Loading models for another connected account…' : models.error}
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>
@@ -458,6 +505,22 @@ function AgentRow({ agent, row, onConnect, onRetry, onDisconnect }: {
               {a.fallbacks[0] ? ` · fallback ${modelName(a.fallbacks[0])}` : ''}
             </span>
             <Link href={`/agents?agent=${encodeURIComponent(agent.agentId)}`} style={{ color: 'var(--violet)' }}>Change in the agent panel</Link>
+          </div>
+        )}
+        {a.running && a.connected && Array.isArray(a.profileReferences) && a.profileReferences.length > 0 && (
+          <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', lineHeight: 1.5 }}>
+              Use the intended account reference when explicitly adopting an automation in the agent&apos;s Control UI.
+            </div>
+            {a.profileReferences.map((profile) => (
+              <div key={profile.id} style={{ display: 'grid', gap: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', overflowWrap: 'anywhere' }}>
+                  {profile.email ?? 'ChatGPT account'}{profile.plan ? ` · ${profile.plan}` : ''}
+                  {profile.expiresAt ? ` · expires ${formatDate(profile.expiresAt)}` : ''}
+                </div>
+                <Input readOnly value={profile.id} aria-label={`Account reference ${profile.id}`} />
+              </div>
+            ))}
           </div>
         )}
       </div>

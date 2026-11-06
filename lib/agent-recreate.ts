@@ -23,6 +23,7 @@ import { patchRev4aProvider } from '@/app/api/gateway/sync';
 import { activeRecreateAgentIds, insertRecreate, isRecreateActive, latestRecreate, markInterruptedRecreates, updateRecreateRow, type AgentRecreateRow } from '@/lib/agent-recreate-state';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { rebuildLimitArgs } from '@/lib/agent-memory-limit';
+import { removeAgentContainer } from '@/lib/agent-stop';
 
 const KEEP_ENV_PREFIXES = ['AGENT_', 'MODEL_', 'OPENCLAW_', 'TZ='];
 const KEEP_LABEL_PREFIXES = ['AGENT_ID', 'traefik.', 'description', 'maintainer'];
@@ -100,7 +101,7 @@ export async function recreateAgentContainer(
   agentId: string,
   container: AgentContainerInspect,
   image: string,
-  opts: { env?: Record<string, string>; portArgs?: string[]; memoryLimitMb?: number | null } = {},
+  opts: { env?: Record<string, string>; portArgs?: string[]; memoryLimitMb?: number | null; gracefulStop?: boolean; onWarning?: (message: string) => void } = {},
 ): Promise<void> {
   // A running container carries its attached networks; a container whose network
   // endpoint was lost (or one inspected while detached) reports none, so the mode it
@@ -150,7 +151,10 @@ export async function recreateAgentContainer(
   const memoryArgs = rebuildLimitArgs(container.HostConfig, opts.memoryLimitMb);
 
   const oldName = (container.Name ?? '').replace(/^\//, '') || agentId;
-  await runDocker(['rm', '-f', oldName], { timeoutMs: 60_000 });
+  // Update and Rollback retain their previous removal policy. Only the claimed
+  // Edit (including memory-limit removal) and Recreate jobs opt into this stop.
+  if (opts.gracefulStop) await removeAgentContainer(agentId, container.Id, opts.onWarning);
+  else await runDocker(['rm', '-f', oldName], { timeoutMs: 60_000 });
 
   const runArgs = (img: string): string[] => [
     'run', '-d',
@@ -227,14 +231,31 @@ export async function startAgentRecreate(agentId: string): Promise<number> {
     return id;
   } catch (e) {
     running.delete(agentId);
+    if (e && typeof e === 'object' && (e as { code?: unknown }).code === 'REV4A_AGENT_JOB_BUSY') {
+      throw new RecreateRefusedError((e as Error).message);
+    }
     throw e;
   }
 }
 
 async function runRecreate(id: number, agentId: string, image: string): Promise<void> {
   let stoppedByBackup = false;
+  let warning: string | null = null;
+  // Best effort: a failed write of the warning must not change what Recreate does next.
+  const onWarning = (message: string) => {
+    warning = message;
+    try { updateRecreateRow(id, { error: message }); } catch (e) { console.warn(`[agent:recreate] could not save the warning: ${String((e as Error | null)?.message ?? e)}`); }
+  };
   try {
-    const { file } = await startColdBackup(agentId, { kind: 'prerecreate', leaveStopped: true });
+    const { file } = await startColdBackup(agentId, {
+      kind: 'prerecreate', leaveStopped: true,
+      onStopOutcome: (outcome) => {
+        if (outcome === 'stopped') return;
+        const message = `${outcome === 'killed' ? 'The cold backup stop required SIGKILL (exit 137 or kill fallback)' : 'Could not confirm graceful shutdown after the cold backup stop'}. The Gateway owner lease may remain active until it expires.`;
+        console.warn(`[agent:recreate] ${agentId}: ${message}`);
+        onWarning(message);
+      },
+    });
     stoppedByBackup = true;
     updateRecreateRow(id, { backup_file: file });
     const backup = await waitForColdBackup(agentId, { timeoutMs: COLD_BACKUP_WAIT_TIMEOUT_MS });
@@ -243,7 +264,7 @@ async function runRecreate(id: number, agentId: string, image: string): Promise<
     updateRecreateRow(id, { status: 'recreating' });
     const container = await inspectAgentContainer(agentId);
     if (!container) throw new Error('The agent container disappeared during the recreate');
-    await recreateAgentContainer(agentId, container, image);
+    await recreateAgentContainer(agentId, container, image, { gracefulStop: true, onWarning });
     stoppedByBackup = false;
 
     if (!(await waitForGatewayReady(agentId, RECREATE_READY_TIMEOUT_MS))) {
@@ -256,7 +277,7 @@ async function runRecreate(id: number, agentId: string, image: string): Promise<
       console.error('[agent:recreate] provider patch failed:', (e as Error).message);
     }
 
-    updateRecreateRow(id, { status: 'done' });
+    updateRecreateRow(id, { status: 'done', error: warning });
 
     // Retention: keep the newest two prerecreate archives (lib/cold-backup.ts). Best-effort.
     prunePrerecreateBackups(agentId)
@@ -277,7 +298,7 @@ async function runRecreate(id: number, agentId: string, image: string): Promise<
         console.error(`[agent:recreate] ${agentId}: the container is gone after the failed rebuild; run Recreate again`);
       }
     }
-    updateRecreateRow(id, { status: 'failed', error: shortError(e) });
+    updateRecreateRow(id, { status: 'failed', error: [shortError(e), warning].filter(Boolean).join('; ') });
   }
 }
 

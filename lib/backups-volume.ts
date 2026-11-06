@@ -12,6 +12,7 @@ import { dockerFetch } from '@/lib/docker-socket';
 import { runDocker } from '@/lib/agent-images';
 import { BACKUPS_DIR } from '@/lib/rev4a-paths';
 import { recordedMigrationState } from '@/lib/backups-migration';
+import { retainedRestoreRecoveryFiles } from '@/lib/agent-restore-state';
 import {
   BACKUP_VOLUME,
   LEGACY_VOLUME_ENABLED,
@@ -202,7 +203,10 @@ export async function pruneBackups(agentId: string, kindMarker: string, keep: nu
   } catch {
     entries = listDirBackups(agentId, dir);
   }
-  const stale = staleByKind(entries, agentId, kindMarker, keep);
+  let protectedFiles: Set<string>;
+  try { protectedFiles = new Set(retainedRestoreRecoveryFiles(agentId)); }
+  catch { return []; } // Unknown recovery references are not permission to delete archives.
+  const stale = staleByKind(entries, agentId, kindMarker, keep).filter((file) => !protectedFiles.has(file));
   const removed: string[] = [];
   for (const file of stale) {
     try {

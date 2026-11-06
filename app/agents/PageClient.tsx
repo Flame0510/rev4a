@@ -1138,30 +1138,38 @@ function EditBanner({ agentId, onChanged, ping }: { agentId: string; onChanged: 
   useEffect(() => {
     let alive = true;
     let shown = false;
-    const controller = new AbortController();
-    abortRef.current = controller;
+    let fetching = false;
     const tick = async () => {
+      if (fetching || !alive) return;
+      fetching = true;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
+        if (!alive || controller.signal.aborted) return;
         const cur: EditJob | null = data.edit ?? null;
         if (cur?.status === 'rebuilding') { shown = true; setJob(cur); return; }
         if (shown) {
           shown = false;
-          setJob(null);
+          setJob(cur?.error ? cur : null);
           if (cur && (cur.status === 'done' || cur.status === 'failed')) onChangedRef.current();
         }
+        else setJob(cur?.error ? cur : null);
       } catch { /* aborted or transient — the next tick retries */ }
+      finally { fetching = false; }
     };
     // `ping` changes when an edit is started here, so the banner appears at once; the
     // 5 s poll then keeps it fresh and clears it when the job finishes.
     void tick();
     const timer = setInterval(() => { if (alive) void tick(); }, 5000);
-    return () => { alive = false; clearInterval(timer); controller.abort(); };
+    return () => { alive = false; clearInterval(timer); abortRef.current?.abort(); };
   }, [agentId, ping]);
 
   if (!job) return null;
+  if (job.status !== 'rebuilding') return <div role="status"><Badge tone={job.status === 'done' ? 'warning' : 'danger'}>{job.error}</Badge></div>;
   return (
     <div style={{
       padding: '8px 12px',
@@ -1178,6 +1186,7 @@ function EditBanner({ agentId, onChanged, ping }: { agentId: string; onChanged: 
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
         Rebuilding the container{job.displayName ? ` as ${job.displayName}` : ''}
         <span style={{ whiteSpace: 'nowrap' }}> (the agent restarts when done)</span>
+        {job.error && <span style={{ display: 'block', color: 'var(--yellow)' }}>{job.error}</span>}
       </span>
     </div>
   );
@@ -1332,6 +1341,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
         <ResourceSection
           container={agent.name}
           agentId={agent.agentId}
+          openclawVersion={agent.openclawVersion}
           agentBusy={busy}
           onStarted={() => { setEditPing(Date.now()); onActivity(agent.agentId, 'edit'); }}
         />
@@ -1448,9 +1458,12 @@ interface ColdBackupJob {
 }
 
 interface RestoreJob {
-  status: 'restoring' | 'done' | 'failed' | 'interrupted';
+  id: number;
+  status: 'restoring' | 'unresolved' | 'done' | 'failed' | 'interrupted';
   file: string | null;
   error: string | null;
+  phase?: string | null;
+  recoveryFile?: string | null;
 }
 
 function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: { agentName: string; agentId: string; agentBusy?: boolean; onStarted?: (kind: 'backup' | 'restore') => void; onChanged?: () => void }) {
@@ -1459,17 +1472,38 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
   const [backup, setBackup] = useState<ColdBackupJob | null>(null);
   const [restore, setRestore] = useState<RestoreJob | null>(null);
   /** The one action in flight, and the file it is working on (keyed busy state). */
-  const [busy, setBusy] = useState<{ kind: 'starting' | 'cancelling' | 'restoring' | 'deleting'; file?: string } | null>(null);
+  const [busy, setBusy] = useState<{ kind: 'starting' | 'cancelling' | 'restoring' | 'resolving' | 'checking-delete' | 'deleting'; file?: string } | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [resolveConfirm, setResolveConfirm] = useState<number | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
   /** The file whose Delete is being confirmed, and the rollback it would make impossible (if any). */
   const [deleteConfirm, setDeleteConfirm] = useState<{ file: string; rollbackTo: string | null } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
+  const lifecycleRef = useRef({ generation: 0, mounted: false });
+  const isCurrent = useCallback((generation: number) =>
+    lifecycleRef.current.mounted && lifecycleRef.current.generation === generation, []);
+  const actionRef = useRef<{ generation: number; action: NonNullable<typeof busy> } | null>(null);
+  const beginAction = useCallback((action: NonNullable<typeof busy>) => {
+    const generation = lifecycleRef.current.generation;
+    if (!isCurrent(generation) || actionRef.current) return null;
+    const claim = { generation, action };
+    actionRef.current = claim;
+    setBusy(action);
+    return claim;
+  }, [isCurrent]);
+  const endAction = useCallback((claim: NonNullable<typeof actionRef.current>) => {
+    if (actionRef.current !== claim) return;
+    actionRef.current = null;
+    if (isCurrent(claim.generation)) setBusy(null);
+  }, [isCurrent]);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    const generation = lifecycleRef.current.generation;
+    if (!isCurrent(generation)) return;
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => { if (isCurrent(generation)) setToast(null); }, 4000);
   };
 
   const stopPolling = useCallback(() => {
@@ -1477,34 +1511,44 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = null;
   }, []);
 
   const loadBackups = useCallback(async () => {
+    const generation = lifecycleRef.current.generation;
+    if (!isCurrent(generation)) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
     try {
       const res = await fetch(`/api/agents/${agentName}/backup`, { signal: controller.signal });
-      if (res.ok) {
+      if (res.ok && !controller.signal.aborted && abortRef.current === controller) {
         const data: { backups: { name: string; size: string; date: string }[] } = await res.json();
+        if (!isCurrent(generation) || controller.signal.aborted || abortRef.current !== controller) return;
         setBackups(data.backups ?? []);
       }
     } catch { /* aborted or transient — the list stays as it is */ }
-    setLoading(false);
-  }, [agentName]);
+    if (isCurrent(generation) && abortRef.current === controller) setLoading(false);
+  }, [agentName, isCurrent]);
 
   /* Poll a running job every 2s until it finishes; the job lives in Docker
      (a detached helper container), so this resumes cleanly after a reload. */
   const startPolling = useCallback(() => {
+    const generation = lifecycleRef.current.generation;
+    if (!isCurrent(generation)) return;
     stopPolling();
-    const controller = new AbortController();
-    abortRef.current = controller;
     pollRef.current = setInterval(async () => {
+      if (!isCurrent(generation)) return;
+      pollAbortRef.current?.abort();
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
       try {
         const res = await fetch(`/api/agents/${agentName}/cold-backup`, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
+        if (!isCurrent(generation) || pollAbortRef.current !== controller || controller.signal.aborted) return;
         const job: ColdBackupJob | null = data.backup ?? null;
         if (job?.status === 'running') {
           setBackup(job);
@@ -1515,69 +1559,98 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
         if (job?.status === 'succeeded') showToast('Backup completed: ' + job.file);
         else if (job?.status === 'failed') showToast('Backup failed: ' + (job.error ?? 'unknown error'), 'error');
         await loadBackups();
-        onChanged?.();
+        if (isCurrent(generation)) onChanged?.();
       } catch { /* aborted or transient network error — the next tick retries */ }
     }, 2000);
-  }, [agentName, loadBackups, stopPolling]);
+  }, [agentName, isCurrent, loadBackups, stopPolling]);
 
   /* Poll a running restore every 2s; the job is recorded server-side, so this resumes
      after a reload and a second restore cannot start meanwhile (the server answers 409). */
   const startRestorePolling = useCallback(() => {
+    const generation = lifecycleRef.current.generation;
+    if (!isCurrent(generation)) return;
     stopPolling();
-    const controller = new AbortController();
-    abortRef.current = controller;
     pollRef.current = setInterval(async () => {
+      if (!isCurrent(generation)) return;
+      pollAbortRef.current?.abort();
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
       try {
         const res = await fetch(`/api/agents/${agentName}/restore`, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
+        if (!isCurrent(generation) || pollAbortRef.current !== controller || controller.signal.aborted) return;
         const job: RestoreJob | null = data.restore ?? null;
         if (job?.status === 'restoring') {
           setRestore(job);
           return;
         }
         stopPolling();
-        setRestore(null);
+        setRestore(job);
         if (job?.status === 'done') showToast('Restored from ' + (job.file ?? 'the backup'));
-        else if (job?.status === 'failed') showToast('Restore failed: ' + (job.error ?? 'unknown error'), 'error');
+        else if (job?.status === 'failed' || job?.status === 'unresolved') showToast('Restore failed: ' + (job.error ?? 'unknown error'), 'error');
         await loadBackups();
       } catch { /* aborted or transient network error — the next tick retries */ }
     }, 2000);
-  }, [agentName, loadBackups, stopPolling]);
+  }, [agentName, isCurrent, loadBackups, stopPolling]);
 
   /* On mount: load the archive list and pick up a backup or restore already running. */
   useEffect(() => {
-    let alive = true;
+    const generation = lifecycleRef.current.generation + 1;
+    lifecycleRef.current = { generation, mounted: true };
+    actionRef.current = null;
+    const controller = new AbortController();
+    setRestore(null);
+    setBackup(null);
+    setBusy(null);
+    setToast(null);
+    setRestoreConfirm(null);
+    setResolveConfirm(null);
+    setDeleteConfirm(null);
     void loadBackups();
     void (async () => {
       try {
-        const res = await fetch(`/api/agents/${agentName}/cold-backup`);
-        if (res.ok && alive) {
+        // A restore's cold recovery copy belongs to that restore, not a separate backup action.
+        const rRes = await fetch(`/api/agents/${agentName}/restore`, { signal: controller.signal });
+        if (rRes.ok && isCurrent(generation)) {
+          const rData = await rRes.json();
+          if (!isCurrent(generation)) return;
+          setRestore(rData.restore ?? null);
+          if (rData.restore?.status === 'restoring') {
+            startRestorePolling();
+            return;
+          }
+        }
+        if (!isCurrent(generation)) return;
+        const res = await fetch(`/api/agents/${agentName}/cold-backup`, { signal: controller.signal });
+        if (res.ok && isCurrent(generation)) {
           const data = await res.json();
+          if (!isCurrent(generation)) return;
           if (data.backup?.status === 'running') {
             setBackup(data.backup);
             startPolling();
             return;
           }
         }
-        const rRes = await fetch(`/api/agents/${agentName}/restore`);
-        if (rRes.ok && alive) {
-          const rData = await rRes.json();
-          if (rData.restore?.status === 'restoring') {
-            setRestore(rData.restore);
-            startRestorePolling();
-          }
-        }
       } catch { /* ignore */ }
     })();
-    return () => { alive = false; stopPolling(); };
-  }, [agentName, startPolling, startRestorePolling, stopPolling, loadBackups]);
+    return () => {
+      lifecycleRef.current = { generation: generation + 1, mounted: false };
+      actionRef.current = null;
+      controller.abort();
+      abortRef.current?.abort();
+      stopPolling();
+    };
+  }, [agentName, isCurrent, startPolling, startRestorePolling, stopPolling, loadBackups]);
 
   const handleBackup = async () => {
-    setBusy({ kind: 'starting' });
+    const claim = beginAction({ kind: 'starting' });
+    if (!claim) return;
+    const { generation } = claim;
     try {
       const res = await fetch(`/api/agents/${agentName}/cold-backup`, { method: 'POST' });
       const data = await res.json();
+      if (!isCurrent(generation)) return;
       if (res.status === 202 && data.started) {
         setBackup({ status: 'running', file: data.file, percent: null, error: null });
         onStarted?.('backup');
@@ -1586,16 +1659,20 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
         showToast(data.error || 'Backup failed to start', 'error');
       }
     } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
+      if (isCurrent(generation)) showToast((e as Error).message, 'error');
+    } finally {
+      endAction(claim);
     }
-    setBusy(null);
   };
 
   const handleCancelBackup = async () => {
-    setBusy({ kind: 'cancelling' });
+    const claim = beginAction({ kind: 'cancelling' });
+    if (!claim) return;
+    const { generation } = claim;
     try {
       const res = await fetch(`/api/agents/${agentName}/cold-backup`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
+      if (!isCurrent(generation)) return;
       if (!res.ok) {
         showToast(data.error || 'Cancel failed', 'error');
       } else {
@@ -1605,21 +1682,25 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
         await loadBackups();
       }
     } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
+      if (isCurrent(generation)) showToast((e as Error).message, 'error');
+    } finally {
+      endAction(claim);
     }
-    setBusy(null);
   };
 
   const executeRestore = async () => {
     const file = restoreConfirm;
     if (!file) return;
+    const claim = beginAction({ kind: 'restoring', file });
+    if (!claim) return;
+    const { generation } = claim;
     setRestoreConfirm(null);
-    setBusy({ kind: 'restoring', file });
     try {
       const res = await fetch(`/api/agents/${agentName}/restore?file=${encodeURIComponent(file)}`, { method: 'POST' });
       const data = await res.json();
+      if (!isCurrent(generation)) return;
       if (res.status === 202 && data.started) {
-        setRestore({ status: 'restoring', file, error: null });
+        setRestore({ id: data.id, status: 'restoring', file, error: null });
         onStarted?.('restore');
         onChanged?.();
         startRestorePolling();
@@ -1627,13 +1708,17 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
         showToast(data.error || 'Restore failed to start', 'error');
       }
     } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
+      if (isCurrent(generation)) showToast((e as Error).message, 'error');
+    } finally {
+      endAction(claim);
     }
-    setBusy(null);
   };
 
   /** Ask before deleting; when this is the backup the latest update's Roll back needs, say so. */
   const askDeleteBackup = async (file: string) => {
+    const claim = beginAction({ kind: 'checking-delete', file });
+    if (!claim) return;
+    const { generation } = claim;
     let rollbackTo: string | null = null;
     try {
       const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/update`, { cache: 'no-store' });
@@ -1645,33 +1730,75 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
         if (offered && u) rollbackTo = u.fromVersion;
       }
     } catch { /* unknown: the plain confirmation */ }
-    setDeleteConfirm({ file, rollbackTo });
+    if (isCurrent(generation)) setDeleteConfirm({ file, rollbackTo });
+    endAction(claim);
   };
 
   const handleDeleteBackup = async (file: string) => {
-    setBusy({ kind: 'deleting', file });
+    const claim = beginAction({ kind: 'deleting', file });
+    if (!claim) return;
+    const { generation } = claim;
     try {
       const res = await fetch(`/api/agents/${agentName}/backup?file=${encodeURIComponent(file)}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
+      if (!isCurrent(generation)) return;
       if (!res.ok || !data.success) {
         showToast(data.error || 'Delete failed', 'error');
       }
       await loadBackups();
-      onChanged?.();
+      if (isCurrent(generation)) onChanged?.();
     } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
+      if (isCurrent(generation)) showToast((e as Error).message, 'error');
+    } finally {
+      endAction(claim);
     }
-    setBusy(null);
+  };
+
+  const handleResolveRestore = async (restoreId: number) => {
+    const claim = beginAction({ kind: 'resolving' });
+    if (!claim) return;
+    const { generation } = claim;
+    try {
+      const res = await fetch(`/api/agents/${agentName}/restore/resolve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restoreId }),
+      });
+      const data = await res.json();
+      if (!isCurrent(generation)) return;
+      if (!res.ok) { showToast(data.error ?? 'Restore resolution failed; reservation retained', 'error'); return; }
+      setRestore(data.restore ?? null);
+      showToast('Restore reservation released. Review the current volume before starting the agent.');
+      await loadBackups();
+      if (isCurrent(generation)) onChanged?.();
+    } catch (error) {
+      if (isCurrent(generation)) showToast((error as Error).message, 'error');
+    } finally { endAction(claim); }
   };
 
   const running = backup?.status === 'running';
   const restoring = restore?.status === 'restoring';
-  const actionsLocked = running || restoring || busy !== null || !!agentBusy;
+  const actionsLocked = running || restoring || restore?.status === 'unresolved' || busy !== null || !!agentBusy;
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
       <SectionHeader icon={<ArchiveIcon size={12} />} label="BACKUP" />
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {restore?.status === 'done' && restore.phase !== 'complete' && (
+          <div role="status" style={{ fontSize: 11, color: 'var(--yellow)' }}>
+            This older restore did not record Gateway readiness. Check the agent's current status before relying on the restored data.
+          </div>
+        )}
+        {(restore?.status === 'failed' || restore?.status === 'interrupted' || restore?.status === 'unresolved') && (
+          <div role="status" style={{ fontSize: 11, color: 'var(--yellow)', overflowWrap: 'anywhere' }}>
+            Restore needs attention: {restore.error ?? 'Check the agent and its backup before retrying.'}
+            {restore.recoveryFile && !restore.error?.includes(restore.recoveryFile) && <> Recovery backup: {restore.recoveryFile}.</>}
+          </div>
+        )}
+        {restore?.status === 'unresolved' && (
+          <Button variant="secondary" size="sm" disabled={busy !== null || running || restoring}
+            loading={busy?.kind === 'resolving'} onClick={() => setResolveConfirm(restore.id)}>
+            {busy?.kind === 'resolving' ? 'Resolving…' : 'Resolve restore'}
+          </Button>
+        )}
         {running && (
           <div style={{
             padding: '8px 12px',
@@ -1734,8 +1861,8 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
               flexShrink: 0,
             }} />
             <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
-              Restoring {restore?.file}
-              <span style={{ whiteSpace: 'nowrap' }}> (the agent restarts when done)</span>
+              {restore?.phase === 'preflight' ? 'Checking backup' : restore?.phase === 'backing_up' ? 'Saving current state before restore' : restore?.phase === 'awaiting_ready' ? 'Waiting for the restored Gateway' : 'Restoring'} {restore?.file}
+              <span style={{ whiteSpace: 'nowrap' }}> (completion requires a ready Gateway)</span>
             </span>
           </div>
         )}
@@ -1762,16 +1889,16 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
                     loading={busy?.kind === 'restoring' && busy.file === b.name}
                     onClick={() => setRestoreConfirm(b.name)}
                   >
-                    Restore
+                    {busy?.kind === 'restoring' && busy.file === b.name ? 'Restoring…' : 'Restore'}
                   </Button>
                   <Button
                     variant="danger"
                     size="sm"
                     disabled={actionsLocked}
-                    loading={busy?.kind === 'deleting' && busy.file === b.name}
+                    loading={(busy?.kind === 'checking-delete' || busy?.kind === 'deleting') && busy.file === b.name}
                     onClick={() => { void askDeleteBackup(b.name); }}
                   >
-                    Delete
+                    {busy?.file === b.name && busy.kind === 'checking-delete' ? 'Checking…' : busy?.file === b.name && busy.kind === 'deleting' ? 'Deleting…' : 'Delete'}
                   </Button>
                 </span>
               </div>
@@ -1779,7 +1906,7 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
           </div>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" size="sm" disabled={actionsLocked} onClick={handleBackup}>
+          <Button variant="secondary" size="sm" disabled={actionsLocked} loading={busy?.kind === 'starting'} onClick={handleBackup}>
             {busy?.kind === 'starting' ? 'Starting…' : 'Backup Now'}
           </Button>
         </div>
@@ -1789,6 +1916,15 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
           {toast.msg}
         </div>
       )}
+      <ConfirmModal
+        open={resolveConfirm !== null}
+        onClose={() => setResolveConfirm(null)}
+        onConfirm={() => { const id = resolveConfirm; setResolveConfirm(null); if (id !== null) void handleResolveRestore(id); }}
+        title="Resolve Restore"
+        message="Stop and remove only this restore's labelled extraction helpers and release its reservation? The agent container is left untouched. The volume may contain partial data: review it before starting the agent or restoring the recovery backup."
+        confirmLabel="Resolve restore"
+        tone="warning"
+      />
       <ConfirmModal
         open={deleteConfirm !== null}
         onClose={() => setDeleteConfirm(null)}
@@ -1889,6 +2025,7 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -1904,20 +2041,27 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    abortRef.current?.abort();
   }, []);
 
   /* Poll the job every 2s while it runs. The job is recorded in `agent_recreates`
      and the steps run in the Rev4a process, so a reload resumes from the row. */
   const startPolling = useCallback(() => {
     stopPolling();
-    const controller = new AbortController();
-    abortRef.current = controller;
+    let fetching = false;
     pollRef.current = setInterval(async () => {
+      if (fetching) return;
+      fetching = true;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
         const res = await fetch(`/api/agents/${agentName}/recreate`, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
         const current: RecreateJob | null = data.recreate ?? null;
+        if (controller.signal.aborted) return;
+        setWarning(current?.status !== 'failed' && current?.status !== 'interrupted' ? current?.error ?? null : null);
         if (current && (current.status === 'backing_up' || current.status === 'recreating')) {
           setJob(current);
           return;
@@ -1934,17 +2078,26 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
           setError(current.error || 'Recreate failed');
         }
       } catch { /* aborted or transient network error — the next tick retries */ }
+      finally { fetching = false; }
     }, 2000);
   }, [agentName, onRecreated, stopPolling]);
 
   /* On mount: pick up a recreate that is already running. */
   useEffect(() => {
     let alive = true;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     void (async () => {
       try {
-        const res = await fetch(`/api/agents/${agentName}/recreate`);
+        const res = await fetch(`/api/agents/${agentName}/recreate`, { signal: controller.signal });
         if (res.ok && alive) {
           const data = await res.json();
+          if (!alive || controller.signal.aborted) return;
+          setWarning(data.recreate?.status !== 'failed' && data.recreate?.status !== 'interrupted' ? data.recreate?.error ?? null : null);
+          if (data.recreate?.status === 'failed' || data.recreate?.status === 'interrupted') {
+            setError(data.recreate.error || 'Recreate failed');
+          }
           if (data.recreate && (data.recreate.status === 'backing_up' || data.recreate.status === 'recreating')) {
             setJob(data.recreate);
             startPolling();
@@ -1957,8 +2110,12 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
 
   const handleRecreate = async () => {
     setShowConfirm(false);
+    // A discovery read still in flight describes the previous job: it must not paint its
+    // failure over this new run (abortRef is the mount discovery's controller here).
+    abortRef.current?.abort();
     setStarting(true);
     setError('');
+    setWarning(null);
     try {
       const res = await fetch(`/api/agents/${agentName}/recreate`, { method: 'POST' });
       const data = await res.json();
@@ -2028,6 +2185,7 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
           {starting ? 'Starting…' : running ? 'Recreating…' : 'Recreate Container'}
         </Button>
         {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
+        {warning && <div role="status" style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 6 }}>{warning}</div>}
       </div>
       {toast && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>

@@ -59,6 +59,9 @@ interface AgentModel {
 const SUB_MARK = 'subscription:';
 /** The character set PUT /api/gateway/agent accepts for a marked subscription reference. */
 const SUB_MODEL_ID = /^[A-Za-z0-9._-]+$/;
+/** How often, and for how long, to ask again while the ChatGPT catalogue is still loading after Connect. */
+const SUB_MODELS_RETRY_MS = 5_000;
+const SUB_MODELS_WAIT_MS = 3 * 60_000;
 const bare = (id: string) =>
   id.startsWith('rev4a/')
     ? id.slice('rev4a/'.length)
@@ -105,6 +108,7 @@ export default function ModelSection({
   const [sub, setSub] = useState<SubscriptionStatus | null>(null);
   const [subLoading, setSubLoading] = useState(true);
   const [subModels, setSubModels] = useState<SubModel[] | null>(null);
+  const [subModelsError, setSubModelsError] = useState<string | null>(null);
   const [subKey, setSubKey] = useState(0);
   /** The previous primary, pre-filled as the first fallback when a subscription model was just chosen. */
   const [autoFallback, setAutoFallback] = useState<string | null>(null);
@@ -138,22 +142,58 @@ export default function ModelSection({
 
   const subConnected = !!sub?.connected && !sub.error;
   useEffect(() => {
-    if (!subConnected) { setSubModels(null); return; }
+    setSubModels(null);
+    setSubModelsError(null);
+    if (!subConnected) return;
     modelsAbortRef.current?.abort();
     const controller = new AbortController();
     modelsAbortRef.current = controller;
-    (async () => {
+    // Right after Connect the agent needs about a minute to load the ChatGPT catalogue: the
+    // server answers `pending` until then. Keep "Loading subscription models…" and ask again.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+    const expire = () => {
+      controller.abort();
+      setSubModels((models) => models ?? []);
+      setSubModelsError('ChatGPT models are still unavailable. Reopen this agent to try again.');
+    };
+    // This timer runs even while fetch or the response body is still pending.
+    const deadline = setTimeout(expire, SUB_MODELS_WAIT_MS);
+    controller.signal.addEventListener('abort', () => {
+      clearTimeout(deadline);
+      if (timer) clearTimeout(timer);
+    }, { once: true });
+    const read = async () => {
+      if (controller.signal.aborted) return;
+      if (Date.now() - startedAt >= SUB_MODELS_WAIT_MS) {
+        expire();
+        return;
+      }
       try {
         const res = await fetch('/api/subscriptions/models', { signal: controller.signal });
         const json = await res.json().catch(() => ({}));
+        if (controller.signal.aborted) return;
+        if (Date.now() - startedAt >= SUB_MODELS_WAIT_MS) { expire(); return; }
         if (!res.ok) throw new Error('unavailable');
-        setSubModels((json.models ?? []) as SubModel[]);
+        const available = (json.models ?? []) as SubModel[];
+        // A different connected account may already offer models. Keep them
+        // usable while the server retries the account whose catalogue is empty.
+        if (available.length || !json.pending) setSubModels(available);
+        if (json.pending && Date.now() - startedAt < SUB_MODELS_WAIT_MS) {
+          timer = setTimeout(() => { void read(); }, Math.min(SUB_MODELS_RETRY_MS, SUB_MODELS_WAIT_MS - (Date.now() - startedAt)));
+          return;
+        }
+        if (json.pending) expire();
+        else clearTimeout(deadline);
       } catch (e) {
-        if ((e as Error)?.name === 'AbortError') return;
+        if (controller.signal.aborted || (e as Error)?.name === 'AbortError') return;
+        clearTimeout(deadline);
         setSubModels([]);
+        setSubModelsError('Could not read the ChatGPT models. Reopen this agent to try again.');
       }
-    })();
-    return () => controller.abort();
+    };
+    void read();
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, [agentId, subConnected]);
 
   const load = useCallback(async () => {
@@ -416,6 +456,7 @@ export default function ModelSection({
           </div>
 
           <SubscriptionLine status={sub} loading={subLoading} modelsLoading={subConnected && subModels === null} />
+          {subModelsError && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{subModelsError}</div>}
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Button variant="primary" size="sm" loading={saving} disabled={!dirty || !primary || primaryUnavailable || !!agentBusy} onClick={save}>

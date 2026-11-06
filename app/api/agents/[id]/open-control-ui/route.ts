@@ -4,6 +4,8 @@
  * What the "Open" buttons navigate to, in a new tab. Redirects to the agent's Control
  * UI: through a one-time link that pairs the browser with no approval on OpenClaw 9.x,
  * or through the plain token link when no one-time link can be issued.
+ * Optional `job` selects the fixed native Automations destination after validating
+ * the job id. It changes no account or job setting and never chooses a redirect host.
  *
  * The target host is the one this request reached Rev4a on (the `Host` header), with
  * the agent's published port. It is never a parameter: a page elsewhere that gets a
@@ -25,6 +27,8 @@ import { probeGateway } from '@/lib/agent-readiness';
 import { gatewayState, blocksOpen } from '@/lib/gateway-state';
 import { dockerFetch } from '@/lib/docker-socket';
 import { findAgentContainer, hostnameFromHostHeader, resolveControlUiUrl } from '@/lib/agent-devices';
+import { isValidCronJobId } from '@/lib/cron-ids';
+import { controlUiAutomationUrl } from '@/lib/control-ui-navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +45,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as NextResponse;
+  const jobs = new URL(request.url).searchParams.getAll('job');
+  if (jobs.length > 1 || jobs.length === 1 && !isValidCronJobId(jobs[0])) return page(400, 'Invalid automation job id.');
+  const jobId = jobs[0];
   const { id } = await params;
   const host = hostnameFromHostHeader(request.headers.get('host'));
   if (!host) return page(400, 'Could not tell which address Rev4a is being reached on.');
@@ -75,7 +82,7 @@ export async function GET(
     const { url } = await resolveControlUiUrl(agent.name, host, agent.controlPort);
     return new NextResponse(null, {
       status: 302,
-      headers: { Location: url, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
+      headers: { Location: controlUiAutomationUrl(url, jobId), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
     });
   } catch (e) {
     return page(502, `Could not open the Control UI: ${(e as Error).message}.`);

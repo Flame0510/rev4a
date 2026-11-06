@@ -55,8 +55,14 @@ export async function register() {
     // since (a slow start, a restart during the wait): proved with the stored baseline, then marked
     // resolved. Idempotent, not awaited, so it cannot delay the server start.
     import('./lib/agent-update')
-      .then(({ resolveFailedUpdatesAtStartup }) => resolveFailedUpdatesAtStartup())
+      .then(async ({ resolveFailedUpdatesAtStartup }) => {
+        const { readPreUpdateCronEvidence } = await import('./lib/backup-cron-evidence');
+        return resolveFailedUpdatesAtStartup(readPreUpdateCronEvidence);
+      })
       .catch((e) => console.warn(`[rev4a] Could not re-check failed agent updates on startup: ${(e as Error)?.message ?? e}`));
+    import('./lib/agent-update-cron-account')
+      .then(({ startCronAccountModelRecovery }) => startCronAccountModelRecovery())
+      .catch(() => console.warn('[rev4a] Could not start pending cron model recovery'));
     // Recreates cut off by the restart: the row becomes `interrupted` and an agent the
     // backup had stopped is started again, so nothing stays down.
     try {
@@ -66,8 +72,8 @@ export async function register() {
     } catch {
       console.warn('[rev4a] Could not check agent recreates on startup');
     }
-    // Restores cut off by the restart: same treatment — the row becomes `interrupted`
-    // and a container left stopped is started again.
+    // An interrupted restore needs review: mark it without extracting again or
+    // restarting an agent whose current volume may contain partial or newer work.
     try {
       const { recoverInterruptedRestores } = await import('./lib/agent-restore');
       const interrupted = await recoverInterruptedRestores();

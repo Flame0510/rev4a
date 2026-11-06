@@ -12,6 +12,55 @@
  */
 import { openDb } from '@/lib/db';
 
+export class AgentJobBusyError extends Error {
+  readonly code = 'REV4A_AGENT_JOB_BUSY';
+  constructor() { super('Another lifecycle operation of this agent started; refresh and retry'); }
+}
+
+const LIFECYCLE_TABLES = ['agent_upgrades', 'agent_recreates', 'agent_restores', 'agent_edits'] as const;
+const ENDED_STATUSES = new Set(['done', 'failed', 'interrupted', 'rolled_back', 'rollback_failed']);
+
+/** Must be checked in the same transaction as every lifecycle claim. */
+function assertAgentIdle(db: ReturnType<typeof openDb>, agentId: string): void {
+  for (const table of LIFECYCLE_TABLES) {
+    const row = db.prepare(`SELECT status${table === 'agent_upgrades' ? ', cron_model_repair_claim' : ''}
+      FROM ${table} WHERE agent_id = ? ORDER BY id DESC LIMIT 1`).get(agentId) as { status: string; cron_model_repair_claim?: number | null } | undefined;
+    if (row && (!ENDED_STATUSES.has(row.status) || row.cron_model_repair_claim != null)) throw new AgentJobBusyError();
+  }
+}
+
+/** Reserve the latest update's agent for cron repair without rewriting its result/history. */
+export async function claimCronModelRepair(updateId: number): Promise<(() => void) | null> {
+  // Cold backups and in-process operations use the shared async ownership check.
+  // Do not hold a SQLite transaction while it waits for Docker. The transaction
+  // below rechecks persisted owners after that wait, like other lifecycle starters.
+  const lookup = openDb(true);
+  let agentId: string | undefined;
+  try { agentId = (lookup.prepare('SELECT agent_id FROM agent_upgrades WHERE id = ?').get(updateId) as { agent_id: string } | undefined)?.agent_id; }
+  finally { lookup.close(); }
+  const { agentBusyReason } = await import('@/lib/agent-busy');
+  if (!agentId || await agentBusyReason(agentId)) return null;
+  const db = openDb(false);
+  try {
+    const claimed = db.transaction(() => {
+      const row = db.prepare(`SELECT agent_id, status FROM agent_upgrades WHERE id = ?
+        AND id = (SELECT MAX(u.id) FROM agent_upgrades u WHERE u.agent_id = agent_upgrades.agent_id)`)
+        .get(updateId) as { agent_id: string; status: string } | undefined;
+      if (!row || !['done', 'failed', 'interrupted'].includes(row.status)) return false;
+      try { assertAgentIdle(db, row.agent_id); }
+      catch (e) { if (e instanceof AgentJobBusyError) return false; throw e; }
+      db.prepare('UPDATE agent_upgrades SET cron_model_repair_claim = 1 WHERE id = ?').run(updateId);
+      return true;
+    }).immediate();
+    if (!claimed) return null;
+  } finally { db.close(); }
+  return () => {
+    const db = openDb(false);
+    try { db.prepare('UPDATE agent_upgrades SET cron_model_repair_claim = NULL WHERE id = ?').run(updateId); }
+    finally { db.close(); }
+  };
+}
+
 export interface JobStateSpec {
   /** Table name (created by lib/db-bootstrap.mjs). */
   table: string;
@@ -25,11 +74,15 @@ export interface JobStateSpec {
   insertColumns: readonly string[];
   /** Extra columns `update` may set, besides status and error. */
   writableColumns: readonly string[];
+  /** Additional journal ownership changes committed with the new lifecycle claim. */
+  afterInsert?(db: ReturnType<typeof openDb>, agentId: string, id: number): void;
 }
 
 export interface JobState {
   insert(agentId: string, ...values: (string | number | null)[]): number;
   update(id: number, fields: Record<string, string | number | null | undefined>): void;
+  /** Atomically claim an ended latest row again, refusing any intervening lifecycle owner. */
+  reactivate(id: number, expectedStatus: string, fields: Record<string, string | number | null | undefined>): void;
   latest<T>(agentId: string): T | null;
   isActive(agentId: string): boolean;
   activeAgentIds(): Set<string>;
@@ -43,6 +96,21 @@ export function createJobState(spec: JobStateSpec): JobState {
   const insertColumns = ['agent_id', 'status', ...spec.insertColumns, 'started_at', 'updated_at'];
   const writable = new Set(['status', 'error', ...spec.writableColumns]);
   const activePlaceholders = activeStatuses.map(() => '?').join(', ');
+
+  const writeUpdate = (db: ReturnType<typeof openDb>, id: number, fields: Record<string, string | number | null | undefined>) => {
+    const entries = Object.entries(fields).filter(([key, value]) => value !== undefined && writable.has(key));
+    const now = Date.now();
+    const sets = [...entries.map(([key]) => `${key} = ?`), 'updated_at = ?'];
+    const values: unknown[] = [...entries.map(([, value]) => value), now];
+    const status = typeof fields.status === 'string' ? fields.status : undefined;
+    if (status && finalStatuses.includes(status)) {
+      sets.push('finished_at = ?');
+      values.push(now);
+    } else if (status) {
+      sets.push('finished_at = NULL');
+    }
+    db.prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  };
 
   const latest = <T,>(agentId: string): T | null => {
     const db = openDb(true);
@@ -60,32 +128,49 @@ export function createJobState(spec: JobStateSpec): JobState {
       }
       const db = openDb(false);
       try {
-        const now = Date.now();
-        const info = db.prepare(
-          `INSERT INTO ${table} (${insertColumns.join(', ')})
-           VALUES (${insertColumns.map(() => '?').join(', ')})`,
-        ).run(agentId, initialStatus, ...values, now, now);
-        return Number(info.lastInsertRowid);
+        // The earlier async busy check can become stale during Docker/image reads.
+        // Check and claim in one short write transaction across all lifecycle kinds.
+        return db.transaction(() => {
+          assertAgentIdle(db, agentId);
+          const now = Date.now();
+          const info = db.prepare(
+            `INSERT INTO ${table} (${insertColumns.join(', ')})
+             VALUES (${insertColumns.map(() => '?').join(', ')})`,
+          ).run(agentId, initialStatus, ...values, now, now);
+          const id = Number(info.lastInsertRowid);
+          spec.afterInsert?.(db, agentId, id);
+          return id;
+        }).immediate();
       } finally {
         db.close();
       }
     },
 
     update(id, fields) {
-      const entries = Object.entries(fields).filter(([key, value]) => value !== undefined && writable.has(key));
-      const now = Date.now();
-      const sets = [...entries.map(([key]) => `${key} = ?`), 'updated_at = ?'];
-      const values: unknown[] = [...entries.map(([, value]) => value), now];
-      const status = typeof fields.status === 'string' ? fields.status : undefined;
-      if (status && finalStatuses.includes(status)) {
-        sets.push('finished_at = ?');
-        values.push(now);
-      } else if (status) {
-        sets.push('finished_at = NULL');
+      const db = openDb(false);
+      try {
+        writeUpdate(db, id, fields);
+      } finally {
+        db.close();
+      }
+    },
+
+    reactivate(id, expectedStatus, fields) {
+      if (!ENDED_STATUSES.has(expectedStatus) || typeof fields.status !== 'string' || !activeStatuses.includes(fields.status)) {
+        throw new Error('Invalid lifecycle reactivation');
       }
       const db = openDb(false);
       try {
-        db.prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+        db.transaction(() => {
+          const current = db.prepare(`SELECT agent_id, status FROM ${table} WHERE id = ?`).get(id) as { agent_id: string; status: string } | undefined;
+          if (!current || current.status !== expectedStatus) throw new AgentJobBusyError();
+          assertAgentIdle(db, current.agent_id);
+          for (const other of LIFECYCLE_TABLES) {
+            const latest = db.prepare(`SELECT id, status FROM ${other} WHERE agent_id = ? ORDER BY id DESC LIMIT 1`).get(current.agent_id) as { id: number; status: string } | undefined;
+            if ((latest && !ENDED_STATUSES.has(latest.status)) || (other === table && latest?.id !== id)) throw new AgentJobBusyError();
+          }
+          writeUpdate(db, id, fields);
+        }).immediate();
       } finally {
         db.close();
       }

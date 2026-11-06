@@ -1,10 +1,10 @@
 /**
  * Restore one agent's volume from a backup archive (lib/agent-restore.ts).
  *
- *   POST ?file=…  start: the container is stopped, the volume cleared and the archive
- *                 extracted (up to 30 minutes), then the container is started again even
- *                 when the extract failed. 202 once the job has started; the steps
- *                 continue in the background and are recorded in `agent_restores`.
+ *   POST ?file=…  claim: 202 with the persisted job ID. Background inspection first
+ *                 proves archive integrity and compatibility without stopping the agent.
+ *                 A cold recovery backup precedes volume replacement. Completion requires
+ *                 actual Gateway readiness; partial replacement leaves the agent stopped.
  *   GET           `{ restore }`: the running or last job; null when none.
  *
  * While it runs, anything else that would touch the agent answers 409 (lib/agent-busy.ts).

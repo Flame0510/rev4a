@@ -5,7 +5,7 @@
  *
  *   pending     preflight: agent running, target downloaded, newer and supported,
  *               no backup or update already running
- *   (baseline)  transcript events per session and cron job names, read inside the agent
+ *   (baseline)  transcript events per session and cron job identities/ownership, read inside the agent
  *   backing_up  cold backup `agent-<id>-preupdate-<from>-<ts>.tar.gz`; the agent stays stopped
  *   migrating   container recreated on `openclaw-agent-base:<to>`; its entrypoint runs
  *               `doctor --fix`; Rev4a waits for `/startupz` to report the target version,
@@ -38,16 +38,20 @@ import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer,
 import { applyRuntimeConfig } from '@/lib/agent-setup';
 import { probeGateway, waitForGatewayReady } from '@/lib/agent-readiness';
 import { patchRev4aProvider } from '@/app/api/gateway/sync';
-import { ACTIVE_STATUSES as ACTIVE_STATUSES_FOR_VIEW, activeUpdateAgentIds, insertUpdate, latestUpdate, markInterruptedUpdates, markUpdateResolved, unresolvedFailedUpdates, updateHistory, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
+import { ACTIVE_STATUSES as ACTIVE_STATUSES_FOR_VIEW, activeUpdateAgentIds, claimRollbackUpdate, insertUpdate, latestUpdate, markInterruptedUpdates, markUpdateResolved, recordCronRepairAudit, unresolvedFailedUpdates, updateHistory, updateRow, type AgentUpdateRow } from '@/lib/agent-update-state';
+import { baselineWithCronEvidence, cronNames, isCronRepairCandidate, parseCronListForUpdate, readCronRepairAudit, readUpdateBaseline, verifyUpdateBaseline, type CronJobIdentity, type CronRepairAudit, type CronTransition, type PreUpdateCronEvidenceReader, type UpdateBaseline, type UpdateVerification } from '@/lib/agent-update-cron';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { latestRecreate } from '@/lib/agent-recreate-state';
 import { latestRestore } from '@/lib/agent-restore-state';
 import { laterJob, type LaterJob } from '@/lib/agent-update-later-job';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { DEFAULT_FINISH_TIMINGS, dueForRecheck, evaluateResolution, finishAfterRecreate, resolutionText, offersRollback, offersRollbackAnyway, verifyJsonForStore, whenEligible, type ContainerState } from '@/lib/agent-update-resolution';
+import { adoptCronInferenceAccount, type CronAccountAdoption } from '@/lib/agent-update-cron-account';
+import { readPreUpdateCronEvidence } from '@/lib/backup-cron-evidence';
 import { redactSecret } from '@/lib/redact-secret';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import fs from 'node:fs';
+import { acquireAgentResourcePreflight } from '@/lib/agent-resource-preflight';
 
 /** A migration runs `doctor --fix` before the Gateway starts; allow for large state. */
 const MIGRATION_READY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -117,18 +121,10 @@ async function countTranscripts(container: string): Promise<Record<string, numbe
   return JSON.parse(line.slice('REV4A-COUNTS '.length)) as Record<string, number>;
 }
 
-/** Names of the agent's cron jobs; null when the list cannot be read. */
-async function cronJobNames(container: string): Promise<string[] | null> {
+/** Stable identities and native ownership; null is unreadable, never a valid empty list. */
+async function cronJobIdentities(container: string): Promise<CronJobIdentity[] | null> {
   const out = await dockerExecNoFail(container, gatewayCliArgv(['cron', 'list', '--all', '--json']), { timeoutMs: 120_000 });
-  const start = out.search(/[{[]/);
-  if (start === -1) return null;
-  try {
-    const data = JSON.parse(out.slice(start)) as unknown;
-    const jobs = Array.isArray(data) ? data : ((data as { jobs?: unknown[] })?.jobs ?? []);
-    return (jobs as { name?: string; id?: string }[]).map((j) => j.name ?? j.id ?? '').filter(Boolean).sort();
-  } catch {
-    return null;
-  }
+  return parseCronListForUpdate(out);
 }
 
 /** The agent container as Docker reports it; null when it is gone, a thrown error when it cannot be inspected. */
@@ -148,33 +144,11 @@ async function runningVersion(container: string): Promise<string | null> {
   }
 }
 
-interface Baseline {
-  transcripts: Record<string, number>;
-  cronJobs: string[] | null;
-}
+type Baseline = UpdateBaseline;
+export type Verification = UpdateVerification;
 
-export interface Verification {
-  sessions: number;
-  /** Sessions with fewer events than before, or gone: `{ session, before, after }`. */
-  lostEvents: { session: string; before: number; after: number }[];
-  /** Cron jobs present before and missing after; null when either list could not be read. */
-  missingCronJobs: string[] | null;
-  ok: boolean;
-}
-
-export function verify(baseline: Baseline, transcripts: Record<string, number>, cronJobs: string[] | null): Verification {
-  const lostEvents = Object.entries(baseline.transcripts)
-    .filter(([session, before]) => (transcripts[session] ?? 0) < before)
-    .map(([session, before]) => ({ session, before, after: transcripts[session] ?? 0 }));
-  const missingCronJobs = baseline.cronJobs && cronJobs
-    ? baseline.cronJobs.filter((name) => !cronJobs.includes(name))
-    : null;
-  return {
-    sessions: Object.keys(baseline.transcripts).length,
-    lostEvents,
-    missingCronJobs,
-    ok: lostEvents.length === 0 && (missingCronJobs === null || missingCronJobs.length === 0),
-  };
+export function verify(baseline: Baseline, transcripts: Record<string, number>, cronJobs: CronJobIdentity[] | string[] | null, transition?: CronTransition): Verification {
+  return verifyUpdateBaseline(baseline, transcripts, cronJobs, transition);
 }
 
 export interface NowVerification {
@@ -186,13 +160,13 @@ export interface NowVerification {
 }
 
 /** Compare the agent, as it is now, with a stored baseline. Shared by the update and the after-the-fact check. */
-async function verifyNow(container: string, baseline: Baseline): Promise<NowVerification> {
+async function verifyNow(container: string, baseline: Baseline, transition?: CronTransition): Promise<NowVerification> {
   const transcriptsAfter = await countTranscripts(container);
-  const cronAfter = await cronJobNames(container);
+  const cronAfter = await cronJobIdentities(container);
   // Unreadable is not "no jobs": refuse to call the update verified rather than
   // report `done` while cron loss would be undetectable.
-  const cronUnreadable = !!baseline.cronJobs?.length && cronAfter === null;
-  const verification = verify(baseline, transcriptsAfter, cronAfter);
+  const verification = verify(baseline, transcriptsAfter, cronAfter, transition);
+  const cronUnreadable = verification.missingCronJobs === null;
   let error: string | null = null;
   if (cronUnreadable) error = 'The cron job list could not be read after the update, so the verification is incomplete';
   else if (!verification.ok) {
@@ -223,6 +197,9 @@ export async function startAgentUpdate(agentId: string, requestedVersion?: strin
     return await runUpdateStart(agentId, requestedVersion);
   } catch (e) {
     running.delete(agentId);
+    if (e && typeof e === 'object' && (e as { code?: unknown }).code === 'REV4A_AGENT_JOB_BUSY') {
+      throw new UpdateRefusedError((e as Error).message);
+    }
     throw e;
   }
 }
@@ -244,15 +221,29 @@ async function runUpdateStart(agentId: string, requestedVersion?: string): Promi
     throw new UpdateRefusedError(`The agent already runs OpenClaw ${fromVersion}; ${toVersion} is not newer`);
   }
 
-  const id = insertUpdate(agentId, fromVersion, toVersion);
-  void runUpdate(id, agentId, name, fromVersion, toVersion).finally(() => running.delete(agentId));
-  return id;
+  const memory = container.HostConfig?.Memory;
+  if (typeof memory !== 'number' || !Number.isFinite(memory) || memory < 0) throw new UpdateRefusedError('The current memory limit could not be read; nothing was changed');
+  let releaseResources: () => void;
+  try {
+    releaseResources = await acquireAgentResourcePreflight({
+      version: toVersion, operation: 'update', targetAgentId: agentId, limitMb: memory === 0 ? null : memory / (1024 * 1024),
+    });
+  } catch (e) { throw new UpdateRefusedError((e as Error).message); }
+  try {
+    const id = insertUpdate(agentId, fromVersion, toVersion, name);
+    void runUpdate(id, agentId, name, fromVersion, toVersion).finally(() => { releaseResources(); running.delete(agentId); });
+    return id;
+  } catch (e) { releaseResources(); throw e; }
 }
 
 async function runUpdate(id: number, agentId: string, name: string, fromVersion: string, toVersion: string): Promise<void> {
   let stopped = false;
   try {
-    const baseline: Baseline = { transcripts: await countTranscripts(name), cronJobs: await cronJobNames(name) };
+    const jobs = await cronJobIdentities(name);
+    if (jobs === null) throw new Error('The cron job list could not be read before the update; nothing was stopped or backed up');
+    const baseline: Baseline = {
+      transcripts: await countTranscripts(name), cronJobs: cronNames(jobs), cronBaselineVersion: 1, cronJobIdentities: jobs,
+    };
     updateRow(id, { baseline_json: JSON.stringify(baseline), status: 'backing_up' });
 
     const { file } = await startColdBackup(agentId, { kind: 'preupdate', label: fromVersion, leaveStopped: true });
@@ -288,7 +279,7 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
         // The slow-start note ("still starting") is stale once the Gateway answers.
         onVerifying: () => updateRow(id, { status: 'verifying', error: null }),
         verify: async () => {
-          const result = await verifyNow(agentId, baseline);
+          const result = await verifyNow(agentId, baseline, { fromVersion, toVersion });
           const stored = verifyJsonForStore(result.verification, result.cronUnreadable);
           if (stored !== null) updateRow(id, { verify_json: stored });
           if (result.error) throw new Error(result.error);
@@ -298,7 +289,11 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
       { ...DEFAULT_FINISH_TIMINGS, firstWindowMs: MIGRATION_READY_TIMEOUT_MS },
     );
 
-    updateRow(id, { status: 'done', error: null });
+    let cronAccount: CronAccountAdoption | null = null;
+    try { cronAccount = await adoptCronInferenceAccount(name, fromVersion, toVersion, id); }
+    catch { cronAccount = { associated: 0, noBindingNeeded: 0, alreadyAssociated: 0, skipped: 0, failed: 1,
+      note: 'Cron inference account adoption could not be completed. Select the intended account for affected jobs in OpenClaw.' }; }
+    updateRow(id, { status: 'done', error: null, cron_account_json: cronAccount ? JSON.stringify(cronAccount) : null });
 
     // Retention: images nothing needs any more (lib/agent-images.ts). Best-effort.
     pruneAgentImages()
@@ -353,7 +348,8 @@ function shortError(e: unknown): string {
  */
 export async function recoverInterruptedUpdates(): Promise<number> {
   const ids = activeUpdateAgentIds();
-  if (ids.size === 0) return 0;
+  // Always clear stale repair reservations, even without an interrupted update.
+  // A repair never owns container power state and must not add restart candidates.
   const interrupted = markInterruptedUpdates();
   for (const agentId of ids) {
     const container = await inspectAgentContainer(agentId).catch(() => null);
@@ -436,6 +432,7 @@ export async function startAgentRollback(agentId: string): Promise<number> {
     return await runRollbackStart(agentId);
   } catch (e) {
     running.delete(agentId);
+    if ((e as { code?: unknown })?.code === 'REV4A_AGENT_JOB_BUSY') throw new UpdateRefusedError((e as Error).message);
     throw e;
   }
 }
@@ -460,7 +457,7 @@ async function runRollbackStart(agentId: string): Promise<number> {
   if (!container) throw new UpdateRefusedError(`No container found with AGENT_ID '${agentId}'`);
 
   // A rollback clears any earlier resolution: if it is cut off, the row is red again with Roll back.
-  updateRow(row.id, { status: 'rolling_back', error: null, resolved_at: null, resolution: null });
+  claimRollbackUpdate(row);
   void runRollback(row, container).finally(() => running.delete(agentId));
   return row.id;
 }
@@ -546,14 +543,9 @@ export async function checkUpdateResolution(agentId: string): Promise<boolean> {
       const gatewayReady = containerRunning && (await probeGateway(agentId)) === 'ready';
       const version = gatewayReady ? await runningVersion(agentId) : null;
 
-      let baseline: Baseline | null = null;
-      try {
-        baseline = row.baseline_json ? (JSON.parse(row.baseline_json) as Baseline) : null;
-      } catch {
-        baseline = null;
-      }
+      const baseline = readUpdateBaseline(row.baseline_json);
       let now: NowVerification | null = null;
-      if (baseline && gatewayReady && version === row.to_version) now = await verifyNow(agentId, baseline);
+      if (baseline && gatewayReady && version === row.to_version) now = await verifyNow(agentId, baseline, { fromVersion: row.from_version, toVersion: row.to_version });
 
       const decision = evaluateResolution({
         status: row.status,
@@ -604,13 +596,78 @@ export async function checkUpdateResolution(agentId: string): Promise<boolean> {
 }
 
 /**
- * At startup: every agent whose latest update failed or was interrupted is checked once, one after
- * the other. Not awaited by the caller. Repairs installs hit by a slow start recorded as a failure.
+ * Separate from slow-start resolution: repair only a recorded, cron-only failure whose native
+ * pre-update ownership is proven by the exact backup. The reader never writes to agent volumes.
+ * No reader/evidence means a visible unresolved audit, never a name-based exemption.
  */
-export async function resolveFailedUpdatesAtStartup(): Promise<number> {
+export async function repairRetiredCronUpdate(agentId: string, readEvidence?: PreUpdateCronEvidenceReader): Promise<boolean> {
+  if (!isValidAgentId(agentId) || resolutionChecking.has(agentId) || running.has(agentId)) return false;
+  const row = latestUpdate(agentId);
+  if (!row || !isCronRepairCandidate(row)) return false;
+  resolutionChecking.add(agentId);
+  resolutionChecked.set(agentId, Date.now());
+  try {
+    if (await agentBusyReason(agentId)) return false;
+    const storeAudit = (status: CronRepairAudit['status'], reason: string, extra: Partial<CronRepairAudit> = {}): boolean => {
+      const audit: CronRepairAudit = {
+        version: 1, policy: 'retired-skill-collection-review-v1', status,
+        reason: shortError(new Error(reason)), checkedAtMs: Date.now(), ...extra,
+      };
+      const changed = recordCronRepairAudit(row, audit);
+      if (changed) console.log(`[agent:update] Cron retirement audit for ${agentId}: ${audit.reason}`);
+      return changed && status === 'verified';
+    };
+    const evidence = readEvidence
+      ? await readEvidence({
+        agentId, backupFile: row.backup_file!, fromVersion: row.from_version!, toVersion: row.to_version,
+        baselineJson: row.baseline_json!,
+      })
+      : { kind: 'unavailable' as const, reason: 'Pre-update cron ownership has not been verified; the original failure and rollback remain available' };
+    if (evidence.kind !== 'verified') return storeAudit('unresolved', evidence.reason);
+    const baseline = baselineWithCronEvidence(row, evidence);
+    if (!baseline) return storeAudit('unresolved', 'The backup does not prove the complete stored cron baseline; the original failure remains unresolved');
+    const source = { file: evidence.file, sha256: evidence.sha256 };
+    const container = await inspectAgentContainer(agentId);
+    if (!container?.State?.Running || (await probeGateway(agentId)) !== 'ready') {
+      return storeAudit('unresolved', 'The Gateway is not ready; cron retirement cannot be verified', { source });
+    }
+    if (await runningVersion(agentId) !== row.to_version) {
+      return storeAudit('unresolved', 'The Gateway does not report the update target version; cron retirement cannot be verified', { source });
+    }
+    const now = await verifyNow(agentId, baseline, { fromVersion: row.from_version, toVersion: row.to_version });
+    if (await agentBusyReason(agentId)) return false;
+    if (now.error || !now.verification.retiredCronJobs?.length) {
+      return storeAudit('unresolved', now.error ?? 'No missing job was proven to be an upstream-owned retirement', { source, verification: now.verification });
+    }
+    // The SQL also checks latest-row identity, original evidence and active lifecycle jobs. A
+    // rollback/new operation racing the checks wins; original status/error/verify_json stay intact.
+    return storeAudit('verified', 'Only the documented upstream-owned cron retirement is missing; transcript and user-job verification passed', { source, verification: now.verification });
+  } catch (e) {
+    console.warn(`[agent:update] Could not audit retired cron jobs on ${agentId}: ${shortError(e)}`);
+    return false;
+  } finally {
+    resolutionChecking.delete(agentId);
+  }
+}
+
+/** Both startup and bounded panel retries retain the retirement-specific evidence and SQL guards. */
+async function checkFailedUpdateResolution(agentId: string, readEvidence: PreUpdateCronEvidenceReader = readPreUpdateCronEvidence): Promise<boolean> {
+  const row = latestUpdate(agentId);
+  return row && isCronRepairCandidate(row)
+    ? repairRetiredCronUpdate(agentId, readEvidence)
+    : checkUpdateResolution(agentId);
+}
+
+/**
+ * At startup: every agent whose latest update failed or was interrupted is checked once, one after
+ * the other. Not awaited by the caller. Retirement audits use their own evidence path; the generic
+ * slow-start eligibility and verification evidence are not broadened or overwritten.
+ */
+export async function resolveFailedUpdatesAtStartup(readEvidence?: PreUpdateCronEvidenceReader): Promise<number> {
   let resolved = 0;
   for (const row of unresolvedFailedUpdates()) {
-    if (await checkUpdateResolution(row.agent_id)) {
+    const repaired = await checkFailedUpdateResolution(row.agent_id, readEvidence);
+    if (repaired) {
       resolved++;
       console.log(`[agent:update] Update of ${row.agent_id} to ${row.to_version} verified after the fact`);
     }
@@ -639,6 +696,9 @@ export interface AgentUpdateView {
   resolution: string | null;
   /** The pre-update backup still exists; checked only when a rollback could be offered; null = unknown. */
   backupAvailable: boolean | null;
+  /** Separate cron-retirement diagnosis; original verification is retained above. */
+  cronRepair: CronRepairAudit | null;
+  cronAccountAdoption: CronAccountAdoption | null;
 }
 
 /** One update attempt in the read-only history. */
@@ -653,6 +713,8 @@ export interface AgentUpdateHistoryEntry {
   backupFile: string | null;
   startedAtMs: number;
   finishedAtMs: number | null;
+  cronRepair: CronRepairAudit | null;
+  cronAccountAdoption: CronAccountAdoption | null;
 }
 
 /** The agent's last 20 updates, newest first. */
@@ -668,6 +730,8 @@ export function agentUpdateHistory(agentId: string): AgentUpdateHistoryEntry[] {
     backupFile: r.backup_file,
     startedAtMs: r.started_at,
     finishedAtMs: r.finished_at,
+    cronRepair: readCronRepairAudit(r.cron_repair_json),
+    cronAccountAdoption: readCronAccountAdoption(r.cron_account_json),
   }));
 }
 
@@ -681,7 +745,7 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
   // agent); the panel is not held for it, the next read shows the outcome.
   if ((row.status === 'failed' || row.status === 'interrupted') && row.resolved_at == null && dueForRecheck(resolutionChecked.get(agentId), Date.now())) {
     resolutionChecked.set(agentId, Date.now());
-    void checkUpdateResolution(agentId);
+    void checkFailedUpdateResolution(agentId);
   }
   const active = (ACTIVE_STATUSES_FOR_VIEW as readonly string[]).includes(row.status);
   const panel = { status: row.status, resolvedAtMs: row.resolved_at ?? null, backupFile: row.backup_file, fromVersion: row.from_version, error: row.error };
@@ -705,5 +769,11 @@ export async function agentUpdateView(agentId: string): Promise<AgentUpdateView 
     resolvedAtMs: row.resolved_at ?? null,
     resolution: row.resolution ?? null,
     backupAvailable,
+    cronRepair: readCronRepairAudit(row.cron_repair_json),
+    cronAccountAdoption: readCronAccountAdoption(row.cron_account_json),
   };
+}
+
+function readCronAccountAdoption(json: string | null | undefined): CronAccountAdoption | null {
+  try { const result = json ? JSON.parse(json) as CronAccountAdoption : null; return result && typeof result.note === 'string' ? result : null; } catch { return null; }
 }

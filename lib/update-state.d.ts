@@ -50,3 +50,5 @@ export function claimUpdate(
 export function adoptPid(dataDir: string, claim: string, pid: number): boolean;
 export function failClaimed(dataDir: string, claim: string, error: string, now?: number): boolean;
 export function redact(text: string): string;
+/** Shared key classifier for update logs and structured config redaction. */
+export function isSecretName(name: string): boolean;

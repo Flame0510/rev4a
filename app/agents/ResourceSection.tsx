@@ -54,11 +54,12 @@ function relativeTime(ts: number, now: number): string {
  * removing one rebuilds the container, which the page's edit banner then follows.
  * One action key at a time ('save' or 'remove'), guarded by a ref (rules 6a-6c).
  */
-function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
+function MemoryLimitRow({ agentId, container, agentBusy, onStarted, openclawVersion }: {
   agentId: string;
   container: string;
   agentBusy: boolean;
   onStarted?: () => void;
+  openclawVersion?: string | null;
 }) {
   const [info, setInfo] = useState<LimitInfo | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -298,6 +299,7 @@ function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
         <MemoryLimitPicker
           value={info.limitMb}
           dockerTotalMb={info.dockerTotalMb}
+          openclawVersion={openclawVersion}
           disabled={action !== null}
           onChange={(mb, error) => { setPicked({ mb, error }); setFormError(''); }}
         >
@@ -355,13 +357,14 @@ function MemoryLimitRow({ agentId, container, agentBusy, onStarted }: {
 
 const note = (text: string) => <div style={{ padding: '12px 14px', fontSize: 12, color: '#888' }}>{text}</div>;
 
-export default function ResourceSection({ container, agentId, agentBusy = false, onStarted }: {
+export default function ResourceSection({ container, agentId, agentBusy = false, onStarted, openclawVersion }: {
   container: string;
   agentId: string;
   /** A long operation runs on the agent: its limit cannot be changed now. */
   agentBusy?: boolean;
   /** The removal rebuild started: the page shows its edit banner at once. */
   onStarted?: () => void;
+  openclawVersion?: string | null;
 }) {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
@@ -392,7 +395,7 @@ export default function ResourceSection({ container, agentId, agentBusy = false,
     };
   }, [container]);
 
-  const limitRow = <MemoryLimitRow agentId={agentId} container={container} agentBusy={agentBusy} onStarted={onStarted} />;
+  const limitRow = <MemoryLimitRow agentId={agentId} container={container} agentBusy={agentBusy} onStarted={onStarted} openclawVersion={openclawVersion} />;
   const withLimit = (content: ReactNode) => <div>{limitRow}{content}</div>;
 
   if (error && !data) return withLimit(<div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--red)' }}>{error}</div>);

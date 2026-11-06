@@ -6,6 +6,7 @@ import { REV4A_PORT } from '@/lib/agent-ports';
 import { getUsedHostPorts } from '@/lib/agent-ports-server';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import { readAgentDefaults } from '@/lib/agent-defaults';
+import { listLocalAgentImages, newestLocalSupportedVersion } from '@/lib/agent-images';
 import CreatePageClient from './PageClient';
 import type { Metadata } from 'next';
 
@@ -83,13 +84,26 @@ async function getUsedPorts(): Promise<number[]> {
   return [...ports];
 }
 
+/** Version advice must not hold the form indefinitely while Docker is unavailable. */
+async function getCreateTargetVersion(): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      listLocalAgentImages().then(newestLocalSupportedVersion),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 5000); }),
+    ]);
+  } catch { return null; }
+  finally { if (timer) clearTimeout(timer); }
+}
+
 export default async function CreateAgentPage() {
 
-  const [templates, models, usedNames, usedPorts] = await Promise.all([
+  const [templates, models, usedNames, usedPorts, openclawVersion] = await Promise.all([
     getTemplates(),
     getModels(),
     getUsedNames(),
     getUsedPorts(),
+    getCreateTargetVersion(),
   ]);
 
   return (
@@ -99,6 +113,7 @@ export default async function CreateAgentPage() {
       usedNames={usedNames}
       usedPorts={usedPorts}
       defaultMemoryLimitMb={readAgentDefaults().memoryLimitMb}
+      openclawVersion={openclawVersion}
     />
   );
 }

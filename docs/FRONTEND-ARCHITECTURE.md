@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-07
 
 ## Layering
 
@@ -216,6 +216,16 @@ Styles are the `.ws-pv-*` block in `app/globals.css`. Tests: `scripts/test-works
 
 ## Subscriptions page
 
+Connected rows also render all safe `profileReferences` as read-only shared Inputs for explicit
+automation account adoption. They do not preselect an account or issue a mutation. Crons shows
+guidance only for the newest loaded run's exact missing-inference-account error. Its native settings
+button uses the trusted `rev4aAgentId` DTO field and a validated job destination, preserving browser
+authentication. Stale run-history requests are aborted and checked again after JSON parsing.
+The evaluated legacy-to-10.10 Update confirmation includes the account-adoption step.
+The Agents update result renders the persisted outcome note: verified associations, **no binding
+needed (model left/restored)**, already associated, unchanged and failed jobs. Restoring a model
+on a route without an inference binding never appears in the associated count.
+
 `/subscriptions` (`app/subscriptions/PageClient.tsx`, skeleton in `SubscriptionsSkeleton.tsx` and `loading.tsx`, sidebar entry between Credentials and Config) renders one `Accordion` per subscription provider (today ChatGPT (Codex)). **It is asynchronous in three independent steps:** `GET /api/subscriptions` returns the agent list at once (names, running; no exec), so the rows appear immediately; each row then loads its own status from `GET /api/subscriptions?agentId=` in parallel (a skeleton line under the name while it loads, a per-row error with Retry, which also covers a server-side error such as "Could not read this agent's subscription status: the read failed"), and the models load separately from `GET /api/subscriptions/models` (a skeleton in the Models block until it arrives). The "N of M agents connected" area shows a skeleton until every row has answered. Each row shows the agent's display name (`AGENT_NAME`), the container name as a small secondary line only when it differs, and next to the account email its plan ("Plus", "Pro"). A connected agent shows its model read-only ("Model: <primary> · fallback <first fallback>", bare names) and a link "Change in the agent panel" to `/agents?agent=<id>`, which the Agents page reads once the list has loaded to select that agent. The page has no model control: the model is chosen in the agent panel.
 
 **Per-row actions.** Disconnect is a background job: the POST answers 202, the row polls `GET …/logout` every 1.5 s, shows the running action ("Disconnecting…" on the Disconnect button) and disables only that row's other actions; the other rows stay usable. A finished job refreshes that one row. The job is also returned by the row's status read, so a reloaded page resumes it. Rules 6a-6c apply (the running job is the per-row action key, a ref guards a double click). The status read, the job poll, the list and the models each have an `AbortController` in a ref (rule 10); the POSTs that start a disconnect or a login do not (a double click is stopped by a ref guard). **Disconnect** first opens the shared `ConfirmModal` ("Disconnect <agent>? It goes back to <own model> and signs out of ChatGPT. Connecting again needs a new code."); the job poll backs off from 1.5 s up to 15 s while reads fail and gives up after 2 minutes ("Lost track of the disconnect. Refresh the row.").
@@ -231,6 +241,24 @@ Styles are the `.ws-pv-*` block in `app/globals.css`. Tests: `scripts/test-works
 `/login` (`app/login/page.tsx`) handles the throttle of wrong passwords: from the 6th wrong password the address is locked for 30 s, doubling up to 15 minutes, and the login route answers `429` with a `Retry-After` header. The page keeps `lockedUntil` (epoch ms, from `Retry-After`) and a one-second `clock` that ticks only while a lock is active; while locked, the sign-in button (and Enter) is disabled until `lockedUntil`, and the page shows the server's fixed message ("Try again in N seconds."), not a live countdown. A restart of Rev4a clears the lock.
 
 ### Subscriptions components
+
+After Connect, `/api/subscriptions/models` may return `pending: true` while OpenClaw
+loads the ChatGPT catalogue. Empty results are never cached. Both the Subscriptions
+page and `ModelSection` retry at 5 s intervals for up to 3 minutes, one request at a
+time, with the current AbortController. They clear timers on replacement/unmount,
+ignore aborted responses, and independently abort fetch/body reads at the 3-minute
+deadline. Pending is tracked per account on the server, so partial models stay usable
+while another account loads, even if a third account fails. The page shows that more
+models are loading; after the deadline it keeps available models and explains how to
+retry. With no models yet they show "Loading ChatGPT models…" / "Loading subscription
+models…". Changing agents resets the model-loading state so the previous agent's
+models do not remain in the picker.
+
+Edit and Recreate display a forced-stop warning from the job's `error`
+message even when its status is successful. Edit and Recreate polling keep one request
+in flight and abort stale reads when replaced or unmounted; warnings survive a reload
+through the existing persisted job message. Recreate discovery also restores failed
+and interrupted job messages into the error display, including any stop warning.
 
 | Component | File | Notes |
 |---|---|---|
@@ -265,3 +293,27 @@ For every new/changed page:
 ## Scrolling on a phone (Agents page)
 
 `.app-shell__content` is a bounded flex column (100svh minus the top bar and the bottom navigation). A page inside it must give its root `flex: 1; min-height: 0; overflow: hidden` and have **one** scrolling region (`flex: 1; min-height: 0; overflow-y: auto`); a root without `min-height: 0` grows with its content and the inner scroller never gets a bounded height, so nothing scrolls. Never use `100dvh` inside the shell: it ignores the top bar and the navigation. On /agents (phone) the header and filter row stay fixed; banners, the Gateway Token form and the list scroll together, in that order (the form scrolls away and the list gets the screen). The detail keeps its BACK header fixed and scrolls banners and panel together. `node scripts/ui-check-agents-mobile.mjs` checks this in a browser against a running instance (see its header for the environment variables).
+
+### Version-aware resources and restore status
+`MemoryLimitPicker` accepts an optional actual `openclawVersion` and
+`enforceVersionFloor` (Create only). Advice and progression validation use the same pure resource
+policy as the server. The create page reads the newest local supported target with a bounded
+five-second advice lookup; Resources receives the agent's known runtime version. Unknown/stale
+advice never bypasses server admission. Values/defaults and existing cap editing remain unchanged.
+
+BACKUP loads an active restore before a cold backup, because a restore owns its cold recovery copy.
+Polling aborts an earlier request before the next tick and stale responses cannot replace new state.
+It shows preflight/recovery/startup phases, retains failure/recovery guidance after reload, and labels
+legacy completed rows without readiness evidence. It does not convert an old status into a proven
+failure or trigger automatic recovery.
+
+BACKUP also displays cleanup `unresolved` as a persistent attention message and disables its
+actions; it does not show that state as completed. UpdateSection renders the persisted
+`cronAccountAdoption.note` after successful Update, including best-effort failures.
+
+Unresolved restores expose **Resolve restore** in Agents > Backups with the shared `ConfirmModal`.
+The confirmation explains labelled-helper cleanup and the need to review partial data. The request
+uses `POST /restore/resolve` with the confirmed row ID. The existing action ref/key guards duplicate
+and sibling actions, with a dedicated `resolving` key, `Button loading` and **Resolving…** text;
+completion is ignored after unmount or an agent change. A failed resolution keeps the reservation
+and shows its error; success refreshes the backup list and notifies the parent.

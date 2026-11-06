@@ -75,11 +75,15 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
     return id;
   } catch (e) {
     running.delete(agentId);
+    if (e && typeof e === 'object' && (e as { code?: unknown }).code === 'REV4A_AGENT_JOB_BUSY') {
+      throw new EditRefusedError((e as Error).message);
+    }
     throw e;
   }
 }
 
 async function runEdit(id: number, agentId: string, container: Awaited<ReturnType<typeof inspectAgentContainer>>, displayName: string | null, portArgs?: string[], removeMemoryLimit = false): Promise<void> {
+  let warning: string | null = null;
   try {
     if (!container) throw new Error(`No container found with AGENT_ID '${agentId}'`);
     const image = await resolveRecreateImage(container);
@@ -89,6 +93,8 @@ async function runEdit(id: number, agentId: string, container: Awaited<ReturnTyp
       portArgs,
       // null rebuilds without any memory flag; undefined carries the container's own limit.
       memoryLimitMb: removeMemoryLimit ? null : undefined,
+      gracefulStop: true,
+      onWarning: (message) => { warning = message; updateEditRow(id, { error: message }); },
     });
 
     if (!(await waitForGatewayReady(agentId, EDIT_READY_TIMEOUT_MS))) {
@@ -101,9 +107,9 @@ async function runEdit(id: number, agentId: string, container: Awaited<ReturnTyp
       console.error('[agent:edit] provider patch failed:', (e as Error).message);
     }
 
-    updateEditRow(id, { status: 'done' });
+    updateEditRow(id, { status: 'done', error: warning });
   } catch (e) {
-    updateEditRow(id, { status: 'failed', error: (e as Error)?.message ?? String(e) });
+    updateEditRow(id, { status: 'failed', error: [(e as Error)?.message ?? String(e), warning].filter(Boolean).join('; ') });
   }
 }
 

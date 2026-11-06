@@ -1,98 +1,215 @@
-/**
- * Restoring an agent's volume from a backup archive.
- *
- * The volume is cleared and the archive extracted into it — minutes for a large
- * workspace — then the container is started again even when the extract failed. The
- * job is recorded in `agent_restores` and runs in the background, so a page reload or
- * a Rev4a restart never loses track of it and a second restore cannot start on top of
- * the first (lib/agent-busy.ts answers 409 while one runs).
- */
+/** Restore is destructive only after content compatibility and a cold recovery copy are proven. */
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { dockerRequestJson } from '@/lib/docker-socket-path';
+import { pipeline } from 'node:stream/promises';
 import { isValidAgentId } from '@/lib/container';
-import { runDocker } from '@/lib/agent-images';
-import { backupMountSource } from '@/lib/backups-volume';
+import { runDocker, containerOpenClawVersion, listLocalAgentImages } from '@/lib/agent-images';
+import { locateBackup } from '@/lib/backups-volume';
+import { BACKUPS_DIR } from '@/lib/rev4a-paths';
 import { isValidBackupFile } from '@/lib/backups';
-import { inspectAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
-import { activeRestoreAgentIds, insertRestore, isRestoreActive, latestRestore, markInterruptedRestores, updateRestoreRow, type AgentRestoreRow } from '@/lib/agent-restore-state';
+import { inspectAgentContainer, startAndVerifyContainer, type AgentContainerInspect } from '@/lib/agent-recreate';
+import { markInterruptedRestores, insertRestore, isRestoreActive, latestRestore, updateRestoreRow, type AgentRestoreRow } from '@/lib/agent-restore-state';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
+import { startColdBackup, waitForColdBackup, isColdBackupRunning } from '@/lib/cold-backup';
+import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { inspectBackupArchive, BackupInspectionError, type BackupInspection } from '@/lib/backup-inspection';
+import { checkBackupCompatibility } from '@/lib/backup-compatibility';
 
-/** A 13 GB workspace takes minutes to decompress; 30 minutes leaves room and still ends. */
 const EXTRACT_TIMEOUT_MS = 30 * 60 * 1000;
-
+const READY_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_SOURCE_BYTES = 32 * 1024 ** 3;
 export class RestoreRefusedError extends Error {}
+const restoreGlobals = globalThis as unknown as { __rev4aRunningRestores?: Set<string> };
+const running = (restoreGlobals.__rev4aRunningRestores ??= new Set<string>());
 
-/** Restore jobs running in this process, so a second start for the same agent is refused. */
-const running = new Set<string>();
+interface RestorePlan {
+  directory: string;
+  container: AgentContainerInspect;
+  name: string;
+  targetVersion: string;
+  inspection: BackupInspection;
+}
+
+/** Pin inspected bytes privately; a later replacement/deletion of the listed archive is harmless. */
+async function pinBackup(file: string): Promise<string> {
+  const where = await locateBackup(file);
+  if (where !== 'dir') throw new RestoreRefusedError(where === 'volume'
+    ? 'This backup is still in the legacy Docker volume. Wait for the backups migration to finish before restoring.'
+    : 'The backup file was not found in the data folder');
+  const input = await fsp.open(path.join(BACKUPS_DIR, file), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+    .catch(() => { throw new RestoreRefusedError('The backup must be a readable local regular file'); });
+  let directory: string | null = null;
+  try {
+    const stat = await input.stat();
+    if (!stat.isFile() || stat.size < 1 || stat.size > MAX_SOURCE_BYTES) throw new RestoreRefusedError('The backup exceeds the safe restore inspection budget');
+    directory = await fsp.mkdtemp(path.join(BACKUPS_DIR, '.rev4a-restore-source-'));
+    await fsp.chmod(directory, 0o700);
+    const capacity = await fsp.statfs(directory);
+    if (Number(capacity.bavail) * Number(capacity.bsize) < stat.size + 1024 ** 3) throw new RestoreRefusedError('Not enough temporary disk space to pin and inspect this backup safely');
+    await pipeline(
+      input.createReadStream({ autoClose: false, start: 0, end: stat.size - 1 }),
+      fs.createWriteStream(path.join(directory, 'source.tar.gz'), { flags: 'wx', mode: 0o600 }),
+      { signal: AbortSignal.timeout(180_000) },
+    );
+    return directory;
+  } catch (error) {
+    if (directory) await fsp.rm(directory, { recursive: true, force: true });
+    throw error;
+  } finally { await input.close().catch(() => {}); }
+}
+
+async function prepareRestore(agentId: string, file: string): Promise<RestorePlan> {
+  const directory = await pinBackup(file);
+  try {
+    const inspection = await inspectBackupArchive(path.join(directory, 'source.tar.gz'));
+    const container = await inspectAgentContainer(agentId);
+    const name = container?.Name?.replace(/^\//, '');
+    if (!container?.Id || !container.Image || !name) throw new RestoreRefusedError('The agent container could not be inspected');
+    const targetVersion = await containerOpenClawVersion({ name, imageId: container.Image, running: container.State?.Running === true }, await listLocalAgentImages());
+    const compatible = checkBackupCompatibility(inspection, targetVersion);
+    if (!compatible.compatible || !targetVersion) throw new RestoreRefusedError(compatible.reason ?? 'Backup compatibility could not be established');
+    return { directory, inspection, container, name, targetVersion };
+  } catch (error) {
+    await fsp.rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function safeFailure(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'REV4A_AGENT_JOB_BUSY') {
+    return 'Another lifecycle operation of this agent started; refresh and retry';
+  }
+  return error instanceof RestoreRefusedError || error instanceof BackupInspectionError
+    ? error.message : 'The restore operation failed; inspect the recovery backup before retrying';
+}
 
 export async function startAgentRestore(agentId: string, file: string): Promise<number> {
   if (!isValidAgentId(agentId)) throw new RestoreRefusedError('Invalid agent id');
   if (!isValidBackupFile(agentId, file)) throw new RestoreRefusedError('Invalid backup file name');
   if (running.has(agentId) || isRestoreActive(agentId)) throw new RestoreRefusedError('A restore of this agent is already running');
-  // Claimed synchronously, before the first await, so two requests cannot both pass.
   running.add(agentId);
+  let id: number | null = null;
   try {
-    // One source for every long operation: an update, recreate, restore, edit or backup.
     const busy = await agentBusyReason(agentId);
     if (busy) throw new RestoreRefusedError(busy);
-
-    // The archive must exist before anything is stopped or cleared. It used to be
-    // shape-checked only, so a file that had been pruned or deleted made the job wipe
-    // the volume and then fail, leaving the agent on an empty volume.
-    // The archive is in the backups folder, or still in the legacy volume while the migration runs.
-    const source = await backupMountSource(file).catch(() => null);
-    if (!source) throw new RestoreRefusedError(`Backup file '${file}' not found`);
-
-    const id = insertRestore(agentId, file);
-    void runRestore(id, agentId, file).finally(() => running.delete(agentId));
+    const source = await fsp.lstat(path.join(BACKUPS_DIR, file)).catch(() => null);
+    if (!source?.isFile()) throw new RestoreRefusedError('The backup is not available as a local regular archive. Wait for the legacy backups migration or select a completed local backup.');
+    // Persist the claim before slow inspection so other lifecycle actions see it.
+    id = insertRestore(agentId, file);
+    updateRestoreRow(id, { phase: 'preflight' });
+    void runRestore(id, agentId, file).catch(() => console.warn('[restore] restore state could not be finalized; review the interrupted operation'))
+      .finally(() => running.delete(agentId));
     return id;
-  } catch (e) {
+  } catch (error) {
+    if (id !== null) updateRestoreRow(id, { status: 'failed', phase: 'preflight_failed', error: safeFailure(error) });
     running.delete(agentId);
-    throw e;
+    throw error instanceof RestoreRefusedError ? error : new RestoreRefusedError(safeFailure(error));
+  }
+}
+
+/** Only a Docker 404 proves absence; a transport failure never releases the volume writer's claim. */
+async function inspectRestoreHelper(name: string): Promise<{ Id?: string; Config?: { Labels?: Record<string, string>; Cmd?: string[] }; State?: { Running?: boolean; ExitCode?: number }; Mounts?: { Name?: string; Destination?: string }[] } | null> {
+  try { return await dockerRequestJson('GET', `/containers/${encodeURIComponent(name)}/json`, 10_000); }
+  catch (error) { if (/^Docker error 404:/.test((error as Error)?.message ?? '')) return null; throw error; }
+}
+
+async function removeRestoreHelper(name: string, agentId: string, id: number): Promise<boolean> {
+  try {
+    const helper = await inspectRestoreHelper(name);
+    if (!helper) return true;
+    const owned = helper.Config?.Labels?.['rev4a.restore.agent'] === agentId && helper.Config?.Labels?.['rev4a.restore.id'] === String(id);
+    if (!owned || helper.Config?.Labels?.AGENT_ID !== undefined) return false;
+    // Even a rejected/timed-out remove can have succeeded: the independent inspect decides.
+    await runDocker(['stop', '-t', '10', name], { timeoutMs: 20_000 }).catch(() => {});
+    await runDocker(['rm', '-f', name], { timeoutMs: 20_000 }).catch(() => {});
+    return (await inspectRestoreHelper(name)) === null;
+  } catch { return false; }
+}
+
+async function stopRestoreAgent(agentId: string, containerId?: string, name?: string): Promise<'stopped' | 'still running' | 'unknown'> {
+  if (name) await runDocker(['stop', '-t', '30', name], { timeoutMs: 45_000 }).catch(() => {});
+  const current = await inspectAgentContainer(agentId).catch(() => null);
+  if (!current || (containerId && current.Id !== containerId) || typeof current.State?.Running !== 'boolean') return 'unknown';
+  return current.State.Running ? 'still running' : 'stopped';
+}
+
+/** Only delete our own pinned source path, after cleanup has been confirmed. */
+async function deleteRestoreSource(directory: string | null | undefined): Promise<void> {
+  if (directory && path.dirname(directory) === BACKUPS_DIR && path.basename(directory).startsWith('.rev4a-restore-source-')) {
+    await fsp.rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 async function runRestore(id: number, agentId: string, file: string): Promise<void> {
-  const container = await inspectAgentContainer(agentId).catch(() => null);
-  const name = container?.Name?.replace(/^\//, '');
-  let failure: string | null = null;
+  let plan: RestorePlan | null = null;
+  let recovery: string | null = null;
+  let replacing = false;
+  let helperName: string | null = null;
+  let helperGone = true;
+  let unresolved = false;
   try {
-    if (name && container?.State?.Running) {
-      await runDocker(['stop', '-t', '30', name], { timeoutMs: 45_000 }).catch(() => {});
+    // Pin, full inspection and SQLite integrity can take minutes. They belong to
+    // the persisted background job, and still precede every stop or volume write.
+    plan = await prepareRestore(agentId, file);
+    updateRestoreRow(id, { source_directory: plan.directory, preflight_json: JSON.stringify({
+      archiveSha256: plan.inspection.sha256, configVersion: plan.inspection.configVersion,
+      stateSchemaVersion: plan.inspection.stateSchemaVersion, agentSchemaVersions: plan.inspection.agentSchemaVersions,
+      targetVersion: plan.targetVersion, containerId: plan.container.Id, imageId: plan.container.Image,
+    }) });
+    const current = await inspectAgentContainer(agentId);
+    if (current?.Id !== plan.container.Id || current?.Image !== plan.container.Image) throw new RestoreRefusedError('The agent container changed after preflight; no volume was replaced');
+    updateRestoreRow(id, { phase: 'backing_up' });
+    const backup = await startColdBackup(agentId, { kind: 'manual', leaveStopped: true });
+    const result = await waitForColdBackup(agentId, { timeoutMs: EXTRACT_TIMEOUT_MS });
+    if (result.status !== 'succeeded' || result.file !== backup.file) throw new RestoreRefusedError('The cold recovery backup did not complete; the volume was not replaced');
+    recovery = backup.file;
+    updateRestoreRow(id, { recovery_file: recovery, phase: 'backed_up' });
+    const stopped = await inspectAgentContainer(agentId);
+    if (stopped?.Id !== plan.container.Id || stopped?.Image !== plan.container.Image || stopped?.State?.Running) throw new RestoreRefusedError('The agent changed or restarted during backup; no volume was replaced');
+    helperName = `rev4a-restore-${agentId}-${id}-${randomUUID()}`;
+    updateRestoreRow(id, { phase: 'extracting', helper_name: helperName, source_directory: plan.directory });
+    helperGone = false;
+    replacing = true;
+    await runDocker([
+      'create', '--name', helperName, '--label', `rev4a.restore.agent=${agentId}`, '--label', `rev4a.restore.id=${id}`, '--network', 'none',
+      '-v', `agent-${agentId}-data:/target`, '-v', `${plan.directory}:/backup:ro`,
+      'alpine', 'sh', '-c',
+      'test -f /backup/source.tar.gz && find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar xzf /backup/source.tar.gz -C /target',
+    ], { timeoutMs: EXTRACT_TIMEOUT_MS });
+    await runDocker(['start', '--attach', helperName], { timeoutMs: EXTRACT_TIMEOUT_MS });
+    const extracted = await inspectRestoreHelper(helperName);
+    if (extracted?.State?.Running !== false || extracted.State.ExitCode !== 0) throw new RestoreRefusedError('The extraction helper did not confirm a successful exit');
+    helperGone = await removeRestoreHelper(helperName, agentId, id);
+    if (!helperGone) throw new RestoreRefusedError('The extraction helper could not be confirmed gone');
+    updateRestoreRow(id, { phase: 'awaiting_ready' });
+    const started = await startAndVerifyContainer(agentId, plan.name);
+    if (!started.ok || !(await waitForGatewayReady(plan.name, READY_TIMEOUT_MS))) {
+      throw new RestoreRefusedError('The restored Gateway did not finish startup');
     }
-
-    // Where the archive is now (the migration may have moved it since the check).
-    const source = await backupMountSource(file);
-    if (!source) throw new Error(`Backup file '${file}' not found`);
-
-    // Clear the volume, then extract. The file name reaches the container through its
-    // environment and the whole command is one argv element, so it is never shell syntax.
-    await runDocker(
-      [
-        'run', '--rm',
-        '-v', `agent-${agentId}-data:/target`,
-        '-v', `${source}:/backup:ro`,
-        'alpine', 'sh', '-c',
-        'test -f "/backup/$FILE" || exit 3; rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null; tar xzf "/backup/$FILE" -C /target',
-      ],
-      { timeoutMs: EXTRACT_TIMEOUT_MS, env: { FILE: file } },
-    );
-  } catch (e) {
-    failure = (e as Error)?.message ?? String(e);
+    void reapplyWhenReady(plan.name).catch(() => console.warn('[restore] credential re-apply failed after Gateway readiness'));
+    updateRestoreRow(id, { status: 'done', phase: 'complete' });
+  } catch (error) {
+    let failure = safeFailure(error);
+    if (recovery) failure += `; recovery backup: ${recovery}`;
+    if (replacing && plan) {
+      if (helperName && !helperGone) helperGone = await removeRestoreHelper(helperName, agentId, id);
+      const state = await stopRestoreAgent(agentId, plan.container.Id, plan.name);
+      failure += state === 'unknown' ? '; agent state is unknown' : `; agent is ${state}`;
+      unresolved = !helperGone || state !== 'stopped';
+      failure += '; do not use partial data: restore the recovery backup after cleanup or review the current volume';
+      if (unresolved) failure += `; helper: ${helperName ?? 'not recorded'}; cleanup unresolved: the volume remains reserved; pinned source retained; resolve this restore in Agents > Backups`;
+    }
+    else if (plan?.container.State?.Running && !(await isColdBackupRunning(agentId).catch(() => true))) {
+      const current = await inspectAgentContainer(agentId).catch(() => null);
+      if (current?.Id === plan.container.Id && current?.State?.Running === false) await startAndVerifyContainer(agentId, plan.name).catch(() => undefined);
+    }
+    updateRestoreRow(id, { status: unresolved ? 'unresolved' : 'failed', phase: unresolved ? 'cleanup_unresolved' : replacing ? 'replacement_failed' : plan ? 'backup_failed' : 'preflight_failed', error: failure });
   } finally {
-    // The container is started again even when the extract failed, so the agent never
-    // stays down. The row is only `done` when it really came back: a container can
-    // report running while its network never attached, which is not a usable agent.
-    if (name) {
-      const started = await startAndVerifyContainer(agentId, name);
-      if (!started.ok) {
-        const note = `the container did not come back: ${started.error}`;
-        failure = failure ? `${failure}; ${note}` : `the volume was restored, but ${note}`;
-      } else {
-        void reapplyWhenReady(name).catch((e) => console.warn(`[restore] credential re-apply failed on ${name}:`, (e as Error).message));
-      }
-    }
-    if (failure) updateRestoreRow(id, { status: 'failed', error: failure });
-    else updateRestoreRow(id, { status: 'done' });
+    if (plan && helperGone && !unresolved) await deleteRestoreSource(plan.directory);
   }
 }
 
@@ -104,57 +221,55 @@ export interface AgentRestoreView {
   error: string | null;
   startedAtMs: number;
   finishedAtMs: number | null;
+  phase: string | null;
+  recoveryFile: string | null;
+  preflight: unknown | null;
 }
-
-/** The latest restore of an agent, so the panel can resume after a reload. */
 export function agentRestoreView(agentId: string): AgentRestoreView | null {
   const row = latestRestore(agentId);
-  if (!row) return null;
-  return {
-    id: row.id,
-    agentId: row.agent_id,
-    status: row.status,
-    file: row.file,
-    error: row.error,
-    startedAtMs: row.started_at,
-    finishedAtMs: row.finished_at,
-  };
+  let preflight: unknown | null = null;
+  try { preflight = row?.preflight_json ? JSON.parse(row.preflight_json) : null; } catch { /* Old malformed audit remains unavailable. */ }
+  return row ? { id: row.id, agentId: row.agent_id, status: row.status, file: row.file, error: row.error,
+    startedAtMs: row.started_at, finishedAtMs: row.finished_at, phase: row.phase ?? null,
+    recoveryFile: row.recovery_file ?? null, preflight } : null;
 }
 
-/**
- * At startup no restore job can be running: rows still active were cut off by the
- * restart. A restore interrupted **mid-extract** leaves a half-written volume, so
- * starting the container would present a partial workspace as if it were the restore: the
- * extract is run again from the same archive (it is the source of truth and the file was
- * checked before the job started), in the background, and the row lands in its final
- * status. When the archive is gone the container is started on whatever the volume holds,
- * and the row says so.
- */
+/** Startup records only interrupted active rows; historical/unresolved rows are untouched. */
 export async function recoverInterruptedRestores(): Promise<number> {
-  const ids = activeRestoreAgentIds();
-  if (ids.size === 0) return 0;
-  const interrupted = markInterruptedRestores();
-  for (const agentId of ids) {
-    const row = latestRestore(agentId);
-    const name = (await inspectAgentContainer(agentId).catch(() => null))?.Name?.replace(/^\//, '');
-    if (row?.file && (await backupFileExists(agentId, row.file))) {
-      console.log(`[agent:restore] ${agentId}: re-running the interrupted restore from ${row.file}`);
-      void runRestore(row.id, agentId, row.file).finally(() => undefined);
-      continue;
-    }
-    if (!name) continue;
-    const started = await startAndVerifyContainer(agentId, name);
-    if (!started.ok) console.warn(`[agent:restore] ${agentId} did not come back after an interrupted restore: ${started.error}`);
-  }
-  return interrupted;
+  return markInterruptedRestores();
 }
 
-/** Whether the archive still exists (backups folder, or the legacy volume until it is migrated). */
-async function backupFileExists(agentId: string, file: string): Promise<boolean> {
-  if (!isValidBackupFile(agentId, file)) return false;
-  try {
-    return (await backupMountSource(file)) !== null;
-  } catch {
-    return false;
+/** Operator-only cleanup: label ownership, never shared volume mounts, selects helpers. */
+export async function resolveAgentRestore(agentId: string, restoreId: number): Promise<void> {
+  if (!isValidAgentId(agentId)) throw new RestoreRefusedError('Invalid agent id');
+  const row = latestRestore(agentId);
+  if (!row || row.id !== restoreId || row.status !== 'unresolved' || running.has(agentId)) {
+    throw new RestoreRefusedError('This restore is no longer unresolved or another restore action is running; refresh and retry');
   }
+  running.add(agentId);
+  try {
+    const agent = await inspectAgentContainer(agentId);
+    const filters = encodeURIComponent(JSON.stringify({ label: [`rev4a.restore.agent=${agentId}`, `rev4a.restore.id=${row.id}`] }));
+    const labelled = async () => {
+      const helpers = await dockerRequestJson<{ Id: string }[]>('GET', `/containers/json?all=true&filters=${filters}`, 10_000);
+      if (!Array.isArray(helpers) || helpers.some(helper => !helper.Id)) throw new Error('Unreadable restore helper identities');
+      return helpers;
+    };
+    const helpers = await labelled();
+    for (const helper of helpers) {
+      if (helper.Id === agent?.Id || !(await removeRestoreHelper(helper.Id, agentId, row.id))) {
+        throw new Error('Restore helper removal could not be confirmed');
+      }
+    }
+    // Confirm again by label, including the no-helper case. No agent start/stop is attempted.
+    if ((await labelled()).length) throw new Error('Restore helpers are still present');
+    await deleteRestoreSource(row.source_directory);
+    const note = `Manual resolution: ${helpers.length} labelled helper(s) removed and confirmed gone; reservation released. Agent container untouched; review the current volume before starting it or restoring the recovery backup`;
+    updateRestoreRow(row.id, { status: 'interrupted', phase: 'manually_resolved', error: `${row.error ?? 'Restore needs review'}; ${note}` });
+    console.warn(`[restore] Restore ${row.id} for ${agentId}: ${note}`);
+  } catch {
+    const note = 'Manual resolution failed: Docker may be unreachable or labelled helper cleanup could not be confirmed; reservation and pinned source retained. Retry Resolve restore when Docker is available';
+    updateRestoreRow(row.id, { error: `${row.error?.split('; Manual resolution failed:')[0] ?? 'Restore needs review'}; ${note}` });
+    throw new RestoreRefusedError(note);
+  } finally { running.delete(agentId); }
 }

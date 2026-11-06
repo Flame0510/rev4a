@@ -24,6 +24,7 @@
 import { execSync } from 'child_process';
 import { dockerExec, dockerExecShellNoFail } from '@/lib/docker-exec';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
+import { PAIRING_STORE_SCRIPT, parsePairingStoreOutput, type PairingStoreResult } from '@/lib/channel-pairing-store';
 
 // ── Types ────────────────────────────────────
 
@@ -294,79 +295,10 @@ export interface PairingState {
   pending: PendingPairing[];
   approved: ApprovedPairing[];
   /**
-   * Why the approved list is empty, when that is not simply "none": the pairing store
-   * could not be read (the writer is not in this OpenClaw build, or the read failed).
-   * Callers must show it instead of "No approved senders", which would be a guess.
+   * An unreadable pending or approved list is distinct from a valid empty list.
+   * Other successfully read results remain available alongside this error.
    */
   error?: string | null;
-}
-
-/**
- * Script run inside the container to read or edit OpenClaw's channel pairing store.
- *
- * On 2026.9.3 the approved senders live in `~/.openclaw/state/openclaw.sqlite`
- * (`channel_pairing_allow_entries`), and no CLI, RPC or documented export reads or
- * writes them: `openclaw pairing` covers pending requests only, `channels.pairing.*`
- * has no remove, and the writers sit in `dist/pairing-store-<hash>.mjs` with minified
- * export names. The function *names* are preserved, though, so the module is found by
- * glob and its functions by `name` — no hash or minified symbol is hardcoded. The
- * write goes through the same state transaction the CLI uses.
- *
- * `op`, `channel` and `entry` arrive as argv, never interpolated into the source.
- * The sentinel lines are machine-readable: `docker exec` exits 0 even when killed by
- * the timeout, so an empty result cannot be read as success (docs/ARCHITECTURE.md §3.1).
- */
-const PAIRING_STORE_SCRIPT = `
-(async () => {
-  const fs = require('fs');
-  const path = require('path');
-  const { pathToFileURL } = require('url');
-  const [op, channel, entry] = process.argv.slice(1);
-  const dist = '/usr/local/lib/node_modules/openclaw/dist';
-  let remove, readSync;
-  try {
-    for (const f of fs.readdirSync(dist).filter((x) => /^pairing-store-.*\\.mjs$/.test(x))) {
-      const mod = await import(pathToFileURL(path.join(dist, f)).href);
-      for (const v of Object.values(mod)) {
-        if (typeof v !== 'function') continue;
-        if (v.name === 'removeChannelAllowFromStoreEntry') remove = v;
-        if (v.name === 'readChannelAllowFromStoreSync') readSync = v;
-      }
-    }
-  } catch (e) { console.log('pair:error ' + e.message); return; }
-  if (!remove || !readSync) { console.log('pair:unsupported'); return; }
-  // Entries are sender ids as strings today; anything else has a field to read. An
-  // unexpected shape is an error, never String(entry) — that would print
-  // "[object Object]" and then remove nothing while reporting success.
-  const normalize = (list) => (list || []).map((e) => {
-    if (typeof e === 'string') return e;
-    if (e && typeof e === 'object') { const v = e.id ?? e.senderId ?? e.entry; return typeof v === 'string' ? v : null; }
-    return null;
-  });
-  try {
-    if (op === 'read') {
-      const entries = normalize(readSync(channel));
-      if (entries.some((e) => e === null)) { console.log('pair:error unexpected allowlist entry shape'); return; }
-      console.log('pair:list ' + JSON.stringify(entries));
-    } else if (op === 'remove') {
-      const r = await remove({ channel, entry });
-      console.log(r && r.changed ? 'pair:ok' : 'pair:absent');
-    } else if (op === 'clear') {
-      const entries = normalize(readSync(channel));
-      if (entries.some((e) => e === null)) { console.log('pair:error unexpected allowlist entry shape'); return; }
-      for (const e of entries) await remove({ channel, entry: e });
-      console.log('pair:ok');
-    } else {
-      console.log('pair:error unknown op');
-    }
-  } catch (e) { console.log('pair:error ' + e.message); }
-})();
-`;
-
-interface StoreOpResult {
-  status: 'ok' | 'absent' | 'unsupported' | 'error';
-  entries?: string[];
-  error?: string;
 }
 
 /** Channel ids reach shell commands and the store API; keep them to OpenClaw's shape. */
@@ -374,41 +306,26 @@ function isSafeChannel(channel: string): boolean {
   return /^[a-z0-9_-]+$/.test(channel);
 }
 
-/** Run one pairing-store operation inside the container; see PAIRING_STORE_SCRIPT. */
-async function runPairingStore(container: string, op: 'read' | 'remove' | 'clear', channel: string, entry?: string): Promise<StoreOpResult> {
+/** Public async read/legacy fallback; private removal stays isolated in the tested script. */
+async function runPairingStore(container: string, op: 'read' | 'remove' | 'clear', channel: string, entry?: string): Promise<PairingStoreResult> {
   const argv = ['node', '-e', PAIRING_STORE_SCRIPT, op, channel];
   if (entry !== undefined) argv.push(entry);
-  let out: string;
   try {
-    // argv reaches docker as an array — the script, the op and the sender id are
-    // never shell syntax. Async: the script loads OpenClaw's own modules inside the
-    // container and takes a second, which must not freeze Rev4a's event loop while
-    // the panel polls it.
-    out = (await dockerExec(container, argv, { timeoutMs: 20_000 })).trim();
-  } catch (e) {
-    return { status: 'error', error: (e as Error).message };
+    // Arguments stay positional. The async SDK import must not block the server.
+    const out = await dockerExec(container, argv, { timeoutMs: 20_000 });
+    return parsePairingStoreOutput(out, op);
+  } catch {
+    // Do not return native command/stderr text: it may include configuration or secrets.
+    return { status: 'error', error: 'Pairing store command failed or timed out' };
   }
-  const listLine = out.split('\n').find((l) => l.startsWith('pair:list '));
-  if (listLine) {
-    try {
-      return { status: 'ok', entries: JSON.parse(listLine.slice('pair:list '.length)) as string[] };
-    } catch {
-      return { status: 'error', error: 'Could not read the approved senders list' };
-    }
-  }
-  if (out.includes('pair:ok')) return { status: 'ok' };
-  if (out.includes('pair:absent')) return { status: 'absent' };
-  if (out.includes('pair:unsupported')) return { status: 'unsupported' };
-  const errLine = out.split('\n').find((l) => l.startsWith('pair:error '));
-  return { status: 'error', error: errLine ? errLine.slice('pair:error '.length) : (out || 'Pairing store command produced no output') };
 }
 
 /** Drop every approved sender of a channel — a different bot must not inherit them. */
 async function clearChannelAllowlist(container: string, channel: string): Promise<void> {
-  if (!isSafeChannel(channel)) return;
+  if (!isSafeChannel(channel)) throw new Error('Invalid channel id');
   const result = await runPairingStore(container, 'clear', channel);
-  if (result.status === 'error') {
-    console.warn(`[channels] could not clear the ${channel} allowlist: ${result.error}`);
+  if (result.status !== 'ok') {
+    throw new Error(result.error ?? 'This OpenClaw release does not expose the capability to clear approved senders');
   }
 }
 
@@ -418,32 +335,41 @@ export async function getPairings(agentId: string, channel: string = 'telegram')
   const fallback: PairingState = { pending: [], approved: [] };
   if (!container || !isSafeChannel(channel)) return fallback;
 
-  // Pending
-  const pendingRaw = await dockerExecShellNoFail(container, `openclaw pairing list --channel ${channel} --json 2>/dev/null`);
+  // A failed/malformed pending list must not look like a successful empty read.
   const pending: PendingPairing[] = [];
-  if (pendingRaw) {
-    try {
-      const parsed = JSON.parse(pendingRaw);
-      for (const req of parsed.requests ?? []) {
-        pending.push({
-          code: req.code ?? req.id ?? '',
-          senderId: req.senderId ?? null,
-        });
+  let pendingError: string | null = null;
+  try {
+    const raw = await dockerExec(container, ['openclaw', 'pairing', 'list', '--channel', channel, '--json'], { timeoutMs: 20_000 });
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { requests?: unknown }).requests)) {
+      throw new Error('Invalid pending list');
+    }
+    const rows = (parsed as { requests: unknown[] }).requests.map((req): PendingPairing => {
+      if (!req || typeof req !== 'object') throw new Error('Invalid pending request');
+      const row = req as { code?: unknown; id?: unknown; senderId?: unknown };
+      const code = row.code ?? row.id;
+      if (typeof code !== 'string' || !code || (row.senderId != null && typeof row.senderId !== 'string')) {
+        throw new Error('Invalid pending request fields');
       }
-    } catch { /* ignore */ }
+      return { code, senderId: row.senderId ?? null };
+    });
+    pending.push(...rows);
+  } catch {
+    pendingError = 'The pending pairing requests could not be read';
   }
 
   // Approved: OpenClaw's pairing store (2026.9.x keeps it in SQLite).
   const approved: ApprovedPairing[] = [];
   const store = await runPairingStore(container, 'read', channel);
   if (store.status === 'ok') {
-    for (const entry of store.entries ?? []) approved.push({ senderId: String(entry) });
+    for (const entry of store.entries ?? []) approved.push({ senderId: entry });
   }
   // 'absent' is a real answer (no store yet, so no approved senders); anything else means
   // the read did not succeed and an empty list must not be presented as "none".
-  const error = store.status === 'ok' || store.status === 'absent'
+  const approvedError = store.status === 'ok' || store.status === 'absent'
     ? null
     : (store.error ?? 'The approved senders could not be read');
+  const error = [pendingError, approvedError].filter(Boolean).join('; ') || null;
 
   return { pending, approved, error };
 }

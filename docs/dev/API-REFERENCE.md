@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-07
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -915,7 +915,7 @@ Create a new agent container from a template. `docker run` is spawned without a 
 | `fallbacks` | no | Array of fallback model IDs |
 | `memoryLimitMb` | no | Memory limit in MB, an integer from 256 to 1048576 (1 TiB); absent, `null`, `0` or `''` mean no limit and the `docker run` command is exactly what it was. Validated before anything is created (`400` on a bad value); when set, adds `--memory <bytes> --memory-swap <bytes>` (swap equal to the limit) built from the validated integer only |
 
-**A failed create leaves nothing behind.** Once `docker run` has been attempted, any failure (a run error, the Gateway not ready in time, an unexpected error) removes the container and the data volume `agent-<container>-data`, but only when this request created the volume (it is looked up before the run; if it existed or Docker could not say, it is kept). The error message says what was removed ("The agent and its data were removed.") and the removal is logged (`[agent:create] rollback: …`). The Gateway readiness window is 120 s, or 300 s when the image's architecture differs from the Docker host's (`/images/<ref>/json` against `/info`: emulation, several times slower); the timeout error names the window used. The route allows up to 480 s.
+**A failed create leaves nothing behind.** Once `docker run` has been attempted, any failure (a run error, the Gateway not ready in time, an unexpected error) removes the container and the data volume `agent-<container>-data`, but only when this request created the volume (it is looked up before the run; if it existed or Docker could not say, it is kept). The error message says what was removed ("The agent and its data were removed.") and the removal is logged (`[agent:create] rollback: …`). Cleanup uses immediate force removal, with a 30 s deadline. The Gateway readiness window is 120 s, or 300 s when the image's architecture differs from the Docker host's (`/images/<ref>/json` against `/info`: emulation, several times slower); the timeout error names the window used. The route allows up to 480 s.
 
 **Every agent is created with a host port mapping:**
 - Port block: `-p <start>-<end>:3000-<3000+offset>` — maps a range of host ports to the same range starting at container port 3000
@@ -975,6 +975,9 @@ best-effort — a missing volume or absent backups do not fail the delete.
 The `id` is validated (`isValidAgentId`) before being interpolated into any
 docker command.
 
+Deletion uses immediate `docker rm -f` with a 30 s deadline before removing its volume
+and backups.
+
 **Auth:** browser cookie
 
 **Response:**
@@ -993,6 +996,24 @@ Edit an agent's display name, its port range, or both. The job runs in the backg
 on the current build of its OpenClaw version (a newer build if one was downloaded) — **without a backup**: the persistent volume is never
 touched (`recreateAgentContainer()` in `lib/agent-recreate.ts`), then the gateway is
 waited for (up to 5 minutes) and the runtime config re-applied.
+
+Only Edit (including removal of a memory limit) and Recreate opt into graceful removal
+in the shared rebuild. The original inspected container ID is verified against its
+`AGENT_ID` label; missing/mismatched IDs are refused. Stop and remove both use that ID,
+never a name that could now belong to a replacement. `docker stop -t 60` gives normal
+SIGTERM cleanup time to release the owner lease without waiting for OpenClaw's extended
+325 s drain. Inspections have 5 s deadlines, stop 65 s, and `rm -f` 15 s: at most 90 s
+before rebuilding, within the background caller's budget. A failed/timed-out stop,
+Docker exit 137, or an unconfirmed stop records a warning before forced removal.
+The job's `error` field retains that warning on success as well as failure; `status`
+is authoritative for the outcome. Failed-run cleanup, Update and Rollback retain their
+previous force-removal policy.
+
+When the Recreate cold backup already stopped the agent with `docker stop -t 30`,
+that is its graceful stop. Recreate observes the backup's stop outcome and persists
+exit-137/kill-fallback warnings before archiving; it does not apply another stop policy
+to the stopped container. Inspection wall-clock deadlines abort the underlying HTTP
+request, including a response that keeps trickling bytes.
 
 The job is recorded in `agent_edits`, so a page reload or a Rev4a restart never loses it:
 `GET` below reports the running or last edit, and while it runs anything else that would
@@ -1105,7 +1126,8 @@ folder by the server; a file `fs` may not delete falls back to one helper contai
 Cold backup of the agent's volume (`lib/cold-backup.ts`). Returns `202` once the job
 has started; the work continues in a helper container, `rev4a-backup-<id>`.
 
-1. The agent is stopped (`docker stop -t 30`, kill as a fallback) if it runs.
+1. The agent is stopped (`docker stop -t 30`, 45 s CLI deadline, kill as a fallback)
+   if it runs. This policy is unchanged for manual and pre-operation cold backups.
 2. The helper, started from the agent's own image, measures the volume (`du`),
    refuses when the backups folder has less free space than about 60% of it, and writes
    `agent-<id>-cold-<ts>.tar.gz.partial` (npm cache excluded) with GNU tar checkpoints
@@ -1152,40 +1174,50 @@ agent started again if it was running. `409` when nothing is running.
 
 ---
 
-### `POST /api/agents/[id]/restore?file=agent-prometheus-2026-07-12_043512345.tar.gz`
-Restore an agent's persistent volume from a backup. The job runs in the background
-(`lib/agent-restore.ts`); this answers `202` once it has started. No pre-restore backup is
-taken: restoring replaces the volume with the archive on purpose.
+### `POST /api/agents/[id]/restore?file=<archive>`
+Start a persisted background restore (`lib/agent-restore.ts`). Returns `202` with
+`{ "started": true, "id": <job id> }` after claiming the job; inspect GET for its outcome.
+Authentication: browser cookie or bearer token.
 
-1. The container is stopped if it runs.
-2. The volume content is cleared and the archive extracted — up to 30 minutes, since a
-   large workspace takes minutes to decompress. The file name reaches the container
-   through its environment, never as shell syntax.
-3. The container is started again even when the extract failed, so the agent never stays
-   down. After a successful start, credential assignments are re-applied in the background once the Gateway is ready. A volume with no container (volume-only agent) is restored anyway.
+1. Validate the name/local regular source and agent busy state. Heavy preflight then runs in the background.
+2. Pin the source privately on the backups filesystem and validate archive, config, core SQLite/WAL integrity
+   and compatibility with the agent's actual image. Failure leaves the running agent and volume untouched.
+3. Take a cold recovery backup using the existing manual cold-backup filename format. Record it before clearing.
+4. Extract only the pinned source, start the container and wait for Gateway `/startupz` readiness before `done`.
 
-The job is recorded in `agent_restores`, so a page reload or a Rev4a restart never loses
-it: while it runs, anything else that would touch the agent answers `409`
-(`lib/agent-busy.ts`), and after a Rev4a restart an active row becomes `interrupted` with
-the container started again.
+Unknown targets, corrupt evidence and incompatibility fail preflight explicitly. A versioned archive
+must not have a newer config version or exceed the target's core schema ceilings. A metadata-free
+legacy archive needs recognized actual core schema generations; a legacy-volume archive waits for
+host-directory migration.
+A volume-only agent needs a compatible container before restore; the target format is never guessed.
+Partial extraction/readiness failure retains the recovery filename, removes the named extraction
+helper and verifies the agent stop. A Docker 404 must confirm helper removal before the reservation
+or pinned source is released. Cleanup uncertainty keeps status `unresolved` and blocks lifecycle
+actions; direct restore failure reports stopped, still running or unknown agent state. Startup
+only marks active restores interrupted for review; interrupted extraction becomes unresolved and
+names its helper. It makes no Docker cleanup calls and there is no periodic scan over restore
+history. Operators confirm `POST /restore/resolve` in Agents > Backups to remove only containers
+with that restore's labels. The agent and cold-backup helpers are left untouched. Docker errors
+keep the unresolved reservation; a resolve finding no labelled container releases it. Interrupted
+jobs require review; startup does not automatically extract or restart possibly changed data.
+An abrupt termination can retain a private `.rev4a-restore-source-*` directory for controlled cleanup.
 
-**Auth:** browser cookie or bearer token
+Additional disk space is needed for the pinned compressed source, selected inspection files and cold
+recovery archive. Copying reserves the source size plus 1 GiB free; the cold backup has its own space
+preflight. Inspection has explicit size/member/time budgets and fails safely when exceeded; these
+checks do not guarantee arbitrary workload capacity or native plugin downgrade compatibility.
 
-**Response (202):**
-```json
-{ "started": true, "id": 3 }
-```
-
-**Errors:** `400` invalid file name (not `agent-<id>-<safe charset>.tar.gz`); `404` the
-archive does not exist; `409` a restore, recreate, update, edit or backup of this agent
-is already running.
+Errors before admission: `400` invalid name/id; `404` missing local archive; `409` busy/conflicting
+operation or unavailable local source. Later failures are recorded on the returned job, without a second POST.
 
 ---
 
 ### `GET /api/agents/[id]/restore`
 The running or last restore of an agent (`null` when it was never restored), with the
-archive being applied. `status`: `restoring` → `done` | `failed`; `interrupted` after a
-Rev4a restart cut it off.
+archive being applied. `status`: `restoring` → `done` | `failed` | `unresolved`; `interrupted`
+after a restart outside extraction, or after confirmed manual resolution. Extraction interrupted
+by a restart becomes `unresolved`. Its `finishedAtMs` stays NULL, its pinned source is retained,
+and an operator must confirm Resolve restore; there is no automatic retry.
 
 **Auth:** browser cookie or bearer token
 
@@ -1194,7 +1226,8 @@ Rev4a restart cut it off.
   "restore": {
     "id": 3, "agentId": "agent_2a3c3a07", "status": "restoring",
     "file": "agent-agent_2a3c3a07-cold-2026-09-21_172032317.tar.gz",
-    "error": null, "startedAtMs": 1790004046548, "finishedAtMs": null
+    "error": null, "startedAtMs": 1790004046548, "finishedAtMs": null,
+    "phase": "preflight", "recoveryFile": null, "preflight": null
   }
 }
 ```
@@ -1651,6 +1684,11 @@ Control UI.
 
 **Auth:** browser cookie
 
+Optional `job=<id>` selects `/automations?job=<id>` under the existing native base path. The
+existing query and authentication fragment are preserved. Invalid, empty or repeated job parameters
+return 400 before container discovery or native link issuance. Callers cannot supply a target host.
+Without `job`, the existing root navigation is unchanged.
+
 The target host is the one the request reached Rev4a on (the `Host` header), with the
 agent's published port — never a parameter, so the link cannot be sent to another host.
 
@@ -1769,8 +1807,23 @@ Lightweight channel status for all running agents (used for TG chips on the agen
 ---
 
 ### `GET /api/agents/config-json`
-Read the full `openclaw.json` from a running agent container (token masked).
+Read `openclaw.json` from a running agent container with secrets masked server-side.
 Useful for inspecting the container config without SSH or terminal.
+
+`redactConfigSecrets()` in `lib/redact-secret.ts` recursively replaces secret-named
+values with `***`, sharing the key classifier used by update-log redaction
+(`isSecretName()` in `lib/update-state.js`). This covers Gateway and Telegram tokens,
+provider API keys, passwords, private keys and unknown secret-named keys, including
+short and non-string values. Context also masks channel bot/account tokens and secrets,
+serialized channel service accounts, `authTag` and other auth-named keys, all `headers`
+values anywhere (including nested provider requests and plugin configuration), TLS
+`ca`/`cert` values including proxy TLS, every value in an `env` object anywhere (including plugin
+MCP configuration), skill `apiKey`, credentials and auth-profile material. Primitive
+array members inside private locations are masked too. Non-secret structure, model
+lists, channel settings and `gateway.auth.mode`/`allowTailscale` remain visible; other
+`gateway.auth` material is masked. No source file is modified. Malformed JSON and any
+non-object root (including arrays, strings and null) return 500 without raw content;
+transport errors return a generic message without stdout/stderr.
 
 **Query params:** `name` (required) — Docker container name
 
@@ -1788,6 +1841,9 @@ Useful for inspecting the container config without SSH or terminal.
 
 **Error (404):** `{ "error": "Config file not found or empty in container" }`
 **Error (400):** `{ "error": "name query param is required" }`
+**Error (500):** `{ "error": "Failed to parse config JSON" }`,
+`{ "error": "Config JSON must be an object" }` or
+`{ "error": "Could not read the agent config" }`.
 
 ---
 
@@ -2200,6 +2256,11 @@ List of scheduled cron jobs from every running Docker container with the `AGENT_
 
 Every job includes `containerName` and `source: "container"` fields, plus `agentName`: the agent's display name (the container's `AGENT_NAME`), or `null` when the agent has none. The page labels tabs, pills and the detail by `agentName` and shows `containerName` only as a secondary detail. The names come from `lib/agent-names.ts` (one cached `docker inspect` for all containers).
 
+`rev4aAgentId` is the trusted Docker `AGENT_ID` from discovery, used for Rev4a navigation. It is
+separate from OpenClaw's internal `agentId` (often `main`); an upstream field cannot override it.
+Older consumers can ignore the additive field. The Crons view recognizes the exact latest-run
+missing-inference-account refusal and provides native settings/account-reference guidance.
+
 **Auth:** Bearer or browser cookie
 
 **Query params:** `status=1` (optional) answers `{ "jobs": [...], "dockerUnavailable": false, "errors": [{ "container", "agentName", "error" }] }` instead of the bare array, so a caller can tell an empty list from "Docker is not reachable" (`dockerUnavailable: true`) or an agent that did not answer (one entry in `errors`). The Crons page uses it and shows a banner. `GET /api/system-health` raises no "No enabled cron detected" in either case.
@@ -2213,7 +2274,8 @@ Every job includes `containerName` and `source: "container"` fields, plus `agent
     "schedule": "0 9 * * 1",
     "enabled": true,
     "source": "container",
-    "agentId": "atlas",
+    "agentId": "main",
+    "rev4aAgentId": "atlas",
     "containerName": "openclaw-atlas",
     "agentName": "Atlas",
     "computedNextRunAtMs": 1749600000000
@@ -2964,8 +3026,14 @@ The agent list, at once, from docker ps and inspect only (no exec into any agent
 ### `GET /api/subscriptions?agentId=<id>`
 One agent's status, read live. An unsupported or unreadable agent is a row with `error` set to the same messages (not an HTTP error). **Response:** `{ agent: { agentId, name, container, running, connected, email, plan, expiresAt, usesSubscription, primary, fallbacks, error }, action }`. `plan` is the ChatGPT plan, capitalised ("Plus", "Pro"), null when unknown. `action` is the agent's running or last disconnect job (or null), so a reloaded page resumes a running one. A stopped agent has `running: false` and unknown status.
 
+The additive `agent.profileReferences` array lists all relevant ChatGPT OAuth profiles as
+`{ id, email, plan, expiresAt }`. API-key and other-provider profiles are excluded; access/refresh
+tokens, account IDs and authorization grants are never returned. It is read-only reference metadata,
+not an account selection or adoption result. Older clients may ignore it; newer clients tolerate its
+absence from older responses.
+
 ### `GET /api/subscriptions/models`
-**Response:** `{ models: [{ key, name, contextWindow }], error }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached status read only (an unsupported or unreadable agent cannot be a source).
+**Response:** `{ models: [{ key, name, contextWindow }], error, pending }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached status read only (an unsupported or unreadable agent cannot be a source). Right after Connect, OpenClaw installs the Codex plugin and hot-reloads its config (about a minute); until then the agent lists no model. Such an empty list is never cached, and the answer carries `pending: true` whenever any successfully read account is still empty, even alongside partial `models` or another account's `error`. Available models are retained and cached independently while pending accounts retry. With no available models the Subscriptions page shows "Loading ChatGPT models…" and the MODEL section keeps "Loading subscription models…", both asking again every 5 s for at most 3 minutes. Independent deadline timers abort fetch/body reads at that limit, keep partial models and publish a retry message. The response remains `{ models, error, pending }`.
 
 ### `GET /api/subscriptions/usage`
 **Query:** `email=<account>` for one account, `refresh=1` to bypass the cache. **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is OpenClaw's own label, seen as "5h" and "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json` under an in-container `timeout 120`; 11 to 50 s on a slow host) and cached 3 minutes per account, failures included, so the next refresh does not start another CLI. A connect or disconnect does not drop this cache; `refresh=1` is the only way to force a read. One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
@@ -3168,3 +3236,66 @@ All errors return JSON:
 ```
 
 Common status codes: `400` bad request, `401` unauthorized, `404` not found, `500` server error, `503` Rev4a is updating (mutating requests only, see `GET /api/update-status`).
+
+## OpenClaw compatibility safeguards
+
+Create (`POST /api/agents/create`) and Update refuse resource admission before lifecycle mutation.
+For exact 2026.10.10 a finite cap must be at least 4096 MiB; no cap remains unlimited and no global
+default changes. Unknown/insufficient Docker capacity is explicit (Create:409; Update refusal:409).
+Running containers and concurrent requests share a conservative planning budget; this is not a
+universal native-host minimum. Older 9.3/9.9 operator-selected caps remain supported.
+
+Update verification preserves cron identity/ownership and accepts only the exact evaluated upstream
+retirement. Update views/history add `cronRepair` for separate legacy failure audit evidence; original
+`verification`, failure and timestamps remain available. `retiredCronJobs` is additive verification
+metadata. The retirement-aware repair also handles later bounded panel retries when startup
+verification could not reach the Gateway. Original failure evidence is preserved.
+
+Update views/history add nullable `cronAccountAdoption`: `{ associated, noBindingNeeded,
+alreadyAssociated, skipped, failed, note }`. `noBindingNeeded` is additive and absent on older stored
+results. `associated` requires verification of the saved binding to the intended account after
+restoring the model. Routes without a binding increment `noBindingNeeded`; the Agents note says
+**no binding needed (model left/restored)**. After successful 9.x -> 2026.10.10 verification, the explicit migration policy
+adopts affected ChatGPT/Codex cron jobs only when exactly one OAuth profile is connected. It uses
+native `cron.update` with revision preconditions, then restores each original model (NULL/Default
+retains primary and fallback inheritance). It never changes schedules, delivery or enabled state.
+Zero/multiple profiles leave jobs unchanged with guidance. Adoption failures are reported without
+failing Update; a failed cleanup of a temporary model override is explicitly flagged for review.
+
+Restore GET adds `phase`, `recoveryFile` and `preflight` (NULL on old rows). A legacy `done` row
+without readiness evidence is not proof of a healthy Gateway and is shown as such in the panel.
+
+Rollback reclaims the exact ended latest update in an immediate transaction after its asynchronous
+backup/container checks. A competing lifecycle claim, changed status or superseding update returns409
+before the rollback worker is scheduled. It never reactivates an arbitrary historical row.
+Legacy `done` Restore rows receive an unverified-readiness warning; this is operator review guidance,
+not a startup audit or an automatic reconstruction of historical restore success.
+
+### `POST /api/agents/[id]/restore/resolve`
+
+Manually resolve an `unresolved` restore after operator confirmation in Agents > Backups.
+**Auth:** `requireAuthJWT` (dashboard cookie or configured Bearer token).
+**Body:** `{ "restoreId": 123 }` — a positive safe integer matching the latest unresolved row.
+
+Selects containers with Docker's label filter for both `rev4a.restore.agent=<id>` and
+`rev4a.restore.id=<restoreId>`, verifies ownership, stops/removes only those helpers and confirms
+absence before releasing the reservation. No mount-based selection, agent stop/removal or automatic
+restart/extraction occurs. Cold-backup helpers have no restore label and are left untouched.
+No labelled container is a valid resolved result. The retained row records `status: interrupted`,
+`phase: manually_resolved`, the outcome and completion time; the operator must still review
+partial data before starting the agent or restoring the recovery backup.
+
+**Response:** `{ "resolved": true, "restore": { ... } }` (200).
+**Errors:** 400 invalid agent/body; 401 unauthenticated; 409 stale/non-unresolved row, duplicate
+action, unreachable Docker or unconfirmed cleanup; 500 unexpected failure. Failed cleanup retains
+`unresolved` and the pinned source; retry explicitly once Docker is available. A stale row ID
+cannot resolve a newer restore.
+
+Startup only marks active restores interrupted for review; an extraction interrupted by a server
+restart becomes unresolved and names its helper. Existing unresolved and historical rows are not
+scanned or cleaned up automatically. Cron-account journal entries are per update so rollback and
+re-upgrade do not skip adoption; pending exact model pins can be repaired without a native binding.
+A new Update supersedes earlier unfinished journals in the same transaction as its lifecycle claim.
+Adoption runs under that claim. Background repair only considers the latest update's journal,
+acquires an exclusive claim for that agent and skips busy agents until the next retry. Superseded
+journals are never reconciled.

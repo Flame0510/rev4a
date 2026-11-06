@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button, Input, MemoryLimitPicker, TemplateOption, useDockerTotalMb } from '../../components/ui';
 import { OpenControlUiButton } from '../BrowserAccessSection';
 import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
+import { memoryLimitPolicyError } from '@/lib/agent-resource-policy';
 
 interface TemplateInfo {
   id: string;
@@ -24,6 +25,7 @@ interface Props {
   usedPorts: number[];
   /** The global default (Configuration page): only prefills the memory limit field. */
   defaultMemoryLimitMb?: number | null;
+  openclawVersion: string | null;
 }
 
 type Step = 'template' | 'config' | 'creating' | 'done' | 'error';
@@ -55,7 +57,7 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
   );
 }
 
-export default function CreatePageClient({ templates, models, usedNames, usedPorts: initialUsedPorts, defaultMemoryLimitMb = null }: Props) {
+export default function CreatePageClient({ templates, models, usedNames, usedPorts: initialUsedPorts, defaultMemoryLimitMb = null, openclawVersion }: Props) {
   const router = useRouter();
 
   const [step, setStep] = useState<Step>('template');
@@ -126,7 +128,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
 
   const canProceed = (): boolean => {
     if (step === 'template') return selectedTemplate !== '';
-    if (step === 'config') return agentName.length > 0 && !nameError && !portError && !memoryError;
+    if (step === 'config') return agentName.length > 0 && !nameError && !portError && !memoryError && !memoryLimitPolicyError(openclawVersion, memoryLimitMb);
     return false;
   };
 
@@ -330,6 +332,8 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             <MemoryLimitPicker
               value={memoryLimitMb}
               dockerTotalMb={dockerTotalMb}
+              openclawVersion={openclawVersion}
+              enforceVersionFloor
               onChange={(mb, error) => { setMemoryLimitMb(mb); setMemoryError(error); }}
             />
           </div>

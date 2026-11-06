@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Accordion, Badge, Button, ConfirmModal, Input, Modal } from '../components/ui';
 import { backupWasDeleted, isResolvedFailure, offersRollback, offersRollbackAnyway, showsRedFailure } from '@/lib/agent-update-resolution';
 import { SkeletonLines } from '../components/Skeleton';
+import { needsInferenceAccountAdoptionNotice } from '@/lib/control-ui-navigation';
 
 type UpdateStatus =
   | 'pending' | 'backing_up' | 'migrating' | 'verifying' | 'done'
@@ -43,6 +44,7 @@ interface UpdateView {
   resolution: string | null;
   /** The pre-update backup still exists (checked only while a rollback could be offered); null = unknown. */
   backupAvailable: boolean | null;
+  cronAccountAdoption?: { note: string } | null;
 }
 
 interface HistoryEntry {
@@ -268,6 +270,7 @@ export default function UpdateSection({
             {update.verification ? ` · ${update.verification.sessions} session(s) checked` : ''}
             {update.backupFile ? ` · pre-update backup ${update.backupFile}` : ''}
           </div>
+          {update.cronAccountAdoption && <div style={metaStyle}>{update.cronAccountAdoption.note}</div>}
         </div>
       )}
 
@@ -394,7 +397,13 @@ export default function UpdateSection({
         message={
           'The agent goes offline, its volume is backed up while stopped, and it starts again on the new version, ' +
           'which migrates its data. The migration cannot be undone in place: going back restores this backup, ' +
-          'and anything the agent does after the update is lost.'
+          'and anything the agent does after the update is lost.' +
+          (needsInferenceAccountAdoptionNotice(candidate?.fromVersion, candidate?.toVersion)
+            ? '\n\nWith exactly one connected ChatGPT/Codex account, Rev4a associates affected cron jobs with it and preserves model inheritance. ' +
+              'With zero or several accounts, or if adoption fails, legacy LLM automations can require explicit account adoption. ' +
+              'Subscriptions shows account references. In the automation settings in OpenClaw, select a model/account reference and save. ' +
+              'Choose Default and save again when the job should keep following the agent model. Verify a run before resuming a paused job.'
+            : '')
         }
         confirmLabel="Update"
         cancelLabel="Cancel"

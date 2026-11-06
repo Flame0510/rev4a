@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-06
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -656,3 +656,65 @@ overrides file stays limited to genuine divergence.
 ## Spend and loop alarms
 
 The daemon evaluates four alarm rules after each costs pass from the proxy metering (`proxy_usage_hourly`), the vendor balance (`vendor_balance`) and the session copy (`agent_sessions`): a session near its model's context window, a failing retry loop, a day of spend out of proportion, and money leaving a USD provider account outside Rev4a. Alarms only. Rules, thresholds (`REV4A_SPEND_*`), snooze and delivery are in [REV4A.md](../REV4A.md#spend-and-loop-alarms). The proxy leaves a `proxy-metering-gap` marker next to `costs.db` when it pauses its metering (`markMeteringGap` in `lib/proxy-usage.js`), so a gap is never read as zero.
+
+## Automation account adoption on OpenClaw 2026.10.10
+
+Legacy LLM automations using stored inference accounts can report `Automation has no recorded
+inference account.` after the evaluated 2026.9.3/2026.9.9 upgrade. The Update confirmation explains
+this step; the Crons detail view recognizes that exact latest-run error and opens the native
+automation settings. Command automations do not need an inference account.
+
+Model inheritance and account authority are separate. A job can follow the agent model and its
+configured fallbacks while retaining its selected account. A compatible fallback uses that account;
+changing an interactive default does not authorize another account or billing route.
+
+After a successful 9.x -> 2026.10.10 Update, Rev4a applies the owner-selected migration policy:
+exactly one connected ChatGPT/Codex OAuth profile permits best-effort association of affected
+cron jobs through native `cron.update` model/profile selection. A second native update restores
+the previous model: Default jobs inherit the primary and fallbacks, and explicit models remain
+explicit. Existing bindings and native-runtime jobs are skipped. The Agents result records counts
+and failures. Before selecting the temporary model, Rev4a durably records the job's original model
+(Default/NULL, empty or explicit), temporary pin and account reference in its own DB. An unfinished
+record is reconciled before an already-bound job is treated as complete. Lost native responses
+therefore remain repairable across passes and restarts; startup and 60-second background retries
+restore recorded pins without adopting new jobs. Each repair re-reads the account/model and uses
+a fresh `expectedConfigRevision`; operator changes are preserved. Only confirmed restoration marks
+the journal finished. Journals are keyed by agent container, update ID and job ID; a rollback
+followed by re-upgrade gets a new journal and adopts restored unbound jobs again. OpenClaw
+10.10's `captureCronUpdatedInferenceBinding` does not create a new binding for CLI execution.
+A lost-response pin on that route is reconciled from the exact journaled temporary model with
+a fresh revision, even without a binding; a different bound account or operator model is preserved.
+A changed connected-account count does not prevent a recorded pin repair.
+Each new Update supersedes all unfinished earlier journals of that agent in the transaction that
+claims the update. Adoption runs under that claim. Background repair considers only the latest
+update's journal and takes an exclusive lifecycle claim; if another operation (including a cold
+backup) owns the agent it skips the pass and retries later. Startup clears stale repair claims
+without starting their containers. Superseded journals are never reconciled.
+The Agents result counts **associated** only after the saved `inferenceBinding` is verified for
+the intended account. Only a route established before mutation by OpenClaw's CLI-runtime resolver
+reports **no binding needed (model left/restored)** without a binding and increments
+`noBindingNeeded`, preserving Default or the original explicit model. An absent binding and an
+unchanged model on other routes do not prove success: the journal remains pending and selection
+is retried under a fresh revision. Rejected retries count as failed, never repaired.
+No schedule, delivery account or enabled state changes. Zero/multiple accounts
+remain unchanged. Read-only metadata checks use `job_json.inferenceBinding` because OpenClaw
+removes that field from public cron responses. Mutations always use the supported RPC, with
+`expectedConfigRevision`; Rev4a writes only its own journal, never the native OpenClaw DB. The 10.10 package evidence is
+`docs/automation/cron-jobs/payloads.md` (Inference account continuity), `docs/cli/cron.md`
+(`--clear-model`), `cron-lew_v2Zj.mjs` (account capture), and `job-mutations.worker-fr12aCYD.mjs`
+(binding preservation when clearing the model).
+
+When there are zero/multiple accounts or adoption failed:
+
+1. Pause the automation in OpenClaw.
+2. On Rev4a's Subscriptions page, find the intended account reference in that agent's connected row.
+   Every ChatGPT OAuth profile is listed; choose deliberately when automatic single-account adoption did not apply.
+3. In the native automation settings, choose Custom model, enter
+   `<provider>/<model>@<profile-id>` with the intended model and account reference, then save.
+4. To follow the agent model, choose Default and save again. To retain an explicit override,
+   select its plain model again instead. Removing the temporary qualifier retains the account.
+5. Verify a run, then resume only if the job was previously active.
+
+The native delivery Account ID belongs to the channel. Inference adoption uses the model/account
+reference above. If a save fails, keep the job paused and inspect the native error. A reported
+failure to restore a temporary model override also needs review in the native settings.

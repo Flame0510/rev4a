@@ -31,8 +31,7 @@ export function releaseMemoryLimit(agentId: string): void {
   memoryLimitClaims.delete(agentId);
 }
 
-/** `ignoreLogin`: for the login's own start, whose placeholder job would otherwise count as busy. */
-export async function agentBusyReason(agentId: string, opts?: { ignoreLogin?: boolean }): Promise<string | null> {
+function currentBusyReason(agentId: string, opts?: { ignoreLogin?: boolean }): string | null {
   if (memoryLimitClaims.has(agentId)) return 'A memory limit change for this agent is being applied';
   if (isUpdateActive(agentId)) return 'An update of this agent is running';
   if (isRecreateActive(agentId)) return 'A recreate of this agent is running';
@@ -41,7 +40,15 @@ export async function agentBusyReason(agentId: string, opts?: { ignoreLogin?: bo
   if (!opts?.ignoreLogin && isLoginActive(agentId)) return 'A subscription login for this agent is running';
   const sub = actionBusyReason(agentId);
   if (sub) return sub;
-  if (await isColdBackupRunning(agentId)) return 'A backup of this agent is running';
   return null;
+}
+
+/** `ignoreLogin`: for the login's own start, whose placeholder job would otherwise count as busy. */
+export async function agentBusyReason(agentId: string, opts?: { ignoreLogin?: boolean }): Promise<string | null> {
+  const before = currentBusyReason(agentId, opts);
+  if (before) return before;
+  if (await isColdBackupRunning(agentId)) return 'A backup of this agent is running';
+  // A lifecycle job or sign-in may have claimed this agent while Docker answered.
+  return currentBusyReason(agentId, opts);
 }
 

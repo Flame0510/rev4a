@@ -22,6 +22,7 @@ import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
 import { agentVolumeName, isEmulated, readyTimeoutMs } from '@/lib/agent-volumes';
 import { volumeExists, removeVolume, invalidateVolumesCache } from '@/lib/agent-volumes-server';
 import { dockerGet } from '@/lib/agent-volumes-server';
+import { acquireAgentResourcePreflight, AgentResourceRefusedError } from '@/lib/agent-resource-preflight';
 
 
 
@@ -81,6 +82,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // Held from reading the token to the end of `docker run`, so a token save cannot miss the new
   // container (lib/agent-token-lock.ts). Released on every exit.
   let releaseTokenLock: () => void = () => {};
+  let releaseResources: () => void = () => {};
   // The token read under the lock (can differ from createToken if it was saved meanwhile).
   let laterToken = '';
   // Set once `docker run` is attempted. From then on any failure removes the container and, when this
@@ -207,6 +209,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     const image = localImageRef(newestLocal);
+    releaseResources = await acquireAgentResourcePreflight({
+      version: newestLocal, operation: 'create', targetAgentId: containerName, limitMb: memoryLimitMb,
+    });
     const network = getNetwork();
 
     // Read agents token for new containers
@@ -460,10 +465,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     return NextResponse.json(
       { success: false, error: redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) + removed },
-      { status: 500 },
+      { status: e instanceof AgentResourceRefusedError ? 409 : 500 },
     );
   } finally {
     releaseTokenLock();
+    releaseResources();
   }
 }
 

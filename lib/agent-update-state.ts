@@ -7,7 +7,9 @@
  */
 import { createJobState } from '@/lib/agent-job-state';
 import { openDb } from '@/lib/db';
+import { supersedeCronModelUpdates } from '@/lib/cron-account-adoption-state';
 import { clearStaleSlowStartNote, markResolvedSql } from '@/lib/agent-update-resolution';
+import { recordCronRepairAuditSql, type CronRepairAudit } from '@/lib/agent-update-cron';
 
 export type UpdateStatus =
   | 'pending'
@@ -40,27 +42,38 @@ export interface AgentUpdateRow {
   /** Set when a failed or interrupted update was later proved fine (lib/agent-update-resolution.ts). */
   resolved_at?: number | null;
   resolution?: string | null;
+  /** Separate retirement audit; the original verification and failure remain unchanged. */
+  cron_repair_json?: string | null;
+  cron_account_json?: string | null;
 }
 
 const FINAL: readonly UpdateStatus[] = ['done', 'failed', 'interrupted', 'rolled_back', 'rollback_failed'];
 
-const state = createJobState({
+const spec = {
   table: 'agent_upgrades',
   initialStatus: 'pending',
   activeStatuses: ACTIVE_STATUSES,
   finalStatuses: FINAL,
   insertColumns: ['from_version', 'to_version'],
-  writableColumns: ['backup_file', 'baseline_json', 'verify_json', 'resolved_at', 'resolution'],
-});
+  writableColumns: ['backup_file', 'baseline_json', 'verify_json', 'resolved_at', 'resolution', 'cron_account_json'],
+};
+const state = createJobState(spec);
 
-type Writable = Partial<Pick<AgentUpdateRow, 'status' | 'backup_file' | 'baseline_json' | 'verify_json' | 'error' | 'resolved_at' | 'resolution'>>;
+type Writable = Partial<Pick<AgentUpdateRow, 'status' | 'backup_file' | 'baseline_json' | 'verify_json' | 'error' | 'resolved_at' | 'resolution' | 'cron_account_json'>>;
 
-export function insertUpdate(agentId: string, fromVersion: string | null, toVersion: string): number {
-  return state.insert(agentId, fromVersion, toVersion);
+export function insertUpdate(agentId: string, fromVersion: string | null, toVersion: string, container: string): number {
+  return createJobState({ ...spec,
+    afterInsert: (db, agentId, id) => supersedeCronModelUpdates(container, id, agentId, db),
+  }).insert(agentId, fromVersion, toVersion);
 }
 
 export function updateRow(id: number, fields: Writable): void {
   state.update(id, fields);
+}
+
+/** Reclaim this exact completed update after asynchronous rollback checks. */
+export function claimRollbackUpdate(row: AgentUpdateRow): void {
+  state.reactivate(row.id, row.status, { status: 'rolling_back', error: null, resolved_at: null, resolution: null });
 }
 
 export function latestUpdate(agentId: string): AgentUpdateRow | null {
@@ -68,7 +81,8 @@ export function latestUpdate(agentId: string): AgentUpdateRow | null {
 }
 
 export function isUpdateActive(agentId: string): boolean {
-  return state.isActive(agentId);
+  const row = state.latest<AgentUpdateRow & { cron_model_repair_claim?: number | null }>(agentId);
+  return !!row && (ACTIVE_STATUSES.includes(row.status) || row.cron_model_repair_claim != null);
 }
 
 /** AGENT_IDs with an update in an active status. */
@@ -82,6 +96,10 @@ export function activeUpdateAgentIds(): Set<string> {
  * between Rollback and a new Update.
  */
 export function markInterruptedUpdates(): number {
+  // Like active lifecycle jobs, repair work cannot survive a server restart.
+  const db = openDb(false);
+  try { db.prepare('UPDATE agent_upgrades SET cron_model_repair_claim = NULL WHERE cron_model_repair_claim IS NOT NULL').run(); }
+  finally { db.close(); }
   const changed = state.markInterrupted();
   if (changed > 0) {
     // Only a note fix: it must never stop recoverInterruptedUpdates from restarting stopped containers.
@@ -113,6 +131,16 @@ export function markUpdateResolved(id: number, resolution: string, verifyJson: s
   const db = openDb(false);
   try {
     return markResolvedSql(db, id, resolution, verifyJson, Date.now());
+  } finally {
+    db.close();
+  }
+}
+
+/** Store a narrowly scoped cron-retirement audit without replacing original failure evidence. */
+export function recordCronRepairAudit(row: AgentUpdateRow, audit: CronRepairAudit): boolean {
+  const db = openDb(false);
+  try {
+    return recordCronRepairAuditSql(db, row, audit);
   } finally {
     db.close();
   }

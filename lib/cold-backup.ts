@@ -18,6 +18,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { dockerFetch } from '@/lib/docker-socket';
+import { dockerRequestJson } from '@/lib/docker-socket-path';
 import { isValidAgentId } from '@/lib/container';
 import { runDocker } from '@/lib/agent-images';
 import { BACKUPS_DIR, ensureBackupsDir } from '@/lib/rev4a-paths';
@@ -230,9 +231,10 @@ function watch(agentId: string): void {
 }
 
 interface ContainerInspect {
+  Id?: string;
   Name?: string;
   Image?: string;
-  State?: { Running?: boolean };
+  State?: { Running?: boolean; ExitCode?: number };
 }
 
 async function agentContainerName(agentId: string): Promise<string | null> {
@@ -257,7 +259,11 @@ function timestamp(): string {
 export async function startColdBackup(
   agentId: string,
   /** `leaveStopped`: do not start the agent afterwards — the Update action recreates it next. */
-  opts: { kind: ColdBackupKind; label?: string; leaveStopped?: boolean },
+  opts: {
+    kind: ColdBackupKind; label?: string; leaveStopped?: boolean;
+    /** Observe the existing backup stop; only Recreate needs its lease warning. */
+    onStopOutcome?: (outcome: 'stopped' | 'killed' | 'unconfirmed') => void;
+  },
 ): Promise<{ file: string }> {
   if (!isValidAgentId(agentId)) throw new Error('Invalid agent id');
   if (await inspectHelper(agentId)) {
@@ -282,8 +288,23 @@ export async function startColdBackup(
 
   const wasRunning = container.State?.Running === true;
   if (wasRunning) {
+    let killed = false;
     await runDocker(['stop', '-t', '30', name], { timeoutMs: 45_000 })
-      .catch(() => runDocker(['kill', name], { timeoutMs: 15_000 }));
+      .catch(async () => { await runDocker(['kill', name], { timeoutMs: 15_000 }); killed = true; });
+    if (opts.onStopOutcome) {
+      // Observation only: keep the backup's shutdown policy and other callers intact.
+      const after = killed ? null : await dockerRequestJson<ContainerInspect>(
+        'GET', `/containers/${encodeURIComponent(container.Id ?? name)}/json`, 5_000, AbortSignal.timeout(5_000),
+      ).catch(() => null);
+      // A failing observer must never interrupt the backup: the agent is already stopped here and
+      // only the code below restarts it.
+      try {
+        opts.onStopOutcome(killed || after?.State?.ExitCode === 137 ? 'killed'
+          : after?.State?.Running === false ? 'stopped' : 'unconfirmed');
+      } catch (e) {
+        console.warn(`[cold-backup] stop outcome observer failed: ${String((e as Error | null)?.message ?? e)}`);
+      }
+    }
   }
 
   ensureBackupsDir();

@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-07
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -441,7 +441,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 
 ### Memory limit per agent
 
-**The picker.** The wizard, the agent panel's Edit form and the Configuration page all use one component, `MemoryLimitPicker`: *No limit*, 1.5, 2, 3, 4, 6, 8, 12 or 16 GB (1 GB = 1024 MB; sizes above Docker's total memory are not offered when it is known), or *Custom…*, any size in GB (for example `2.5` or `2,5`, rounded to whole MB; from 0.25 to 1024 GB) shown with its exact value in MB (`= 2560 MB`). Custom is not capped by Docker's total memory: only the presets are hidden. Opened on an existing limit it selects the matching size, or Custom with that limit in GB. The API still takes MB (minimum 256 MB). Below 2 GB a warning appears (it does not block): *OpenClaw needs about 1 GB just to start, and more while it works. Below 2 GB the agent may be killed while it starts or during a task.* This is measured, not a guess: an agent created with a 1000 MB limit was killed by the kernel while it was starting, and an idle OpenClaw 2026.9.3 sits at about 710-750 MB. When a limit is exceeded, Docker kills the process that uses the most memory (a memory hog inside the container was killed alone and the agent stayed up), and the agent restarts if it was the main process.
+**The picker.** The wizard, the agent panel's Edit form and the Configuration page all use one component, `MemoryLimitPicker`: *No limit*, 1.5, 2, 3, 4, 6, 8, 12 or 16 GB (1 GB = 1024 MB; sizes above Docker's total memory are not offered when it is known), or *Custom…*, any size in GB (for example `2.5` or `2,5`, rounded to whole MB; from 0.25 to 1024 GB) shown with its exact value in MB (`= 2560 MB`). Custom is not capped by Docker's total memory: only the presets are hidden. Opened on an existing limit it selects the matching size, or Custom with that limit in GB. The API still takes MB (minimum 256 MB). Advice is version-specific: 9.3/9.9 retain a nonblocking 2 GB warning; exact 10.10 Create/Update require a finite cap of at least 4 GB after the bounded memory failures. Editing an existing cap remains an explicit operator choice, with the runtime advice visible. Unknown versions receive general planning advice. This is measured guidance, not a guarantee for every workload. When a limit is exceeded, Docker kills the process that uses the most memory (a memory hog inside the container was killed alone and the agent stayed up), and the agent restarts if it was the main process.
 
 A memory limit is **always the operator's choice**: no agent gets one by itself, an update touches no existing agent, and the default is none. A Docker memory limit kills, it does not slow down: a process over the limit is killed by the kernel (and the agent restarts if it was the main one), so leave it empty for heavy workloads (headless browsers, builds) unless you know the figure.
 
@@ -507,9 +507,27 @@ a re-created agent keeps the workspace the user edited.
 | **Update** | the agent panel's OPENCLAW VERSION section, when a newer supported version is downloaded: count transcript events and cron jobs → cold pre-update backup → recreate on the new version (its data migrates one way) → wait for that version (a slow start keeps being waited for in the background, up to 40 minutes in all) → check nothing went missing. Unused agent images are removed afterwards. A failed or interrupted update that stopped before its verification (a slow start, or Rev4a restarting mid-update — never a recorded verification failure, a version mismatch or an interrupted rollback) and whose agent is later proved fine (target version, Gateway ready, baseline verification passes) is shown muted with its resolution and without Roll back; **Update history** (collapsed) lists the last 20 attempts. Before the resolution is stamped Rev4a re-applies its own config and provider block to the agent (best-effort; a failure is logged and named in the resolution text). A resolved failure of the latest update keeps a secondary **Roll back anyway…** button: its confirmation states the backup date and age and the version it returns to, says that everything the agent did since is lost, and stays disabled until the agent's name is typed. When the pre-update backup has been deleted from the Backup section, no Roll back is offered: a muted line says going back is no longer possible, and deleting that very backup first warns that it is the one the Roll back needs |
 | **Rollback** | after an update: stop → restore the pre-update backup → recreate on the previous version. Everything since the backup is lost, including a recreate or restore done after a failed update: the panel names that job and its date next to the failure and in the confirmation. This is the only way back: 2026.9.9 moves the OpenClaw state database from schema 16 to 19 and 2026.9.3 refuses to start on that volume (verified), so recreating on the older version without restoring the backup does not work |
 | **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
-| **Recreate** | auto-backup first (aborts if it fails) → rebuild on the agent's own OpenClaw version (`openclaw-agent-base:<version>`, tagged or pulled when missing) keeping the volume. Never changes version |
+| **Recreate** | auto-backup first (aborts if it fails) → rebuild on the agent's own OpenClaw version (`openclaw-agent-base:<version>`, tagged or pulled when missing) keeping the volume. The cold backup's 30 s stop is the graceful stop; exit 137 or kill fallback keeps a lease warning in the job message, including after failure/interruption and reload. Never changes version |
 | **Restart** | `docker restart`, nothing else |
 | **Delete** | **destructive**: removes container **+ volume + all backups**. Cannot be undone |
+
+**Release note (2026-11-07).** Edit, removal of a memory limit and Recreate allow a
+running Gateway up to 60 seconds to shut down before removing its original container
+by ID (ownership is verified). Shutdown/removal is bounded to 90 seconds; a forced
+fallback is logged and retained in the job's message (`error`, even on success), with
+an owner-lease warning. Other lifecycle paths retain their previous behavior. Existing
+leases are never deleted by Rev4a. Config inspection masks secret-named keys and
+credential locations: channel accounts/service accounts, provider keys and all headers,
+all environment values, skill API keys, credentials and auth profiles, including arrays.
+Invalid JSON or a non-object root returns an error without the raw content. After
+Connect, loading accounts are retried every 5 seconds for up to 3 minutes, including an
+in-flight request/body deadline. Available models remain usable while another account
+loads; after the deadline the page explains how to retry.
+
+These changes do not migrate or rewrite existing databases, config, environment files,
+provider keys or agent volumes. There is no startup scan or added startup delay. Older
+agents use the same Docker stop signal and remain manageable. Rolling Rev4a back can
+read the same data; it restores the earlier shutdown and config-inspection behaviour.
 
 Version migrations after an image update are handled by the entrypoint (see
 [Entrypoint behavior](#agent-templates)), not by `openclaw update` — updating an
@@ -776,3 +794,89 @@ curl -b /tmp/cookies.txt -X PUT http://localhost:3740/api/workspace \
 ├── next.config.mjs
 └── package.json
 ```
+
+### OpenClaw migration safeguards
+Create and Update check the actual target version and Docker headroom before changing an agent.
+For OpenClaw 2026.10.10, a selected finite cap below 4 GB is refused. Basic checks passed at 3 GB, but repeated CLI configuration/model checks
+exhausted that cap; the remaining case passed at 4 GB. Larger workloads may need more. No limit remains unlimited, and the
+Configuration default is unchanged. Stop other agents or increase Docker memory when admission
+reports insufficient capacity; Rev4a never changes caps automatically.
+
+Update distinguishes the evaluated upstream-owned retired cron from lost user jobs. Old cron-only
+failures can be audited from their exact pre-update archive without overwriting the original failure.
+After a successful 9.x to 2026.10.10 Update, Rev4a associates affected ChatGPT/Codex cron jobs
+with the account only when exactly one OAuth profile is connected. This migration policy is
+explicit: zero or multiple profiles leave jobs unchanged and retain the selection guidance.
+Default jobs keep model/fallback inheritance; explicit models and existing account associations
+are preserved. The original model is journaled in Rev4a before native selection. Lost responses
+leave unfinished intent that later passes and startup/60-second background retries reconcile with
+revision guards, including journaled pins on CLI routes that did not create an inference binding.
+The journal is per agent, update ID and job ID, so rollback followed by re-upgrade adopts again.
+Starting an Update atomically supersedes earlier unfinished journals. Adoption uses the Update's
+lifecycle claim; background repair takes that agent's claim and only repairs the latest update's
+journal, skipping busy agents until a later retry. A job is complete only after its original model
+is restored. The Agents update result counts association only after verifying the persisted binding
+to the intended account. Only routes known before mutation to use CLI execution may report
+**no binding needed (model left/restored)** without a binding; failed or unverified selections
+remain pending for retry and are not reported as repaired.
+
+For the evaluated 9.3/9.9 to 10.10 upgrade, the confirmation explains legacy automation account
+adoption. Subscriptions lists read-only account references for every connected ChatGPT OAuth
+profile. A Crons run with the exact missing-account refusal links to its native automation settings
+and explains the explicit selection, optional return to Default, and verification before resuming.
+See [Automation account adoption](dev/GATEWAY.md#automation-account-adoption-on-openclaw-20261010).
+
+Restore first checks a pinned copy of the archive, saves a cold recovery copy, and only reports
+completion after the restored Gateway is ready. Recovery archives referenced by retained restore
+history survive automatic pruning. Partial/interrupted jobs require review and retain recovery
+information; they are never automatically extracted over newer work. The BACKUP panel shows the
+phase, retained failure and recovery filename. Older completed restores without Gateway evidence
+carry an explicit notice. Versioned archives are checked against the target's core schema ceilings.
+Unknown targets, unrecognized metadata-free schemas, corrupt/newer formats and source archives still
+in the legacy Docker volume refuse safely. Check temporary disk requirements in the API reference
+before a large restore.
+
+Extraction uses a persisted, uniquely named and labelled helper. On failure or timeout Rev4a
+removes it and independently confirms absence before freeing the volume or deleting its pinned
+source. The BACKUP panel shows `unresolved` cleanup and keeps lifecycle actions locked if Docker
+cannot confirm removal or the direct restore could not confirm an agent stop. Failure messages
+report stopped, still running or unknown agent state accurately.
+
+On Rev4a startup, an active restore becomes interrupted for review. An extraction interrupted by
+the restart becomes `unresolved`, names its helper and keeps its reservation and pinned source.
+Startup makes no Docker cleanup calls; there is no periodic restore recovery scan, and historical
+restore rows are untouched.
+
+In Agents > Backups, **Resolve restore** opens a confirmation for an unresolved restore. On confirm,
+Rev4a stops and removes only containers with that restore's agent and row-ID labels, independently
+confirms absence, then releases the reservation and records the outcome. The button shows
+**Resolving…** and disables sibling actions during the request. A cold-backup helper has no restore
+label and is never selected; the agent container is never stopped or removed by resolution. If no
+labelled helper remains, resolution still releases the reservation. If Docker is unavailable or
+cleanup is unconfirmed, the state stays unresolved: restore Docker access and retry the button.
+Resolution does not establish data integrity: review the current volume before starting the agent
+or restoring its recovery backup. Do not downgrade Rev4a while cleanup is unresolved: older panels
+do not understand this status.
+
+A cron-retirement audit deferred because the Gateway was unavailable at startup is retried on
+later Agents panel reads, at most once every five minutes, using the same archived evidence and
+concurrency guards. The original failure diagnosis remains available.
+
+OC-10 behavior changes: restore cleanup after a server restart is an explicit operator
+action, restricted to restore-labelled helpers. There is no historical-volume cleanup scan.
+Cron adoption journals are scoped to each update and repair pins even without an inference binding.
+Only the latest update owns repair intent; a new Update supersedes older unfinished journals.
+Repair and lifecycle operations are serialized, and no-binding routes are reported separately from
+verified association. Default, empty and explicit model choices remain intact.
+Repair skips agents owned by cold backups or other operations. A stale repair reservation is
+cleared at startup without starting an intentionally stopped agent or disturbing a cold backup.
+No-binding success requires a CLI route known before mutation; rejected or unverified selections
+remain failed and retry later.
+Existing configuration, credentials, agent volumes and defaults are not rewritten. New DB storage
+is additive and idempotent; evaluation-build journals are copied once into legacy update scope 0
+without deleting their originals. A transactional migration marker prevents writes on later opens,
+including after a partial copy. Unowned legacy scope 0 is retained for audit/manual review rather
+than background mutation. The first startup only marks active restores, with no Docker scan or
+archive extraction; older agents retain their normal lifecycle controls. Previous releases can
+read the original data and ignore the additive fields/tables, but cannot finish pending repairs or
+honor unresolved reservations: finish cleanup/model repair before downgrading.

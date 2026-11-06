@@ -3,16 +3,15 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/apiFetch';
 import { MEMORY_PRESETS_MB, formatLimit, mbToGbText, parseGbInput } from '@/lib/agent-memory-limit';
+import { memoryLimitPolicyError, resourcePolicyFor } from '@/lib/agent-resource-policy';
 import { Input } from './Input';
 import { Select } from './Select';
 
-/** Below this the agent may be killed while it starts or works (measured on OpenClaw 2026.9.3). */
-const COMFORTABLE_MB = 2048;
 const NONE = 'none';
 const CUSTOM = 'custom';
 
 export const MEMORY_LIMIT_HELP = 'If the agent goes over the limit, Docker kills the process that uses the most memory and the agent restarts if needed.';
-export const MEMORY_LIMIT_WARNING = 'OpenClaw needs about 1 GB just to start, and more while it works. Below 2 GB the agent may be killed while it starts or during a task.';
+export const MEMORY_LIMIT_WARNING = resourcePolicyFor(null).advice;
 
 interface MemoryLimitPickerProps {
   /** The limit in MB the picker opens with; null for no limit. Read once, when the picker mounts. */
@@ -22,6 +21,10 @@ interface MemoryLimitPickerProps {
   label?: string;
   /** Docker's total memory in MB, when known: presets above it are not offered. */
   dockerTotalMb?: number | null;
+  /** Actual target/runtime release; no version means general advice, never a new default. */
+  openclawVersion?: string | null;
+  /** Create validates the tested finite-limit floor. Editing an existing cap remains an explicit choice. */
+  enforceVersionFloor?: boolean;
   disabled?: boolean;
   /** Extra lines under the shared helper text. */
   children?: React.ReactNode;
@@ -52,7 +55,7 @@ export function useDockerTotalMb(): number | null {
  * in GB. The value it reports stays in MB, as the API takes it. Opened with an existing
  * limit it selects the matching preset, or Custom with that limit in GB.
  */
-export function MemoryLimitPicker({ value, onChange, label = 'Memory limit', dockerTotalMb = null, disabled, children }: MemoryLimitPickerProps) {
+export function MemoryLimitPicker({ value, onChange, label = 'Memory limit', dockerTotalMb = null, openclawVersion = null, enforceVersionFloor = false, disabled, children }: MemoryLimitPickerProps) {
   const [choice, setChoice] = useState<string>(() => {
     if (value === null) return NONE;
     return MEMORY_PRESETS_MB.includes(value) ? String(value) : CUSTOM;
@@ -64,6 +67,8 @@ export function MemoryLimitPicker({ value, onChange, label = 'Memory limit', doc
   };
   const custom = choice === CUSTOM ? customResult(gbText) : null;
   const mb: number | null = choice === NONE ? null : custom ? custom.mb : Number(choice);
+  const policy = resourcePolicyFor(openclawVersion);
+  const policyError = enforceVersionFloor ? memoryLimitPolicyError(openclawVersion, mb) : '';
 
   const presets = MEMORY_PRESETS_MB.filter((p) => dockerTotalMb === null || p <= dockerTotalMb || p === value);
   const options = [
@@ -94,7 +99,7 @@ export function MemoryLimitPicker({ value, onChange, label = 'Memory limit', doc
 
   return (
     <div>
-      <Select label={label} value={choice} options={options} disabled={disabled} onChange={(e) => onSelect(e.target.value)} />
+      <Select label={label} value={choice} options={options} disabled={disabled} error={policyError} onChange={(e) => onSelect(e.target.value)} />
       {custom && (
         <div style={{ marginTop: 8 }}>
           <Input
@@ -111,10 +116,8 @@ export function MemoryLimitPicker({ value, onChange, label = 'Memory limit', doc
           {!gbText.trim() && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{custom.error}</div>}
         </div>
       )}
-      {mb !== null && mb < COMFORTABLE_MB && (
-        <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 6 }}>{MEMORY_LIMIT_WARNING}</div>
-      )}
-      <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>{MEMORY_LIMIT_HELP}</div>
+      <div style={{ fontSize: 11, color: mb !== null && mb < policy.reserveMb ? 'var(--yellow)' : 'var(--text-dim)', marginTop: 6 }}>{policy.advice}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>{MEMORY_LIMIT_HELP} No limit still needs enough free Docker memory.</div>
       {children}
     </div>
   );

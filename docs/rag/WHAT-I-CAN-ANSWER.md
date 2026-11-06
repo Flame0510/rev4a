@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-06
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -135,3 +135,32 @@ When you ask a question, PULSE knows which page you're currently on (e.g. `/agen
 1. **Open the relevant page first.** PULSE gives better guidance when you're on the Agents page asking about agents, or on the Gateway page asking about model routing.
 2. **Be specific.** "How do I add a fallback model?" works better than "help me with models."
 3. **Ask follow-ups.** PULSE remembers the conversation within the same chat session.
+
+## OpenClaw migration safety
+- "Why does Create or Update refuse my memory limit?" — Exact OpenClaw 2026.10.10 requires at least
+  a 4 GB finite cap for these operations: 2 GB failed compatibility checks, and repeated CLI
+  configuration/model checks exhausted 3 GB. This is bounded guidance, not a universal minimum. No limit stays unlimited; host capacity is checked separately.
+  Existing caps/defaults are never raised or removed automatically.
+- "Why did a completed old restore get a warning?" — Older restore jobs did not record actual Gateway
+  readiness. The warning asks you to check the current agent; it does not prove historical data loss.
+- "How can I recover a failed restore?" — Read the BACKUP panel's error and recovery filename. New
+  restores save current state before replacing data and require a ready Gateway before completion.
+  An interrupted/partial restore is left for review; it never automatically extracts over newer work.
+  Unresolved helper cleanup keeps the volume reserved and the source pinned. Use Agents > Backups >
+  **Resolve restore**, then confirm: only helpers labelled for that agent and restore are removed.
+  The agent container and cold-backup helpers are excluded. No labelled helper remaining also
+  permits resolution, even if the agent container is absent. Docker failures retain the reservation
+  for an explicit retry. Startup marks active restores for review but performs no cleanup; there
+  is no periodic restore scan, and historical rows remain unchanged. Resolution does not establish
+  data integrity or restart the agent. Direct restore failures report stopped, still running or
+  unknown agent state.
+- "Can a cron use my primary model and fallbacks?" — Model selection and inference-account ownership
+  are separate. A configured chain does not authorize a different account. For a successful 9.x -> 10.10 Update, the migration policy associates affected jobs only with
+  exactly one connected ChatGPT/Codex account, retaining Default inheritance or explicit models.
+  Zero/multiple accounts require explicit selection. The Agents result reports verified association,
+  failures and **no binding needed (model left/restored)** for routes where OpenClaw creates no
+  inference binding; restoring the model alone never counts as account association.
+  The original model is saved before selection, so a lost response can be repaired on a later pass
+  or after restart without overwriting an operator's intervening model/account change.
+  Starting a newer Update supersedes unfinished earlier journals. Only the latest update's journal
+  can be repaired, under the agent's lifecycle claim; repair skips busy agents and retries later.

@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-06
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (events and the agents' sessions, below), `metrics.db` (machine and container metrics, see
@@ -114,7 +114,7 @@ CREATE TABLE agent_upgrades (
   from_version  TEXT,
   to_version    TEXT NOT NULL,
   backup_file   TEXT,            -- pre-update cold backup, a file in <data>/backups
-  baseline_json TEXT,            -- transcript events per session and cron job names before
+  baseline_json TEXT,            -- transcript counts, legacy cron names and versioned cron identities/ownership
   verify_json   TEXT,            -- the comparison after the update
   error         TEXT,
   started_at    INTEGER NOT NULL,
@@ -122,7 +122,10 @@ CREATE TABLE agent_upgrades (
   finished_at   INTEGER,
   resolved_at   INTEGER,         -- added after 1.21.1 (guarded ADD COLUMN): a failed or interrupted
                                  -- update later proved fine; status is never rewritten
-  resolution    TEXT             -- why, e.g. "verified on 2026.9.9 after a slow start"
+  resolution    TEXT,            -- why, e.g. "verified on 2026.9.9 after a slow start"
+  cron_repair_json TEXT,         -- separate retirement audit; original verification is preserved
+  cron_account_json TEXT,        -- best-effort account adoption result; NULL on old updates
+  cron_model_repair_claim INTEGER -- additive, nullable exclusive repair reservation
 );
 
 CREATE INDEX idx_agent_upgrades_agent ON agent_upgrades(agent_id, started_at);
@@ -137,6 +140,15 @@ status are marked `interrupted`. The newest rows of each agent are kept (job-his
 ready, it reports `to_version` and the stored `baseline_json` verification passes. The row's `status`,
 `error` and `finished_at` are not touched, so an older Rev4a reads the row as before (a failed update
 that was in fact fine). The write is guarded on `status IN ('failed','interrupted')` and `resolved_at IS NULL`, so a rollback starting meanwhile cannot be stamped. Both columns are added by `addMissingColumns`, safe to run twice.
+
+Cron-retirement repair is a separate path, not broader slow-start eligibility. `cron_repair_json`
+records a bounded ownership audit of the exact pre-update archive and current preservation checks.
+Only the evaluated 2026.9.3/2026.9.9 to 2026.10.10 retirement is eligible. A name-only baseline cannot
+prove ownership without the complete matching archived inventory. A successful audit sets resolution
+fields while retaining the original `status`, `error`, times, `baseline_json` and `verify_json`.
+Unavailable evidence remains unresolved. Guarded writes refuse a concurrent rollback, newer update
+or another active lifecycle operation; repeated identical audits write nothing. The new column is
+nullable and added idempotently, so an older Rev4a still reads the original failure.
 
 ### `agent_recreates` — agent recreates
 
@@ -169,12 +181,17 @@ are never pruned.
 CREATE TABLE agent_restores (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   agent_id    TEXT NOT NULL,
-  status      TEXT NOT NULL,   -- restoring, done, failed, interrupted
+  status      TEXT NOT NULL,   -- restoring, unresolved, done, failed, interrupted
   file        TEXT,            -- the archive being applied, a file in <data>/backups
   error       TEXT,
   started_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
-  finished_at INTEGER
+  finished_at INTEGER,
+  preflight_json TEXT,           -- archive hash, verified source/core schemas and target identity
+  recovery_file TEXT,            -- existing cold-backup filename; retained for recovery
+  phase TEXT,                   -- nullable on legacy rows; never invent a trusted old phase
+  helper_name TEXT,             -- unique labelled extraction container
+  source_directory TEXT         -- private pinned source retained until confirmed cleanup
 );
 
 CREATE INDEX idx_agent_restores_agent ON agent_restores(agent_id, started_at);
@@ -182,8 +199,70 @@ CREATE INDEX idx_agent_restores_agent ON agent_restores(agent_id, started_at);
 
 One row per restore attempt (`lib/agent-restore.ts`): the volume is replaced from the
 archive. Persisted for the same reason as a recreate (`GET /api/agents/[id]/restore`),
-and at startup an active row becomes `interrupted` with the container started again.
-Rows are never pruned.
+and survives a reload. Startup touches only rows still `restoring`: extraction becomes
+`unresolved`, with helper identity in the error, `finished_at = NULL` and the reservation kept;
+other phases become `interrupted` for review. Existing unresolved and historical rows are unchanged.
+There is no Docker scan at startup and no periodic restore recovery. Manual resolution removes
+only helpers selected by both restore labels. Confirmed absence records `interrupted` with phase
+`manually_resolved` and a completion timestamp; a Docker error keeps the unresolved reservation.
+Lifecycle maintenance retains the latest 20 rows per agent; recovery archives are protected
+while a retained restore row references them.
+
+Restore safety fields are added with guarded `ADD COLUMN`. Old rows retain their original status,
+error and timestamps, with NULL safety fields. Interrupted restores require review; startup never
+automatically re-extracts over newer work. Recovery files referenced by retained restore history
+are excluded from automatic backup pruning; explicit archive deletion remains an operator action.
+
+### Cron model journal per update
+
+```sql
+CREATE TABLE cron_account_adoptions_by_update (
+  container TEXT NOT NULL,
+  update_id INTEGER NOT NULL,
+  job_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  original_model TEXT,          -- NULL = Default; empty/explicit strings are preserved exactly
+  temporary_model TEXT NOT NULL,
+  finished_at INTEGER,
+  superseded_at INTEGER,       -- older unfinished intent retired by a newer Update
+  PRIMARY KEY (container, update_id, job_id)
+);
+CREATE INDEX idx_cron_account_adoptions_by_update_pending
+  ON cron_account_adoptions_by_update(container, update_id) WHERE finished_at IS NULL;
+```
+
+The table/index are created with `IF NOT EXISTS`. If an evaluation build's old
+`cron_account_adoptions` table exists, its rows are copied with `INSERT OR IGNORE` into update
+scope 0; the old table remains untouched. The copy and a `rev4a_schema_migrations` marker
+(`name = 'cron_account_adoptions_by_update'`) commit in one transaction. Later opens check the
+marker without attempting a write or scanning legacy rows, including with SQLite `query_only`.
+A half-copied file without the marker receives missing records without overwriting newer records.
+Scope 0 has no verified update owner and is retained for audit/manual review, not background repair.
+A completed journal for one update cannot suppress adoption after rollback and a later update.
+`superseded_at` is added with guarded `ADD COLUMN`. Starting an Update supersedes all earlier
+unfinished journals for its agent in the same transaction that inserts the update. It also sets
+`finished_at` so older readers cannot reconcile superseded intent.
+
+`lib/cron-account-adoption-state.ts` records the original model BEFORE native account selection.
+Insert-or-ignore preserves the first original within an update across ambiguous commits and
+restarts. Completion requires confirmed original-model restoration. Exact recorded pins on CLI
+routes can be repaired without an inference binding; a different bound account or operator model
+is preserved. Recovery uses supported revision-guarded RPCs; the journal contains no credential or
+native inference authority. Association requires a verified persisted binding to the intended
+account after saving. Only a CLI route established by OpenClaw's runtime resolver before
+mutation may report `noBindingNeeded` without a binding. An unchanged original model and
+absent binding leave selection unverified; recovery retries the journaled selection with a
+fresh revision, and a rejected retry stays unfinished and failed.
+Startup and 60-second retries read only the latest update's unfinished scope through the partial
+index and acquire its agent's exclusive lifecycle claim before reading/mutating native jobs.
+`agent_upgrades.cron_model_repair_claim` is a nullable additive reservation, checked by lifecycle
+insertion/reactivation transactions and the busy view. It leaves update results/timestamps intact,
+is released in `finally`, and is cleared at startup because no previous worker survives restart.
+Repair reservations are excluded from active update IDs and never cause a container restart.
+Repair uses the shared ownership check for cold backups and in-process operations before its
+transaction rechecks persisted lifecycle owners. Busy agents retry later; adoption uses the
+Update's existing claim. Older Rev4a versions ignore
+additive storage but cannot coordinate or finish pending repairs; finish repairs before downgrading.
 
 ### `agent_edits` — agent renames and port changes
 

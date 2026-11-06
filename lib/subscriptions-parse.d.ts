@@ -16,6 +16,15 @@ export interface AuthProfile {
   plan?: string | null;
 }
 
+/** Safe reference metadata only; this neither selects an account nor grants automation authority. */
+export interface SubscriptionProfileReference {
+  id: string;
+  email: string | null;
+  plan: string | null;
+  expiresAt: string | null;
+}
+export function subscriptionProfileReferences(profiles: unknown): SubscriptionProfileReference[];
+
 export interface SubscriptionModel {
   key: string;
   name: string;

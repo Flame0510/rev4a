@@ -7,6 +7,10 @@ import { CronJobsSkeleton, CronRunsSkeleton } from '../components/Skeleton';
 import { apiFetch } from '@/lib/apiFetch';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
+import Link from 'next/link';
+import { OpenControlUiButton } from '../agents/BrowserAccessSection';
+import { isControlUiAgentId, isMissingInferenceAccountError } from '@/lib/control-ui-navigation';
+import { isValidCronJobId } from '@/lib/cron-ids';
 
 
 interface CronSchedule { kind?: string; expr?: string; tz?: string; [k: string]: unknown }
@@ -21,6 +25,7 @@ interface CronJob {
   name?: string;
   description?: string;
   agentId?: string;
+  rev4aAgentId?: string;
   containerName?: string;
   /** The agent's display name (AGENT_NAME); null when the agent has none. */
   agentName?: string | null;
@@ -162,6 +167,11 @@ export default function CronsPage() {
 
   // Prevent stale responses overwriting the latest requested job's runs
   const latestRunRequest = useRef<string | null>(null);
+  const runAbortRef = useRef<AbortController | null>(null);
+  const latestRun = runs.reduce<CronRunEntry | null>((latest, run) =>
+    !latest || (run.ts ?? run.runAtMs ?? 0) > (latest.ts ?? latest.runAtMs ?? 0) ? run : latest, null);
+  const needsInferenceAccount = latestRun?.status === 'error'
+    && isMissingInferenceAccountError(latestRun.error ?? latestRun.diagnostics?.summary);
 
   async function toggleJob(job: CronJob) {
     const id = job.id;
@@ -241,6 +251,9 @@ export default function CronsPage() {
 
     const requestKey = `${cName}:${jobId}`;
     latestRunRequest.current = requestKey;
+    runAbortRef.current?.abort();
+    const controller = new AbortController();
+    runAbortRef.current = controller;
 
     let cancelled = false;
     setRunsLoading(true);
@@ -250,11 +263,13 @@ export default function CronsPage() {
     (async () => {
       try {
         const res = await apiFetch(
-          `/api/crons/runs?containerName=${encodeURIComponent(cName)}&jobId=${encodeURIComponent(jobId)}&limit=30`
+          `/api/crons/runs?containerName=${encodeURIComponent(cName)}&jobId=${encodeURIComponent(jobId)}&limit=30`,
+          { signal: controller.signal },
         );
         if (cancelled || latestRunRequest.current !== requestKey) return;
         if (res.ok) {
           const data = await res.json();
+          if (cancelled || controller.signal.aborted || latestRunRequest.current !== requestKey) return;
           setRuns((data.entries ?? []) as CronRunEntry[]);
         } else {
           setRunsError('Failed to load runs');
@@ -266,7 +281,7 @@ export default function CronsPage() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [selectedJob?.id, selectedJob?.containerName]);
 
   useEffect(() => {
@@ -496,6 +511,24 @@ export default function CronsPage() {
             {selectedJob && runsLoading && <CronRunsSkeleton />}
             {selectedJob && !runsLoading && runsError && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: 'var(--red)' }}>{runsError}</div>
+            )}
+            {selectedJob && !runsLoading && !runsError && needsInferenceAccount && (
+              <div role="status" style={{ padding: '12px', borderBottom: '1px solid var(--border)', fontSize: 11, lineHeight: 1.6 }}>
+                <div style={{ color: 'var(--yellow)', marginBottom: 6 }}>The latest loaded run could not use an inference account.</div>
+                <div>
+                  Pause the job, then open its settings in OpenClaw. Choose Custom model, enter <code>model@profile</code> and save.
+                  To keep inheriting the agent model, choose Default and save again. Run once to verify before resuming.
+                  Find profile references on <Link href="/subscriptions" className="ui-link">Subscriptions</Link>.
+                  {' '}Delivery Account ID is a separate setting.
+                </div>
+                {isControlUiAgentId(selectedJob.rev4aAgentId) && isValidCronJobId(selectedJob.id) ? (
+                  <div style={{ marginTop: 8 }}>
+                    <OpenControlUiButton agentId={selectedJob.rev4aAgentId} jobId={selectedJob.id} label="Open automation ↗" variant="secondary" disabled={busyJobId !== null} />
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 6, color: 'var(--text-dim)' }}>Open the agent Control UI and select this job under Automations.</div>
+                )}
+              </div>
             )}
             {selectedJob && !runsLoading && !runsError && runs.length === 0 && (
               <div style={{ padding: '20px 12px', fontSize: 11, color: '#555' }}>No runs recorded yet</div>

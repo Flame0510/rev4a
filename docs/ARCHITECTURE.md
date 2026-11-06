@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-07
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -192,7 +192,7 @@ The central container, running the Next.js dashboard + orchestration API.
   user-namespace remapping).
 - **Agent updates** are `lib/agent-update.ts`, with their state in the `agent_upgrades`
   table (`lib/agent-update-state.ts`). An update counts the agent's transcript events per
-  session and its cron jobs, takes a cold pre-update backup, recreates the container on
+  session and its complete cron identity/ownership inventory, takes a cold pre-update backup, recreates the container on
   the newer version (`lib/agent-recreate.ts`, argv only, env values outside the process
   table), waits for `/startupz` to report that version, re-applies Rev4a's config and
   checks the counts. A Gateway that is slow to start (past 10 minutes) is waited for up to 30
@@ -205,6 +205,38 @@ The central container, running the Next.js dashboard + orchestration API.
   unfinished one into `interrupted`. `lib/agent-busy.ts` gives the routes one 409 reason
   for "edit, update, recreate, restore or backup running". After a successful update, `pruneAgentImages()`
   keeps only images in use plus the newest and previous versions.
+  `lib/agent-update-cron.ts` holds the narrow, tested transition policy: only the upstream-owned
+  `skill-collection-review:` retirement on 2026.9.3/2026.9.9 to 2026.10.10 is exempt. User jobs,
+  changed owners, unrelated declared jobs and unreadable/partial inventories remain failures.
+  Old cron-only failures have a separate background audit using their exact local pre-update
+  archive (`lib/backup-cron-evidence.ts`). Original verification/failure fields remain intact;
+  unknown ownership stays unresolved and rollback remains available. The same retirement-aware
+  dispatcher handles startup and bounded panel retries, including an unavailable-at-startup Gateway.
+  After successful verification of a 9.x -> 10.10 Update, `lib/agent-update-cron-account.ts` performs
+  best-effort native `cron.update` account adoption only with exactly one connected ChatGPT OAuth
+  profile. A model/profile selection captures ownership; restoring the original model (NULL for
+  Default) retains ownership and inheritance. Counts/notes live in `cron_account_json`.
+  Before the first native mutation, `cron_account_adoptions_by_update` commits the original model and
+  temporary selection in Rev4a's DB, keyed by container, update ID and job ID so rollback followed
+  by re-upgrade adopts again. Starting an Update atomically marks every unfinished earlier journal
+  for that agent superseded (with a completion timestamp so older readers also skip it).
+  Adoption runs under the Update's persisted lifecycle claim. Repair considers only the latest
+  update's unfinished journal and acquires an exclusive lifecycle claim for that agent; a busy
+  agent is skipped until a later retry. Update, rollback, edit, recreate and restore admission check
+  that claim in their SQLite transaction. Repair also uses the shared cold-backup and
+  in-process ownership checks. Restart clears repair claims without restarting their agents;
+  only active update statuses enter interrupted-update container recovery.
+  Every pass repairs an unfinished selection before counting
+  an already-bound job as finished. Startup and a 60-second background retry repair recorded
+  pins, including lost mutation responses, without adopting additional jobs. Fresh native revisions
+  and re-read account/model metadata protect operator edits; no OpenClaw DB is written directly.
+  Exact journaled pins are repaired even when the CLI-execution route did not create a binding.
+  A job counts as associated only after its persisted inference binding to the intended account
+  is verified after saving. Routes known before mutation to use CLI execution report
+  **no binding needed (model left/restored)** without a binding. An absent binding on other
+  routes leaves selection unverified and retries its journaled intent; a rejection stays failed,
+  with no repaired count. Agents renders these persisted outcome notes.
+  Zero/multiple profiles, existing bindings and native-runtime authority are not reassigned.
 - **Agent recreates** are `lib/agent-recreate.ts`, with their state in the
   `agent_recreates` table (`lib/agent-recreate-state.ts`): the same-version counterpart
   of an update. A cold backup, then the container rebuilt on the image the agent already
@@ -214,6 +246,22 @@ The central container, running the Next.js dashboard + orchestration API.
   helper has finished, never while the archive is written. On success the older
   `prerecreate` archives are pruned to the newest two. The same `recreateAgentContainer()`
   serves the edit route (`PATCH` → 202, no backup) and the Update action.
+  Only the claimed Edit (including removal of a memory limit) and Recreate jobs opt
+  into `lib/agent-stop.ts`: verify the original container ID and its `AGENT_ID` label,
+  then stop and remove that immutable ID. A missing/mismatched ID refuses the operation.
+  The 60 s stop allowance covers normal SIGTERM cleanup without waiting for OpenClaw's
+  extended 325 s drain. The stop CLI has a 65 s deadline, each inspection 5 s (both
+  inactivity and wall-clock, aborting the HTTP request at the deadline), and removal 15 s: at most 90 s before the rebuild, within
+  the background job's budget. Stop failure/timeout, exit 137, or an unconfirmed stop
+  emits a lease warning before `rm -f` of that same ID. Edit/Recreate job messages retain
+  the warning on success and failure. When Recreate's cold backup has already stopped
+  the agent, that existing 30 s stop is its graceful stop; no second stop is issued.
+  Recreate observes the backup's exit status/kill fallback and persists a lease warning
+  before archiving, including when the backup itself later fails. Only this caller opts
+  into observing the backup stop. Update/Rollback, cold backup (30 s stop), Restore,
+  Delete and failed-run/create cleanup keep their previous shutdown/removal behavior.
+  No lease file is deleted: an existing stale lease must expire, because clearing an
+  unproven owner could permit concurrent volume writers.
   `agentBusyReason()` (`lib/agent-busy.ts`) covers it for every route that changes an agent.
 - **Host ports** have one source of truth: `lib/agent-ports.ts` holds the pure rules
   (`validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`,
@@ -239,27 +287,60 @@ The central container, running the Next.js dashboard + orchestration API.
   endpoint when it opens — so both show the same message and disable their action while
   the range is refused, instead of letting the server refuse it on submit.
 - **Memory limit** (`lib/agent-memory-limit.js`, pure helpers shared with the daemon; `lib/agent-memory-limit-server.ts`): optional and never defaulted. `recreateAgentContainer()` carries `HostConfig.Memory` and `MemorySwap` from the inspect into `docker run` (`--memory`, `--memory-swap`), so no rebuild loses a limit; `opts.memoryLimitMb` overrides it (a number sets it with swap equal, `null` rebuilds without any flag). Setting a limit is `docker update --memory <b> --memory-swap <b>` (live); removal goes through an agent edit with `removeMemoryLimit`, because `docker update` cannot lift a limit. The global default for new agents lives in `agent-defaults.json` (`lib/agent-defaults.ts`).
+  Create/Update admission uses shared pure version-specific resource policy plus bounded Docker API
+  facts (`lib/agent-resource-policy.js`, `lib/agent-resource-preflight.ts`). Exact 2026.10.10 refuses
+  a finite limit below 4096 MiB; 9.3/9.9 retain the operator's cap choice. Unlimited remains unlimited.
+  Host planning counts running agent caps, unlimited usage plus headroom, other container usage and
+  in-flight reservations. Unknown/insufficient facts refuse before mutation. Process-local claims
+  prevent concurrent requests spending the same capacity and are released on all exits. This is a
+  measured candidate policy, not a universal memory guarantee or a new global default.
+
 - **Agent edits** are `lib/agent-edit.ts`, with their state in the `agent_edits` table
   (`lib/agent-edit-state.ts`): the display name (`AGENT_NAME`) and/or the port range are
   applied by rebuilding the container on the current build of its OpenClaw version (a newer build if one was downloaded) — **no backup**, the
   volume is never touched. Same 202-and-background shape as a restore; the parameters
   live in the row, so recovery can tell what was being applied. The panel shows a banner
   and the agent card an `EDITING` chip.
-- **Agent restores** are `lib/agent-restore.ts`, with their state in the `agent_restores`
-  table (`lib/agent-restore-state.ts`): the archive replaces the volume (stop, clear,
-  extract, start), up to 30 minutes. Same 202-and-background shape as a recreate, and the
-  same guarantees — a reload or a Rev4a restart does not lose the job, a second restore
-  is refused, and an interrupted one is **run again from the same archive** at startup: a
-  half-written volume must never be presented as a restore, and the archive was already
-  checked before the job started (when it is gone the container is started on whatever the
-  volume holds, and the row says so). The extract has no percentage (it is a single
-  `tar xzf`); the panel and the agent card show `RESTORING`.
+- **Agent restores** are `lib/agent-restore.ts`, with additive preflight/phase/recovery fields in
+  `agent_restores`. The 202 response claims the job; expensive checks run in the background before
+  stopping the agent. The source is copied to a private directory on the backups filesystem and
+  inspected there; extraction uses only those pinned bytes. `lib/backup-inspection.ts` validates
+  the gzip/tar stream, canonical config and core SQLite/WAL evidence. Native SQLite integrity work
+  runs in a deadline-limited subprocess (`lib/backup-sqlite-worker.js`). Its native dependency
+  is resolved through Node from the package working directory set by `rev4a serve`, so a
+  bundled module identifier cannot leak into the subprocess. The pure
+  `lib/backup-compatibility.ts` shares verified schema ceilings with the cron source reader.
+  A cold recovery backup must succeed before replacing the volume; referenced recovery files are
+  protected from automatic pruning while their restore history remains. Completion requires actual
+  Gateway `/startupz` readiness. Partial failures retain recovery information and stop the agent.
+  Startup records active restores as interrupted, except interrupted extraction becomes unresolved
+  with its persisted helper name and keeps the volume reserved. It makes no Docker discovery or
+  cleanup calls and never revisits historical rows. The operator can confirm Resolve restore in
+  Agents > Backups: only that restore's labelled helpers are removed and confirmed absent before
+  releasing the reservation. Cold-backup helpers and the agent container are left untouched. Old `done` rows without readiness evidence are labelled as unverified in
+  the panel, without inventing a historical failure. Legacy-volume backups wait for migration into
+  the host directory; metadata-free archives can use recognized core schemas. A versioned archive
+  is checked against the target's core schema ceilings. Unknown targets, unrecognized metadata-free
+  schemas, corruption and newer formats refuse before mutation. Core checks do not certify private
+  plugin downgrade compatibility.
 - **The four job tables share one implementation**: `lib/agent-job-state.ts` builds the
   insert/update/latest/active/`markInterrupted` machinery for `agent_upgrades`,
   `agent_recreates`, `agent_restores` and `agent_edits`; each `lib/agent-*-state.ts` keeps
   only its table's types and function names. They were four near-identical copies that had
   started to drift. At startup `lib/agent-jobs-maintenance.ts` prunes each table to the
   newest 20 rows per agent — the panel reads the latest row only, so the rest is history.
+
+Lifecycle insertion rechecks the latest job of every lifecycle kind and inserts its claim in one
+short immediate SQLite transaction (`lib/agent-job-state.ts`). This closes cross-operation races after
+asynchronous preflight. Rollback reactivation claims the exact ended, still-latest update row in the
+same kind of transaction after its backup/container checks; a changed status, newer update or active
+Restore/Edit/Recreate refuses with 409 before scheduling the rollback worker.
+Unresolved restore rows keep their existing cross-lifecycle reservation during manual resolution.
+A synchronous per-agent action guard prevents duplicate resolves; a failed Docker request keeps
+the unresolved row for an explicit retry. There is no startup or periodic restore cleanup scan.
+`agentBusyReason` also refreshes synchronous state after its cold-backup
+probe. A conflict is an explicit refusal before either job can mutate the agent.
+
 - **Startup repair of the token file mode.** `instrumentation.ts` runs `repairAllTokenFileModes`
   (`lib/agent-token.ts`, not awaited, logged) on every running agent: a `/root/.agent-token`
   that an older release left 0644 becomes 0600 (a constant script that only removes group/other
@@ -275,19 +356,15 @@ The central container, running the Next.js dashboard + orchestration API.
    refuses agents without approval. Every link's token is read inside the container,
    and its host is the request's `Host` header (`hostnameFromHostHeader()`), never a
    caller-supplied value.
-- **Telegram DM pairing** lives in `lib/channelManager.ts`. The bot binding is config
-  (`channels.telegram.botToken`/`dmPolicy`); *who* may talk is OpenClaw's pairing
-  store — on 2026.9.3 the SQLite rows in `~/.openclaw/state/openclaw.sqlite`, not the
-  `credentials/*.json` files older releases used. Reading and revoking go through the
-  store's own functions (`readChannelAllowFromStoreSync`,
-  `removeChannelAllowFromStoreEntry`): no CLI, RPC or documented export exposes them,
-  so a small script run inside the container finds OpenClaw's `pairing-store` module by
-  glob and its functions by name (the names survive minification; no hash or minified
-  symbol is hardcoded) and calls them, which uses the same state transaction the CLI
-  does. If a release stops exposing the store, the revoke fails with a message pointing
-  at `/allowlist remove` — it never reports success without changing anything. Approving
-  a pairing request (`openclaw pairing approve`) also bootstraps
-  `commands.ownerAllowFrom` for the first owner (OpenClaw's own behaviour).
+- **Telegram DM pairing** lives in `lib/channelManager.ts` and the operation-specific
+  `lib/channel-pairing-store.js`. Config contains the bot binding; approved senders use OpenClaw's
+  native store. Reads prefer the public async `openclaw/plugin-sdk/channel-pairing` export resolved
+  from the installed global package, with a legacy sync fallback for older builds. Removal remains
+  an isolated private native capability; a read does not require removal support. Clear preflights
+  both operations, validates all entries and confirms the final empty list before a bot change or
+  disconnect can write config. Pending malformed/unreadable JSON produces an explicit error while
+  retaining readable approved results. No new pairing schema or fleet probe is introduced.
+
 
 **Running commands inside containers** (`lib/docker-exec.ts`):
 
@@ -1065,3 +1142,19 @@ calls, the terminal WebSocket, persisted counters.
 | Reverse proxy | Optional, operator's choice | Rev4a sets no reverse-proxy labels on agent containers |
 | Monitoring | Rev4a daemon (extended) | Evolution of current daemon |
 | Version control | Git + GitHub | `github.com/Flame0510/rev4a.git` |
+
+### Manual restore resolution
+
+`agent_restores.helper_name` and `source_directory` are additive nullable audit fields. The helper
+is created before starting extraction, with agent/job labels and a unique name. Removal is followed
+by an independent Docker inspect (only 404 proves absence). Unknown cleanup keeps status
+`unresolved`, `finished_at = NULL` and the lifecycle reservation; the pinned source stays.
+Startup only marks active restores for review; an interrupted extraction becomes `unresolved`.
+There is no startup or periodic Docker cleanup scan, and historical rows remain unchanged.
+Agents > Backups > **Resolve restore** requires explicit confirmation, then removes only helpers
+labelled with that agent and restore row ID and independently confirms absence. It excludes the
+agent container and cold-backup helpers, works if the agent container is absent, and releases the
+reservation if no labelled helper remains. Successful resolution records `interrupted` with phase
+`manually_resolved`; Docker failures or unconfirmed removal retain `unresolved` for explicit retry.
+Resolution never re-extracts, restarts the agent or proves data integrity. The operator must review
+the current volume and recovery backup before continuing.

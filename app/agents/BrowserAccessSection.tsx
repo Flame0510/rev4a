@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, Button, ConfirmModal, Input, RemoveButton } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
+import { controlUiOpenPath } from '@/lib/control-ui-navigation';
+import { isValidCronJobId } from '@/lib/cron-ids';
 
 interface PendingBrowser {
   requestId: string;
@@ -158,6 +160,8 @@ export function OpenControlUiButton({
   stopPropagation = false,
   gateway,
   blocksOpen = false,
+  jobId,
+  disabled = false,
 }: {
   agentId: string;
   label?: string;
@@ -167,10 +171,15 @@ export function OpenControlUiButton({
   gateway?: GatewayState;
   /** From `/api/agents/gateway`: the Gateway answered 503 inside its budget. */
   blocksOpen?: boolean;
+  /** A fixed native automation destination, validated again before the server resolves a link. */
+  jobId?: string;
+  disabled?: boolean;
 }) {
+  const validJob = jobId === undefined || isValidCronJobId(jobId);
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
-    window.open(`/api/agents/${encodeURIComponent(agentId)}/open-control-ui`, '_blank', 'noopener');
+    if (!validJob || disabled) return;
+    window.open(controlUiOpenPath(agentId, jobId), '_blank', 'noopener');
   };
 
   const starting = gateway === 'starting' && blocksOpen === true;
@@ -179,8 +188,8 @@ export function OpenControlUiButton({
       variant={variant}
       size="sm"
       onClick={open}
-      disabled={starting}
-      title={starting ? "The agent's Gateway is still starting"
+      disabled={starting || disabled || !validJob}
+      title={!validJob ? 'Invalid automation job id' : starting ? "The agent's Gateway is still starting"
         : gateway === 'starting' ? 'The Gateway may still be starting — the Control UI might not answer yet'
         : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
         : 'Open the agent Control UI'}

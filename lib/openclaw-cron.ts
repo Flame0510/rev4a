@@ -87,6 +87,8 @@ export interface OpenClawCronJob {
   name?: string;
   description?: string;
   agentId?: string;
+  /** Rev4a's container label; distinct from the job's internal OpenClaw agentId. */
+  rev4aAgentId?: string;
   containerName?: string;
   enabled?: boolean;
   schedule?: CronSchedule;
@@ -252,6 +254,8 @@ export async function listOpenClawCronJobs(): Promise<OpenClawCronListResult> {
       job.scheduleExpr = extractScheduleExpr(job);
       job.source = 'container';
       job.containerName = agent.containerName;
+      // Discovery owns this field. An upstream job cannot choose a different Rev4a agent.
+      job.rev4aAgentId = agent.agentId;
       if (!job.agentId) job.agentId = agent.agentId;
 
       if (job.id && seen.has(job.id)) continue;

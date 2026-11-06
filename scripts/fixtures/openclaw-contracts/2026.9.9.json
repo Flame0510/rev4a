@@ -1,0 +1,237 @@
+{
+  "version": "2026.9.9",
+  "sourceItems": [
+    "file.openclaw-json",
+    "cli.cron-list",
+    "cli.cron-runs-agent",
+    "rpc.sessions-list",
+    "cli.models-all",
+    "cli.status-usage",
+    "cli.devices-list"
+  ],
+  "telegram": {
+    "channels": {
+      "telegram": {
+        "enabled": true,
+        "dmPolicy": "pairing",
+        "botToken": "fixture-bot-token"
+      }
+    }
+  },
+  "cronList": {
+    "jobs": [
+      {
+        "id": "fixture-command",
+        "name": "fixture-command",
+        "enabled": true,
+        "sessionTarget": "isolated",
+        "wakeMode": "now",
+        "schedule": {
+          "kind": "cron",
+          "expr": "*/30 * * * *"
+        },
+        "payload": {
+          "kind": "command"
+        }
+      },
+      {
+        "id": "fixture-model",
+        "name": "fixture-model",
+        "enabled": true,
+        "sessionTarget": "isolated",
+        "wakeMode": "now",
+        "schedule": {
+          "kind": "cron",
+          "expr": "0 3 1 1 *"
+        },
+        "payload": {
+          "kind": "agentTurn",
+          "model": "openai/fixture-model"
+        }
+      },
+      {
+        "id": "fixture-retired",
+        "name": "skill-collection-review-main",
+        "enabled": true,
+        "declarationKey": "skill-collection-review:main",
+        "sessionTarget": "isolated",
+        "wakeMode": "next-heartbeat",
+        "schedule": {
+          "kind": "every"
+        },
+        "payload": {
+          "kind": "agentTurn"
+        }
+      }
+    ]
+  },
+  "cronRuns": {
+    "entries": [
+      {
+        "ts": 1800000000000,
+        "jobId": "fixture-model",
+        "action": "finished",
+        "status": "ok",
+        "completionStatus": "succeeded",
+        "runId": "fixture-run",
+        "runAtMs": 1799999999000,
+        "durationMs": 1000,
+        "nextRunAtMs": 1800000001000,
+        "model": "fixture-model",
+        "provider": "openai",
+        "sessionId": "fixture-session",
+        "sessionKey": "agent:main:cron:fixture-model:run:fixture-run",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "total_tokens": 15
+        }
+      }
+    ]
+  },
+  "sessionsList": {
+    "hasMore": false,
+    "nextOffset": null,
+    "totalCount": 4,
+    "sessions": [
+      {
+        "key": "agent:main:dashboard:fixture-0",
+        "sessionId": "fixture-session-0",
+        "classification": "explicit",
+        "displayName": "Fixture session",
+        "status": "done",
+        "abortedLastRun": false,
+        "hasActiveRun": false,
+        "model": "fixture-model",
+        "modelProvider": "openai",
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "contextTokens": 128000,
+        "startedAt": 1799999999000,
+        "createdAt": 1799999999000,
+        "updatedAt": 1800000000000,
+        "lastActivityAt": 1800000000000,
+        "endedAt": 1800000000000
+      },
+      {
+        "key": "agent:main:subagent:fixture-child",
+        "sessionId": "fixture-session-1",
+        "classification": "subagent",
+        "spawnedBy": "agent:main:main",
+        "parentSessionKey": "agent:main:main",
+        "spawnDepth": 1,
+        "status": "done",
+        "hasActiveRun": false,
+        "model": "fixture-model",
+        "modelProvider": "openai",
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "contextTokens": 128000,
+        "startedAt": 1799999999000,
+        "createdAt": 1799999999000,
+        "updatedAt": 1800000000000,
+        "lastActivityAt": 1800000000000,
+        "endedAt": 1800000000000
+      },
+      {
+        "key": "agent:main:dashboard:fixture-2",
+        "sessionId": "fixture-session-2",
+        "classification": "explicit",
+        "displayName": "Fixture session",
+        "status": "done",
+        "abortedLastRun": false,
+        "hasActiveRun": false,
+        "model": "fixture-model",
+        "modelProvider": "openai",
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "contextTokens": 128000,
+        "startedAt": 1799999999000,
+        "createdAt": 1799999999000,
+        "updatedAt": 1800000000000,
+        "lastActivityAt": 1800000000000,
+        "endedAt": 1800000000000
+      },
+      {
+        "key": "agent:main:cron:fixture-model",
+        "sessionId": "fixture-session-3",
+        "classification": "cron",
+        "label": "Fixture session",
+        "displayName": "Fixture session",
+        "hasActiveRun": false,
+        "model": "fixture-model",
+        "modelProvider": "openai",
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "contextTokens": 128000,
+        "createdAt": 1799999999000,
+        "updatedAt": 1800000000000
+      }
+    ]
+  },
+  "modelList": {
+    "models": [
+      {
+        "key": "openai/fixture-model-0",
+        "name": "Fixture model 0",
+        "contextWindow": 128000
+      },
+      {
+        "key": "openai/fixture-model-1",
+        "name": "Fixture model 1",
+        "contextWindow": 128000
+      }
+    ]
+  },
+  "quota": {
+    "usage": {
+      "updatedAt": 1800000000000,
+      "providers": [
+        {
+          "provider": "openai",
+          "accountEmail": "fixture@example.invalid",
+          "plan": "plus",
+          "windows": [
+            {
+              "label": "Window",
+              "usedPercent": 25,
+              "resetAt": 1800000001000
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "devices": {
+    "pending": [],
+    "paired": [
+      {
+        "deviceId": "fixture-device-0",
+        "platform": "fixture-platform",
+        "clientId": "fixture-client",
+        "clientMode": "ui",
+        "role": "operator",
+        "roles": [
+          "operator"
+        ],
+        "scopes": [
+          "operator.read"
+        ],
+        "remoteIp": "192.0.2.1",
+        "approvedVia": "operator",
+        "createdAtMs": 1799999998000,
+        "approvedAtMs": 1799999999000,
+        "lastSeenAtMs": 1800000000000,
+        "tokens": [
+          {
+            "lastUsedAtMs": 1800000001000
+          }
+        ]
+      }
+    ]
+  }
+}

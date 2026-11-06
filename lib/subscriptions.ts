@@ -30,6 +30,7 @@ import { dockerRequestJson } from '@/lib/docker-socket-path';
 import {
   parseModelList,
   parseStatusJson,
+  subscriptionProfileReferences,
   isSupportedLine,
   statusFailureReason,
   readWithRetry,
@@ -41,6 +42,7 @@ import {
   type AuthProfile,
   type SubscriptionModel,
   type AgentModelRef,
+  type SubscriptionProfileReference,
 } from '@/lib/subscriptions-parse';
 
 const execFileAsync = promisify(execFile);
@@ -84,6 +86,8 @@ export interface AgentSubscription {
   /** ChatGPT plan ("Plus", "Pro"), capitalised; null when unknown. */
   plan: string | null;
   expiresAt: string | null;
+  /** All ChatGPT OAuth references, without choosing an inference account. Optional for older clients. */
+  profileReferences?: SubscriptionProfileReference[];
   usesSubscription: boolean;
   primary: string | null;
   fallbacks: string[];
@@ -365,6 +369,7 @@ function emptyStatus(a: AgentContainer): AgentSubscription {
     email: null,
     plan: null,
     expiresAt: null,
+    profileReferences: [],
     usesSubscription: false,
     primary: null,
     fallbacks: [],
@@ -383,6 +388,7 @@ async function readAgent(a: AgentContainer): Promise<AgentSubscription> {
     return out;
   }
   const oauth = state.profiles;
+  out.profileReferences = subscriptionProfileReferences(oauth);
   out.connected = oauth.length > 0;
   const best = [...oauth].sort((x, y) => (y.expiresAt ?? '').localeCompare(x.expiresAt ?? ''))[0];
   out.email = best?.email ?? null;
@@ -417,7 +423,7 @@ async function readAccountModels(container: string, email: string | null): Promi
   const key = email ?? '';
   const gen = generation();
   const hit = modelsCache().get(key);
-  if (hit && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
+  if (hit && hit.models.length > 0 && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
   const out = await dockerExec(
     container,
     // Reaches the Gateway: the token must be the one it runs with (see lib/gateway-cli.ts).
@@ -426,7 +432,10 @@ async function readAccountModels(container: string, email: string | null): Promi
   );
   const models = parseModelList(out);
   if (!models) throw new Error('unreadable');
-  if (generation() === gen) modelsCache().set(key, { at: Date.now(), models });
+  // Right after Connect, OpenClaw installs the Codex plugin and hot-reloads its config (about a
+  // minute); until then the list is empty. An empty answer is never cached: it would hide the
+  // models for the whole TTL once they exist.
+  if (models.length > 0 && generation() === gen) modelsCache().set(key, { at: Date.now(), models });
   return models;
 }
 
@@ -467,14 +476,19 @@ export async function findAccountSources(): Promise<Map<string, SourceAgent>> {
 /**
  * The models the connected accounts offer (one CLI read per distinct account, cached 10 min),
  * merged by model id. Finding a connected agent per account uses the cached fast discovery.
+ * `pending` is true when an account is connected but its agent offers no model yet (OpenClaw is
+ * still loading the ChatGPT catalogue after Connect): callers show it as loading and ask again.
  */
-export async function getSubscriptionModels(): Promise<{ models: SubscriptionModel[]; error: string | null }> {
+export async function getSubscriptionModels(): Promise<{ models: SubscriptionModel[]; error: string | null; pending: boolean }> {
   const sources = await findAccountSources();
-  if (sources.size === 0) return { models: [], error: null };
+  if (sources.size === 0) return { models: [], error: null, pending: false };
   let failed = false;
+  let pending = false;
   const lists = await Promise.all([...sources].map(async ([email, src]) => {
     try {
-      return await readAccountModels(src.container, email || null);
+      const models = await readAccountModels(src.container, email || null);
+      if (models.length === 0) pending = true;
+      return models;
     } catch {
       failed = true;
       return [] as SubscriptionModel[];
@@ -485,6 +499,7 @@ export async function getSubscriptionModels(): Promise<{ models: SubscriptionMod
   return {
     models: [...merged.values()],
     error: failed && merged.size === 0 ? 'Could not read the model list from a connected agent.' : null,
+    pending,
   };
 }
 
