@@ -250,10 +250,13 @@ banner offers the new build, and the download pulls `:<version>-<short sha>` and
 install gets the pinned build the same way. Running agents keep their image until they are
 recreated or updated. A version without `imageRevision` is addressed by `:<version>` as before.
 
-**Supporting a new OpenClaw version** is one change: bump `ARG OPENCLAW_VERSION` in the
-Dockerfile and add the version at the top of `lib/agent-versions.json`, with the model
-`input` values that release accepts. Keep the previous versions listed while agents
-still run them.
+**Supporting a new OpenClaw version** starts with an evaluation, run with the
+`skills/rev4a-openclaw-upgrade` skill: a release that states no breaking change can still break
+Rev4a's Update, its memory limits or a feature users rely on (2026.10.10 did all three). Once its
+blockers are fixed, the change itself is small: bump `ARG OPENCLAW_VERSION` in the Dockerfile and add
+the version at the top of `lib/agent-versions.json`, with the model `input` values that release
+accepts. Keep the previous versions listed while agents still run them. A change that adds, moves or
+removes a place where Rev4a depends on OpenClaw updates the skill's `references/inventory.md`.
 
 ```bash
 gh workflow run build-agent-image.yml -f promote_latest=true

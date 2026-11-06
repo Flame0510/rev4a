@@ -97,6 +97,7 @@ access to them.
 | Skill | Description |
 |---|---|
 | `rev4a-deep-review` | Deep anti-regression review: 4 parallel read-only reviewers (regressions, failure modes, security, docs & language), every finding validated against code and a running instance |
+| `rev4a-openclaw-upgrade` | Evaluate a new OpenClaw release before Rev4a supports it: static diff of packages, config schema and docs, then seed, snapshot, update, compare, rollback on throwaway local agents; keeps the inventory of every Rev4a ↔ OpenClaw touchpoint (`references/inventory.md`) |
 
 ---
 
