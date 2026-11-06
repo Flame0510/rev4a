@@ -10,17 +10,17 @@
 # and recreate (lib/agent-setup.ts); the config patches below only seed new volumes.
 #
 # Build:
-#   docker build -t openclaw-agent-base:2026.9.9 -f Dockerfile .
+#   docker build -t openclaw-agent-base:2026.10.10 -f Dockerfile .
 #   docker build --build-arg OPENCLAW_VERSION=<version> -t openclaw-agent-base:<version> .
 #
 # Test:
-#   docker run --rm openclaw-agent-base:2026.9.9 openclaw --version
+#   docker run --rm openclaw-agent-base:2026.10.10 openclaw --version
 
 FROM node:24-bookworm-slim
 
 # The OpenClaw release this image runs, also recorded as a label so it can be read
 # with `docker image inspect` without starting a container.
-ARG OPENCLAW_VERSION=2026.9.9
+ARG OPENCLAW_VERSION=2026.10.10
 ARG SUPABASE_VERSION=2.109.1
 # The short commit sha of this build; the workflow passes it. It matches the immutable
 # `<version>-<sha>` tag, which is what lib/agent-versions.json's `imageRevision` names.
@@ -30,6 +30,12 @@ LABEL description="OpenClaw Agent Base — Rev4a multicontainer ecosystem"
 LABEL maintainer="Rev4a Agency"
 LABEL org.opencontainers.image.version="${OPENCLAW_VERSION}"
 LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
+
+# Node 24.22.1 is the October 2026 Node.js TLS security release. OpenClaw 2026.10.6 to
+# 2026.10.9 refuse to start below it; 2026.10.10 starts but warns on every run. The base tag
+# stays on the 24 line so rebuilds pick up later security releases, but a stale local
+# `node:24-bookworm-slim` would ship an unpatched Node: fail the build instead. Build with `--pull`.
+RUN node -e 'const [a,b,c]=process.versions.node.split(".").map(Number);if(a===24&&(b<22||(b===22&&c<1))){console.error("Node "+process.versions.node+" is older than the 24.22.1 security release; rebuild with --pull");process.exit(1)}'
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive

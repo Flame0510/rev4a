@@ -3,6 +3,10 @@
   "registryRepository": "ghcr.io/flame0510/rev4a/openclaw-agent-base",
   "supported": [
     {
+      "version": "2026.10.10",
+      "modelInput": ["text", "image", "audio", "video"]
+    },
+    {
       "version": "2026.9.9",
       "imageRevision": "384bd8e",
       "modelInput": ["text", "image", "audio", "video"]
