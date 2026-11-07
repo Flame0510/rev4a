@@ -4,6 +4,7 @@
   "supported": [
     {
       "version": "2026.10.10",
+      "imageRevision": "afc4d74",
       "modelInput": ["text", "image", "audio", "video"]
     },
     {
