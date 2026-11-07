@@ -238,6 +238,7 @@ export default function UpdateSection({
       {update && active && update.status !== 'rolling_back' && (
         <div style={{ margin: '6px 0 10px' }}>
           <div style={metaStyle}>Updating OpenClaw {update.fromVersion} → {update.toVersion}. The agent is offline until it finishes.</div>
+          {update.status === 'pending' && <div style={metaStyle}>Waiting for the agent to finish starting…</div>}
           {update.error && <div style={metaStyle}>{update.error}</div>}
           {STEPS.map((step, i) => {
             const state = update.status === 'pending' ? 'waiting' : i < stepIndex ? 'done' : i === stepIndex ? 'running' : 'waiting';

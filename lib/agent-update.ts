@@ -4,7 +4,7 @@
  * Each step is recorded in `agent_upgrades` before it starts:
  *
  *   pending     preflight: agent running, target downloaded, newer and supported,
- *               no backup or update already running
+ *               no backup or update already running; wait for the Gateway to finish starting
  *   (baseline)  transcript events per session and cron job identities/ownership, read inside the agent
  *   backing_up  cold backup `agent-<id>-preupdate-<from>-<ts>.tar.gz`; the agent stays stopped
  *   migrating   container recreated on `openclaw-agent-base:<to>`; its entrypoint runs
@@ -239,7 +239,17 @@ async function runUpdateStart(agentId: string, requestedVersion?: string): Promi
 async function runUpdate(id: number, agentId: string, name: string, fromVersion: string, toVersion: string): Promise<void> {
   let stopped = false;
   try {
-    const jobs = await cronJobIdentities(name);
+    // Docker can report running long before the Gateway accepts CLI calls. Keep the
+    // row pending and leave the agent untouched until startup has finished.
+    const ready = await waitForGatewayReady(name, 300_000);
+    if (!ready || !(await inspectAgentContainer(agentId))?.State?.Running) {
+      throw new Error("The agent's Gateway did not finish starting within 5 minutes; nothing was stopped or backed up. Wait until the agent is ready and try again.");
+    }
+    let jobs = await cronJobIdentities(name);
+    if (jobs === null) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+      jobs = await cronJobIdentities(name);
+    }
     if (jobs === null) throw new Error('The cron job list could not be read before the update; nothing was stopped or backed up');
     const baseline: Baseline = {
       transcripts: await countTranscripts(name), cronJobs: cronNames(jobs), cronBaselineVersion: 1, cronJobIdentities: jobs,

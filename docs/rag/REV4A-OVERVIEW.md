@@ -75,7 +75,9 @@ new version (which converts its data), and checks that no conversation history o
 went missing. Afterwards **Roll back to <version>** puts back the backup taken just before
 the update, on the old version; anything the agent did after that backup is lost, including a
 recreate or restore done since (the confirmation names the backup date and any such job). The agent
-must be running to start an update.
+must be running to start an update. Clicking Update right after Start is fine: the update waits up to 5 minutes for the
+agent to finish starting ("Waiting for the agent to finish starting…") before it reads anything, and
+fails without stopping or backing up the agent only if it never becomes ready.
 
 A slow start is not a failure: if the new version needs more than 10 minutes to start, Rev4a keeps
 waiting up to 30 more minutes and then finishes the update. An update recorded as failed or interrupted

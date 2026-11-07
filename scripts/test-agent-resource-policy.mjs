@@ -217,6 +217,8 @@ function updateModule(limitMb, dockerTotalMb, throwAfterAdmission = false) {
     '@/lib/agent-images': { listLocalAgentImages: async () => [], containerOpenClawVersion: async () => '2026.9.9', newestLocalSupportedVersion: () => '2026.10.10', localVersionExists: async () => true },
     '@/lib/agent-recreate': { inspectAgentContainer: async () => container },
     '@/lib/agent-busy': { agentBusyReason: async () => null },
+    // The background job waits for the Gateway before reading the cron list.
+    '@/lib/agent-readiness': { waitForGatewayReady: async () => true, probeGateway: async () => 'ready' },
     '@/lib/agent-update-state': {
       insertUpdate: () => { calls.push('insert'); if (throwAfterAdmission) throw new Error('admitted sentinel'); return 1; },
       updateRow: (_id, fields) => { calls.push(fields.status); },

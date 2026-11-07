@@ -1364,7 +1364,14 @@ the background.
 
 1. **Preflight** (refused with `409`): the agent runs, the target is downloaded,
    supported and newer than the agent's version, no update or backup is running.
-2. **Baseline**, inside the agent: transcript events per session (`transcript_events`
+2. **`pending` / baseline**: wait up to 5 minutes for the existing Gateway's `/startupz`
+   to report `started`, then confirm the container is still running. The panel shows
+   "Waiting for the agent to finish starting…"; the Update button's availability is unchanged.
+   If startup times out or the container has stopped, the row fails with guidance to wait
+   until the agent is ready and try again; nothing was stopped or backed up. Read the cron
+   list only after readiness; if unreadable, retry once after 5 seconds, then fail with
+   the existing unreadable-list message before any backup or stop. Record transcript events
+   per session (`transcript_events`
    rows in `openclaw-agent.sqlite`, plus `sessions/*.jsonl` and the
    `session-sqlite-import-archive/` the 9.x import moves old files into, taking the
    maximum per session; trajectory files not counted) and cron job names.
@@ -1377,8 +1384,9 @@ the background.
 5. **`verifying`**: every session has at least as many events as before and every cron
    job is still there → `done`, then unused agent images are removed (`pruneAgentImages`).
 
-A failure before the recreate starts the old container again. A failure after it leaves
-the agent on the new version; the panel offers Rollback.
+A failure between the cold backup stopping the old container and the recreate restarting it
+starts the old container again. A failure after the recreate leaves the agent on the new
+version; the panel offers Rollback.
 
 **Errors:** `400` unsupported version, `409` refused (reason in `error`), `500`.
 
