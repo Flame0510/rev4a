@@ -32,6 +32,7 @@ const os = require('os');
 const path = require('path');
 const next = require('next');
 const { CLIENT_IP_HEADER, clientAddress, parseTrustedProxies } = require('./lib/client-address.js');
+const { passwordFingerprint, fingerprintEquals } = require('./lib/session-fingerprint.js');
 
 const PORT = parseInt(process.env.PORT || '3740', 10);
 const TERMINAL_WS_PORT = parseInt(process.env.TERMINAL_WS_PORT || '3741', 10);
@@ -53,21 +54,25 @@ process.env.REV4A_SERVER_PID = String(process.pid);
 /** Docker container names and ids: what `docker exec` accepts, nothing a shell could read. */
 const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-// Same data directory rule as lib/rev4a-paths.ts, for the JWT secret fallback below.
+// Same data directory rule as lib/rev4a-paths.ts, for the auth values below.
 const DATA_DIR = process.env.REV4A_DATA_DIR
   || (process.platform === 'win32'
     ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'rev4a')
     : path.join(os.homedir(), '.config', 'rev4a'));
 
-/** REV4A_JWT_SECRET from the environment, else from .env — the rule lib/rev4a-auth.js follows. */
-function jwtSecret() {
-  if (process.env.REV4A_JWT_SECRET) return process.env.REV4A_JWT_SECRET;
+/** Environment, else .env — the getPassword/getJwtSecret rule in lib/rev4a-auth.js. */
+function authEnvValue(key) {
+  if (process.env[key]) return process.env[key];
   try {
-    const m = /^REV4A_JWT_SECRET=(.*)$/m.exec(fs.readFileSync(path.join(DATA_DIR, '.env'), 'utf8'));
+    const m = new RegExp(`^${key}=(.*)$`, 'm').exec(fs.readFileSync(path.join(DATA_DIR, '.env'), 'utf8'));
     return m ? m[1].trim() : '';
   } catch {
     return '';
   }
+}
+
+function jwtSecret() {
+  return authEnvValue('REV4A_JWT_SECRET');
 }
 
 function cookieValue(header, name) {
@@ -100,8 +105,9 @@ async function authorised(req) {
   if (!token || !secret) return false;
   try {
     jwtVerify = jwtVerify || (await import('jose')).jwtVerify;
-    await jwtVerify(token, new TextEncoder().encode(secret));
-    return true;
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
+    const password = authEnvValue('REV4A_PASSWORD');
+    return !!password && fingerprintEquals(payload.pwf, passwordFingerprint(password, secret));
   } catch {
     return false;
   }

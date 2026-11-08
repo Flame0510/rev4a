@@ -20,6 +20,21 @@ After a successful `POST /api/auth/login`, the server sets an `rev4a_token`
 cookie (signed JWT, 7-day expiry). All subsequent UI requests use this cookie
 automatically.
 
+The JWT includes `pwf`: the first 22 base64url characters of HMAC-SHA256 keyed
+by `REV4A_JWT_SECRET` over the fixed label `rev4a:session-password:v1\0` followed
+by the effective password. The password itself is never included. After signature
+and expiry verification, API authentication, protected pages and terminal WebSocket
+upgrades compare this claim in constant time against the current password's
+fingerprint. A missing, malformed or different claim is unauthenticated; an empty
+password cannot authenticate a cookie session. Password resolution is
+`process.env.REV4A_PASSWORD || .env value`, as at login. A Config password change
+therefore ends existing browser sessions once applied after restart. Bearer
+authentication remains independent of the password.
+
+**SEC-21 upgrade:** every browser must log in once after updating, because cookies
+issued by earlier releases have no `pwf`. No stored data or configuration migration
+is needed; cookie flags and the 7-day lifetime are unchanged.
+
 ### Browser write protection (SEC-18)
 
 `proxy.ts` checks every POST/PUT/PATCH/DELETE to `/api` or `/api/*` carrying the
@@ -81,7 +96,9 @@ Validate the current browser cookie and report whether the user is authenticated
 { "authenticated": true }
 ```
 
-**Error:** `401` with `{ "authenticated": false }` if the cookie is missing or invalid.
+**Error:** `401` with `{ "authenticated": false }` if the cookie is missing, invalid,
+has no `pwf` claim or no longer matches the current effective password. This endpoint
+remains cookie-only; a Bearer token does not authenticate a browser session.
 
 ### `POST /api/auth/logout`
 Delete the `rev4a_token` cookie.

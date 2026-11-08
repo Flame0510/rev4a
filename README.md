@@ -104,6 +104,14 @@ already filled in — you normally never set these by hand. See
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
 
+**SEC-21 update note:** after updating, every browser has to log in once. Browser
+session cookies now carry a keyed password fingerprint; cookies from earlier releases
+are refused. Once a password change takes effect, all cookies issued for the previous
+password are refused by API authentication, protected pages and terminal WebSocket
+upgrades. A password saved in Config takes effect after restarting Rev4a. The 7-day
+cookie lifetime, cookie flags and `REV4A_TOKEN` Bearer access are unchanged. No stored
+data, configuration files or agent volumes are migrated or deleted.
+
 **SEC-18 update note:** cookie-authenticated API writes now reject foreign origins with
 `403 { "error": "Cross-site request refused" }`, including sibling subdomains and other ports.
 A request the browser marks `Sec-Fetch-Site: same-origin` is accepted (every current browser

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
-import { getPassword, getJwtSecret, secretEquals } from '@/lib/rev4a-auth';
+import { getPassword, getJwtSecret, secretEquals, passwordFingerprint } from '@/lib/rev4a-auth';
 import { createLoginThrottle } from '@/lib/login-throttle';
 import { CLIENT_IP_HEADER } from '@/lib/client-address';
 
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     throttle.succeed(key);
     const secretKey = new TextEncoder().encode(jwtSecret);
-    const token = await new SignJWT({ role: 'admin' })
+    const token = await new SignJWT({ role: 'admin', pwf: passwordFingerprint(password, jwtSecret) })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime('7d')

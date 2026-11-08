@@ -1,7 +1,7 @@
 # Container Terminal — WebSocket PTY
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-11-08
 
 ---
 
@@ -51,10 +51,19 @@ At the upgrade, in `server.js`, in this order:
 |---|---|
 | The path is `/api/terminal-ws` (no other path takes an upgrade) | `404` |
 | `Origin` equals the host the browser addressed: `Host`, or `X-Forwarded-Host` from a proxy; case and the scheme's default port are ignored. Blocks a page on another site from opening a shell with the user's cookie (cross-site WebSocket hijacking); a browser cannot set `X-Forwarded-Host` on a WebSocket, so accepting it opens nothing | `403` |
-| The `rev4a_token` cookie verifies — the JWT the dashboard pages require (`REV4A_JWT_SECRET` from the environment or `.env`); a bearer token is not accepted here | `401` |
+| The `rev4a_token` cookie verifies and its `pwf` claim matches the current effective password — the JWT the dashboard pages require (`REV4A_JWT_SECRET` and `REV4A_PASSWORD` from the environment or `.env`); a bearer token is not accepted here | `401` |
 | The container name matches Docker's pattern (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`, ≤128 characters) | `400` |
 | The per-boot secret is set (Rev4a started with `rev4a serve`) | `503` |
 | The terminal server answers (refused → `502`, silent for 10 s → `504`) | `502` / `504` |
+
+After signature and expiry verification, `lib/session-fingerprint.js` checks the
+keyed password fingerprint in constant time. Missing or different claims, or no
+configured password, refuse the upgrade exactly like an invalid JWT. A password
+change ends existing browser authentication once applied (after restart for a
+Config edit), including new terminal connections and reconnects. SEC-21 requires
+every browser to log in once after updating because older cookies lack `pwf`.
+An already upgraded socket is not periodically re-authenticated; the existing
+socket lifecycle remains unchanged.
 
 The handshake is then replayed to 127.0.0.1:3741 **without the cookie** and with
 `X-Rev4a-Terminal-Secret` (any copy the client sent is dropped): a random value

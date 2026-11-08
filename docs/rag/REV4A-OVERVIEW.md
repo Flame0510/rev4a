@@ -190,6 +190,8 @@ environment writes; existing dotted keys are preserved when saving other keys.
 ### Login (`/login`)
 Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.
 
+Once a password change takes effect, every browser session using the old password is refused by API authentication, protected pages and terminal connections. A password saved in Config takes effect after restarting Rev4a. After the SEC-21 update, every browser has to log in once because older cookies lack the password fingerprint; cookie flags, lifetime and Bearer API access are unchanged.
+
 ## What about Pulse?
 
 Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat button in the bottom-right corner, on every page except login, setup and the first-run wizard. She can:

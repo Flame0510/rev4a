@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { join } from 'path';
-import { getJwtSecret } from '@/lib/rev4a-auth';
+import { getJwtSecret, getPassword, passwordFingerprint, fingerprintEquals } from '@/lib/rev4a-auth';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
 import { currentUpdate } from '@/lib/update-state';
 
@@ -133,8 +133,13 @@ export async function proxy(request: NextRequest) {
   }
 
   try {
-    const secret = new TextEncoder().encode(getJwtSecret());
-    await jwtVerify(token, secret);
+    const jwtSecret = getJwtSecret();
+    const secret = new TextEncoder().encode(jwtSecret);
+    const { payload } = await jwtVerify(token, secret);
+    const password = getPassword();
+    if (!password || !fingerprintEquals(payload.pwf, passwordFingerprint(password, jwtSecret))) {
+      throw new Error('Invalid session');
+    }
     return NextResponse.next();
   } catch {
     const loginUrl = new URL('/login', request.url);

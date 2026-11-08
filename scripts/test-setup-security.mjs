@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const ts = require('typescript');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const validator = require('../lib/env-file.js');
+const fingerprint = require('../lib/session-fingerprint.js');
 const CODE = 'ABCD-EFGH-JKLM-NPQR';
 const ERROR = 'Setup code required: it is printed in the terminal (or the journal) where rev4a serve runs';
 const ENV_FILE = '/mock/.env';
@@ -63,7 +64,12 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
     path, 'node:path': path, crypto, 'node:os': { homedir: () => '/mock' },
     '@/lib/rev4a-paths': { ENV_FILE, REV4A_DATA: '/mock' },
     '@/lib/env-file': validator, './env-file.js': validator,
-    jose: { jwtVerify: async (token) => { if (token !== 'valid-cookie') throw new Error('Invalid JWT'); } },
+    './session-fingerprint.js': fingerprint,
+    jose: { jwtVerify: async (token) => {
+      if (token !== 'valid-cookie') throw new Error('Invalid JWT');
+      // Fixed issued credential: changing the effective password must invalidate this cookie.
+      return { payload: { role: 'admin', pwf: fingerprint.passwordFingerprint('owner-pass', 'test-secret') } };
+    } },
     child_process: { execSync: () => effects.push(['exec']) },
     '@/lib/buildAgentImage': {
       getIsDownloading: () => { effects.push(['download-check']); return false; },
@@ -331,6 +337,10 @@ await test('configured installs ignore setup codes: normal bearer/cookie auth ap
   }
   assert.equal(h.logs.length, 0);
   assert.equal(h.process.env.REV4A_SETUP_CODE, undefined);
+  h.process.env.REV4A_PASSWORD = 'changed-owner-pass'; // secret-ok: local test fixture
+  const stale = h.req({}, CODE);
+  stale.cookies = { get: () => ({ value: 'valid-cookie' }) };
+  assert.equal((await h.auth.requireAuthIfConfigured(stale)).status, 401);
 });
 
 await test('development fallback generates one 80-bit code, logs once and shares it across route bundles', async () => {
@@ -590,4 +600,4 @@ await test('setup UI uses the shared Input, sends the code header and guards rep
   assert.deepEqual(saved, [CODE]);
 });
 
-console.log(`\n${passed} setup security checks passed`);
+console.log(`\nEXECUTED: test-setup-security.mjs — ${passed} setup security checks passed`);

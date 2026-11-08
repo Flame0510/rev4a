@@ -492,6 +492,35 @@ is never written, and the command hangs with no error to point at.
   `UpdatingScreen` (every tab) and `VersionBanner` judge "the new version answers" from that
   running version through one shared function.
 
+### Browser sessions and password changes (SEC-21)
+
+Login signs the admin JWT with a `pwf` claim from `lib/session-fingerprint.js`
+(CommonJS with a sibling `.d.ts`, shared with `server.js`). It is HMAC-SHA256,
+keyed by the JWT secret, over `rev4a:session-password:v1\0` followed by the password,
+base64url encoded and truncated to 22 characters. The JWT never contains the password.
+The helper compares fingerprint strings through fixed-size SHA-256 digests using
+`timingSafeEqual`; missing and non-string claims fail closed.
+
+After `jwtVerify`, API authentication (`requireAuthJWT`), the cookie-only session check
+(`/api/auth/check`), protected pages (`proxy.ts`) and terminal upgrades (`authorised`
+in `server.js`) require the claim for the current effective password. The APIs and
+pages use `getPassword()`; the CommonJS server uses
+the same environment-first, `.env`-fallback rule, with the same trimming of file
+values and data directory. An empty password cannot authenticate a cookie session.
+A Config password change applies after restart; until then the inherited environment
+still holds the effective password. `Authorization: Bearer <REV4A_TOKEN>` remains an
+independent API path. Cookie flags, HS256 and the 7-day lifetime are unchanged.
+
+**Upgrade:** every browser logs in once after updating; older cookies lack `pwf`.
+This stateless check automatically refuses the previously issued cookies without a
+session table or repair job. No database, `.env`, provider key file or agent volume
+is written or migrated. First startup adds no scans or background work, and older
+OpenClaw agents are unaffected. Rollback can read all existing data and accepts
+the additional JWT claim, but restores the older release's session validation and
+loses password-change revocation. `scripts/test-session-fingerprint.mjs` tests real
+login tokens against all four verification sites with isolated environment/files
+and a VM extract of terminal authentication, without starting `server.js` or using Docker.
+
 ### Browser API write boundary (SEC-18)
 
 `proxy.ts` applies the existing update guard first, then a shared origin guard to
