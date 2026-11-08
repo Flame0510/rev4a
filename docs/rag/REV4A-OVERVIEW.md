@@ -149,7 +149,7 @@ A read-only, per-agent overview of what OpenClaw puts in the agent's prompt. Pic
 Blank files are skipped and a missing file shows as "missing". A linked (symlinked) file is followed by OpenClaw but its size is not read here, so the page marks it unknown and leaves it out of the total. A sub-agent session gets AGENTS.md only (OpenClaw's system-prompt docs: "Sub-agent sessions only inject AGENTS.md"); MEMORY.md is also left out of cron, group and channel sessions. TOOLS.md and HEARTBEAT.md are not injected; the page only mentions them when present.
 
 ### Config (`/config`)
-Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. Changes are persisted to `.env`, synced to systemd, and a daemon-reload is triggered. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
+Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. The client sends only edited values. Config patches `.env` in place, preserving other keys, comments, blank lines, order and line endings; a daemon-reload is attempted only after a file change. Unchanged values stay intact. If `.env` has a multi-line or unterminated quoted value, a Config edit answers 409 and the file must be edited by hand. Allowed settings shown from the process environment are saved only if edited. A full unchanged GET-to-PUT round trip does not write the file. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
 
 ### Plugins (`/plugins`)
 Browse the OpenClaw plugins of one agent, read from its container (pick the agent at the top; a stopped agent must be started first). Search by name, id or description and filter enabled or disabled. Each row shows the version, whether it is enabled, and how many tools and hooks it adds. The page is read-only for now: turning plugins on or off is not available yet. The list is cached for about a minute and Reload refreshes it.
@@ -170,15 +170,22 @@ dashes and spaces do not matter. Direct Next.js starts (`npm run dev`) print it 
 the first setup request. Setup sets `REV4A_PASSWORD` and any missing JWT secret,
 then requires login. Already-configured installs never require a setup code.
 All setup/wizard API calls require the code before a password exists and normal
-authentication afterwards. Environment edits reject non-strings, CR, LF and NUL;
-an empty string still removes a Config key. At start the launcher comments out `.env` loader
+authentication afterwards. New environment values reject non-strings, CR, LF and NUL;
+clearing a stored non-empty Config value removes its assignment, while unchanged
+empty or multiline values remain intact. At start the launcher comments out `.env` loader
 controls (`NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
 `LD_LIBRARY_PATH`, `DYLD_*`) and logs only the key names; they belong in the service environment.
 The server removes those keys again after Next loads `.env`, preserving loader
-settings inherited from the operator's shell or systemd. `REV4A_SETUP_CODE` is
-excluded from Config reads, rejected on Config writes and ignored by the launcher's
-`.env` loader. File read failures other than a missing file abort environment writes;
-existing dotted keys are preserved when saving other keys.
+settings inherited from the operator's shell or systemd. Runtime-only keys
+(`REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`) are excluded from Config reads and
+silently ignored on Config writes, including older open tabs. The launcher
+removes their real assignments from `.env` at startup, logging names only, and
+clears inherited copies from the base child environment before setting fresh
+per-boot credentials. Both repairs preserve assignment-like text inside quoted
+multiline values and are idempotent. Deleted operator keys and comments cannot
+be reconstructed automatically. File read failures other than a missing file abort
+environment writes; existing dotted keys are preserved when saving other keys.
 
 ### Login (`/login`)
 Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.

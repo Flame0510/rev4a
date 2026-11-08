@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { updateCachedRev4aTimezone } from '@/lib/timezone';
 import { apiFetch } from '@/lib/apiFetch';
+import { RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
 import { Button, Input, MemoryLimitPicker, Page, PageHeader, Surface, Pill, Modal, useDockerTotalMb } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 
@@ -49,48 +50,78 @@ export default function ConfigPageClient() {
   const [statusMsg, setStatusMsg] = useState('');
   const [restarting, setRestarting] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'save' | 'restart' | null>(null);
+  const loadedEnvRef = useRef<EnvVars>({});
+  const loadAbortRef = useRef<AbortController | null>(null);
+  const savingRef = useRef(false);
 
   const loadEnv = useCallback(async () => {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     setLoading(true);
     try {
-      const res = await fetch('/api/config/env');
+      const res = await fetch('/api/config/env', { signal: controller.signal });
       const data = await res.json();
-      if (data.env) setEnv(data.env);
+      if (!controller.signal.aborted && data.env) {
+        loadedEnvRef.current = { ...data.env };
+        setEnv(data.env);
+      }
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadEnv();
+    return () => loadAbortRef.current?.abort();
   }, [loadEnv]);
 
   const handleChange = (key: string, value: string) => {
     setEnv((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleSave = async () => {
+  const handleSave = async (restart: boolean) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    const savedEnv = { ...env };
+    const changes = Object.fromEntries(Object.entries(savedEnv).filter(([key, value]) =>
+      !RUNTIME_ONLY_ENV_KEYS.includes(key) && value !== (loadedEnvRef.current[key] ?? ''),
+    ));
     setStatus('saving');
     setStatusMsg('');
     try {
       const res = await fetch('/api/config/env', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ env }),
+        body: JSON.stringify({ env: changes }),
       });
       const data = await res.json();
       if (data.status === 'ok') {
+        loadedEnvRef.current = savedEnv;
         setStatus('ok');
         setStatusMsg('Environment variables saved. Restart Rev4a to apply them.');
+        if (restart) {
+          setRestarting(true);
+          await fetch('/api/config/restart', { method: 'POST' });
+          setTimeout(() => {
+            setRestarting(false);
+            setStatus('idle');
+            setStatusMsg('');
+          }, 4000);
+        }
       } else {
         setStatus('error');
         setStatusMsg(data.error || 'Error');
       }
     } catch (e: unknown) {
+      setRestarting(false);
       setStatus('error');
       setStatusMsg(e instanceof Error ? e.message : 'Network error');
+    } finally {
+      savingRef.current = false;
+      setConfirmAction(null);
     }
   };
 
@@ -217,6 +248,7 @@ export default function ConfigPageClient() {
               variant="primary"
               size="md"
               loading={restarting}
+              disabled={status === 'saving' || restarting}
               onClick={() => setConfirmAction('restart')}
             >
               {restarting ? 'Restarting...' : 'Save & Restart'}
@@ -226,7 +258,7 @@ export default function ConfigPageClient() {
           {/* Confirm modal */}
           <Modal
             open={confirmAction !== null}
-            onClose={() => setConfirmAction(null)}
+            onClose={() => { if (!savingRef.current && !restarting) setConfirmAction(null); }}
             title={confirmAction === 'restart' ? 'Restart Rev4a' : 'Save configuration'}
           >
             <div style={{ display: 'grid', gap: 14 }}>
@@ -236,51 +268,18 @@ export default function ConfigPageClient() {
                   : 'Save the current environment variables. Changes will take effect after a restart.'}
               </p>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                <Button variant="ghost" size="sm" onClick={() => setConfirmAction(null)}>
+                <Button variant="ghost" size="sm" disabled={status === 'saving' || restarting} onClick={() => setConfirmAction(null)}>
                   Cancel
                 </Button>
                 <Button
                   variant="primary"
                   size="sm"
-                  loading={status === 'saving'}
-                  onClick={async () => {
-                    setStatus('saving');
-                    setStatusMsg('');
-                    try {
-                      const saveRes = await fetch('/api/config/env', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ env }),
-                      });
-                      const saveData = await saveRes.json();
-                      if (saveData.status !== 'ok') {
-                        setStatus('error');
-                        setStatusMsg(saveData.error || 'Save error');
-                        setStatus('idle');
-                        setConfirmAction(null);
-                        return;
-                      }
-                      setStatus('ok');
-                      setStatusMsg('Environment variables saved.');
-                      if (confirmAction === 'restart') {
-                        setRestarting(true);
-                        await fetch('/api/config/restart', { method: 'POST' });
-                        setTimeout(() => {
-                          setRestarting(false);
-                          setStatus('idle');
-                          setStatusMsg('');
-                        }, 4000);
-                      }
-                      setConfirmAction(null);
-                    } catch {
-                      setStatus('error');
-                      setStatusMsg('Network error');
-                      setStatus('idle');
-                      setConfirmAction(null);
-                    }
-                  }}
+                  loading={status === 'saving' || restarting}
+                  disabled={status === 'saving' || restarting}
+                  onClick={() => void handleSave(confirmAction === 'restart')}
                 >
-                  {confirmAction === 'restart' ? 'Save & Restart' : 'Save'}
+                  {restarting ? 'Restarting…' : status === 'saving' ? 'Saving…'
+                    : confirmAction === 'restart' ? 'Save & Restart' : 'Save'}
                 </Button>
               </div>
             </div>

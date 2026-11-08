@@ -122,7 +122,7 @@ await test('config PUT rejects every invalid value with its key before writing a
     const response = await h.load('app/api/config/env/route.ts').PUT(h.req({ env: { REV4A_TEST: value } },
       null, { authorization: 'Bearer test-bearer' }));
     assert.equal(response.status, 200);
-    assert.equal(h.files.get(ENV_FILE), value === '' ? '\n' : `REV4A_TEST=${value}\n`);
+    assert.equal(h.files.get(ENV_FILE), value === '' ? '' : `REV4A_TEST=${value}\n`);
   }
   const h = harness({ REV4A_TOKEN: 'test-bearer' }); // secret-ok
   const response = await h.load('app/api/config/env/route.ts').PUT(h.req({
@@ -144,7 +144,7 @@ await test('writeEnvVar uses the shared boundary before touching files or proces
   assert.match(h.files.get(ENV_FILE), /^REV4A_TEST=abc$/m);
 });
 
-await test('Config never returns the setup code from disk or runtime and refuses PUT with 400', async () => {
+await test('Config never returns the setup code from disk or runtime and ignores it on PUT', async () => {
   const h = harness({ REV4A_TOKEN: 'test-bearer', REV4A_SETUP_CODE: CODE }, // secret-ok
     'REV4A_SETUP_CODE=old-file-code\nREV4A_TEST=abc\n');
   const route = h.load('app/api/config/env/route.ts');
@@ -155,9 +155,8 @@ await test('Config never returns the setup code from disk or runtime and refuses
   h.files.set(ENV_FILE, 'REV4A_TEST=abc\n');
   assert.equal((await (await route.GET(req({}))).json()).env.REV4A_SETUP_CODE, undefined);
   const saved = h.files.get(ENV_FILE);
-  const rejected = await route.PUT(req({ env: { REV4A_SETUP_CODE: CODE, REV4A_TEST: 'changed' } }));
-  assert.equal(rejected.status, 400);
-  assert.match((await rejected.json()).error, /Keys not allowed: REV4A_SETUP_CODE/);
+  const ignored = await route.PUT(req({ env: { REV4A_SETUP_CODE: CODE } }));
+  assert.equal(ignored.status, 200);
   assert.equal(h.files.get(ENV_FILE), saved);
   assert.equal(h.effects.length, 0);
 });
@@ -170,7 +169,7 @@ await test('Config saves preserve legacy dotted keys without applying request ke
   assert.equal(h.files.get(ENV_FILE), 'PROVIDER_VENDOR.OPTION=x\nREV4A_TEST=abc\n');
 });
 
-await test('Config GET -> PUT round trip keeps a legacy dotted key (the client sends every stored key back)', async () => {
+await test('Config GET -> PUT round trip keeps a legacy dotted key for older open tabs', async () => {
   const h = harness({ REV4A_TOKEN: 'test-bearer' }, 'PROVIDER_VENDOR.OPTION=x\nREV4A_TEST=old\n'); // secret-ok
   const route = h.load('app/api/config/env/route.ts');
   const auth = { authorization: 'Bearer test-bearer' };
@@ -194,6 +193,21 @@ await test('.env repair comments out loader keys (Next.js reads .env for the bui
   assert.match(r.content, /^PORT=3740$/m);
   assert.doesNotMatch(r.content, /^(export\s+)?(NODE_OPTIONS|LD_PRELOAD|DYLD_INSERT_LIBRARIES)=/m);
   assert.deepEqual(envFile.disableLoaderEnvLines(r.content).disabled, []);
+});
+
+await test('loader repair is line based: it only comments lines out, also inside or after an odd quoted value', () => {
+  for (const newline of ['\n', '\r\n']) {
+    const content = ['# header', 'OPERATOR_NOTE="open', 'NODE_OPTIONS=--import=payload', 'export LD_PRELOAD=/x.so', 'PORT=3740', ''].join(newline);
+    const r = envFile.disableLoaderEnvLines(content);
+    assert.deepEqual(r.disabled, ['NODE_OPTIONS', 'LD_PRELOAD']);
+    const before = content.split('\n'); const after = r.content.split('\n');
+    assert.equal(after.length, before.length);
+    after.forEach((line, i) => {
+      if (/^(export\s+)?(NODE_OPTIONS|LD_PRELOAD)=/.test(before[i].trim())) assert.ok(line.startsWith('# Disabled by Rev4a:'));
+      else assert.equal(line, before[i]);
+    });
+    assert.deepEqual(envFile.disableLoaderEnvLines(r.content).disabled, []);
+  }
 });
 
 await test('all assignment writers fail closed on EACCES/EIO/EISDIR; only ENOENT starts an empty file', async () => {
@@ -347,7 +361,7 @@ function launcher(content, inherited = {}) {
     ENV_SOURCE: ENV_FILE, ROOT: '/mock', ENV_LINK: '/mock/link', CONFIG_DIR: '/mock', DATA_DIR: '/mock/data', join: path.join,
     existsSync: () => true, readFileSync: () => content, log: (tag, message) => logs.push({ tag, message }),
     skippedEnvKeys: new Set(), process: { env: inherited, execPath: '/mock/node', on: () => {} }, crypto,
-    isLoaderEnvKey: validator.isLoaderEnvKey,
+    isLoaderEnvKey: validator.isLoaderEnvKey, RUNTIME_ONLY_ENV_KEYS: validator.RUNTIME_ONLY_ENV_KEYS,
     preflight: () => {}, checkVersion: () => {}, setTimeout: () => {}, setInterval: () => ({ unref: () => {} }),
     spawn: (_exec, args, options) => {
       children.push({ args, env: options.env });
@@ -390,6 +404,31 @@ await test('launcher generates a fresh code only before configuration and passes
     const configured = launcher(file, inherited);
     assert.equal(configured.logs.filter(({ tag }) => tag === 'SETUP').length, 0);
     for (const child of configured.children) assert.equal(child.env.REV4A_SETUP_CODE, undefined);
+  }
+});
+
+await test('launcher strips inherited runtime-only state before supplying per-boot child credentials', () => {
+  const inherited = Object.fromEntries(validator.RUNTIME_ONLY_ENV_KEYS.map((key) => [key, 'stale-runtime']));
+  inherited.CUSTOM_OPERATOR_KEY = 'preserved';
+  for (const configured of [false, true]) {
+    const content = (configured ? 'REV4A_PASSWORD=existing\n' : '') // secret-ok
+      + validator.RUNTIME_ONLY_ENV_KEYS.map((key) => `${key}=stale-file\n`).join('');
+    const h = launcher(content, inherited);
+    for (const child of h.children) {
+      const entry = child.args[0];
+      for (const key of validator.RUNTIME_ONLY_ENV_KEYS) {
+        const value = child.env[key];
+        if (key === 'REV4A_TERMINAL_SECRET' && entry !== 'daemon.js') {
+          assert.match(value, /^[a-f0-9]{64}$/);
+        } else if (key === 'REV4A_SETUP_CODE' && entry === 'server.js' && !configured) {
+          assert.match(value, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/);
+        } else assert.equal(value, undefined, `${entry}: ${key}`);
+      }
+      assert.equal(child.env.CUSTOM_OPERATOR_KEY, 'preserved');
+    }
+    assert.equal(h.children[0].env.REV4A_TERMINAL_SECRET, h.children[2].env.REV4A_TERMINAL_SECRET);
+    assert.ok(!JSON.stringify(h.logs).includes('stale-runtime'));
+    assert.equal(inherited.REV4A_SERVER_PID, 'stale-runtime');
   }
 });
 
@@ -485,6 +524,7 @@ await test('default .env generation preserves existing files and aborts on read 
       },
       log: () => {}, seedAgentToken: () => {}, writeFileSync: (...args) => writes.push(args),
       disableLoaderEnvLines: envFile.disableLoaderEnvLines,
+      removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
     });
     const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
     if (error) assert.throws(run, { code: error });

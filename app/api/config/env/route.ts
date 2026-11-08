@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { assertEnvKey, assertEnvValue } from '@/lib/env-file';
+import { assertEnvKey, assertEnvValue, classifyEnvLines, isPlainEnvFile, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,39 +21,17 @@ export const runtime = 'nodejs';
 const ALLOWED_PREFIXES = ['REV4A_', 'PROVIDER_'];
 
 function isAllowedKey(key: string): boolean {
-  return key !== 'REV4A_SETUP_CODE' && ALLOWED_PREFIXES.some((p) => key.startsWith(p));
+  return !RUNTIME_ONLY_ENV_KEYS.includes(key) && ALLOWED_PREFIXES.some((p) => key.startsWith(p));
 }
 
 function parseEnvFile(content: string): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
-    // Strip surrounding quotes
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (isAllowedKey(key)) {
-      result[key] = value;
+  for (const line of classifyEnvLines(content)) {
+    if (line.key && isAllowedKey(line.key)) {
+      result[line.key] = line.value ?? '';
     }
   }
   return result;
-}
-
-function serializeEnvFile(vars: Record<string, string>): string {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(vars).sort()) {
-    assertEnvValue(key, value);
-    lines.push(`${key}=${value}`);
-  }
-  return lines.join('\n') + '\n';
 }
 
 export async function GET(request: NextRequest) {
@@ -63,11 +41,11 @@ export async function GET(request: NextRequest) {
     let content = '';
     try {
       content = fs.readFileSync(ENV_FILE, 'utf-8');
-    } catch {
-      content = '';
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
     const vars = parseEnvFile(content);
-    // Also inject runtime values for keys not in file
+    // Include inherited settings, but never per-process state or credentials.
     for (const key of Object.keys(process.env).filter((k) => isAllowedKey(k) && !(k in vars))) {
       vars[key] = process.env[key] || '';
     }
@@ -89,8 +67,9 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'env object required' }, { status: 400 });
     }
 
-    // Validate keys
-    const invalidKeys = Object.keys(body.env).filter((k) => !isAllowedKey(k));
+    // Older open tabs may submit per-process keys: ignore them before validation.
+    const entries = Object.entries(body.env).filter(([key]) => !RUNTIME_ONLY_ENV_KEYS.includes(key));
+    const invalidKeys = entries.map(([key]) => key).filter((k) => !isAllowedKey(k));
     if (invalidKeys.length > 0) {
       return NextResponse.json(
         { error: `Keys not allowed: ${invalidKeys.join(', ')}` },
@@ -99,34 +78,68 @@ export async function PUT(request: NextRequest) {
     }
 
     try {
-      for (const [key, value] of Object.entries(body.env)) {
+      for (const [key] of entries) {
         assertEnvKey(key);
-        assertEnvValue(key, value);
       }
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 400 });
     }
 
-    // Read current, merge, write back
-    let current: Record<string, string> = {};
+    // Preserve every line not edited, including comments, unknown keys and line endings.
+    let content = '';
     try {
-      current = parseEnvFile(fs.readFileSync(ENV_FILE, 'utf-8'));
+      content = fs.readFileSync(ENV_FILE, 'utf-8');
     } catch (e) {
       // Only a missing file permits starting fresh; never overwrite unreadable data.
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
-    for (const [key, value] of Object.entries(body.env)) {
+    const current = parseEnvFile(content);
+    // Check stored values first: an old client's unchanged empty or multiline value
+    // must not remove a line or fail the validation applied to new assignments.
+    // A key absent from the file whose value equals the running one was injected by GET, not edited.
+    const changes = entries.filter(([key, value]) => (key in current)
+      ? value !== current[key]
+      : value !== '' && value !== (process.env[key] ?? ''));
+    if (changes.length > 0 && !isPlainEnvFile(content)) {
+      return NextResponse.json({
+        error: '.env has a multi-line or unusual value: edit it by hand, Rev4a will not guess where a value ends',
+      }, { status: 409 });
+    }
+    try {
+      for (const [key, value] of changes) assertEnvValue(key, value);
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    }
+    let next = content;
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const updated: string[] = [];
+    for (const [key, value] of changes) {
       assertEnvValue(key, value);
-      if (value === '') {
-        delete current[key];
+      const classified = classifyEnvLines(next);
+      const lines = classified.map((line) => line.text);
+      const index = classified.findIndex((line) => line.key === key);
+      if (index === -1) {
+        // An unchanged GET-injected setting is not a new user setting.
+        if (value === '' || value === process.env[key]) continue;
+        if (lines.length && !lines[lines.length - 1].endsWith('\n')) {
+          lines[lines.length - 1] += newline;
+        }
+        lines.push(`${key}=${value}${newline}`);
+      } else if (value === '') {
+        lines.splice(index, classified[index].endIndex - index + 1);
       } else {
-        current[key] = value;
+        const end = classified[index].endIndex;
+        const ending = lines[end].endsWith('\r\n') ? '\r\n'
+          : lines[end].endsWith('\n') ? '\n' : '';
+        lines.splice(index, end - index + 1, `${key}=${value}${ending}`);
       }
+      next = lines.join('');
+      updated.push(key);
     }
 
-    fs.writeFileSync(ENV_FILE, serializeEnvFile(current), 'utf-8');
-
+    if (next === content) return NextResponse.json({ status: 'ok', updated: [] });
+    fs.writeFileSync(ENV_FILE, next, 'utf-8');
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
     // No need to write individual Environment= lines into unit files —
@@ -137,7 +150,7 @@ export async function PUT(request: NextRequest) {
       console.warn('Failed to reload systemd:', syncErr);
     }
 
-    return NextResponse.json({ status: 'ok', updated: Object.keys(body.env) });
+    return NextResponse.json({ status: 'ok', updated });
   } catch (e: unknown) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'Unknown error' },

@@ -80,20 +80,46 @@ to any specific reverse proxy.
 
 When environment variables are saved via the Config page (Save & Restart):
 
-1. Values are merged into the data directory's `.env` (`~/.config/rev4a/.env`; the
-   `.env` in the installation root is a link to it). An empty string removes the key.
-   Values must be strings without CR, LF or NUL; invalid entries reject the entire
+1. The client sends only values changed since the last successful load or save.
+   The data directory's `.env` (`~/.config/rev4a/.env`; the `.env` in the installation
+   root is a link to it) is patched in place: replace only the first assignment of
+   an edited key, append a new key, or remove that assignment when a stored
+   non-empty value is cleared. Unchanged empty assignments stay intact.
+   Other keys (including `GATEWAY_TOKEN`, `PORT` and operator-defined settings),
+   comments, blank lines, order and line endings stay intact. An unchanged value
+   retains its quoting, including when an older open tab sends the entire GET result.
+   Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit. Unchanged stored values are
+   compared before validation and left untouched. New values must be strings
+   without CR, LF or NUL; invalid entries reject the entire
    request with `400` naming the key. Every `.env` assignment writer uses the shared
    `lib/env-file.js` validator, including `writeEnvVar()`.
    Only ENOENT (a missing file) permits an empty starting file; other read errors
-   abort the write. Config returns `500` without changing the file. New keys must
-   be environment identifiers, while existing dotted keys are preserved when
-   saving other keys. `REV4A_SETUP_CODE` is excluded from Config reads and rejected
-   in updates because it belongs only to the running setup session.
-2. `sudo systemctl daemon-reload` is attempted; it is harmless where there is no systemd.
+   abort the write. Config returns `500` without changing the file. Submitted keys
+   must have a `REV4A_` or `PROVIDER_` prefix and pass the assignment validator;
+   legacy dotted keys remain valid. Runtime-only keys (`REV4A_SERVER_PID`,
+   `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`, `REV4A_TERMINAL_SECRET`,
+   `REV4A_SETUP_CODE`) are omitted from GET and silently ignored on PUT. An allowed
+   key absent from the file is shown from the process environment, but is written
+   only if the submitted value differs from that inherited value.
+2. After a file change, `sudo systemctl daemon-reload` is attempted; it is harmless
+   where there is no systemd. A no-op save neither writes nor reloads.
 3. **Save & Restart** runs `sudo systemctl restart rev4a.service`: the restart only works
    when Rev4a runs as that systemd service. Started any other way, restart `rev4a serve`
    yourself — `serve` reads `.env` at start-up, so nothing changes until then.
+
+**BUG-14 update note:** on startup, before Next.js builds or starts, `ensureEnv()`
+removes assignments of the five runtime-only keys left in `.env` by earlier Config
+saves. The repair is idempotent and logs key names, never values. It preserves all
+other lines and runs alongside the loader-key repair. Previously deleted operator
+keys and comments cannot be reconstructed and are not restored. Databases, provider
+key files and agent volumes are unchanged; older agents need no changes. The repair
+runs only on a plain `.env` (one-line assignments; `isPlainEnvFile` in
+`lib/env-file.js`) and is skipped, with a log line, otherwise. The loader-key repair
+is line based on purpose: it only ever comments a line out, so it is safe on any file. The launcher also clears
+runtime-only keys inherited from the shell or systemd's `EnvironmentFile` from
+the base child environment before setting fresh per-boot credentials. The repair
+creates no new configuration format, so previous releases
+can read the resulting file on rollback (their Config save bug would return).
 
 ### First-run ownership (SEC-14)
 

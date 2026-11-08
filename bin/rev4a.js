@@ -25,7 +25,7 @@ const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameS
 const { join, dirname } = require('path');
 const crypto = require('crypto');
 const os = require('os');
-const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines } = require('../lib/env-file.js');
+const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines, removeRuntimeEnvLines, RUNTIME_ONLY_ENV_KEYS } = require('../lib/env-file.js');
 
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
@@ -442,9 +442,18 @@ function ensureEnv() {
     // Before anything runs Next (the build in preflight loads .env on its own).
     const current = readFileSync(ENV_SOURCE, 'utf-8');
     const repaired = disableLoaderEnvLines(current);
+    const runtimeRepair = removeRuntimeEnvLines(repaired.content);
+    if (runtimeRepair.content !== current) {
+      writeFileSync(ENV_SOURCE, runtimeRepair.content, { encoding: 'utf-8', mode: 0o600 });
+    }
     if (repaired.disabled.length > 0) {
-      writeFileSync(ENV_SOURCE, repaired.content, { encoding: 'utf-8', mode: 0o600 });
       log('ENV', `Disabled unsafe .env key(s): ${[...new Set(repaired.disabled)].join(', ')} (set loader options in the service environment instead)`);
+    }
+    if (runtimeRepair.removed.length > 0) {
+      log('ENV', `Removed runtime-only .env key(s): ${[...new Set(runtimeRepair.removed)].join(', ')}`);
+    }
+    if (runtimeRepair.skipped) {
+      log('ENV', '.env has a multi-line or unusual value: runtime-only keys were not cleaned automatically');
     }
     // Ensure symlink so the app can find .env at the root
     if (!existsSync(ENV_LINK)) {
@@ -599,8 +608,9 @@ function serve(port) {
     PORT: String(port),
     NODE_ENV: process.env.NODE_ENV || 'production',
   };
-  // The code is ephemeral, never read from .env and never needed on configured installs.
-  delete childEnv.REV4A_SETUP_CODE;
+  // A service EnvironmentFile may have exported stale state before the file repair ran.
+  // Clear it from both sources before supplying this boot's credentials to specific children.
+  for (const key of RUNTIME_ONLY_ENV_KEYS) delete childEnv[key];
   let setupCode;
   if (!childEnv.REV4A_PASSWORD) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

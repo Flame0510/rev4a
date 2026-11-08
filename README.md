@@ -104,18 +104,35 @@ already filled in — you normally never set these by hand. See
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
 
 **SEC-14 update note:** first-run setup now requires the operator's setup code.
-Environment edits require string values without CR, LF or NUL (an empty string
-still removes a Config key). Loader settings are no longer read from `.env`: at start
+Environment edits require string values without CR, LF or NUL (clearing a stored
+non-empty Config value removes its assignment; unchanged empty assignments stay).
+Loader settings are no longer read from `.env`: at start
 `rev4a serve` comments out `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
 `LD_LIBRARY_PATH` and `DYLD_*` lines in `.env` (Next.js reads `.env` itself for the build
 and the server, so ignoring them in the launcher alone is not enough) and logs the key
 names, never the values. Set such options in the shell or systemd environment instead.
-Settings inherited from the operator's shell or systemd environment are preserved,
+Loader settings inherited from the operator's shell or systemd environment are preserved,
 including `NODE_OPTIONS=--max-old-space-size=4096`. Other operator-defined keys still
 reach child processes. The setup code is runtime-only: Config never returns or
-accepts `REV4A_SETUP_CODE`, and the launcher ignores it in `.env`. Environment
+persists `REV4A_SETUP_CODE`, and the launcher ignores it in `.env`. Environment
 writes abort on read errors other than a missing file; existing dotted keys remain
 valid when saving other keys. Existing passwords and stored data are unchanged.
+
+**BUG-14 update note:** Config saves only edited values and patches `.env` in place,
+preserving other keys (including `GATEWAY_TOKEN` and `PORT`), comments, blank lines
+and order. Values shown from the process environment are not saved unless edited.
+Unchanged values (also empty ones) stay byte-for-byte intact, and an unchanged
+GET-to-PUT round trip does not write the file. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
+`REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
+`REV4A_TERMINAL_SECRET` and `REV4A_SETUP_CODE` are never returned by Config and are
+silently ignored on save, including from older open tabs. At startup, `rev4a serve`
+automatically removes existing assignments of those five runtime-only keys from
+`.env`, logging names only; a second pass makes no further changes. Inherited
+copies of these keys (including from systemd's `EnvironmentFile`) are
+also cleared from the base child environment before fresh per-boot values are set.
+Previously deleted keys and comments cannot be restored automatically. No database, provider
+key file or agent volume changes are required; older agents and rollback remain
+compatible with the resulting `.env`.
 
 ---
 

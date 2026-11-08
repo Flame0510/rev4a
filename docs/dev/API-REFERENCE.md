@@ -440,7 +440,11 @@ Read stored and runtime variables with `REV4A_` or `PROVIDER_` prefixes.
 
 **Response:** `{ "env": { "REV4A_PASSWORD": "...", ... } }`
 
-`REV4A_SETUP_CODE` is never included, from either the file or runtime environment.
+Per-process keys are never included, from either the file or runtime environment:
+`REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
+`REV4A_TERMINAL_SECRET` and `REV4A_SETUP_CODE` (the shared
+`RUNTIME_ONLY_ENV_KEYS` list in `lib/env-file.js`). Other allowed keys absent from
+the file are supplemented from `process.env` for display.
 
 ### `PUT /api/config/env`
 Update environment variables on the VPS host.
@@ -450,17 +454,31 @@ Update environment variables on the VPS host.
 **Body:** `{ "env": { "REV4A_PASSWORD": "newpass", ... } }`
 
 **Side effects:**
-- Writes the persistent data directory's `.env` (linked from the project root)
-- Runs `systemctl daemon-reload` so the next restart picks up the new environment
-- Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted; `REV4A_SETUP_CODE`
-  is reserved and rejected
-- Submitted keys must be environment identifiers; existing legacy dotted keys are
-  preserved when saving other keys. All values must be strings without CR, LF
-  or NUL. Validation runs before any write. An empty string removes the key;
+- Patches the persistent data directory's `.env` (linked from the project root)
+  line by line. Only the first assignment of a submitted key is replaced with
+  `KEY=value` (or removed when a stored non-empty value is cleared); an absent
+  non-empty key is appended. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
+  Every other line, including unknown operator keys, comments, blank lines, order
+  and line endings, is preserved. Stored parsed values are compared first, so
+  unchanged empty assignments (`KEY=`, `KEY=""`, `KEY=''`) retain their original bytes. An unchanged full GET-to-PUT round trip
+  performs no write
+- Runs `systemctl daemon-reload` after a file change so the next restart picks up
+  the new environment; a no-op save neither writes nor reloads
+- Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted. Runtime-only keys
+  listed above are silently ignored, so older open tabs can still save
+- An absent key whose submitted value equals `process.env[key]` is ignored: it is
+  an unchanged GET-injected value. A different non-empty value is a new setting
+- The Config client sends only values that differ from its last loaded/saved
+  snapshot, including explicit clears
+- Submitted keys use the shared assignment validator, which permits legacy dotted
+  keys but rejects whitespace, control characters, `=` and a leading `#`.
+  New or changed non-runtime values must be strings without CR, LF
+  or NUL. Validation runs before any write. Clearing a stored non-empty value removes the key;
   space-only strings keep their previous behaviour. Non-string values, including
   `null`, are `400` rather than coerced or treated as removal
 
 **Response:** `{ "status": "ok", "updated": ["REV4A_PASSWORD", ...] }`
+`updated` lists keys whose assignment changed; ignored and unchanged keys are omitted.
 
 **Errors (400):** `Keys not allowed: ...`, `Invalid environment key: <key>`, or
 `Invalid value for <key>: must be a string without CR, LF or NUL characters`.
