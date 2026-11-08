@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-07
+> **Last updated:** 2026-11-08
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -91,6 +91,20 @@
 ---
 
 ## 3. Components (Target Architecture)
+
+### Dashboard framing protection
+
+`next.config.mjs` applies `X-Frame-Options: SAMEORIGIN` to `/:path*`, covering
+dashboard pages and API responses. Same-origin framing remains available for the
+Workspace PDF preview. The workspace SVG response keeps its existing sandbox CSP.
+
+Next.js 16.2.6's `sendResponse` keeps an already configured CSP and skips a route's
+CSP, rather than combining the policies. A global framing-only CSP would therefore
+discard the SVG sandbox; CSP changes must preserve that route policy. This behavior
+was verified offline with Next's response sender, without opening a listener.
+
+`node scripts/test-security-headers.mjs` checks the configured header rule and the
+npm package's test/fixture exclusions without a running server or an npm subprocess.
 
 ### 3.1 Rev4a Control Plane
 

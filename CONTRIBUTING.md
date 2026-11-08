@@ -148,6 +148,14 @@ tree is not fully locked. TypeScript and the `@types/*` packages used by `next b
 belong in `dependencies`: npm global installs omit `devDependencies`, and Next's
 automatic type-package installer can select a different package manager and versions.
 
+The npm package keeps `scripts/` included, with exclusions only for `scripts/test-*`
+and `scripts/fixtures/`. Tests and fixtures stay in the checkout for CI; backup/restore
+scripts, Docker configuration, `scripts/lib/`, maintenance tools and
+`scripts/check-package-types.mjs` still ship. Keeping the directory included also
+preserves future runtime helpers without maintaining a separate list of file names.
+`scripts/test-security-headers.mjs` checks the package rules without invoking npm;
+`npm pack --dry-run --json` verifies the resulting file list.
+
 ## Before opening a PR: `npm run precheck`
 
 `npm run precheck` is the whole local gate in one command. It runs `npm test`,

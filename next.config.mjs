@@ -10,6 +10,12 @@ const nextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ['better-sqlite3'],
   allowedDevOrigins: ['127.0.0.1', 'localhost', ...extraDevOrigins],
+  async headers() {
+    return [{
+      source: '/:path*',
+      headers: [{ key: 'X-Frame-Options', value: 'SAMEORIGIN' }],
+    }];
+  },
 };
 
 export default nextConfig;

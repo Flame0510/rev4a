@@ -31,6 +31,8 @@
     "lib/",
     "public/",
     "scripts/",
+    "!scripts/test-*",
+    "!scripts/fixtures/",
     "docs/",
     "agent-templates/",
     "rev4a-rules/",
