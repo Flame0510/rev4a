@@ -7,7 +7,82 @@ import { describeAgent } from '@/lib/agent-names';
 import { SHARED_SKILLS_DIR } from '@/lib/rev4a-paths';
 import { isRev4aOwnedSkill } from '@/lib/rev4a-skills';
 import { CONTAINER_NAME_RE } from '@/lib/skill-files';
+import { isSafeSkillPromoteName, SKILL_PROMOTE_MAX_FILE_BYTES, SKILL_PROMOTE_MAX_EXTRA_FILES } from '@/lib/skill-promote-names';
 
+class UnsafeDestinationError extends Error {}
+
+function checkDirectory(dir) {
+  const stat = fs.lstatSync(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new UnsafeDestinationError('Skill destination must be a real directory, not a symlink');
+  }
+}
+
+function ensureDirectory(dir) {
+  try {
+    checkDirectory(dir);
+    return;
+  } catch (err) {
+    // lstat catches dangling symlinks too; only create genuinely missing directories.
+    if (err.code !== 'ENOENT') throw err;
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    if (['EEXIST', 'ENOTDIR', 'ELOOP'].includes(err.code)) {
+      throw new UnsafeDestinationError('Skill destination must be a real directory, not a symlink');
+    }
+    throw err;
+  }
+  checkDirectory(dir);
+}
+
+// Check again immediately before each write, including the fixed SKILL.md destination.
+function checkedDestination(destDir, name) {
+  const destPath = path.resolve(destDir, name);
+  if (!isSafeSkillPromoteName(name) || !destPath.startsWith(path.resolve(destDir) + path.sep)) {
+    throw new UnsafeDestinationError('Skill destination is outside its directory');
+  }
+  checkDirectory(SHARED_SKILLS_DIR);
+  checkDirectory(destDir);
+  const realShared = fs.realpathSync(SHARED_SKILLS_DIR);
+  const realDest = fs.realpathSync(destDir);
+  if (!realDest.startsWith(realShared + path.sep)) {
+    throw new UnsafeDestinationError('Skill destination is outside the shared skills directory');
+  }
+  try {
+    const stat = fs.lstatSync(destPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new UnsafeDestinationError('Skill destination must be a regular file, not a symlink');
+    }
+    return { destPath, overwritten: true };
+  } catch (err) {
+    // lstat also finds dangling symlinks; only a genuinely missing path is safe to create.
+    if (err.code !== 'ENOENT') throw err;
+    return { destPath, overwritten: false };
+  }
+}
+
+function writeDestination(destDir, name, content) {
+  const destination = checkedDestination(destDir, name);
+  let fd;
+  try {
+    // O_NOFOLLOW refuses a symlink swapped in after lstat, before truncating its target.
+    fd = fs.openSync(destination.destPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o644);
+    fs.writeFileSync(fd, content);
+  } catch (err) {
+    if (['ELOOP', 'EISDIR', 'ENOTDIR'].includes(err.code)) {
+      throw new UnsafeDestinationError('Skill destination must be a regular file, not a symlink');
+    }
+    throw err;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return destination;
+}
+
+const readOptions = { timeout: 5000, maxBuffer: SKILL_PROMOTE_MAX_FILE_BYTES + 1 };
 
 /**
  * POST /api/skills/promote
@@ -76,52 +151,78 @@ export async function POST(request) {
     const srcPath = `/root/.openclaw/workspace/skills/${skillName}/SKILL.md`;
     let content;
     try {
-      content = execFileSync('docker', ['exec', containerName, 'cat', srcPath], {
-        encoding: 'utf8', timeout: 5000
-      });
-    } catch {
+      content = execFileSync('docker', ['exec', containerName, 'cat', srcPath], readOptions);
+    } catch (err) {
+      if (err.code === 'ENOBUFS') {
+        return NextResponse.json({ error: 'SKILL.md exceeds the 1 MiB limit' }, { status: 413 });
+      }
       return NextResponse.json(
         { error: `Skill "${skillName}" not found in ${describeAgent(containerName)}` },
         { status: 404 }
       );
     }
+    if (content.length > SKILL_PROMOTE_MAX_FILE_BYTES) {
+      return NextResponse.json({ error: 'SKILL.md exceeds the 1 MiB limit' }, { status: 413 });
+    }
 
     // Check for additional files in the skill directory (assets, scripts, etc.)
     const extraFiles = [];
+    const skipped = [];
+    let skippedCount = 0;
+    function skip(name) {
+      skippedCount++;
+      // Bounded sample: at most 50 names of at most 120 characters, so the response stays small.
+      if (skipped.length < 50) skipped.push(name.length > 120 ? `${name.slice(0, 120)}…` : name);
+    }
+    let listRaw = '';
     try {
-      const listRaw = execFileSync('docker', ['exec', containerName, 'ls', '-1p', `/root/.openclaw/workspace/skills/${skillName}/`], {
-        encoding: 'utf8', timeout: 5000
-      }).trim();
-      // Exclude SKILL.md and directories from the extras list
-      extraFiles.push(
-        ...listRaw.split('\n')
-          .map(f => f.trim())
-          .filter(f => f && !f.endsWith('/') && f !== 'SKILL.md')
-      );
-    } catch {
-      // No extra files — that's fine
+      listRaw = execFileSync('docker', ['exec', containerName, 'ls', '-1p', `/root/.openclaw/workspace/skills/${skillName}/`], {
+        encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024
+      });
+    } catch (err) {
+      // SKILL.md was just read, so the folder exists: a failed listing is an error, never "no extra files".
+      if (err && err.code === 'ENOBUFS') {
+        return NextResponse.json({ error: "The skill folder's file list exceeds 1 MiB; nothing was promoted" }, { status: 413 });
+      }
+      return NextResponse.json({ error: "Could not list the skill's files; nothing was promoted" }, { status: 502 });
+    }
+    // Iterate without spread or an unbounded array of names. Ignore only the final delimiter.
+    for (let start = 0; start < listRaw.length;) {
+      const newline = listRaw.indexOf('\n', start);
+      const file = listRaw.slice(start, newline === -1 ? listRaw.length : newline);
+      start = newline === -1 ? listRaw.length : newline + 1;
+      if (file === 'SKILL.md' || (file.endsWith('/') && isSafeSkillPromoteName(file.slice(0, -1)))) continue;
+      if (!isSafeSkillPromoteName(file) || extraFiles.length >= SKILL_PROMOTE_MAX_EXTRA_FILES) {
+        skip(file);
+        continue;
+      }
+      extraFiles.push(file);
     }
 
-    // Create shared skills directory if it doesn't exist
-    const destDir = path.join(SHARED_SKILLS_DIR, skillName);
-    fs.mkdirSync(destDir, { recursive: true });
+    // Nested skill names are supported: refuse symlinks at every component before descending.
+    let destDir = path.resolve(SHARED_SKILLS_DIR);
+    ensureDirectory(destDir);
+    for (const part of skillName.split('/')) {
+      destDir = path.join(destDir, part);
+      ensureDirectory(destDir);
+    }
 
     // Write SKILL.md
-    const destPath = path.join(destDir, 'SKILL.md');
-    const overwritten = fs.existsSync(destPath);
-    fs.writeFileSync(destPath, content, 'utf8');
+    const { destPath, overwritten } = writeDestination(destDir, 'SKILL.md', content);
 
     // Copy extra files from container
     let extraCopied = 0;
     for (const file of extraFiles) {
       try {
-        const fileContent = execFileSync('docker', ['exec', containerName, 'cat', `/root/.openclaw/workspace/skills/${skillName}/${file}`], {
-          encoding: 'utf8', timeout: 5000
-        });
-        fs.writeFileSync(path.join(destDir, file), fileContent, 'utf8');
+        const fileContent = execFileSync('docker', ['exec', containerName, 'cat', `/root/.openclaw/workspace/skills/${skillName}/${file}`], readOptions);
+        if (fileContent.length > SKILL_PROMOTE_MAX_FILE_BYTES) {
+          skip(file);
+          continue;
+        }
+        writeDestination(destDir, file, fileContent);
         extraCopied++;
       } catch {
-        // Skip files that can't be read
+        skip(file);
       }
     }
 
@@ -133,10 +234,12 @@ export async function POST(request) {
       destPath,
       overwritten,
       extraCopied,
+      skipped,
+      skippedCount,
     });
   } catch (err) {
     // Only return message for known Error objects, never raw unknown throws
     const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: err instanceof UnsafeDestinationError ? 403 : 500 });
   }
 }

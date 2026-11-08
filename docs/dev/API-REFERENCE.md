@@ -2733,14 +2733,22 @@ Copy a skill from an agent's workspace to the shared skills directory, making it
   "skillName": "my-custom-skill",
   "agentId": "atlas",
   "containerName": "openclaw-atlas",
-  "destPath": "~/.config/rev4a/shared/shared-skills/my-custom-skill",
+  "destPath": "~/.config/rev4a/shared/shared-skills/my-custom-skill/SKILL.md",
   "overwritten": false,
-  "extraCopied": 0
+  "extraCopied": 0,
+  "skipped": [],
+  "skippedCount": 0
 }
 ```
 
 - `overwritten`: `true` if a shared skill with the same name already existed
 - `extraCopied`: number of additional files (beyond SKILL.md) copied from the skill directory
+- `skipped`: up to **50** extra filenames omitted because they are unsafe, exceed a limit, cannot be read or cannot be safely written. Names are returned as JSON strings (control characters are escaped); a name longer than 120 characters is cut to 120 followed by `…`, so the response stays small. Promotion still succeeds for the remaining files.
+- `skippedCount`: total number of omitted extra-file entries, including those beyond the 50-name response sample. Listings are scanned iteratively; at most 200 safe names are retained for copying, and later entries are counted without being read.
+- The folder listing (`ls -1p`) is limited to 1 MiB: over it the promote answers **413** and writes nothing; any other listing failure answers **502** and writes nothing (it is never treated as "no extra files").
+- Extra filenames must be plain names of at most 255 UTF-8 bytes: empty names, `.`, `..`, `/`, `\\`, NUL, CR and LF are rejected. `.hidden`, `....` and `..env` are allowed. Directories are not copied.
+- Each file is limited to **1 MiB (1,048,576 bytes)**, inclusive. An oversized `SKILL.md` returns **413** before any host writes; an oversized extra is skipped. At most **200** safe extra-file reads are attempted (failed and oversized reads count); later names are skipped.
+- Every host write checks that its resolved path is inside the skill directory and that the directory's current real path is inside the shared skills root's real path. Symlink directories (including nested skill-name components), regular files in place of directories, and symlink or non-regular file destinations are refused: **403** for the skill directory or `SKILL.md`, or `skipped` for an extra. Dangling symlinks are refused too. Files are opened with `O_NOFOLLOW` before writing through the descriptor, so a final-file symlink introduced after the checks is also refused without truncating its target. Existing regular files can still be overwritten.
 - The skill name is validated against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`
 - Container must have an `AGENT_ID` Docker label
 - A `skillName` starting with `rev4a-` is refused with **403** `"rev4a-…" is reserved for Rev4a's own skills: rename the skill first`
