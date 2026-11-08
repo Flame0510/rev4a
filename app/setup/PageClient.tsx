@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '../components/ui';
+import { Button, Input } from '../components/ui';
 import { ArrowRightIcon, CheckCircleIcon } from '../wizard/icons';
+import { rememberSetupCode } from '../wizard/storage';
 
 type Step = 'password' | 'done';
 
@@ -16,19 +17,26 @@ export default function SetupPageClient() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('password');
   const [password, setPassword] = useState('');
+  const [setupCode, setSetupCode] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const statusAbortRef = useRef<AbortController | null>(null);
 
   const stepIndex = STEPS.findIndex((s) => s.key === step);
 
   // Redirect if already configured
   useEffect(() => {
-    fetch('/api/auth/status')
+    statusAbortRef.current?.abort();
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
+    fetch('/api/auth/status', { signal: controller.signal })
       .then((r) => r.json())
       .then((d: { configured: boolean }) => {
-        if (d.configured) router.replace('/login');
+        if (!controller.signal.aborted && d.configured) router.replace('/login');
       })
       .catch(() => {});
+    return () => controller.abort();
   }, [router]);
 
 
@@ -36,24 +44,26 @@ export default function SetupPageClient() {
   // ─── Password ─────────────────────────────────────────────────────
 
   const handleSetPassword = useCallback(async () => {
+    if (savingRef.current) return;
     if (password.length < 8) {
       setPasswordError('Password must be at least 8 characters');
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     setPasswordError('');
 
     try {
       const res = await fetch('/api/setup/password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-rev4a-setup-code': setupCode },
         body: JSON.stringify({ password }),
       });
 
       if (res.ok) {
         // Password saved to .env — login route reads it from file.
-        // No restart needed: JWT_SECRET was inlined at build time.
-        setSaving(false);
+        // Retain the code only for this tab's wizard requests.
+        rememberSetupCode(setupCode);
         setStep('done');
         return;
       }
@@ -62,9 +72,11 @@ export default function SetupPageClient() {
       setPasswordError(err.error || 'Failed to set password');
     } catch {
       setPasswordError('Network error — please try again');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
-  }, [password]);
+  }, [password, setupCode]);
 
 
 
@@ -104,26 +116,37 @@ export default function SetupPageClient() {
                 Choose a password to protect your Rev4a dashboard.
                 You'll use this to log in as admin.
               </p>
-              <input
+              <Input
+                label="Setup code"
+                placeholder="ABCD-EFGH-JKLM-NPQR"
+                value={setupCode}
+                onChange={(e) => { setSetupCode(e.target.value); setPasswordError(''); }}
+                onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                aria-describedby="setup-code-hint"
+                disabled={saving}
+                autoFocus
+              />
+              <p id="setup-code-hint" style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+                Find this code in the terminal where rev4a serve runs, or in the service journal
+                (journalctl -u rev4a). For npm run dev, check its terminal after submitting.
+              </p>
+              <Input
+                label="Password"
                 type="password"
                 placeholder="Minimum 8 characters"
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setPasswordError(''); }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()}
-                className="setup-input"
-                autoFocus
+                autoComplete="new-password"
+                disabled={saving}
+                error={passwordError}
               />
-              {passwordError && (
-                <div style={{
-                  fontSize: 11, color: '#ef4444', padding: '4px 8px',
-                  background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
-                }}>
-                  {passwordError}
-                </div>
-              )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-                <Button variant="primary" size="md" onClick={handleSetPassword} loading={saving}>
-                  Set Password <ArrowRightIcon />
+                <Button variant="primary" size="md" onClick={handleSetPassword} loading={saving} disabled={saving}>
+                  {saving ? 'Setting Password…' : 'Set Password'} <ArrowRightIcon />
                 </Button>
               </div>
             </div>
@@ -202,14 +225,6 @@ export default function SetupPageClient() {
         .setup-step.done { background: var(--violet); opacity: 0.7; }
         .setup-step.active { background: var(--violet); opacity: 1; box-shadow: 0 0 6px rgba(146,91,252,0.5); }
         .setup-body { padding: 16px; }
-        .setup-input {
-          background: var(--bg); border: 1px solid var(--border);
-          color: var(--text); padding: 8px 10px;
-          font-size: 12px; font-family: var(--font-mono-stack);
-          outline: none; width: 100%; box-sizing: border-box;
-        }
-        .setup-input:focus { border-color: var(--violet); }
-
         @media (min-width: 481px) {
           .setup-outer { align-items: center; padding: 24px; }
           .setup-card {

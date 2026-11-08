@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { assertEnvKey, assertEnvValue } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,7 +21,7 @@ export const runtime = 'nodejs';
 const ALLOWED_PREFIXES = ['REV4A_', 'PROVIDER_'];
 
 function isAllowedKey(key: string): boolean {
-  return ALLOWED_PREFIXES.some((p) => key.startsWith(p));
+  return key !== 'REV4A_SETUP_CODE' && ALLOWED_PREFIXES.some((p) => key.startsWith(p));
 }
 
 function parseEnvFile(content: string): Record<string, string> {
@@ -49,6 +50,7 @@ function parseEnvFile(content: string): Record<string, string> {
 function serializeEnvFile(vars: Record<string, string>): string {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(vars).sort()) {
+    assertEnvValue(key, value);
     lines.push(`${key}=${value}`);
   }
   return lines.join('\n') + '\n';
@@ -66,9 +68,7 @@ export async function GET(request: NextRequest) {
     }
     const vars = parseEnvFile(content);
     // Also inject runtime values for keys not in file
-    for (const key of ALLOWED_PREFIXES.flatMap((p) =>
-      Object.keys(process.env).filter((k) => k.startsWith(p) && !(k in vars))
-    )) {
+    for (const key of Object.keys(process.env).filter((k) => isAllowedKey(k) && !(k in vars))) {
       vars[key] = process.env[key] || '';
     }
     return NextResponse.json({ env: vars });
@@ -84,8 +84,8 @@ export async function PUT(request: NextRequest) {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
   try {
-    const body: { env?: Record<string, string> } = await request.json();
-    if (!body.env || typeof body.env !== 'object') {
+    const body: { env?: Record<string, unknown> } | null = await request.json();
+    if (!body?.env || typeof body.env !== 'object' || Array.isArray(body.env)) {
       return NextResponse.json({ error: 'env object required' }, { status: 400 });
     }
 
@@ -98,16 +98,27 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    try {
+      for (const [key, value] of Object.entries(body.env)) {
+        assertEnvKey(key);
+        assertEnvValue(key, value);
+      }
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    }
+
     // Read current, merge, write back
     let current: Record<string, string> = {};
     try {
       current = parseEnvFile(fs.readFileSync(ENV_FILE, 'utf-8'));
-    } catch {
-      // File doesn't exist — start fresh
+    } catch (e) {
+      // Only a missing file permits starting fresh; never overwrite unreadable data.
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
     for (const [key, value] of Object.entries(body.env)) {
-      if (value === null || value === undefined || value === '') {
+      assertEnvValue(key, value);
+      if (value === '') {
         delete current[key];
       } else {
         current[key] = value;

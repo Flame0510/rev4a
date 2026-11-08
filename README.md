@@ -42,7 +42,11 @@ rev4a serve
 ```
 
 Rev4a auto-builds on first run, generates `.env` with credentials,
-and starts all services. Open `http://localhost:3740` and follow the setup wizard.
+and starts all services. Open `http://localhost:3740`, enter the **Setup code** printed
+by `rev4a serve`, and choose your dashboard password. With systemd, find the code in
+`journalctl -u rev4a`. It changes on each start until a password exists; configured
+installs do not print or require it. If you start Next.js directly (`npm run dev`),
+the first setup request prints the code in that process's terminal.
 An npm install also builds the dashboard during installation; it fails if the
 production build cannot complete. Startup checks for `.next/BUILD_ID` and retries an
 incomplete build before starting the server. The published package includes a dependency
@@ -98,6 +102,20 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
+
+**SEC-14 update note:** first-run setup now requires the operator's setup code.
+Environment edits require string values without CR, LF or NUL (an empty string
+still removes a Config key). Loader settings are no longer read from `.env`: at start
+`rev4a serve` comments out `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
+`LD_LIBRARY_PATH` and `DYLD_*` lines in `.env` (Next.js reads `.env` itself for the build
+and the server, so ignoring them in the launcher alone is not enough) and logs the key
+names, never the values. Set such options in the shell or systemd environment instead.
+Settings inherited from the operator's shell or systemd environment are preserved,
+including `NODE_OPTIONS=--max-old-space-size=4096`. Other operator-defined keys still
+reach child processes. The setup code is runtime-only: Config never returns or
+accepts `REV4A_SETUP_CODE`, and the launcher ignores it in `.env`. Environment
+writes abort on read errors other than a missing file; existing dotted keys remain
+valid when saving other keys. Existing passwords and stored data are unchanged.
 
 ---
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { setupCodeHeaders } from '../wizard/storage';
 
 // Cache auth result per session to avoid re-checking on every navigation
 const authCache = { valid: false, checked: false, ts: 0 };
@@ -81,7 +82,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         // Check wizard status
         const [statusRes, wizardRes] = await Promise.all([
           fetch('/api/auth/status'),
-          fetch('/api/wizard/status'),
+          fetch('/api/wizard/status', { headers: setupCodeHeaders() }),
         ]);
         const { configured } = await statusRes.json();
         const { done: wizardDone } = await wizardRes.json();

@@ -63,6 +63,10 @@ The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 5, De
 ## First-run wizard
 First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar. The mobile bottom navigation has five entries — Home, Agents, Workspace, Gateway, Containers — and the wizard is not one of them.
 
+Before choosing a password at `/setup`, enter the setup code from the terminal or
+service journal where `rev4a serve` runs. It changes on each unconfigured start;
+already-configured installations use normal authentication and need no setup code.
+
 ## Plugin
 An extension that adds new tools and capabilities to agents. The Plugins page reads the plugins of one agent from its container and lists each agent's plugins read-only (enabling and disabling is not available yet).
 

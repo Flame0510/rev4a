@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-07
+> **Last updated:** 2026-11-08
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -81,11 +81,54 @@ to any specific reverse proxy.
 When environment variables are saved via the Config page (Save & Restart):
 
 1. Values are merged into the data directory's `.env` (`~/.config/rev4a/.env`; the
-   `.env` in the installation root is a link to it). An empty value removes the key.
+   `.env` in the installation root is a link to it). An empty string removes the key.
+   Values must be strings without CR, LF or NUL; invalid entries reject the entire
+   request with `400` naming the key. Every `.env` assignment writer uses the shared
+   `lib/env-file.js` validator, including `writeEnvVar()`.
+   Only ENOENT (a missing file) permits an empty starting file; other read errors
+   abort the write. Config returns `500` without changing the file. New keys must
+   be environment identifiers, while existing dotted keys are preserved when
+   saving other keys. `REV4A_SETUP_CODE` is excluded from Config reads and rejected
+   in updates because it belongs only to the running setup session.
 2. `sudo systemctl daemon-reload` is attempted; it is harmless where there is no systemd.
 3. **Save & Restart** runs `sudo systemctl restart rev4a.service`: the restart only works
    when Rev4a runs as that systemd service. Started any other way, restart `rev4a serve`
    yourself — `serve` reads `.env` at start-up, so nothing changes until then.
+
+### First-run ownership (SEC-14)
+
+Before a password exists, `/setup` asks for the setup code and a password of at least
+8 characters. `rev4a serve` generates an 80-bit random code per start and prints it
+with a `[SETUP]` hint in its terminal (or `journalctl -u rev4a` under systemd). It
+passes the code only to `server.js`, never writes it to disk, and generates no code
+for an already-configured install. Direct Next.js starts generate and log one code
+on the first protected setup request instead.
+
+All pre-setup API calls use `x-rev4a-setup-code`: password setup, agent-image reads
+and downloads, setup restart, and wizard status/complete/reset. Case, dashes and
+spaces do not matter. A missing/wrong code returns `403` with instructions to find
+it; comparisons use the shared constant-time secret comparison. After a password
+exists the code is ignored and normal cookie/bearer authentication applies; password
+setup remains `409`. The final password write synchronously rechecks configuration
+and uses a freshly read `.env`, so a request paused reading its body cannot replace
+the owner's password. Setup and wizard clients retain the code only in per-tab
+`sessionStorage` with guarded access; wizard completion clears it.
+
+On upgrade (and at every start), the launcher comments out loader-control lines in
+`.env` before anything runs Next: `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`,
+`LD_PRELOAD`, `LD_LIBRARY_PATH` and all `DYLD_*` (the line stays, prefixed with
+`# Disabled by Rev4a: …`). Next.js loads `.env` on its own for `next build` and for the
+server, so skipping them in the launcher is not enough. It logs the key names once
+(never the values) and also skips them when it reads `.env`; other operator keys are
+still passed to children. `server.js` snapshots inherited loader keys before
+requiring Next, then removes newly added loader keys after `app.prepare()` so
+Next's own `.env` loading cannot pass them to updater or other child processes.
+Operator settings inherited from the shell or systemd are retained in both the
+launcher and server (including Node memory limits). The launcher also ignores
+any `REV4A_SETUP_CODE` entry in `.env`. No database, vault or agent-volume migration is
+required; the `.env` repair above is idempotent. An operator who kept
+`NODE_OPTIONS` in `.env` on purpose must move it to the service environment (release note). Older agents and rollback data compatibility are unchanged; rolling
+back also restores the older setup and loader security behaviour.
 
 ## Components
 

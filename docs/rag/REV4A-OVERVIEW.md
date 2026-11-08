@@ -163,7 +163,22 @@ Skill registry showing all skills across three sources:
 Filter by source, view and edit SKILL.md content, and **promote** agent-local skills to shared with one click. Skills whose name starts with `rev4a-` are Rev4a's own: they show "Managed by Rev4a" and are read-only (no Edit, no Delete, and a workspace skill cannot be promoted under such a name).
 
 ### Setup (`/setup`)
-First-run password setup. Reachable before a password exists; it sets `REV4A_PASSWORD` and the JWT secret, after which every page requires a session.
+First-run password setup. Enter the **Setup code** printed by `rev4a serve` in its
+terminal or service journal (`journalctl -u rev4a`), then choose a password of at
+least 8 characters. The code changes at every start until setup finishes; case,
+dashes and spaces do not matter. Direct Next.js starts (`npm run dev`) print it on
+the first setup request. Setup sets `REV4A_PASSWORD` and any missing JWT secret,
+then requires login. Already-configured installs never require a setup code.
+All setup/wizard API calls require the code before a password exists and normal
+authentication afterwards. Environment edits reject non-strings, CR, LF and NUL;
+an empty string still removes a Config key. At start the launcher comments out `.env` loader
+controls (`NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `DYLD_*`) and logs only the key names; they belong in the service environment.
+The server removes those keys again after Next loads `.env`, preserving loader
+settings inherited from the operator's shell or systemd. `REV4A_SETUP_CODE` is
+excluded from Config reads, rejected on Config writes and ignored by the launcher's
+`.env` loader. File read failures other than a missing file abort environment writes;
+existing dotted keys are preserved when saving other keys.
 
 ### Login (`/login`)
 Password-protected access to the dashboard. Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.

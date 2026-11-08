@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { assertEnvKey, assertEnvValue } from './env-file.js';
 
 /**
  * Centralised Rev4a data directory.
@@ -130,10 +131,14 @@ export function loadEnvVars(): Record<string, string> {
  * Replaces existing value for the same key, appends if missing.
  */
 export function writeEnvVar(key: string, value: string): void {
+  assertEnvKey(key);
+  assertEnvValue(key, value);
   ensurePaths();
   let content = '';
-  if (fs.existsSync(ENV_FILE)) {
+  try {
     content = fs.readFileSync(ENV_FILE, 'utf-8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
   const lines = content.split('\n');

@@ -21,6 +21,10 @@
  */
 'use strict';
 
+// Snapshot before requiring Next: its env loader may repopulate keys the launcher skipped.
+const { isLoaderEnvKey, stripUninheritedLoaderEnv } = require('./lib/env-file.js');
+const inheritedLoaderEnvKeys = new Set(Object.keys(process.env).filter(isLoaderEnvKey));
+
 const http = require('http');
 const net = require('net');
 const fs = require('fs');
@@ -182,6 +186,7 @@ async function main() {
   }
   const app = next({ dev: false, dir: __dirname, port: PORT });
   await app.prepare();
+  stripUninheritedLoaderEnv(process.env, inheritedLoaderEnvKeys, (message) => console.warn(`[rev4a] ${message}`));
   const handle = app.getRequestHandler();
   const server = http.createServer((req, res) => {
     // The login throttle keys on this header: a client must never be able to set it itself.

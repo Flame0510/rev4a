@@ -1,11 +1,11 @@
 /**
  * POST /api/setup/restart
  *
- * No auth required. Restarts the Rev4a server so that changes to
+ * Requires a setup code before configuration, normal auth afterwards. Restarts so changes to
  * .env (especially REV4A_PASSWORD) take effect.
  *
- * Next.js inlines env vars at build time, so a runtime process.env
- * mutation is not enough — the process must restart to reload .env.
+ * Restart reloads .env for all services. Password setup itself takes effect
+ * immediately; other environment edits still need a restart.
  *
  * Strategy:
  *   1. If running under systemd (rev4a.service), restart via systemctl.
@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Open only during initial setup (before a password exists). Once
+  // Requires the operator code during initial setup. Once
   // configured, this triggers a production service restart and must
   // require a valid session like every other privileged route.
   const denied = await requireAuthIfConfigured(request);

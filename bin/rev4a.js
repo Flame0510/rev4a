@@ -25,6 +25,7 @@ const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameS
 const { join, dirname } = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines } = require('../lib/env-file.js');
 
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
@@ -386,6 +387,8 @@ function ensureRev4aSkills() {
 
 // ── .env setup ──────────────────────────────────────────────────────────────
 
+const skippedEnvKeys = new Set();
+
 function loadEnv() {
   const envFile = existsSync(ENV_SOURCE) ? ENV_SOURCE : null;
   if (!envFile) return {};
@@ -398,6 +401,16 @@ function loadEnv() {
       if (trimmed.startsWith('#') || !trimmed.includes('=')) continue;
       const eqIdx = trimmed.indexOf('=');
       const key = trimmed.slice(0, eqIdx).trim();
+      if (key === 'REV4A_SETUP_CODE') continue;
+      // Ignore loader controls even in an older .env already affected by injection.
+      // Other operator-defined keys remain supported. Never log their values.
+      if (isLoaderEnvKey(key)) {
+        if (!skippedEnvKeys.has(key)) {
+          skippedEnvKeys.add(key);
+          log('ENV', `Warning: skipped unsafe environment key ${key}`);
+        }
+        continue;
+      }
       let val = trimmed.slice(eqIdx + 1).trim();
 
       // Strip surrounding quotes (single or double)
@@ -417,8 +430,22 @@ function loadEnv() {
 }
 
 function ensureEnv() {
-  if (existsSync(ENV_SOURCE)) {
+  let configured = false;
+  try {
+    readFileSync(ENV_SOURCE, 'utf-8');
+    configured = true;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (configured) {
     log('ENV', 'Configuration found');
+    // Before anything runs Next (the build in preflight loads .env on its own).
+    const current = readFileSync(ENV_SOURCE, 'utf-8');
+    const repaired = disableLoaderEnvLines(current);
+    if (repaired.disabled.length > 0) {
+      writeFileSync(ENV_SOURCE, repaired.content, { encoding: 'utf-8', mode: 0o600 });
+      log('ENV', `Disabled unsafe .env key(s): ${[...new Set(repaired.disabled)].join(', ')} (set loader options in the service environment instead)`);
+    }
     // Ensure symlink so the app can find .env at the root
     if (!existsSync(ENV_LINK)) {
       try { require('fs').symlinkSync(ENV_SOURCE, ENV_LINK); } catch {}
@@ -436,6 +463,10 @@ function ensureEnv() {
   const token = randomString(32);
   const apiKey = 'rev_' + randomString(48);
   const gatewayToken = randomString(48);
+  for (const [key, value] of Object.entries({
+    REV4A_PASSWORD: '', REV4A_JWT_SECRET: jwt, REV4A_TOKEN: token,
+    REV4A_API_KEY: apiKey, GATEWAY_TOKEN: gatewayToken,
+  })) assertEnvValue(key, value);
 
   const env = [
     '# Rev4a environment — auto-generated on first run',
@@ -568,6 +599,15 @@ function serve(port) {
     PORT: String(port),
     NODE_ENV: process.env.NODE_ENV || 'production',
   };
+  // The code is ephemeral, never read from .env and never needed on configured installs.
+  delete childEnv.REV4A_SETUP_CODE;
+  let setupCode;
+  if (!childEnv.REV4A_PASSWORD) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const code = Array.from(crypto.randomBytes(16), (byte) => alphabet[byte & 31]).join('');
+    setupCode = code.match(/.{4}/g).join('-');
+    log('SETUP', `${setupCode} — open the dashboard and enter this code`);
+  }
 
   const children = [];
   const wsPort = process.env.TERMINAL_WS_PORT || '3741';
@@ -582,7 +622,8 @@ function serve(port) {
   const next = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: { ...childEnv, TERMINAL_WS_PORT: wsPort, REV4A_TERMINAL_SECRET: terminalSecret },
+    env: { ...childEnv, ...(setupCode ? { REV4A_SETUP_CODE: setupCode } : {}),
+      TERMINAL_WS_PORT: wsPort, REV4A_TERMINAL_SECRET: terminalSecret },
   });
   children.push(next);
   log('SERVE', `Next.js PID ${next.pid}`);

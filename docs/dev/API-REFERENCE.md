@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-07
+> **Last updated:** 2026-11-08
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -82,24 +82,39 @@ the login form.
 
 ## Setup & wizard
 
+While no password exists, **every endpoint in this section** requires header
+`x-rev4a-setup-code`. `rev4a serve` prints a new random code at each unconfigured
+start with `[SETUP]` in its terminal or service journal (`journalctl -u rev4a`). A
+direct Next.js start generates and logs one on its first setup request. Input is
+trimmed, case-insensitive, and ignores dashes/spaces; comparison is constant-time.
+Missing or wrong codes return `403`:
+
+```json
+{ "error": "Setup code required: it is printed in the terminal (or the journal) where rev4a serve runs" }
+```
+
+After configuration the setup code is ignored: cookie/bearer authentication applies
+to wizard, image and restart routes. Password setup instead always returns `409`.
+Configured installations generate and print no setup code.
+
 ### `GET /api/wizard/status`
 Whether the first-run wizard has been completed.
 
-**Auth:** browser cookie or bearer token
+**Auth:** setup code before configuration; browser cookie or bearer token afterwards
 
 **Response:** `{ "done": true }`
 
 ### `POST /api/wizard/complete`
 Mark the wizard as completed.
 
-**Auth:** browser cookie or bearer token
+**Auth:** setup code before configuration; browser cookie or bearer token afterwards
 
 **Response:** `{ "done": true }`
 
 ### `POST /api/wizard/reset`
 Reset the wizard so it runs again.
 
-**Auth:** browser cookie or bearer token
+**Auth:** setup code before configuration; browser cookie or bearer token afterwards
 
 **Response:** `{ "done": false }`
 
@@ -108,26 +123,29 @@ Reset the wizard so it runs again.
 ### `POST /api/setup/password`
 Set the dashboard password during first-run setup.
 
-**Auth:** none, and only usable once — returns `409` if a password already exists
+**Auth:** setup code, and only usable once — returns `409` if a password already exists
 
 **Body:** `{ "password": "..." }` — minimum 8 characters
 
-**Errors:** `400` invalid JSON, missing password, or shorter than 8 characters;
-`409` already configured; `500` the `.env` file could not be written.
+**Errors:** `400` invalid JSON, missing/non-string password, fewer than 8 characters,
+or a value containing CR, LF or NUL (names `REV4A_PASSWORD`); `403` missing/wrong setup
+code; `409` already configured, including a request paused reading its body while
+another request finished setup; `500` the `.env` file could not be written. The file
+is freshly read and configuration synchronously rechecked immediately before writing.
 
 **Response:** `{ "status": "ok" }`
 
 ### `POST /api/setup/restart`
 Restart the service so a freshly written `.env` takes effect.
 
-**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+**Auth:** setup code before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
 **Errors:** `500` if the `.env` file is missing, or the restart could not be issued.
 
 ### `GET /api/setup/agent-image`
 Whether a supported OpenClaw version of the agent image is downloaded.
 
-**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+**Auth:** setup code before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
 **Response:** `{ "exists": true, "version": "2026.9.3" }` (the newest one present), or
 `{ "exists": false, "version": null }` when none is **or Docker is unreachable** — the two
@@ -139,7 +157,7 @@ Download the newest supported version the registry publishes, streaming progress
 that version is already here as its pinned build (the same rules as
 `POST /api/agents/download-image`).
 
-**Auth:** open before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
+**Auth:** setup code before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
 **Errors:** `409` if a download is already running.
 
@@ -415,22 +433,42 @@ with the providers that do support OAuth.
 
 ## Config
 
+### `GET /api/config/env`
+Read stored and runtime variables with `REV4A_` or `PROVIDER_` prefixes.
+
+**Auth:** browser cookie or bearer token
+
+**Response:** `{ "env": { "REV4A_PASSWORD": "...", ... } }`
+
+`REV4A_SETUP_CODE` is never included, from either the file or runtime environment.
+
 ### `PUT /api/config/env`
 Update environment variables on the VPS host.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
-**Body:** `{ "REV4A_PASSWORD": "newpass", ... }`
+**Body:** `{ "env": { "REV4A_PASSWORD": "newpass", ... } }`
 
 **Side effects:**
-- Writes to `.env` in the project root
-- Automatically syncs to `/etc/systemd/system/rev4a.service` (removes all `Environment=REV4A_*` and `Environment=PROVIDER_*` lines, appends current vars)
+- Writes the persistent data directory's `.env` (linked from the project root)
 - Runs `systemctl daemon-reload` so the next restart picks up the new environment
-- Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted
+- Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted; `REV4A_SETUP_CODE`
+  is reserved and rejected
+- Submitted keys must be environment identifiers; existing legacy dotted keys are
+  preserved when saving other keys. All values must be strings without CR, LF
+  or NUL. Validation runs before any write. An empty string removes the key;
+  space-only strings keep their previous behaviour. Non-string values, including
+  `null`, are `400` rather than coerced or treated as removal
 
 **Response:** `{ "status": "ok", "updated": ["REV4A_PASSWORD", ...] }`
 
-**Error (400):** `{ "error": "Keys not allowed: ..." }`
+**Errors (400):** `Keys not allowed: ...`, `Invalid environment key: <key>`, or
+`Invalid value for <key>: must be a string without CR, LF or NUL characters`.
+
+**Errors (500):** file read or write failure. Only ENOENT (a missing file) permits
+starting from an empty file; any other read error aborts before writing. Password
+setup, `writeEnvVar()` and the launcher's default configuration generation follow
+the same rule.
 
 ### `POST /api/config/restart`
 Restart the Rev4a server (via systemd).
