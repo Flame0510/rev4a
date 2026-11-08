@@ -144,6 +144,7 @@ already filled in — you normally never set these by hand. See
 | [docs/dev/PROVIDERS.md](./docs/dev/PROVIDERS.md) | Provider login, key management, proxy details |
 | [docs/dev/DATABASE.md](./docs/dev/DATABASE.md) | SQLite schema and storage notes |
 | [docs/dev/WORKSPACE.md](./docs/dev/WORKSPACE.md) | Workspace file explorer and editor |
+| [SECURITY.md](./SECURITY.md) | How to report a vulnerability privately, supported versions |
 
 ---
 
