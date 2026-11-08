@@ -164,7 +164,11 @@ Reset the wizard so it runs again.
 ---
 
 ### `POST /api/setup/password`
+
 Set the dashboard password during first-run setup.
+
+Password setup writes `.env` with mode `0600` and chmods it to `0600` after writing,
+including an existing file with broader permissions.
 
 **Auth:** setup code, and only usable once — returns `409` if a password already exists
 
@@ -389,6 +393,15 @@ Rev4a Provider Gateway — proxy chat completions to the correct upstream.
 { "error": { "message": "Invalid API key...", "type": "authentication_error" } }
 ```
 
+**Error (502):** upstream request or body-read failure, including a malformed stored key:
+```json
+{ "error": { "message": "Gateway error: the upstream request failed", "type": "gateway_error" } }
+```
+The raw exception message is never returned or logged; only its name and optional
+code are logged. Stored upstream keys with ASCII control characters are refused
+before fetching. `POST /api/gateway/provider` rejects such keys with `400` before
+trimming, writing or syncing (see [PROVIDERS.md](PROVIDERS.md)).
+
 ---
 
 ### `GET /api/models/details?id=<model id>`
@@ -497,6 +510,10 @@ Update environment variables on the VPS host.
   performs no write
 - Runs `systemctl daemon-reload` after a file change so the next restart picks up
   the new environment; a no-op save neither writes nor reloads
+- Writes with mode `0600`, then explicitly chmods `.env` to `0600`, including an
+  existing file left at `0644`. At startup the launcher independently tightens
+  overly broad `.env` permissions and logs the repair once; no content change is
+  needed for that repair
 - Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted. Runtime-only keys
   listed above are silently ignored, so older open tabs can still save
 - An absent key whose submitted value equals `process.env[key]` is ignored: it is

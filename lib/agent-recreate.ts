@@ -42,7 +42,7 @@ export interface AgentContainerInspect {
   State?: { Running?: boolean; Status?: string };
   HostConfig?: {
     NetworkMode?: string;
-    PortBindings?: Record<string, { HostPort?: string }[] | null>;
+    PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null>;
     /** Memory limit in bytes; 0 or absent means none. */
     Memory?: number;
     /** Memory + swap in bytes; 0 or absent means none, -1 unlimited swap. */
@@ -125,10 +125,17 @@ export async function recreateAgentContainer(
     .flatMap(([k, v]) => ['-l', `${k}=${v}`]);
 
   const portArgs = opts.portArgs ?? Object.entries(container.HostConfig?.PortBindings ?? {}).flatMap(([containerPort, bindings]) => {
-    const hostPort = bindings?.[0]?.HostPort;
-    if (!hostPort) return [];
     const proto = containerPort.includes('/udp') ? '/udp' : '';
-    return ['-p', `${hostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`];
+    // Docker can report both wildcard families for one publish; retain it only once.
+    const mappings = new Set<string>();
+    for (const binding of bindings ?? []) {
+      if (!binding.HostPort) continue;
+      const ip = binding.HostIp;
+      const address = ip && ip !== '0.0.0.0' && ip !== '::'
+        ? `${ip.includes(':') ? `[${ip}]` : ip}:` : '';
+      mappings.add(`${address}${binding.HostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`);
+    }
+    return [...mappings].flatMap((mapping) => ['-p', mapping]);
   });
 
   // Refuse on a port clash before anything is removed: the old container is the

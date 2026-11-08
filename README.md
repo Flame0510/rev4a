@@ -112,6 +112,20 @@ upgrades. A password saved in Config takes effect after restarting Rev4a. The 7-
 cookie lifetime, cookie flags and `REV4A_TOKEN` Bearer access are unchanged. No stored
 data, configuration files or agent volumes are migrated or deleted.
 
+**SEC-22 update note:** Gateway key saves reject ASCII control characters before
+trimming. Old malformed upstream keys fail closed; replace them in Gateway.
+Proxy exceptions return `Gateway error: the upstream request failed` (502) and
+log only the error name/code, keeping credentials out of fetch error messages.
+Commands fed through stdin now reject output beyond their combined stdout/stderr
+limit (1 MiB by default), rather than collecting it without a bound. Container
+recreates retain specific IPv4/IPv6 publish addresses and UDP; ordinary wildcard
+publishes still produce one mapping. Config, initial password setup and shared environment writes enforce
+`.env` mode `0600`; startup also repairs older files with broader permissions and
+logs the repair once. The unused `remove-auth-profile.js` maintenance helper was
+removed. No database, provider vault or agent volume migration is required;
+older agents and rollback remain compatible. An address restriction already lost
+in an earlier recreate cannot be inferred from the resulting Docker inspect.
+
 **SEC-18 update note:** cookie-authenticated API writes now reject foreign origins with
 `403 { "error": "Cross-site request refused" }`, including sibling subdomains and other ports.
 A request the browser marks `Sec-Fetch-Site: same-origin` is accepted (every current browser

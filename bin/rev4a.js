@@ -21,7 +21,7 @@
  */
 
 const { spawn, execSync, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, chmodSync } = require('fs');
 const { join, dirname } = require('path');
 const crypto = require('crypto');
 const os = require('os');
@@ -438,6 +438,10 @@ function ensureEnv() {
     if (err.code !== 'ENOENT') throw err;
   }
   if (configured) {
+    if ((statSync(ENV_SOURCE).mode & 0o777) & ~0o600) {
+      chmodSync(ENV_SOURCE, 0o600);
+      log('ENV', 'Tightened .env permissions to 0600');
+    }
     log('ENV', 'Configuration found');
     // Before anything runs Next (the build in preflight loads .env on its own).
     const current = readFileSync(ENV_SOURCE, 'utf-8');
@@ -445,6 +449,7 @@ function ensureEnv() {
     const runtimeRepair = removeRuntimeEnvLines(repaired.content);
     if (runtimeRepair.content !== current) {
       writeFileSync(ENV_SOURCE, runtimeRepair.content, { encoding: 'utf-8', mode: 0o600 });
+      chmodSync(ENV_SOURCE, 0o600);
     }
     if (repaired.disabled.length > 0) {
       log('ENV', `Disabled unsafe .env key(s): ${[...new Set(repaired.disabled)].join(', ')} (set loader options in the service environment instead)`);
@@ -499,6 +504,7 @@ function ensureEnv() {
   ].join('\n') + '\n';
 
   writeFileSync(ENV_SOURCE, env, { mode: 0o600 });
+  chmodSync(ENV_SOURCE, 0o600);
   log('ENV', `Written ${ENV_SOURCE}`);
 
   // Symlink in package root so Next.js server finds it

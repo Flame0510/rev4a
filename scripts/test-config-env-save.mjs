@@ -35,6 +35,7 @@ function load(file, dependencies, globals = {}) {
 
 function harness(initial, inherited = {}, readError = null) {
   let content = initial;
+  let mode = 0o644;
   const effects = [];
   const denied = { status: 401 };
   let authenticated = true;
@@ -46,14 +47,20 @@ function harness(initial, inherited = {}, readError = null) {
         if (readError) throw Object.assign(new Error(readError), { code: readError });
         return content;
       },
-      writeFileSync: (file, next) => { assert.equal(file, ENV_FILE); content = next; effects.push('write'); },
+      writeFileSync: (file, next, options) => {
+        assert.equal(file, ENV_FILE);
+        assert.equal(options.mode, 0o600);
+        content = next; effects.push('write');
+      },
+      chmodSync: (file, nextMode) => { assert.equal(file, ENV_FILE); assert.equal(nextMode, 0o600); mode = nextMode; },
+      statSync: () => ({ mode }),
     },
     child_process: { execSync: () => effects.push('reload') },
     '@/lib/rev4a-paths': { ENV_FILE },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => authenticated ? null : denied },
     '@/lib/env-file': envFile,
   }, { process: { env: inherited }, console: { warn: () => {} } });
-  return { get content() { return content; }, effects,
+  return { get content() { return content; }, get mode() { return mode; }, effects,
     put: (env) => route.PUT({ json: async () => ({ env }) }),
     get: () => route.GET({}),
     deny: () => { authenticated = false; },
@@ -67,6 +74,7 @@ await test('PUT changes only the submitted assignment, preserving every other by
     const h = harness(content);
     assert.equal((await h.put({ REV4A_TOKEN: 'u' })).status, 200);
     assert.equal(h.content, content.replace('REV4A_TOKEN=t', 'REV4A_TOKEN=u'));
+    assert.equal(h.mode, 0o600);
   }
 });
 
@@ -228,6 +236,8 @@ await test('startup removes only exact runtime assignments, logs names, and is i
     ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', existsSync: () => true,
     readFileSync: () => content,
     writeFileSync: (_file, next) => { content = next; writes.push(next); },
+    statSync: () => ({ mode: 0o600 }),
+    chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
     log: (_tag, message) => logs.push(message), seedAgentToken: () => {},
     disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
   });

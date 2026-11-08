@@ -21,6 +21,7 @@ import {
   meterStream,
   recordProxyCall,
   resolveMeterAgent,
+  upstreamErrorDetails,
   type MeterContext,
 } from '@/app/api/provider/upstream';
 import { AGENT_HEADER } from '@/lib/proxy-usage';
@@ -175,8 +176,7 @@ export async function POST(request: NextRequest) {
       headers: responseHeaders,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[provider/v1] Error:', message);
-    return errorResponse(`Gateway error: ${message}`, 'gateway_error', 502);
+    console.error('[provider/v1] The upstream request failed:', upstreamErrorDetails(err));
+    return errorResponse('Gateway error: the upstream request failed', 'gateway_error', 502);
   }
 }

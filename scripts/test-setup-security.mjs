@@ -40,6 +40,7 @@ function load(file, dependencies, globals = {}) {
 
 function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = null) {
   const files = new Map([[ENV_FILE, content]]);
+  const modes = new Map([[ENV_FILE, 0o644]]);
   const effects = [];
   const logs = [];
   const mockFs = {
@@ -49,8 +50,14 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
       if (!files.has(file)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
       return files.get(file);
     },
-    writeFileSync: (file, value) => { effects.push(['write', file]); files.set(file, value); },
-    mkdirSync: () => {}, chmodSync: () => {},
+    writeFileSync: (file, value, options) => {
+      if (file === ENV_FILE) assert.equal(options.mode, 0o600);
+      effects.push(['write', file]); files.set(file, value);
+      if (!modes.has(file)) modes.set(file, options?.mode ?? 0o644);
+    },
+    mkdirSync: () => {},
+    statSync: (file) => ({ mode: modes.get(file) }),
+    chmodSync: (file, mode) => { assert.ok(files.has(file)); modes.set(file, mode); },
     unlinkSync: (file) => { effects.push(['unlink', file]); files.delete(file); },
   };
   const process = { env: { ...env }, platform: 'linux', pid: 1, kill: () => effects.push(['kill']) };
@@ -80,7 +87,7 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
   };
   const auth = load('lib/rev4a-auth.js', dependencies, globals);
   dependencies['@/lib/rev4a-auth'] = auth;
-  return { files, effects, logs, process, auth,
+  return { files, modes, effects, logs, process, auth,
     load: (file) => load(file, dependencies, globals),
     req: (body, code = CODE, extra = {}) => ({
       headers: new Headers({ ...(code === null ? {} : { 'x-rev4a-setup-code': code }), ...extra }),
@@ -103,6 +110,7 @@ await test('password HTTP boundaries: 7 rejected, 8 accepted; spaces retain prev
     const h = harness();
     const response = await h.load('app/api/setup/password/route.ts').POST(h.req({ password }));
     assert.equal(response.status, status);
+    if (status === 200) assert.equal(h.modes.get(ENV_FILE), 0o600);
   }
   for (const password of ['a\nb', 'a\rb', 'a\0b', '\n', 'xxxxxxxx\nNODE_OPTIONS=payload', 8, false, null, {}, []]) {
     const h = harness();
@@ -510,6 +518,8 @@ await test('the default .env generator validates assignments too, before any wri
       log: () => {}, mkdirSync: () => {}, randomString: () => value,
       assertEnvValue: validator.assertEnvValue, seedAgentToken: () => {},
       writeFileSync: (_file, content) => writes.push(content), require: () => ({ symlinkSync: () => {} }),
+      chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
+      statSync: () => ({ mode: 0o600 }),
     });
     const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
     if (value.includes('\n')) {
@@ -533,6 +543,8 @@ await test('default .env generation preserves existing files and aborts on read 
         return 'PROVIDER_KEEP=existing\n';
       },
       log: () => {}, seedAgentToken: () => {}, writeFileSync: (...args) => writes.push(args),
+      statSync: () => ({ mode: 0o600 }),
+      chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
       disableLoaderEnvLines: envFile.disableLoaderEnvLines,
       removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
     });

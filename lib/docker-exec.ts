@@ -250,6 +250,8 @@ function spawnOnce(
   wrap: boolean,
 ): Promise<string> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // NaN, negative or non-numbers would disable the cap: fall back to the default.
+  const maxBuffer = Number.isFinite(opts?.maxBuffer) && (opts!.maxBuffer as number) >= 0 ? (opts!.maxBuffer as number) : DEFAULT_MAX_BUFFER;
   return new Promise((resolve, reject) => {
     const child = spawn('docker', buildExecArgs({ container, argv, envKeys: envKeys(opts), interactive: true, timeoutMs, wrap }), {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -261,15 +263,35 @@ function spawnOnce(
 
     let stdout = '';
     let stderr = '';
+    let outputBytes = 0;
+    let settled = false;
+    const fail = (error: Error, kill = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (kill) child.kill('SIGKILL');
+      reject(error);
+    };
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`docker exec timed out after ${timeoutMs}ms`));
+      fail(new Error(`docker exec timed out after ${timeoutMs}ms`), true);
     }, wrap ? clientTimeoutMs(timeoutMs) : timeoutMs);
 
-    child.stdout.on('data', (c) => { stdout += c; });
-    child.stderr.on('data', (c) => { stderr += c; });
-    child.on('error', (err) => { clearTimeout(timer); reject(err); });
+    const retain = (c: Buffer | string, stream: 'stdout' | 'stderr') => {
+      if (settled) return;
+      outputBytes += Buffer.byteLength(c);
+      if (outputBytes > maxBuffer) {
+        fail(new Error(`docker exec output exceeded ${maxBuffer} bytes`), true);
+        return;
+      }
+      if (stream === 'stdout') stdout += c;
+      else stderr += c;
+    };
+    child.stdout.on('data', (c) => retain(c, 'stdout'));
+    child.stderr.on('data', (c) => retain(c, 'stderr'));
+    child.on('error', (err) => fail(err));
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (code === 0) resolve(stdout);
       else if (wrap && isWrapperMissing(code, `${stdout}\n${stderr}`)) reject(Object.assign(new Error('no timeout binary'), { wrapperMissing: true, original: new Error(stderr.trim() || `docker exec exited with code ${code}`) }));

@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-10-08
+> **Last updated:** 2026-11-08
 
 This document covers the Rev4a Provider Gateway (proxy), the provider key
 endpoints, and how agent containers authenticate against the Rev4a proxy.
@@ -55,10 +55,9 @@ upstream credentials by the proxy, not as client tokens.
 
 #### `GET /api/provider/v1/models`
 
-Returns all enabled models from `models.config.json` at the project root in
-OpenAI-compatible format.
-Models are filtered by the `models.config.json` catalogue (tracked in the repo),
-not by auto-discovery.
+Returns offered models from the local catalogue in OpenAI-compatible format:
+enabled after user overrides, with a configured provider key. This endpoint never
+fetches upstream models or sends upstream credentials.
 
 **Response:**
 ```json
@@ -80,7 +79,7 @@ not by auto-discovery.
 
 | Auth state | Response |
 |---|---|
-| Valid `rev4a` token | All enabled models |
+| Valid `rev4a` token | All offered models |
 | Invalid token | `total: 0`, empty `data` array |
 | No token | `total: 0`, empty `data` array |
 
@@ -152,6 +151,16 @@ The upstream module (`app/api/provider/upstream.ts`) handles this via a per-prov
 The proxy authenticates using the provider's real API key from
 `data/provider-keys.json`.
 
+Upstream request failures return `502` with the fixed message
+`Gateway error: the upstream request failed` (`type: "gateway_error"`). Fetch error
+messages can contain an authorization header: neither those messages nor error
+objects, stacks or causes are returned or logged. Logs contain only the error
+name and optional code. A stream that fails after headers were sent terminates
+with the same fixed error text, without forwarding the raw stream exception.
+Previously stored keys containing ASCII control characters
+are refused before headers are built or any network request is sent; replace such
+a key through the Gateway page. The existing vault is not rewritten by this check.
+
 ---
 
 ## Vault & Provider Key Endpoints
@@ -182,6 +191,10 @@ reports whether every agent received it; its shape is documented under
 `_syncOnly` the sync *is* the operation: a failed or partial sync returns `502` with
 `status: "error"` and `error` set to the summary. Unknown provider names are
 rejected with `400` and the list of known providers.
+
+API keys containing any ASCII control character (`U+0000`–`U+001F` or `U+007F`)
+are rejected with `400` before trimming, saving or syncing. Ordinary surrounding
+spaces are still trimmed, and an empty or space-only value still removes the key.
 
 **Auth:** browser cookie or bearer token
 

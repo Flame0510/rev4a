@@ -260,6 +260,12 @@ The central container, running the Next.js dashboard + orchestration API.
   helper has finished, never while the archive is written. On success the older
   `prerecreate` archives are pruned to the newest two. The same `recreateAgentContainer()`
   serves the edit route (`PATCH` → 202, no backup) and the Update action.
+  Rebuilt port publications retain each specific `HostIp` from the inspect:
+  IPv4 addresses stay explicit, IPv6 addresses use Docker's bracket syntax
+  (`[::1]:3701:3001`), and UDP suffixes are preserved. Empty, `0.0.0.0` and `::`
+  bindings retain the plain `hostPort:containerPort` form; duplicate wildcard
+  families produce one `-p`. Explicit `portArgs` still replace all carried bindings.
+  Host-port conflict parsing understands address prefixes before any removal.
   Only the claimed Edit (including removal of a memory limit) and Recreate jobs opt
   into `lib/agent-stop.ts`: verify the original container ID and its `AGENT_ID` label,
   then stop and remove that immutable ID. A missing/mismatched ID refuses the operation.
@@ -386,6 +392,12 @@ This module is how a route reaches an agent container. The migration to it is
 not finished — routes predating it still shell out directly — so treat these as
 the rules for anything you touch, not as a description of the whole tree:
 
+- **Stdin commands have bounded output.** `dockerExecWithInput` counts the combined
+  stdout and stderr bytes against `maxBuffer` (default 1 MiB). Exactly the limit
+  is accepted; the next byte stops retention, clears the deadline timer, kills
+  the Docker CLI child, and rejects once with
+  `docker exec output exceeded <n> bytes`. Late output/close/error events cannot
+  change the outcome or trigger the missing-wrapper fallback.
 - **Never `execSync`/`execFileSync` in a request path.** They block Node's single
   thread: while one runs, no other request is served and no agent's stream
   advances. A `docker exec` costs ~90 ms warm and the OpenClaw CLI costs
@@ -456,6 +468,13 @@ the rules for anything you touch, not as a description of the whole tree:
 `dockerExecWithInput` uses `spawn` rather than `execFile` because
 `promisify(exec)` silently ignores an `input` option: the process starts, stdin
 is never written, and the command hangs with no error to point at.
+
+- **Environment file permissions.** Config saves, initial password setup, `writeEnvVar()` and launcher
+  writes use creation mode `0600` and explicitly chmod `.env` after writing,
+  because creation mode alone does not repair an existing `0644` file.
+  `ensureEnv()` also tightens an existing file with broader permissions before
+  any content repair or child startup, logging the permission repair once.
+  It does not rewrite content just to repair permissions.
 
 - **The process model and self-update.** `rev4a serve` (the systemd unit's process) is a
   supervisor: it spawns `rev4a _run <port>`, which in turn runs Next, the daemon and the

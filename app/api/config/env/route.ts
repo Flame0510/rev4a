@@ -138,8 +138,13 @@ export async function PUT(request: NextRequest) {
       updated.push(key);
     }
 
-    if (next === content) return NextResponse.json({ status: 'ok', updated: [] });
-    fs.writeFileSync(ENV_FILE, next, 'utf-8');
+    if (next === content) {
+      // Nothing to write, but a loose mode is still tightened (the file holds secrets).
+      try { if ((fs.statSync(ENV_FILE).mode & 0o077) !== 0) fs.chmodSync(ENV_FILE, 0o600); } catch { /* missing: nothing to protect */ }
+      return NextResponse.json({ status: 'ok', updated: [] });
+    }
+    fs.writeFileSync(ENV_FILE, next, { encoding: 'utf-8', mode: 0o600 });
+    fs.chmodSync(ENV_FILE, 0o600);
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
     // No need to write individual Environment= lines into unit files —

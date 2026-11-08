@@ -160,6 +160,7 @@ export function writeEnvVar(key: string, value: string): void {
     encoding: 'utf-8',
     mode: 0o600,
   });
+  fs.chmodSync(ENV_FILE, 0o600);
 
   // Also set in process.env so current process picks it up immediately
   process.env[key] = value;

@@ -250,6 +250,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'error', error: `Unknown provider: ${providerName}. Known: ${Object.keys(PROVIDER_CONFIGS).join(', ')}` }, { status: 400 });
     }
     const apiKeyValue = body.apiKey;
+    // Validate before trimming: even leading/trailing controls must be refused.
+    if (apiKeyValue != null && (typeof apiKeyValue !== 'string' || /[\x00-\x1f\x7f]/.test(apiKeyValue))) {
+      return NextResponse.json({ status: 'error', error: 'API key must be a string without control characters' }, { status: 400 });
+    }
     const isRemove = !apiKeyValue || apiKeyValue.trim() === '';
     setProviderApiKey(providerName, isRemove ? null : apiKeyValue!.trim());
     // The key is saved whatever the sync does next; report the two separately.

@@ -113,6 +113,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     fs.writeFileSync(ENV_FILE, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
+    fs.chmodSync(ENV_FILE, 0o600);
 
     // Update in-memory so proxy redirects work before restart
     process.env.REV4A_PASSWORD = body.password;

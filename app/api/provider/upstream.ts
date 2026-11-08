@@ -109,6 +109,16 @@ export function getApiKey(provider: string, storedKeys: Record<string, string>):
   return storedKeys[provider] || null;
 }
 
+/** Only diagnostic identifiers may reach logs; fetch messages can contain credentials. */
+export function upstreamErrorDetails(error: unknown): { name: string; code?: string | number } {
+  const err = error as { name?: unknown; code?: unknown } | null;
+  const identifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(value);
+  return {
+    name: identifier(err?.name) ? err.name : 'Error',
+    ...(identifier(err?.code) || typeof err?.code === 'number' ? { code: err.code } : {}),
+  };
+}
+
 export async function callUpstream(
   provider: string,
   model: string,
@@ -122,6 +132,9 @@ export async function callUpstream(
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
+
+  // Old vaults can contain malformed keys. Fail before building any headers or calling fetch.
+  if (/[\x00-\x1f\x7f]/.test(apiKey)) throw new TypeError('Invalid upstream API key');
 
   const basePath = envConfig.basePath || '/v1';
   const targetUrl = `${envConfig.baseUrl}${basePath}/chat/completions`;
@@ -202,7 +215,7 @@ let usageStoreRetryAt = 0;
 
 function pauseMetering(what: string, e: unknown): void {
   // Logged once per pause, not once per dropped call.
-  if (Date.now() >= usageStoreRetryAt) console.error(`[provider/v1] ${what}:`, (e as Error).message);
+  if (Date.now() >= usageStoreRetryAt) console.error(`[provider/v1] ${what}:`, upstreamErrorDetails(e));
   usageStoreRetryAt = Date.now() + 60_000;
   // The spend alarms skip the hours this gap touches: dropped calls must never read as zero (lib/spend-alerts.js).
   markMeteringGap(COSTS_DB_PATH);
@@ -317,7 +330,8 @@ export function meterStream(body: ReadableStream<Uint8Array>, ctx: MeterContext,
         controller.enqueue(value);
       } catch (e) {
         finish();
-        controller.error(e);
+        console.error('[provider/v1] The upstream stream failed:', upstreamErrorDetails(e));
+        controller.error(new Error('Gateway error: the upstream request failed'));
       }
     },
     async cancel(reason) {

@@ -69,7 +69,7 @@ export function portMappingArgs(start: number, end: number): string[] {
 
 /** The host ports a container publishes, from its inspect (`HostConfig.PortBindings`). */
 export function hostPortsFromBindings(container: {
-  HostConfig?: { PortBindings?: Record<string, { HostPort?: string }[] | null> };
+  HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> };
 }): number[] {
   return Object.values(container.HostConfig?.PortBindings ?? {})
     .flatMap((bindings) => bindings ?? [])
@@ -82,7 +82,8 @@ export function hostPortsFromArgs(portArgs: readonly string[]): number[] {
   const ports: number[] = [];
   for (let i = 0; i < portArgs.length - 1; i++) {
     if (portArgs[i] !== '-p') continue;
-    const host = (portArgs[i + 1] ?? '').split(':')[0];
+    // The final pair is hostPort:containerPort, including an optional IPv4 or [IPv6] prefix.
+    const host = (portArgs[i + 1] ?? '').split(':').at(-2) ?? '';
     const [start, end] = host.split('-').map(Number);
     if (!Number.isInteger(start)) continue;
     for (let p = start; p <= (Number.isInteger(end) ? end : start); p++) ports.push(p);

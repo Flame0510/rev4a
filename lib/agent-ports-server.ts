@@ -27,7 +27,7 @@ interface ContainerInspect {
   Id?: string;
   Name?: string;
   Config?: { Env?: string[] };
-  HostConfig?: { PortBindings?: Record<string, { HostPort?: string }[] | null> };
+  HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> };
 }
 
 /**
