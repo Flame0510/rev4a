@@ -492,6 +492,69 @@ is never written, and the command hangs with no error to point at.
   `UpdatingScreen` (every tab) and `VersionBanner` judge "the new version answers" from that
   running version through one shared function.
 
+### Browser API write boundary (SEC-18)
+
+`proxy.ts` applies the existing update guard first, then a shared origin guard to
+POST/PUT/PATCH/DELETE under `/api` (including `/api` itself). The origin guard applies
+only when `rev4a_token` is present and `Authorization` is absent; it does not verify the
+cookie or Bearer token, which remains each route's responsibility. A request whose browser
+sends `Sec-Fetch-Site: same-origin` (and an Origin other than `null`) passes first: the browser
+computes it from the real page and target URLs, so it stays right behind a reverse proxy that
+rewrites `Host` (nginx's default), and another site cannot forge it. Otherwise, with `Origin`, a
+case-insensitive host:port match against `Host` is required. Both authorities are parsed
+using the Origin's scheme: explicit and implicit HTTP :80 / HTTPS :443 are equivalent,
+while other ports remain significant. For browsers that send no
+fetch metadata behind a reverse proxy that rewrites `Host`, an operator can explicitly trust the dashboard's public origin through `REV4A_ALLOWED_ORIGINS`,
+a comma-separated list of full HTTP(S) origins; its comparisons include scheme and port,
+never wildcards. `X-Forwarded-Host` is not trusted by this check. Opaque (`null`) and
+malformed origins are refused. Without `Origin`, `Sec-Fetch-Site: cross-site` or
+`same-site` is refused; `same-origin`, `none` or absent metadata passes. Refusals are 403 JSON:
+`{ "error": "Cross-site request refused" }`.
+
+GET/HEAD/OPTIONS, requests without the cookie and requests carrying Authorization are
+untouched by this guard, including the agents' Bearer-authenticated provider calls.
+The update guard retains its 503 precedence and existing exemptions; those exemptions do
+not bypass the origin guard. The terminal WebSocket retains its independent Origin check
+in `server.js`. No database, configuration or agent-volume migration is introduced.
+`scripts/test-csrf-origin.mjs` exercises the middleware with real `NextRequest` objects
+and an isolated update-state directory, without a server, Docker or real credentials.
+
+The unused gateway provider OAuth route was removed: its GET polled a caller-selected
+device flow and saved credentials, allowing login CSRF through navigation. Its device
+flow configuration and interfaces were local to the deleted file. `readProviderKeys` and
+`writeProviderKeys` remain shared by the live provider configuration, catalogue and proxy.
+The Subscriptions page's per-agent ChatGPT login remains a separate, active workflow.
+
+**GET audit (2026-11-08):** the 74 remaining GET handlers in `app/api` were inspected
+for direct and helper-driven writes. These existing side effects remain outside this
+change's owned code files. Moving them requires coordinating readers, background job
+completion, token issuance or bootstrap behaviour; no blanket GET blocking was added.
+The locations below identify calls that can cause a side effect, conditional on the
+existing job, configuration or legacy data. This is a static audit, without running
+Docker actions or sending alerts.
+
+| GET call site | Side effect and implementation |
+|---|---|
+| `app/api/system-health/route.ts:128` | With alerts enabled, `maybeSendAlert` writes `alert_state` even without Telegram credentials and can send stale-heartbeat or recovery messages (`lib/alerts.ts:44`). Report only: moving alert evaluation off this health read needs a coordinated change to monitoring. |
+| `app/api/alerts/smoke/route.ts:16` | When alerts are enabled and smoke is allowed (development, or `REV4A_ALERT_SMOKE=true`), writes `alert_state` even in dry-run mode and can send Telegram messages (`lib/alerts.ts:44`). A method change needs a separate API compatibility change. |
+| `app/api/agents/[id]/open-control-ui/route.ts:84` | Issues a single-use bootstrap token via `openclaw dashboard --json` (`lib/agent-devices.ts:251`). The navigation/redirect flow needs a coordinated replacement. |
+| `app/api/agents/[id]/cold-backup/route.ts:45`, `app/api/agents/[id]/recreate/route.ts:44`, `app/api/agents/[id]/update/route.ts:32`, `app/api/agents/activity-summary/route.ts:61` | `coldBackupStatus` can finish an exited backup: delete a partial archive, start the agent and remove the backup helper (`lib/cold-backup.ts:188`, `lib/cold-backup.ts:211`). Activity summary can hit this if a listed running helper exits before its status read. |
+| `app/api/agents/[id]/update/route.ts:32` | Failed/interrupted update reads schedule a bounded background recheck (`lib/agent-update.ts:758`), which can reapply runtime/provider configuration and mark a DB row resolved (`lib/agent-update.ts:584`, `lib/agent-update.ts:599`), or record a cron-retirement audit (`lib/agent-update.ts:626`). |
+| `app/api/subscriptions/openai/login/route.ts:50`, `app/api/credentials/assignments/route.ts:41` | Login status and the assignment busy check can expire an overdue login and terminate its host/container CLI processes (`lib/subscription-login.ts:82`, `lib/subscription-login.ts:287`, `lib/subscription-login.ts:299`). They do not initiate login or save caller-supplied credentials. |
+| `app/api/update-status/route.ts:85` | `readUpdate` can rewrite `update-state.json` to `done`/`failed` based on process/version/deadline evidence (`lib/update-state.js:213`). |
+| `app/api/agents/[id]/backup/route.ts:43`, `app/api/agents/[id]/update/route.ts:32` | Legacy backup listing/existence checks create temporary `docker run --rm` helpers with a read-only volume mount (`lib/backups-volume.ts:83`, `lib/backups-volume.ts:117`). They do not delete backup data. |
+| `app/api/gateway/provider/route.ts:144`, `app/api/gateway/provider/balance/route.ts:32`, `app/api/models/route.ts:40`, `app/api/agents/models-summary/route.ts:102`, `app/api/agents/[id]/model/route.ts:111`, `app/api/provider/v1/models/route.ts:32`, `app/api/costs/agent/route.ts:36`, `app/api/costs/usage/route.ts:39` | Shared key reads can create the parent directory, tighten file permissions and migrate configured environment keys into a missing/unreadable `provider-keys.json` (`app/api/gateway/provider/keys.ts:26`). |
+| `app/api/events/route.ts:12`, `app/api/session/route.ts:17`, `app/api/sessions/route.ts:21`, `app/api/sessions/[id]/route.ts:20`, `app/api/system-health/route.ts:66`, `app/api/metrics/alerts/route.ts:41`; lifecycle status reads listed above plus `app/api/agents/[id]/route.ts:155` and `app/api/agents/[id]/restore/route.ts:50` | Even read-only `openDb` calls first run shared bootstrap (`lib/db.ts:9`, `lib/db-bootstrap.mjs:65`): create/migrate schema and metadata, and remove legacy lineage tables when present. These are existing bootstrap effects, not caller-directed mutations. |
+| `app/api/credentials/route.ts:14`, `app/api/credentials/[id]/route.ts:23`, `app/api/credentials/[id]/assignments/route.ts:58`, `app/api/credentials/assignments/route.ts:21`, `app/api/credentials/detect/route.ts:167` | First vault read can create/migrate credential schema and tighten file permissions (`lib/credentials/db.ts:15`, `lib/credentials/db.ts:104`). |
+
+Routine in-memory response caches were not treated as persistent state changes.
+Rechecking alert/notification senders found only the two GET callers of `maybeSendAlert`
+listed above. It delegates to `sendTelegramMessage`; that sender's other production
+caller is the daemon (`daemon.js:1525`), outside the HTTP GET handlers. Metrics alert
+reads list existing alarms and snoozes; they do not send notifications.
+`GET /api/update-check?check=1` also runs `npm view` (`app/api/update-check/route.ts:72`),
+which can populate npm's disk cache; it does not start the update (that remains POST).
+
 ### 3.2 Agent Container Template (`openclaw-agent-base`)
 
 Docker image for every agent container.

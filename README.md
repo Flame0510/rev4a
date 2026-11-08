@@ -95,6 +95,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |
 | `REV4A_DEV_ORIGINS` | — | No | Extra comma-separated hostnames or IPs allowed to reach `next dev` (e.g. a LAN address, without scheme or port); no effect on a production build |
+| `REV4A_ALLOWED_ORIGINS` | — | No | Extra trusted browser origins for cookie-authenticated API writes when a reverse proxy rewrites `Host`. Comma-separated full origins, e.g. `https://rev4a.example.com`; no wildcards. Restart Rev4a after changing it |
 | `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Outside CI, a failed post-install build fails the installation. Any non-empty value skips it, `0` included |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_TRUSTED_PROXIES` | — | No | Comma-separated IPs or CIDRs (e.g. `192.0.2.10`; `127.0.0.1,::1` for a proxy on the same host) of the reverse proxies whose `X-Forwarded-For` names the client for the login lock. Unset: no `X-Forwarded-For` is trusted. List the proxy's own address, pinned and not on `rev4a-network` with the agents |
@@ -102,6 +103,21 @@ already filled in — you normally never set these by hand. See
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
+
+**SEC-18 update note:** cookie-authenticated API writes now reject foreign origins with
+`403 { "error": "Cross-site request refused" }`, including sibling subdomains and other ports.
+A request the browser marks `Sec-Fetch-Site: same-origin` is accepted (every current browser
+sends it, and it stays right behind a reverse proxy, nginx included). Otherwise the browser's
+`Origin` host and port must match `Host` (case-insensitive).
+Explicit and implicit default ports match (HTTP :80, HTTPS :443), using the Origin's scheme.
+Only for an old browser without fetch metadata behind a proxy that rewrites `Host`, set `REV4A_ALLOWED_ORIGINS` to the dashboard's public
+origin and restart Rev4a; only list origins you control. With no `Origin`, requests marked
+`Sec-Fetch-Site: cross-site` or `same-site` are refused; `same-origin`, `none` and absent
+metadata still work. `Origin: null` is refused. Requests with an `Authorization` header
+and GET/HEAD/OPTIONS keep their existing behaviour; agents using Bearer keys keep working.
+The unused gateway provider OAuth device-flow endpoint has been removed. The active
+per-agent ChatGPT connection on the Subscriptions page is unchanged. No stored data or
+credentials are migrated or deleted.
 
 **SEC-14 update note:** first-run setup now requires the operator's setup code.
 Environment edits require string values without CR, LF or NUL (clearing a stored

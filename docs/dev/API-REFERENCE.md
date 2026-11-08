@@ -20,6 +20,31 @@ After a successful `POST /api/auth/login`, the server sets an `rev4a_token`
 cookie (signed JWT, 7-day expiry). All subsequent UI requests use this cookie
 automatically.
 
+### Browser write protection (SEC-18)
+
+`proxy.ts` checks every POST/PUT/PATCH/DELETE to `/api` or `/api/*` carrying the
+`rev4a_token` cookie and no `Authorization` header, before route authentication:
+
+- With `Origin`, its host and port must equal `Host` (case-insensitive), or its full
+  origin must be listed in `REV4A_ALLOWED_ORIGINS` (comma-separated HTTP(S) origins,
+  e.g. `https://rev4a.example.com`). Schemes and ports are significant for the allowlist;
+  sibling subdomains, wildcards and forwarded headers do not grant trust.
+  Host and Origin use the Origin scheme to normalize default ports: explicit and
+  implicit HTTP :80 / HTTPS :443 match; non-default ports must still match exactly.
+- `Origin: null` and malformed origins are refused, including when fetch metadata says
+  `same-origin`. A present `Origin` takes precedence over fetch metadata.
+- Without `Origin`, `Sec-Fetch-Site: cross-site` and `same-site` are refused.
+  `same-origin`, `none` and missing metadata are allowed for older browsers and clients.
+
+Refusals return **403** `{ "error": "Cross-site request refused" }`. Requests with any
+`Authorization` header bypass this check; the route still owns authentication.
+GET/HEAD/OPTIONS and requests without the session cookie are unaffected. The update guard
+runs first and retains its existing 503 response and exemptions. This check applies to
+update-exempt routes too. It does not replace the terminal WebSocket's own Origin check.
+
+Normally no setting is required. For a reverse proxy that rewrites `Host`, list only the
+dashboard's trusted public origins in `REV4A_ALLOWED_ORIGINS` and restart Rev4a.
+
 ### API-only auth
 `Authorization: Bearer <REV4A_TOKEN>`. No other fallback is accepted: a `?token=` query
 parameter is ignored (it would end up in logs and browser history).
@@ -39,7 +64,8 @@ Login — exchange the static password for a signed JWT cookie.
 ```json
 { "ok": true }
 ```
-Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; SameSite=Lax`.
+Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; Secure; SameSite=Strict` in production.
+Development or `REV4A_FORCE_INSECURE_COOKIE=1` uses a non-Secure cookie with `SameSite=Lax`.
 
 **Error:** `401` if the password is wrong or the server is not configured; `500` for an unreadable body.
 
@@ -420,16 +446,6 @@ Remaining credit for one provider.
 **Query params:** `provider` — one of `deepseek`, `openrouter`, `glm`.
 
 **Errors:** `502` when the provider's API cannot be reached or rejects the call. For `glm`, Z.AI's token-quota endpoint only serves Coding Plan subscriptions: a pay-as-you-go key gets `502` with `reason: "no-balance-api"` — Z.AI exposes no balance API for such accounts (verified 2026-09-16), and the Gateway hides the badge on this reason instead of offering a retry.
-
-### `POST /api/gateway/provider/oauth`
-Run the OAuth device flow for a provider that supports it.
-
-**Auth:** browser cookie or bearer token
-
-**Body:** `{ "provider": "..." }`
-
-**Errors:** `400` for an unknown provider; the response body carries `available`
-with the providers that do support OAuth.
 
 ## Config
 
