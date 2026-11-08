@@ -7,10 +7,10 @@
  * Optional `job` selects the fixed native Automations destination after validating
  * the job id. It changes no account or job setting and never chooses a redirect host.
  *
- * The target host is the one this request reached Rev4a on (the `Host` header), with
- * the agent's published port. It is never a parameter: a page elsewhere that gets a
- * signed-in browser to open this URL can at most open the Control UI in that same
- * browser, never send the link to another host.
+ * The target host comes from the `Host` header, using a different loopback hostname
+ * to isolate dashboard cookies, with the agent's published port. It is never a
+ * parameter: a page elsewhere that gets a signed-in browser to open this URL can
+ * at most open the Control UI in that same browser, never choose an arbitrary host.
  *
  * While the Gateway answers 503 on `/startupz` (one probe) inside its 10-minute budget from the
  * container's `StartedAt`, the answer is a 503 page, not a redirect to a dead port. Only a real
@@ -31,6 +31,8 @@ import { isValidCronJobId } from '@/lib/cron-ids';
 import { controlUiAutomationUrl } from '@/lib/control-ui-navigation';
 
 export const dynamic = 'force-dynamic';
+
+let warnedInsecureCookieHost = false;
 
 /** A plain-text page: this route is opened in a browser tab, not read by code. */
 function page(status: number, text: string): NextResponse {
@@ -79,7 +81,14 @@ export async function GET(
   }
 
   try {
-    const { url } = await resolveControlUiUrl(agent.name, host, agent.controlPort);
+    const { url, isolated } = await resolveControlUiUrl(agent.name, host, agent.controlPort);
+    // client-address.js has no trusted forwarded-proto helper. Use the request URL,
+    // never an unverified X-Forwarded-Proto header, to decide whether to warn.
+    if (isolated === false && new URL(request.url).protocol === 'http:'
+      && process.env.REV4A_FORCE_INSECURE_COOKIE === '1' && !warnedInsecureCookieHost) {
+      warnedInsecureCookieHost = true;
+      console.warn('[control-ui] dashboard on plain HTTP: the session cookie is visible to agent ports; use HTTPS');
+    }
     return new NextResponse(null, {
       status: 302,
       headers: { Location: controlUiAutomationUrl(url, jobId), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },

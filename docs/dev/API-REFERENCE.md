@@ -1735,8 +1735,21 @@ existing query and authentication fragment are preserved. Invalid, empty or repe
 return 400 before container discovery or native link issuance. Callers cannot supply a target host.
 Without `job`, the existing root navigation is unchanged.
 
-The target host is the one the request reached Rev4a on (the `Host` header), with the
-agent's published port — never a parameter, so the link cannot be sent to another host.
+The target host is derived from the `Host` header, with the agent's published port;
+callers cannot choose it through a parameter. To keep dashboard cookies away from
+agent ports, `localhost` (case-insensitive, including `localhost.`), `::1` and `[::1]`
+map to `127.0.0.1`, and any `127.x.y.z` maps to `localhost`. Other hosts, including
+LAN/public IPs, domains and `localhost.example.com`, stay unchanged. Both link kinds
+use this mapping, including the one-time link's `gatewayUrl` fragment. Paths, query
+parameters and authentication fragment values are preserved.
+
+When the host cannot be isolated, the request URL uses `http:` and
+`REV4A_FORCE_INSECURE_COOKIE=1`, the route logs once per process:
+`[control-ui] dashboard on plain HTTP: the session cookie is visible to agent ports; use HTTPS`.
+It adds nothing to the redirect. The client-address helper has no trusted proxy
+protocol support, so the request URL's protocol is used. Next.js derives it from
+`X-Forwarded-Proto` when present, so a client can suppress this warning; it is only a log
+hint, the isolation above does not depend on it.
 
 - Runs `openclaw dashboard --json` in the container and redirects to its `browserUrl`,
   with the host, the port and the `gatewayUrl` fragment parameter rewritten to that host
@@ -1745,6 +1758,11 @@ agent's published port — never a parameter, so the link cannot be sent to anot
 - When no one-time link can be issued: redirects to the plain link
   `http://<host>:<port>/#token=<token>`, with the token read inside the container
   (`/root/.agent-token`, then `OPENCLAW_GATEWAY_TOKEN`).
+
+**Upgrade note (SEC-16):** a browser previously paired on `localhost:<port>` now opens
+on `127.0.0.1:<port>`. The one-time link pairs it again without approval; a plain token
+link may require pairing approval once. No database, configuration or volume migration
+is needed, and older agents retain the plain token fallback.
 
 Before resolving the link the route runs one readiness probe (`probeGateway`, 3 s). Only a Gateway that
 answers 503 on `/startupz` inside 10 minutes of the container's `StartedAt` gets a `503` page

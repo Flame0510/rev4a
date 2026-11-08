@@ -240,8 +240,8 @@ export async function renameBrowser(container: string, deviceId: string, name: s
  * `openclaw dashboard --json` issues a ten-minute, single-use bootstrap token and
  * returns `browserUrl` aimed at the Gateway's own listener (`127.0.0.1:3000`), with
  * the WebSocket destination in the `gatewayUrl` fragment parameter. Both are
- * rewritten to the address the dashboard is being reached on and the agent's
- * published port, which is where the browser can actually connect.
+ * rewritten to the selected Control UI host and the agent's published port,
+ * which is where the browser can actually connect.
  */
 export async function issueControlUiLink(
   container: string,
@@ -272,6 +272,18 @@ export async function issueControlUiLink(
 /** An IPv6 literal needs brackets inside a URL. */
 function hostForUrl(hostname: string): string {
   return hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+}
+
+/** Use a different loopback cookie host: browsers share cookies across ports. */
+export function controlUiHostFor(dashboardHost: string): { host: string; isolated: boolean } {
+  if (/^localhost\.?$/i.test(dashboardHost) || dashboardHost === '::1' || dashboardHost === '[::1]') {
+    return { host: '127.0.0.1', isolated: true };
+  }
+  if (/^127(?:\.\d{1,3}){3}$/.test(dashboardHost)
+    && dashboardHost.split('.').every((part) => Number(part) <= 255)) {
+    return { host: 'localhost', isolated: true };
+  }
+  return { host: dashboardHost, isolated: false };
 }
 
 /** The hostname in a `Host` header value — the address the dashboard was reached on. */
@@ -309,22 +321,24 @@ const plainLink = (hostname: string, port: string, token: string) =>
 /**
  * Where "Open" should take the browser: the one-time link, which pairs the browser with
  * no approval, else the plain token link when no one-time link could be issued.
+ * Both use a separate cookie host when the dashboard is reached on loopback.
  */
 export async function resolveControlUiUrl(
   container: string,
   hostname: string,
   port: string,
-): Promise<{ url: string; kind: 'one-time' | 'token' }> {
+): Promise<{ url: string; kind: 'one-time' | 'token'; isolated: boolean }> {
+  const { host, isolated } = controlUiHostFor(hostname);
   if (await answersStartupzWithVersion(container)) {
     try {
-      return { url: (await issueControlUiLink(container, hostname, port)).url, kind: 'one-time' };
+      return { url: (await issueControlUiLink(container, host, port)).url, kind: 'one-time', isolated };
     } catch {
       // Fall back to the plain link below.
     }
   }
   const token = await readGatewayToken(container);
   if (!token) throw new Error('no one-time link could be issued and no gateway token is available');
-  return { url: plainLink(hostname, port, token), kind: 'token' };
+  return { url: plainLink(host, port, token), kind: 'token', isolated };
 }
 
 /**
