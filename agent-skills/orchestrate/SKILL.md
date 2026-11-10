@@ -36,6 +36,8 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    the card's files (it names them), or the gate fails only on scope, add exactly the files needed with
    `$ORCH card normalise <id> --from <card.json>` (the card's rules still apply), then `$ORCH fix <id>`: the fix
    brief names the new files, and that round does not count toward the limit (once per run).
+   On a scope failure, choose to own exactly those files with normalise, or use `$ORCH fix <id> --scope revert` to have the worker restore them to the base in a counted round, fixing any other failures too.
+   If the next round fails on any of the same outside files (or either gate list is partial), plain fix refuses (exit 3) until normalise covers the scope violation or you choose revert with a counted round left; partial lists are examples, so own or revert every outside file, or split or park.
 10. **The config is the owner's.** Never change it (`config --set`, editing the file) and never `config --confirm`
    it on your own, not even under a broad autonomy mandate or to undo a change you remember making: propose the
    change to the owner and wait for their ok. A limit raised for one task stays as the owner leaves it. The campaign

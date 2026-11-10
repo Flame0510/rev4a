@@ -216,17 +216,23 @@ o = orch(['fix', 'SB-7']);
 has(o, /round 2\/3: /, 'a second extension counts'); hasNot(o, /does not count/, 'not free twice');
 write('lib/new-file.mjs', '// n\n', W('SB-7'));
 write('.orchestrate/runs/SB-7/inbox/worker.md', 'third\n'); orch(['record', 'SB-7', 'worker']);
-has(orch(['gate', 'SB-7'], 2), /FAIL +scope: 1 file\(s\) outside the owned files: lib\/new-file\.mjs/, 'a later scope failure is reported as usual');
+o = orch(['gate', 'SB-7'], 2);
+has(o, /FAIL +scope: 1 file\(s\) outside the owned files: lib\/new-file\.mjs/, 'a later scope failure is reported as usual');
+has(o, /this round counts; the free scope round was already used/, 'advice never promises a second free round');
 
 // 11. At the round limit, a gate that failed on files outside the card still gets its scope round (not the owner).
 write('backlog/tasks/sb-8 - Card.md', card('SB-8', 'lib/k.mjs')); write('lib/k.mjs', '// k\n'); g('add', '-A'); g('commit', '-q', '-m', 'sb8');
 orch(['start', 'SB-8']);
 write('lib/k.mjs', '// changed\n', W('SB-8')); write('lib/k2.mjs', '// new\n', W('SB-8'));
 for (let r = 0; r < 2; r++) {
-  write('.orchestrate/runs/SB-8/inbox/worker.md', `r${r}\n`); orch(['record', 'SB-8', 'worker']); orch(['gate', 'SB-8'], 2); orch(['fix', 'SB-8']);
+  write('.orchestrate/runs/SB-8/inbox/worker.md', `r${r}\n`); orch(['record', 'SB-8', 'worker']); orch(['gate', 'SB-8'], 2); orch(['fix', 'SB-8', ...(r ? ['--scope', 'revert'] : [])]);
 }
 write('.orchestrate/runs/SB-8/inbox/worker.md', 'r2\n'); orch(['record', 'SB-8', 'worker']); orch(['gate', 'SB-8'], 2);
-has(orch(['status', 'SB-8']), /round limit reached \(2\/2\), but the gate failed on files outside the card: .*orch card normalise SB-8/, 'at the limit: the scope path is offered');
+const atLimit8 = orch(['status', 'SB-8']);
+has(atLimit8, /round limit reached \(2\/2\), but the gate failed on files outside the card: .*orch card normalise SB-8/, 'at the limit: the scope path is offered');
+hasNot(atLimit8, /--scope revert/, 'at the limit: revert cannot grant another round');
+assert.equal(atLimit8.trim().split('\n').at(-1), 'next: round limit reached (2/2), but the gate failed on files outside the card: if the change really needs them, add exactly those files (orch card normalise SB-8 --from <card.json>), then orch fix SB-8 (that round does not count, once per run); otherwise decide with the owner'); n++;
+orch(['fix', 'SB-8', '--scope', 'revert'], 3);
 orch(['fix', 'SB-8'], 3); // nothing added yet: still at the limit
 write('backlog/tasks/sb-8 - Card.md', card('SB-8', 'lib/k.mjs').replace('  - lib/k.mjs', '  - lib/k.mjs\n  - lib/k2.mjs'));
 has(orch(['fix', 'SB-8']), /round 3\/3 \(files added: lib\/k2\.mjs; this round does not count\)/, 'scope round granted at the limit');
@@ -313,6 +319,224 @@ has(orchS(['record', 'SB-11', 'checker', '--from', path.join(base, 'placeholder.
 fs.writeFileSync(SESS, JSON.stringify({ sessions: [{ key: 'agent:main:coord', label: 'coord' }, { key: 'c1', label: 'SB-11 checker a r0', status: 'done', updatedAt: Date.now() }] }));
 has(orchS(['record', 'SB-11', 'checker', '--from', path.join(base, 'placeholder.md')], 0), /NEEDS EVIDENCE/, '--from once it ended');
 fs.rmSync(path.join(REPO, '.orchestrate/campaign.json'));
+
+// 15. Scope evidence and explicit choices: simulated workers, local git only.
+const scopeIds = ['SB-12', 'SB-13', 'SB-14', 'SB-15', 'SB-16', 'SB-17', 'SB-18', 'SB-19', 'SB-20', 'SB-21', 'SB-22'];
+const scopeOwned = id => `lib/scope-${id}.mjs`;
+for (const id of scopeIds) {
+  write(`backlog/tasks/${id.toLowerCase()} - Card.md`, card(id, scopeOwned(id)));
+  write(scopeOwned(id), '// base\n');
+}
+write('outside/existing.txt', 'base content\n');
+write('outside/café.txt', 'unicode base\n');
+write('outside/with space.txt', 'space base\n');
+g('add', '-A'); g('commit', '-q', '-m', 'scope fixtures');
+const recordWorker = id => { write(`.orchestrate/runs/${id}/inbox/worker.md`, 'done\n'); orch(['record', id, 'worker']); };
+const scopeWork = (id, files) => {
+  orch(['start', id]); write(scopeOwned(id), '// changed\n', W(id));
+  for (const f of files) write(f, 'outside change\n', W(id));
+  recordWorker(id);
+};
+const statePath = id => path.join(REPO, '.orchestrate/runs', id, 'state.json');
+const normalise = (id, files) => {
+  write('scope-card.json', JSON.stringify({ title: `Card ${id}`, goal: 'Fix the scope fixture.', acceptance: ['The fixture passes.'],
+    kind: 'code', owned: [scopeOwned(id), ...files], noTests: 'Scope fixture only.' }), base);
+  orch(['card', 'normalise', id, '--from', path.join(base, 'scope-card.json')]);
+};
+const outside12 = ['outside/new.txt', 'outside/existing.txt'];
+scopeWork('SB-12', outside12);
+o = orch(['gate', 'SB-12'], 2);
+const sorted12 = [...outside12].sort();
+assert.deepEqual(state('SB-12').gate.outsideFiles, sorted12);
+assert.deepEqual(state('SB-12').events.at(-1).outsideFiles, sorted12);
+assert.equal(state('SB-12').gate.outside, 2);
+assert.equal(state('SB-12').gate.scopeOnly, true); n += 4;
+assert.equal(state('SB-12').gate.outsideTruncated, undefined); n++;
+const choices12 = [
+  'next: orch card normalise SB-12 --from <card.json> adding exactly: outside/existing.txt, outside/new.txt — then orch fix SB-12 (this round does not count, once per run)',
+  'next: orch fix SB-12 --scope revert — the worker reverts exactly those files to the base (this round counts)',
+];
+assert.deepEqual(o.trim().split('\n').slice(-2), choices12); n++;
+console.log('scope: gate stores sorted outsideFiles and scopeOnly; next names both choices');
+console.log(o.trim().split('\n').slice(-2).join('\n'));
+// First occurrence still permits today's plain fix, with the same gate lines in its brief.
+orch(['fix', 'SB-12']);
+const firstBrief = fs.readFileSync(state('SB-12').prompt, 'utf8');
+has(firstBrief, /FAIL +scope:/, 'first scope failure keeps the gate findings');
+hasNot(firstBrief, /Revert these files to the base/, 'no unchosen revert instructions');
+recordWorker('SB-12'); orch(['gate', 'SB-12'], 2);
+// Re-running a gate in the same round must not hide the previous round's overlap.
+orch(['gate', 'SB-12'], 2);
+const before12 = fs.readFileSync(statePath('SB-12'));
+const activity12 = fs.readFileSync(path.join(REPO, '.orchestrate/activity'));
+const prompts12 = fs.readdirSync(path.join(REPO, '.orchestrate/runs/SB-12/prompts'));
+o = orch(['fix', 'SB-12'], 3);
+has(o, /scope failed again on: outside\/existing.txt, outside\/new.txt/, 'overlap names the exact files');
+for (const choice of choices12) assert.ok(o.includes(choice)); n++;
+has(o, /or split \/ park/, 'repeat refusal offers split or park');
+assert.deepEqual(fs.readFileSync(statePath('SB-12')), before12);
+assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/activity')), activity12);
+assert.deepEqual(fs.readdirSync(path.join(REPO, '.orchestrate/runs/SB-12/prompts')), prompts12); n += 3;
+orch(['fix', 'SB-12', '--scope', 'revert']);
+assert.equal(state('SB-12').round, 2); assert.equal(state('SB-12').scopeRounds, undefined); n += 2;
+const revertBrief = fs.readFileSync(state('SB-12').prompt, 'utf8');
+has(revertBrief, /### Revert these files to the base/, 'revert section');
+for (const f of sorted12) assert.ok(revertBrief.includes(`- ${f}:`) && revertBrief.includes(`${state('SB-12').base}:${f}`)); n++;
+has(revertBrief, /Restore content from `git show <base>:<file>`/, 'restore from the base');
+has(revertBrief, /delete a file the base does not have/, 'delete files absent from the base');
+hasNot(revertBrief.split('---')[0], /git checkout/, 'revert instructions need no checkout');
+console.log('scope: overlapping failures refuse plain fix with exit 3 and no writes; revert brief restores/deletes and counts a round');
+
+scopeWork('SB-13', outside12); orch(['gate', 'SB-13'], 2); orch(['fix', 'SB-13']);
+recordWorker('SB-13'); orch(['gate', 'SB-13'], 2);
+// Adding only part of the overlap does not resolve the choice.
+normalise('SB-13', ['outside/existing.txt']);
+const before13 = fs.readFileSync(statePath('SB-13'));
+orch(['fix', 'SB-13'], 3); assert.deepEqual(fs.readFileSync(statePath('SB-13')), before13); n++;
+normalise('SB-13', sorted12);
+has(orch(['fix', 'SB-13']), /round 2\/3 .*this round does not count/, 'normalise covering the overlap gets the existing free round');
+assert.equal(state('SB-13').scopeRounds, 1); n++;
+console.log('scope: normalise must cover the overlap; then fix passes with the existing free round');
+
+scopeWork('SB-14', ['outside/first.txt']); orch(['gate', 'SB-14'], 2); orch(['fix', 'SB-14']);
+fs.unlinkSync(path.join(W('SB-14'), 'outside/first.txt'));
+write('outside/second.txt', 'new\n', W('SB-14')); recordWorker('SB-14'); orch(['gate', 'SB-14'], 2);
+orch(['fix', 'SB-14']); assert.equal(state('SB-14').round, 2); n++;
+console.log('scope: disjoint outside files do not trigger the repeat guard');
+
+scopeWork('SB-15', ['outside/legacy.txt']); orch(['gate', 'SB-15'], 2); orch(['fix', 'SB-15']);
+recordWorker('SB-15'); orch(['gate', 'SB-15'], 2);
+const legacy = state('SB-15'); delete legacy.gate.outsideFiles; delete legacy.gate.scopeOnly;
+for (const e of legacy.events) delete e.outsideFiles;
+fs.writeFileSync(statePath('SB-15'), JSON.stringify(legacy));
+has(orch(['status', 'SB-15']), /next: orch fix SB-15\s*$/, 'older states keep today’s next text');
+has(orch(['fix', 'SB-15', '--scope', 'revert'], 1), /needs outsideFiles from the last gate/, 'revert refuses unknown outside files');
+orch(['fix', 'SB-15']); assert.equal(state('SB-15').round, 2); n++;
+console.log('scope: legacy state without outsideFiles keeps plain fix and the existing next text');
+
+const capFiles = prefix => Array.from({ length: 200 }, (_, i) => `outside/${prefix}-${String(199 - i).padStart(3, '0')}.txt`);
+const shared = 'z/shared.txt';
+scopeWork('SB-16', [...capFiles('cap'), shared]);
+orch(['gate', 'SB-16'], 2);
+const capped = Array.from({ length: 200 }, (_, i) => `outside/cap-${String(i).padStart(3, '0')}.txt`);
+assert.equal(state('SB-16').gate.outside, 201);
+assert.deepEqual(state('SB-16').gate.outsideFiles, capped);
+assert.deepEqual(state('SB-16').events.at(-1).outsideFiles, capped);
+assert.equal(state('SB-16').gate.outsideTruncated, true);
+assert.equal(state('SB-16').events.at(-1).outsideTruncated, true); n += 5;
+orch(['fix', 'SB-16']);
+for (const f of capFiles('cap')) fs.unlinkSync(path.join(W('SB-16'), f));
+for (const f of capFiles('other')) write(f, 'outside change\n', W('SB-16'));
+recordWorker('SB-16'); orch(['gate', 'SB-16'], 2);
+assert.deepEqual(state('SB-16').gate.outsideFiles.filter(f => capped.includes(f)), []); n++;
+const capBefore = fs.readFileSync(statePath('SB-16'));
+has(orch(['fix', 'SB-16'], 3), /scope may overlap again \(a gate list is partial\)/, 'overlap beyond the cap refuses');
+assert.deepEqual(fs.readFileSync(statePath('SB-16')), capBefore); n++;
+normalise('SB-16', capFiles('other'));
+const partialBefore = fs.readFileSync(statePath('SB-16'));
+orch(['fix', 'SB-16'], 3);
+assert.deepEqual(fs.readFileSync(statePath('SB-16')), partialBefore); n++;
+normalise('SB-16', [...capFiles('other'), shared]);
+orch(['fix', 'SB-16']);
+assert.equal(state('SB-16').scopeRounds, 1); n++;
+console.log('scope: 201 outside files store 200 plus outsideTruncated; hidden overlap exits 3 unchanged; partial normalise refuses and full normalise gets the free round');
+
+scopeWork('SB-18', [...capFiles('revert'), shared]); orch(['gate', 'SB-18'], 2);
+orch(['fix', 'SB-18', '--scope', 'revert']);
+const capBrief = fs.readFileSync(state('SB-18').prompt, 'utf8');
+has(capBrief, /list below is partial: these are examples, not the complete scope violation/, 'capped revert is explicit');
+has(capBrief, /Revert EVERY changed file outside the owned files/, 'revert all outside files');
+has(capBrief, /git status --short/, 'worker can list the full violation');
+hasNot(capBrief, /Leave the other files alone/, 'no instruction to preserve omitted outside files');
+assert.equal(state('SB-18').round, 1);
+assert.equal(state('SB-18').scopeRounds, undefined); n += 2;
+// Follow the partial-list instruction, including the omitted 201st file.
+for (const f of [...capFiles('revert'), shared]) fs.unlinkSync(path.join(W('SB-18'), f));
+recordWorker('SB-18'); orch(['gate', 'SB-18']);
+console.log('scope: 201-file revert brief calls the list partial, orders EVERY outside file reverted via git status; simulated full revert passes the gate and counts a round');
+
+// Either side being truncated is conservative, even with no overlap in the stored samples.
+scopeWork('SB-19', [...capFiles('previous'), shared]); orch(['gate', 'SB-19'], 2); orch(['fix', 'SB-19']);
+for (const f of [...capFiles('previous'), shared]) fs.unlinkSync(path.join(W('SB-19'), f));
+write('outside/current.txt', 'outside\n', W('SB-19')); recordWorker('SB-19'); orch(['gate', 'SB-19'], 2);
+orch(['fix', 'SB-19'], 3);
+normalise('SB-19', ['outside/current.txt']); orch(['fix', 'SB-19']);
+console.log('scope: a truncated previous gate also requires an explicit choice when the current list is complete');
+
+scopeWork('SB-20', ['outside/limit-first.txt']); orch(['gate', 'SB-20'], 2); orch(['fix', 'SB-20']);
+fs.unlinkSync(path.join(W('SB-20'), 'outside/limit-first.txt'));
+write('outside/limit-repeat.txt', 'outside\n', W('SB-20')); recordWorker('SB-20'); orch(['gate', 'SB-20'], 2); orch(['fix', 'SB-20']);
+recordWorker('SB-20');
+const limitText = orch(['gate', 'SB-20'], 2);
+has(limitText, /round limit reached \(2\/2\), but the gate failed on files outside the card/, 'existing limit advice');
+normalise('SB-20', ['outside/unrelated.txt']);
+const limitBefore = fs.readFileSync(statePath('SB-20'));
+const limitAdvice = orch(['fix', 'SB-20'], 3);
+has(limitAdvice, /next: orch card normalise SB-20/, 'limit refusal still offers normalise');
+hasNot(limitAdvice, /--scope revert/, 'no unavailable revert option');
+has(limitAdvice, /or split \/ park/, 'limit refusal offers split or park');
+assert.deepEqual(fs.readFileSync(statePath('SB-20')), limitBefore); n++;
+orch(['fix', 'SB-20', '--scope', 'revert'], 3);
+normalise('SB-20', ['outside/limit-repeat.txt']); orch(['fix', 'SB-20']);
+assert.equal(state('SB-20').round, 3); assert.equal(state('SB-20').scopeRounds, 1); n += 2;
+console.log('scope: at r2/2 partial normalise exits 3 unchanged; refusal offers normalise/split/park without revert; full normalise still grants r3/3');
+
+const realNames = ['outside/café.txt', 'outside/with space.txt'];
+scopeWork('SB-21', realNames);
+const nameAdvice = orch(['gate', 'SB-21'], 2);
+assert.deepEqual(state('SB-21').gate.outsideFiles, realNames); n++;
+has(nameAdvice, /adding exactly: outside\/café.txt, outside\/with space.txt/, 'next uses actual filenames');
+orch(['fix', 'SB-21', '--scope', 'revert']);
+assert.equal(state('SB-21').round, 1); n++;
+const nameBrief = fs.readFileSync(state('SB-21').prompt, 'utf8');
+for (const f of realNames) {
+  assert.ok(nameBrief.includes(`- ${f}:`) && nameBrief.includes(`git show '${state('SB-21').base}:${f}'`)); n++;
+  const shown = spawnSync('git', ['show', `${state('SB-21').base}:${f}`], { cwd: W('SB-21'), encoding: 'utf8' });
+  assert.equal(shown.status, 0); assert.match(shown.stdout, /base/); n += 2;
+}
+recordWorker('SB-21'); orch(['gate', 'SB-21'], 2);
+orch(['fix', 'SB-21'], 3);
+normalise('SB-21', realNames); orch(['fix', 'SB-21']);
+assert.equal(state('SB-21').scopeRounds, 1); n++;
+recordWorker('SB-21'); orch(['gate', 'SB-21']);
+console.log('scope: café.txt and with space.txt survive gate -> next -> git show revert brief -> real-name normalise; repeat guard accepts and owned scope passes');
+console.log(nameAdvice.trim().split('\n').slice(-2).join('\n'));
+
+// A name that differs from an owned file only by whitespace at an end or a control character is never owned
+// (the glob matcher trims patterns; the gate's -z names are exact).
+const disguised = [`${scopeOwned('SB-22')} `, `${scopeOwned('SB-22')}\t`];
+scopeWork('SB-22', disguised);
+has(orch(['gate', 'SB-22'], 2), /FAIL  scope: 2 file\(s\) outside the owned files/, 'disguised names fail scope');
+assert.deepEqual(state('SB-22').gate.outsideFiles, [...disguised].sort()); n++;
+console.log('scope: names that differ from an owned file only by edge whitespace or a control character stay outside');
+
+scopeWork('SB-17', ['outside/mixed.txt']);
+write(scopeOwned('SB-17'), 'const broken = ;\n', W('SB-17'));
+write('.orchestrate/config.json', JSON.stringify({ ...cfg, checks: [`node --check ${scopeOwned('SB-17')}`] }));
+o = orch(['gate', 'SB-17'], 2);
+assert.equal(state('SB-17').gate.scopeOnly, false); n++;
+has(o, /the other failures are fixed in the same round/, 'mixed failure advice');
+orch(['fix', 'SB-17', '--scope', 'revert']);
+const mixedBrief = fs.readFileSync(state('SB-17').prompt, 'utf8');
+has(mixedBrief, /FAIL +scope:/, 'mixed brief has scope failure');
+has(mixedBrief, /FAIL +check 1:/, 'mixed brief has check failure');
+has(mixedBrief, /This revert instruction applies only to the outside files; fix the other gate failures in the owned files in this same round/, 'mixed instructions permit owned fixes');
+hasNot(mixedBrief, /Leave the other files alone/, 'no conflicting mixed instructions');
+console.log('scope: mixed-failure revert brief limits the revert to outside files and explicitly fixes other gate failures in owned files in the same round');
+write(scopeOwned('SB-17'), '// fixed\n', W('SB-17'));
+write('outside/test-rule.txt', 'out\n', W('SB-17'));
+write('.orchestrate/config.json', JSON.stringify({ ...cfg, tests: { rule: 'fail' } }));
+orch(['gate', 'SB-17'], 2);
+assert.equal(state('SB-17').gate.scopeOnly, false); n++;
+write('.orchestrate/config.json', JSON.stringify(cfg));
+orch(['gate', 'SB-17'], 2);
+assert.equal(state('SB-17').gate.scopeOnly, true); n++;
+// A previous gate without new evidence is unknown, even when the current gate has it.
+const unknown = state('SB-17');
+for (const e of unknown.events.filter(e => e.kind === 'gate' && e.round === 0)) delete e.outsideFiles;
+fs.writeFileSync(statePath('SB-17'), JSON.stringify(unknown));
+orch(['fix', 'SB-17']);
+console.log('scope: scopeOnly is false for check/test-rule failures; an older previous gate cannot trigger the guard');
 
 // 9. Config values are checked.
 orch(['config', '--set', 'merge.recheck=sometimes'], 1);

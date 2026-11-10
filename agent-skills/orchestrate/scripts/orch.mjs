@@ -9,7 +9,7 @@
 //   orch start <id> [--force]                                worktree + branch, status In Progress, worker prompt
 //   orch record <id> worker|checker [--tag a] [--from f] [--tokens n]   save a sub-agent's report
 //   orch gate <id>                                           scope, counts, checks; on PASS the checker prompts
-//   orch fix <id> [--anyway]                                 next correction round (at most limits.correctionRounds)
+//   orch fix <id> [--anyway] [--scope revert]                  next correction round (at most limits.correctionRounds)
 //   orch recheck <id>                                        checkers again, same round, when they only lacked evidence
 //   orch restore <id>                                        put back the tree the gate passed (changed after it)
 //   orch push <id>                                           delivery pr: commit the gated tree, push, open/update the PR
@@ -66,6 +66,10 @@ function parseArgs(argv) {
 }
 
 const out = (...lines) => console.log(lines.filter(l => l !== null && l !== undefined).join('\n'));
+
+function recordActivity(root, name) {
+  if (fs.existsSync(orchDir(root))) { try { fs.writeFileSync(path.join(orchDir(root), 'activity'), `${name} ${now()}\n`); } catch { /* read-only checkout */ } }
+}
 
 async function trackerFor(root, cfg) {
   const file = path.join(SKILL, 'scripts', 'trackers', `${cfg.tracker.kind}.mjs`);
@@ -168,6 +172,13 @@ const roundLimit = (st, cfg) => cfg.limits.correctionRounds + (st.scopeRounds ??
 // A gate that failed on files outside the card can still get that round, at the limit too.
 const scopeFixable = st => st.phase === 'gate-failed' && (st.gate?.outside ?? 0) > 0 && (st.scopeRounds ?? 0) < SCOPE_ROUNDS;
 
+function scopeChoices(st, cfg) {
+  return `orch card normalise ${st.id} --from <card.json> adding exactly: ${st.gate.outsideFiles.join(', ')}${st.gate.outsideTruncated ? ' (partial list; add EVERY changed file outside the owned files, not just these examples)' : ''} — then orch fix ${st.id} `
+    + ((st.scopeRounds ?? 0) < SCOPE_ROUNDS ? '(this round does not count, once per run)' : '(this round counts; the free scope round was already used)')
+    + (st.round < roundLimit(st, cfg) ? `\nnext: orch fix ${st.id} --scope revert — the worker reverts ${st.gate.outsideTruncated ? 'EVERY changed file outside the owned files' : 'exactly those files'} to the base (this round counts)` : '')
+    + (st.gate.scopeOnly === false ? '; the other failures are fixed in the same round' : '');
+}
+
 // Whether the coordinator decides a run at its round limit itself (the owner's standing rule) instead of the owner.
 const selfDecides = cfg => cfg.limits.atRoundLimit === 'coordinator';
 
@@ -189,7 +200,7 @@ function nextAction(st, cfg, sessions = null) {
     }
     case 'worked': return `orch gate ${id}`;
     case 'gated': return `orch push ${id}`;
-    case 'gate-failed': return roundsLeft ? `orch fix ${id}` : scopeFixable(st)
+    case 'gate-failed': return roundsLeft ? (st.gate?.outsideFiles?.length ? scopeChoices(st, cfg) : `orch fix ${id}`) : scopeFixable(st)
       ? `round limit reached (${st.round}/${max}), but the gate failed on files outside the card: if the change really needs them, add exactly those files (orch card normalise ${id} --from <card.json>), then orch fix ${id} (that round does not count, once per run); otherwise ${selfDecides(cfg) ? 'decide as the advisor path says' : 'decide with the owner'}` : selfDecides(cfg) ? selfDecide : `round limit reached (${st.round}/${max}) and the gate fails, so it cannot be accepted: decide with the owner — split the task, or orch park ${id} --reason "<why>"`;
     case 'rejected': return recheckable(st) ? `orch recheck ${id} (no checker found a defect, they could not verify: they run again in this round, no correction round used)`
       : roundsLeft ? `orch fix ${id}` : decide;
@@ -645,7 +656,7 @@ async function cmdGate(root, { pos }) {
   const tree = stageAndTree(wt);
   const commits = Number(git(['rev-list', '--count', `${st.sha ?? st.base}..HEAD`], wt)); // orch's own pushed commits do not count
   if (commits) warn(`the worker made ${commits} commit(s); they are counted with the rest`);
-  const files = git(['diff', '--cached', '--no-renames', '--name-only', st.base], wt).split('\n').filter(Boolean);
+  const files = git(['diff', '-z', '--cached', '--no-renames', '--name-only', st.base], wt).split('\0').filter(Boolean);
   let added = 0; let removed = 0;
   for (const l of git(['diff', '--cached', '--no-renames', '--numstat', st.base], wt).split('\n').filter(Boolean)) {
     const [a, r] = l.split('\t'); added += Number(a) || 0; removed += Number(r) || 0;
@@ -655,7 +666,10 @@ async function cmdGate(root, { pos }) {
   const owned = task.ownedFiles;
   // A tracker kept in the repository (Backlog.md) is the coordinator's, never the worker's.
   const notOwned = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**'];
-  const outside = files.filter(f => !matchesAny(owned, f) || matchesAny(notOwned, f));
+  // The names are exact (-z); the glob matcher trims patterns, so a name with whitespace at either end or a control
+  // character would match an owned file it is not. Such a name is never owned.
+  const oddName = f => f !== f.trim() || /[\x00-\x1f\x7f]/.test(f);
+  const outside = files.filter(f => oddName(f) || !matchesAny(owned, f) || matchesAny(notOwned, f));
   if (!owned.length) bad('the task has no modified_files');
   else if (outside.length) bad(`scope: ${outside.length} file(s) outside the owned files: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ' …' : ''}`);
   else pass(`scope: all ${files.length} changed file(s) are owned`);
@@ -751,10 +765,14 @@ async function cmdGate(root, { pos }) {
     pass: !fail, tree, files: files.length, added, removed, checksRun: checks.length, checksPassed,
     harnessesRun: harnesses.length, harnessesPassed: harnessPassed, harnessRuns, tests: rule.level, round: st.round, at: now(), outside: outside.length,
     cfgHash: checksHash(cfg, task),
+    outsideFiles: outside.slice().sort().slice(0, 200),
+    ...(outside.length > 200 ? { outsideTruncated: true } : {}),
+    scopeOnly: outside.length > 0 && lines.filter(l => l.startsWith('FAIL')).every(l => l.startsWith('FAIL  scope:')),
   };
   const text = [`gate ${st.id} round ${st.round}: ${files.length} file(s), +${added} -${removed}`, ...lines, '', `GATE: ${fail ? 'FAIL' : 'PASS'}`].join('\n');
   writeAtomic(path.join(dir, `gate-r${st.round}.txt`), `${text}\n`);
-  event(st, 'gate', { round: st.round, pass: !fail, files: files.length, added, removed, ms: Date.now() - t0 });
+  event(st, 'gate', { round: st.round, pass: !fail, files: files.length, added, removed, outsideFiles: st.gate.outsideFiles,
+    ...(st.gate.outsideTruncated ? { outsideTruncated: true } : {}), ms: Date.now() - t0 });
   if (!fail) pinGate(st);
   if (!fail && st.delivery === 'pr') st.phase = 'gated'; // the checker comes after the push: it gets the PR and the sha
   else if (!fail) {
@@ -821,6 +839,9 @@ async function cmdFix(root, { pos, flags }) {
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (!['gate-failed', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: a fix follows a failed gate or a rejecting checker`);
+  if (flags.scope !== undefined && flags.scope !== 'revert') throw new OrchError('--scope must be revert');
+  const revert = flags.scope === 'revert';
+  if (revert && !st.gate?.outsideFiles?.length) throw new OrchError('--scope revert needs outsideFiles from the last gate; it had none (older gates must be run again)');
   const sessions = campaignSessions(root);
   const live = liveSubAgent(cfg, st, { role: 'worker', anyRound: true, sessions });
   if (live) throw new OrchError(`the worker "${live.label}" is still running: wait for its completion before orch fix ${st.id}; do not start another worker`, 4);
@@ -830,8 +851,26 @@ async function cmdFix(root, { pos, flags }) {
   // Files the card was given since the last round (orch card normalise): that round does not count, once per run.
   const owned = [...(task.ownedFiles ?? [])].sort();
   const added = st.owned ? owned.filter(f => !st.owned.includes(f)) : [];
-  const scope = added.length > 0 && (st.scopeRounds ?? 0) < SCOPE_ROUNDS;
+  const scope = !revert && added.length > 0 && (st.scopeRounds ?? 0) < SCOPE_ROUNDS;
   if (st.round >= roundLimit(st, cfg) + (scope ? 1 : 0)) throw new OrchError(nextAction(st, cfg), 3);
+  if (st.phase === 'gate-failed' && st.gate?.outsideFiles?.length && !revert) {
+    const previous = [...st.events].reverse().find(e => e.kind === 'gate' && e.round < st.round);
+    // A capped list cannot prove disjointness. Require an explicit choice for the whole current violation;
+    // read the immutable gated tree only when normalise must cover names missing from the stored sample.
+    const repeated = previous?.round === st.round - 1 && previous.pass === false && previous.outsideFiles?.length;
+    const truncated = repeated && (st.gate.outsideTruncated || previous.outsideTruncated);
+    let overlap = repeated ? (truncated ? st.gate.outsideFiles : st.gate.outsideFiles.filter(f => previous.outsideFiles.includes(f))) : [];
+    if (truncated && st.gate.outsideTruncated && added.length) {
+      const notOwned = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**'];
+      overlap = git(['diff', '-z', '--no-renames', '--name-only', st.base, st.gate.tree], st.worktree).split('\0')
+        .filter(f => f && (!matchesAny(st.owned ?? [], f) || matchesAny(notOwned, f)));
+    }
+    if (overlap.some(f => !matchesAny(added, f))) {
+      throw new OrchError(`${truncated ? 'scope may overlap again (a gate list is partial)' : `scope failed again on: ${overlap.join(', ')}`}; choose explicitly:\nnext: ${scopeChoices(st, cfg)}\nor split / park`, 3);
+    }
+  }
+  // A refused fix writes nothing, including the keeper's activity marker.
+  recordActivity(root, 'fix');
   if (scope) st.scopeRounds = (st.scopeRounds ?? 0) + 1;
   st.owned = owned;
   const dir = runDir(root, st.id);
@@ -846,6 +885,12 @@ async function cmdFix(root, { pos, flags }) {
     }
   }
   if (added.length) findings.unshift('### Files added to this task', `You may now also change: ${added.join(', ')}`);
+  if (revert) findings.push('### Revert these files to the base',
+    st.gate.outsideTruncated
+      ? `The list below is partial: these are examples, not the complete scope violation. Revert EVERY changed file outside the owned files to base ${st.base}; use \`git status --short\` to list changed files and compare them with the owned files in this brief.`
+      : `Revert exactly the files below to base ${st.base}.`,
+    'Restore content from `git show <base>:<file>` for a file the base has; delete a file the base does not have. This revert instruction applies only to the outside files; fix the other gate failures in the owned files in this same round.',
+    ...st.gate.outsideFiles.map(f => `- ${f}: if the base has it, restore content from \`git show ${shq(`${st.base}:${f}`)}\`; otherwise delete this file (the base does not have it).`));
   // A checker of an earlier round that reported after its round was closed: its findings are still about this work.
   for (const l of lateReports(root, st)) findings.push(`### Checker ${l.tag} of round ${l.round} (reported, never recorded): ${l.verdict}`, fs.readFileSync(l.file, 'utf8').slice(0, 6000));
   setAsideInbox(root, st);
@@ -2009,7 +2054,7 @@ export async function runCli() {
   try {
     const root = primaryRoot();
     // The coordinator's activity, for the campaign keeper: any orch command but the keeper's own.
-    if (!['keeper', 'campaign'].includes(name) && fs.existsSync(orchDir(root))) { try { fs.writeFileSync(path.join(orchDir(root), 'activity'), `${name} ${now()}\n`); } catch { /* read-only checkout */ } }
+    if (!['keeper', 'campaign', 'fix'].includes(name)) recordActivity(root, name);
     await fn(root, parseArgs(rest));
   } catch (e) {
     if (!(e instanceof OrchError)) throw e;
