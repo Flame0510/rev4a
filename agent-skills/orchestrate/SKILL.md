@@ -158,6 +158,20 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   touches `risk.paths` (database, migrations, shared code). A whole-suite failure is rerun once on the failed specs
   (passing then = flaky, a WARN); a real failure lists the cards merged since the last whole-suite pass — open a small fix
   card for the likely culprit. Workers and checkers never run the whole suite themselves.
+- **Whole-suite reuse (opt-in):** a gate harness with `reuse: true` reuses a recorded clean whole-suite PASS for up
+  to 72 hours (`reuse: { maxAgeHours: 24 }` sets another age). The gate says `REUSED` and names the original card,
+  round and time; fast runs are never reused. The key hashes the gated tree's modes, blob IDs and exact paths under
+  the harness's `paths` (all paths if absent), all lockfiles, its definition except `reuse`, the Node version and
+  each linked regular file's path and content hash (including env files; directory links rely on the lockfiles).
+  The owner enables this only when `paths` lists every input of the suite: it gives up a closure card's full run
+  as the safety net for missing inputs. Flaky passes are never recorded for reuse; the newest 20 clean passes are
+  kept. Reuse does not refresh their age or the last real run. Merge rechecks still run a reused entry in full
+  when the base moves, under the existing merge rules. Lookup, execution hashes (before and after the command)
+  and history writes use the existing project harness lock; no marker lock is created. Different execution hashes
+  warn and prevent recording a reusable pass. Histories are merged and written atomically, preserving the newest
+  real run; the legacy suite marker holds only last-run fields. Missing or malformed history requires execution;
+  invalid receipts are dropped on the next PASS. History read, hash or write errors warn and never fail a passing
+  gate. Without `reuse`, behaviour is unchanged.
 - **Test with the change**: a change to source code without a changed test file is reported by the gate
   (`tests.rule`: warn, fail or off). The owner can exempt a task with `no_tests: <why>` in its front matter.
 - `$ORCH next` gives **advice** on tasks: no test file among its owned files (the worker could not add one), or

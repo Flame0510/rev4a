@@ -3,8 +3,9 @@
 // confirms the config.
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { firstOverlap, matchesAny } from './glob.mjs';
-import { OrchError, sh } from './util.mjs';
+import { git, OrchError, sh, writeJson } from './util.mjs';
 
 export const DEFAULT_TEST_PATHS = ['tests/**', 'test/**', 'e2e/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*'];
 const CODE = /\.(m?[jt]sx?|cjs|cts|mts|vue|svelte|astro|sql)$/;
@@ -156,12 +157,22 @@ function takeLock(lock, maxSec) {
   }
 }
 
-export function runHarness(root, h, cwd) {
+export function withHarnessLock(root, h, action) {
   const lock = path.join(root, '.orchestrate', 'harness.lock');
   const timeoutSec = h.timeoutSec ?? 1800;
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   takeLock(lock, timeoutSec);
-  try { return sh(h.command, { cwd, timeoutSec, env: h.env }); } finally { fs.rmSync(lock, { recursive: true, force: true }); }
+  try { return action(); } finally { fs.rmSync(lock, { recursive: true, force: true }); }
+}
+
+/** Hooks bracket the command inside the existing project lock; callers handle optional history errors. */
+export function runHarness(root, h, cwd, hooks = {}) {
+  return withHarnessLock(root, h, () => {
+    hooks.before?.();
+    const result = sh(h.command, { cwd, timeoutSec: h.timeoutSec ?? 1800, env: h.env });
+    hooks.after?.(result);
+    return result;
+  });
 }
 
 // ── Fast gate ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -198,6 +209,97 @@ export function harnessPlan(h, { closure, risky, specs }) {
   if (risky.length) return { mode: 'full', specs: [], reason: `risky paths: ${risky.slice(0, 3).join(', ')}${risky.length > 3 ? ' …' : ''}` };
   const all = [...new Set([...specs, ...(h.fast.critical ?? [])])];
   return all.length ? { mode: 'fast', specs: all, reason: '' } : { mode: 'skip', specs: [], reason: 'no spec of the card and no critical spec' };
+}
+
+/** Opt-in whole-suite reuse; validate here as well as in `orch config` for hand-written configs. */
+export function reuseMaxAgeHours(h) {
+  if (h.reuse === undefined || h.reuse === false) return null;
+  const value = h.reuse;
+  if ((h.when ?? 'gate') !== 'gate') throw new OrchError(`harness ${h.name}: reuse is only available with when: gate`);
+  if (value === true) return 72;
+  if (value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === 1 && typeof value.maxAgeHours === 'number'
+    && Number.isFinite(value.maxAgeHours) && value.maxAgeHours > 0) return value.maxAgeHours;
+  throw new OrchError(`harness ${h.name}: reuse must be true, false or { maxAgeHours: <positive number> }`);
+}
+
+const LOCKFILES = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb']);
+
+// A tree id names immutable content: list it once per process (lookup, before and after a run share it).
+const treeListings = new Map();
+const listTree = (tree, cwd) => {
+  if (!treeListings.has(tree)) {
+    if (treeListings.size > 32) treeListings.clear();
+    treeListings.set(tree, git(['ls-tree', '-r', '-z', tree], cwd));
+  }
+  return treeListings.get(tree);
+};
+
+/** Hash only: one exact-name tree listing, the harness definition, Node and linked regular-file contents. */
+export function harnessInputKey(h, tree, cwd, links = []) {
+  const entries = listTree(tree, cwd).split('\0').filter(Boolean).map(entry => {
+    const tab = entry.indexOf('\t');
+    const [mode, , blob] = entry.slice(0, tab).split(' ');
+    return [mode, blob, entry.slice(tab + 1)];
+  }).filter(([, , file]) => !h.paths?.length || matchesAny(h.paths, file) || LOCKFILES.has(path.posix.basename(file)))
+    .sort((a, b) => a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0);
+  const linkedFiles = [];
+  for (const file of [...new Set(links)].sort()) {
+    const target = path.join(cwd, file);
+    try {
+      if (fs.statSync(target).isFile()) linkedFiles.push([file, createHash('sha256').update(fs.readFileSync(target)).digest('hex')]);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw new OrchError(`cannot hash linked file ${file}`);
+    }
+  }
+  const { reuse, ...definition } = h;
+  return createHash('sha256').update(JSON.stringify({ entries, definition, node: process.version, linkedFiles })).digest('hex');
+}
+
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const validPass = p => isObject(p) && typeof p.key === 'string' && typeof p.tree === 'string'
+  && typeof p.card === 'string' && Number.isInteger(p.round) && p.round >= 0
+  && typeof p.at === 'string' && Number.isFinite(Date.parse(p.at));
+const history = marker => isObject(marker) && Array.isArray(marker.passes) ? marker.passes.filter(validPass) : [];
+
+export function reusablePass(marker, key, maxAgeHours, time = Date.now()) {
+  return history(marker).find(p => {
+    const age = time - Date.parse(p.at);
+    return p.key === key && age >= 0 && age <= maxAgeHours * 3600_000;
+  }) ?? null;
+}
+
+/** Missing or malformed stored data requires execution; I/O errors are reported by the optional-history caller. */
+export function readSuiteMarker(file) {
+  try {
+    const marker = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return isObject(marker) ? marker : null;
+  } catch (e) {
+    if (e.code === 'ENOENT' || e instanceof SyntaxError) return null;
+    throw e;
+  }
+}
+
+/** Caller holds the project harness lock: re-read, merge valid receipts, then atomically replace the marker. */
+export function updateSuiteMarker(file, green, pass = null, realRun = false) {
+  const stored = readSuiteMarker(file);
+  const storedAt = typeof stored?.at === 'string' ? Date.parse(stored.at) : NaN;
+  const runAt = Date.parse(green.at);
+  // now() has second precision: a delayed history append keeps a tie; a real run owns its new timestamp.
+  const validRun = isObject(stored) && ['base', 'card', 'harness', 'at'].every(k => typeof stored[k] === 'string');
+  const latest = validRun && (storedAt > runAt || (!realRun && pass && storedAt === runAt)) ? stored : green;
+  const marker = { base: latest.base, card: latest.card, harness: latest.harness, at: latest.at };
+  const passes = [...(validPass(pass) ? [pass] : []), ...history(stored)];
+  if (passes.length) {
+    passes.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    const seen = new Set();
+    marker.passes = passes.filter(p => {
+      const id = JSON.stringify([p.key, p.tree, p.card, p.round]);
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    }).slice(0, 20);
+  }
+  writeJson(file, marker);
 }
 
 /** The spec files Playwright reports as failed (`[project] › path/x.spec.ts:12:3 › title`). */

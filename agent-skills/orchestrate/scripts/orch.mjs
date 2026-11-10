@@ -34,8 +34,8 @@ import {
 } from './lib/config.mjs';
 import { matchesAny } from './lib/glob.mjs';
 import {
-  cardSpecFiles, detectHarnesses, failedSpecFiles, harnessesCovering, harnessesFor, harnessPlan, OUTPUT_DIRS, riskyFiles,
-  runHarness, shq, testRule,
+  cardSpecFiles, detectHarnesses, failedSpecFiles, harnessesCovering, harnessesFor, harnessInputKey, harnessPlan, OUTPUT_DIRS, riskyFiles,
+  readSuiteMarker, reusablePass, reuseMaxAgeHours, runHarness, shq, testRule, updateSuiteMarker, withHarnessLock,
 } from './lib/harness.mjs';
 import { cardRules } from './lib/card.mjs';
 import { CAMPAIGN_DEFAULTS, decide, sameLabel, wakeMessage } from './lib/keeper.mjs';
@@ -366,7 +366,7 @@ function showConfig(cfg, models) {
     `base branch: ${cfg.baseBranch} · worktrees in ${cfg.worktreeRoot} · branches ${cfg.branchPrefix}<id> · links ${cfg.links.join(', ') || '-'}`,
     `checks: ${cfg.checks.join(' · ') || '(none: set checks)'}`,
     `artifacts: ${cfg.artifacts.enabled ? 'enabled' : 'disabled'} · reserve ${cfg.artifacts.minFreeBytes} bytes · disposable ${cfg.artifacts.disposable.join(', ') || '(none)'}`,
-    ...(cfg.harnesses.length ? cfg.harnesses.map(h => `harness ${h.name}: ${h.command} · on ${h.when ?? 'gate'} when a change touches ${(h.paths ?? ['**']).join(', ')} · ${h.timeoutSec ?? 1800} s`) : ['harnesses: none']),
+    ...(cfg.harnesses.length ? cfg.harnesses.map(h => `harness ${h.name}: ${h.command} · on ${h.when ?? 'gate'} when a change touches ${(h.paths ?? ['**']).join(', ')} · ${h.timeoutSec ?? 1800} s · reuse: ${reuseMaxAgeHours(h) === null ? 'off' : `on (max ${reuseMaxAgeHours(h)} h)`}`) : ['harnesses: none']),
     `tests: rule ${cfg.tests.rule} (a source change needs a changed test file) · test files ${cfg.tests.paths.join(', ')}`,
     `merge: ${cfg.merge.approval === 'standing' && cfg.merge.standing ? `standing approval of ${cfg.merge.standing.by} since ${cfg.merge.standing.at}` : 'the owner\'s ok for each task'} · never on ${cfg.merge.protectedBranches.join(', ')}`,
     `limits: ${cfg.limits.correctionRounds} correction rounds · ${cfg.limits.checkers} checker(s) · ${cfg.limits.checkTimeoutSec} s per check · a task may own at most ${Math.round(cfg.limits.maxOwnedShare * 100)}% of the tracked files · at the round limit the ${selfDecides(cfg) ? 'coordinator decides (advisor, then split or park; never merges)' : 'owner decides'}`,
@@ -380,6 +380,7 @@ async function cmdConfig(root, { flags }) {
   if (!['owner', 'coordinator'].includes(cfg.limits.atRoundLimit)) throw new OrchError('limits.atRoundLimit must be "owner" or "coordinator"');
   if (!['always', 'if-changed'].includes(cfg.merge.recheck)) throw new OrchError('merge.recheck must be "always" or "if-changed"');
   for (const h of cfg.harnesses ?? []) if (h.kind !== undefined && !['check', 'suite'].includes(h.kind)) throw new OrchError(`harness ${h.name}: kind must be "check" or "suite"`);
+  for (const h of cfg.harnesses ?? []) reuseMaxAgeHours(h);
   validatePolicy(cfg.artifacts); // reject invalid assignments before they can poison the saved config
   // Merge policy: only on the owner's word. It does not unconfirm the rest of the config.
   if (typeof flags['standing-approval'] === 'string') {
@@ -712,9 +713,60 @@ async function cmdGate(root, { pos }) {
     const run = { name: h.name, mode: plan.mode, specs: plan.specs };
     harnessRuns.push(run);
     if (plan.mode === 'skip') { harnessPassed++; pass(`harness ${h.name}: fast gate, nothing to run (${plan.reason})`); continue; }
+    const maxAgeHours = reuseMaxAgeHours(h);
+    const reuseFull = plan.mode === 'full' && maxAgeHours !== null;
+    const historyWarning = reason => warn(`harness ${h.name} reuse: history not recorded (${reason})`);
+    let reused = null;
+    if (reuseFull) {
+      withHarnessLock(root, h, () => {
+        try {
+          const key = harnessInputKey(h, tree, wt, st.links);
+          reused = reusablePass(readSuiteMarker(suiteMarker(root, h)), key, maxAgeHours);
+        } catch {
+          warn(`harness ${h.name} reuse: lookup unavailable, running suite normally`);
+        }
+      });
+    }
+    // Both execution hashes and the marker update are protected by the same lock as the suite.
+    let executionKey = null;
+    const recordResult = (result, allowPass) => {
+      if (result.code !== 0 || result.infra) return;
+      const green = { base: st.base, card: st.id, harness: h.name, at: now() };
+      let receipt = null;
+      if (allowPass && !result.timedOut) {
+        try {
+          const afterKey = harnessInputKey(h, tree, wt, st.links);
+          if (executionKey && afterKey !== executionKey) warn(`harness ${h.name} reuse: inputs changed during the run, not recorded`);
+          else if (executionKey && stageAndTree(wt) === tree) {
+            receipt = { key: executionKey, tree, card: st.id, round: st.round, at: green.at };
+          }
+        } catch { historyWarning('input verification failed'); }
+      }
+      try { updateSuiteMarker(suiteMarker(root, h), green, receipt, true); }
+      catch { historyWarning('marker update failed'); }
+      if (!isCheck(h)) {
+        try { writeJson(path.join(orchDir(root), 'runs', '_suite.json'), green); }
+        catch { historyWarning('legacy marker update failed'); }
+      }
+    };
+    const hooks = reuseFull ? {
+      before: () => {
+        try { executionKey = harnessInputKey(h, tree, wt, st.links); }
+        catch { historyWarning('input hashing failed'); }
+      },
+      after: result => recordResult(result, true),
+    } : undefined;
+    const label = `harness ${h.name} (${plan.mode}${plan.reason ? `: ${plan.reason}` : ''})`;
+    if (reused) {
+      run.mode = 'reused';
+      run.from = { card: reused.card, round: reused.round, at: reused.at };
+      harnessPassed++;
+      pass(`${label}: REUSED from ${reused.card} r${reused.round} ${reused.at} (inputs unchanged)`);
+      continue;
+    }
     const command = plan.mode === 'full' ? h.command : `${h.command} ${plan.specs.map(shq).join(' ')}`;
     const log = path.join(dir, 'logs', `gate-r${st.round}-harness-${h.name}.log`);
-    let r = runHarness(root, { ...h, command }, wt);
+    let r = runHarness(root, { ...h, command }, wt, hooks);
     run.ms = r.ms;
     writeAtomic(log, `$ ${command}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
     let flaky = [];
@@ -724,19 +776,19 @@ async function cmdGate(root, { pos }) {
       const failed = failedSpecFiles(r.out);
       if (failed.length) {
         const again = `${h.command} ${failed.map(shq).join(' ')}`;
-        const r2 = runHarness(root, { ...h, command: again }, wt);
+        const r2 = runHarness(root, { ...h, command: again }, wt, reuseFull ? { after: result => recordResult(result, false) } : undefined);
         fs.appendFileSync(log, `\n\n$ ${again}   (rerun of the failed specs)\nexit ${r2.code} in ${minutes(r2.ms)}\n\n${r2.out}`);
         if (r2.infra) { infra ??= r2.infra; lines.push(`INFRA harness ${h.name} (rerun of the failed specs) -> ${r2.infra}`); continue; }
         if (r2.code === 0) { flaky = failed; r = { ...r, code: 0 }; }
       }
     }
-    const label = `harness ${h.name} (${plan.mode}${plan.reason ? `: ${plan.reason}` : ''})`;
     if (r.code === 0) {
       harnessPassed++;
       pass(`${label}: ${command} (${minutes(r.ms)})`);
       if (flaky.length) warn(`flaky: ${flaky.join(', ')} failed in the full run and passed on a rerun`);
-      if (plan.mode === 'full') {
+      if (plan.mode === 'full' && !reuseFull) {
         const green = { base: st.base, card: st.id, harness: h.name, at: now() };
+        // Reuse-off keeps the original marker path, including flaky passes, without reading history.
         writeJson(suiteMarker(root, h), green);
         if (!isCheck(h)) writeJson(path.join(orchDir(root), 'runs', '_suite.json'), green);
       }
@@ -747,7 +799,8 @@ async function cmdGate(root, { pos }) {
   }
   const later = harnessesFor(cfg, task, files, 'merge');
   if (later.length) pass(`harness ${later.map(h => h.name).join(', ')}: runs at the merge`);
-  if (stageAndTree(wt) !== tree) bad('the checks or harnesses changed files in the worktree (a formatter, a generator, a report folder not ignored?): run them in the worker, not in the gate');
+  const treeUnchanged = stageAndTree(wt) === tree;
+  if (!treeUnchanged) bad('the checks or harnesses changed files in the worktree (a formatter, a generator, a report folder not ignored?): run them in the worker, not in the gate');
 
   if (infra) {
     // The machine ended a command (out of memory, killed): no verdict on the change, no correction round used.
@@ -812,11 +865,12 @@ function checkerHarnesses(cfg, task, st, tag = 'a', tmp = null) {
   const rules = cardRules(task, cfg, 'checker');
   return [
     ...(rules ? [rules] : []),
-    `The gate already ran these on this exact tree (orch refuses a verdict if the tree changed since): ${[
+    `${st.gate?.harnessRuns?.some(x => x.mode === 'reused') ? 'The gate verified these results for this tree; REUSED entries use a recorded PASS with identical inputs' : 'The gate already ran these on this exact tree'} (orch refuses a verdict if the tree changed since): ${[
       ...checksFor(cfg, task),
       ...(st.gate?.harnessRuns ?? hs.map(h => ({ name: h.name, mode: 'full', specs: [] }))).map((x) => {
         const h = cfg.harnesses.find(y => y.name === x.name);
         const cmd = h ? h.command : x.name;
+        if (x.mode === 'reused') return `\`${cmd}\` (whole suite, REUSED: inputs identical to ${x.from.card} r${x.from.round})`;
         return x.mode === 'full' ? `\`${cmd}\` (${isCheck(h) ? 'scoped check' : 'whole suite'})` : x.mode === 'fast' ? `\`${cmd} ${x.specs.join(' ')}\` (fast gate)` : `${x.name}: nothing to run`;
       }),
     ].join(', ')}.`,
