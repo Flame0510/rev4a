@@ -46,6 +46,9 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    sub-agent that ended without a report and without an answer is started again with the same brief, in the same
    round. `orch status` shows a LATE REPORT (a checker report nobody recorded: it came after its round was closed,
    or after another checker's FAIL): its findings go to the worker (`sessions_send` if one is running; the next `orch fix` brief carries them anyway).
+   During a campaign, `gate` and `fix` also refuse while the runtime shows the worker running (exit 4, no round used,
+   at most for its time limit); `fix` checks workers of every round. The `next:` line then says to wait. Without
+   runtime information these commands behave as before; `record` keeps its existing refusal and exit code.
 12. **Nobody changes a worktree after its gate.** When `record` or `finish` says the worktree changed after the gate,
    look at what changed (the message says): if nobody meant it (a sub-agent's "undo"), `$ORCH restore <id>` puts back
    what the gate passed, keeps a copy of what it replaced, and the recorded verdicts stay; then record again. Run

@@ -110,6 +110,28 @@ function phaseOpenedAt(st) {
   return Date.parse([...st.events].reverse().find(e => kinds.includes(e.kind))?.t ?? 0) || 0;
 }
 
+// Look up the runtime once per command, and only during a campaign. Unknown means the usual offline behaviour.
+function campaignSessions(root) {
+  const campaign = readCampaign(root);
+  return campaign?.active && campaign.session ? liveSessions(campaign.session) : null;
+}
+
+// The same bounded liveness check for reports, gates, fixes and advice. Callers supply one campaign session snapshot;
+// this helper never calls the runtime. A fix checks every round, including workers from before the phase opened.
+function liveSubAgent(cfg, st, { role, tag = null, anyRound = false, sessions }) {
+  const limitMs = (role === 'worker' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000;
+  const now = Date.now();
+  return sessions?.find(s => {
+    // A time that is not a real date, or lies in the future (a skewed clock), never blocks: it could block forever.
+    if (!Number.isFinite(s.updatedAt) || s.updatedAt > now + 60000 || Number.isNaN(new Date(s.updatedAt).getTime())) return false;
+    const round = anyRound ? s.label.match(/\s+r(\d+)(?:\s|$)/i)?.[1] : st.round;
+    return round !== undefined && sameLabel(s.label, `${st.id} ${role}${tag ? ` ${tag}` : ''} r${round}`)
+      && ['running', 'queued'].includes(s.status) && !s.endedAt
+      && (anyRound || s.updatedAt >= phaseOpenedAt(st) - 60000)
+      && now - s.updatedAt < limitMs;
+  });
+}
+
 // Reports left in the inbox by an earlier round go to reports/, renamed, so nobody records them as the current one.
 function setAsideInbox(root, st, only = () => true) {
   const dir = path.join(runDir(root, st.id), 'inbox');
@@ -149,7 +171,7 @@ const scopeFixable = st => st.phase === 'gate-failed' && (st.gate?.outside ?? 0)
 // Whether the coordinator decides a run at its round limit itself (the owner's standing rule) instead of the owner.
 const selfDecides = cfg => cfg.limits.atRoundLimit === 'coordinator';
 
-function nextAction(st, cfg) {
+function nextAction(st, cfg, sessions = null) {
   const id = st.id; const max = roundLimit(st, cfg);
   if (st.setAside) return `orch card set-aside ${id} (a split set this run aside half-way: finish that; the card then waits for its split cards)`;
   const roundsLeft = st.round < max;
@@ -160,7 +182,11 @@ function nextAction(st, cfg) {
   const decide = selfDecides(cfg) ? selfDecide
     : `round limit reached (${st.round}/${max}): decide with the owner — accept (orch finish ${id} --approved-by <name> --override "<why>", only after a gate PASS), split the task, or orch park ${id} --reason "<why>"`;
   switch (st.phase) {
-    case 'working': return `${spawnLine(cfg, 'worker', st, st.prompt, cfg.limits.workerTimeoutSec)} When it has finished: orch record ${id} worker`;
+    case 'working': {
+      const live = liveSubAgent(cfg, st, { role: 'worker', sessions });
+      if (live) return `the worker "${live.label}" is running (since ${new Date(live.updatedAt).toISOString()}): wait for its completion, do not start another; then orch record ${id} worker`;
+      return `${spawnLine(cfg, 'worker', st, st.prompt, cfg.limits.workerTimeoutSec)} When it has finished: orch record ${id} worker`;
+    }
     case 'worked': return `orch gate ${id}`;
     case 'gated': return `orch push ${id}`;
     case 'gate-failed': return roundsLeft ? `orch fix ${id}` : scopeFixable(st)
@@ -233,7 +259,7 @@ function untestedRuns(root) {
   return fs.readdirSync(runs).filter(d => fs.existsSync(path.join(runs, d, 'state.json'))).map(d => loadState(root, d)).filter(blocking);
 }
 
-function statusLine(st, cfg) {
+function statusLine(st, cfg, sessions = null) {
   const g = st.gate ? `gate ${st.gate.pass ? 'PASS' : 'FAIL'} (${st.gate.files} files +${st.gate.added} -${st.gate.removed}, checks ${st.gate.checksPassed}/${st.gate.checksRun})` : 'gate not run';
   const m = metrics(st);
   return [
@@ -242,7 +268,7 @@ function statusLine(st, cfg) {
     `  elapsed ${m.elapsed} · gate runs ${m.gates} (${m.gateFails} failed)${m.tokens ? ` · tokens ${m.tokens}` : ''} · worktree ${st.worktree}`,
     ...(st.pr ? [`  PR #${st.pr.number} ${st.pr.url} · pushed ${st.sha?.slice(0, 9) ?? '-'}`] : []),
     ...(unresolvedUntested(st) ? [`  ATTENTION: the merged result ${st.merge?.slice(0, 9)} on ${st.baseBranch} is not the checked tree: run the checks on ${st.baseBranch}, then orch resolve ${st.id} --checked "<what passed>"`] : []),
-    `next: ${nextAction(st, cfg)}`,
+    `next: ${nextAction(st, cfg, sessions)}`,
   ].join('\n');
 }
 
@@ -372,8 +398,14 @@ async function cmdNext(root, { flags }) {
   }
   const ok = res.filter(r => !r.reasons.length);
   if (flags.json) { console.log(JSON.stringify(res.map(r => ({ id: r.task.id, title: r.task.title, eligible: !r.reasons.length, reasons: r.reasons, advice: r.advice })), null, 2)); return; }
+  const sessions = campaignSessions(root);
+  const runs = path.join(orchDir(root), 'runs');
+  const working = sessions === null || !fs.existsSync(runs) ? [] : fs.readdirSync(runs)
+    .filter(d => fs.existsSync(path.join(runs, d, 'state.json'))).map(d => loadState(root, d))
+    .filter(st => st.phase === 'working' && !st.setAside);
   out(ok.length ? ok.map(r => [`${r.task.id}  ${r.task.title}`, ...r.advice.map(a => `  advice: ${a}`)].join('\n')).join('\n') : 'no eligible task',
     flags.all ? res.filter(r => r.reasons.length).map(r => [`  not ${r.task.id}: ${r.reasons.join('; ')}`, ...r.advice.map(a => `    advice: ${a}`)].join('\n')).join('\n') || null : `(${res.length - ok.length} not eligible: --all shows why)`,
+    ...working.map(st => `${st.id}  phase working\nnext: ${nextAction(st, cfg, sessions)}`),
     `next: ${ok.length ? `orch start ${ok[0].task.id}` : 'split or unblock a task (orch next --all)'}`);
 }
 
@@ -542,10 +574,7 @@ async function cmdRecord(root, { pos, flags }) {
   // takes seconds); unknown (no runtime, no campaign) means allowed.
   {
     const label = `${st.id} ${role}${tag ? ` ${tag}` : ''} r${st.round}`;
-    const campaign = readCampaign(root);
-    const session = campaign?.active ? campaign.session : null;
-    const limitMs = (role === 'worker' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000; // a hung session past its limit does not block
-    const live = (session ? liveSessions(session) : null)?.find(s => sameLabel(s.label, label) && ['running', 'queued'].includes(s.status) && !s.endedAt && s.updatedAt >= phaseOpenedAt(st) - 60000 && Date.now() - s.updatedAt < limitMs);
+    const live = liveSubAgent(cfg, st, { role, tag, sessions: campaignSessions(root) });
     if (live) throw new OrchError(`the sub-agent "${label}" is still running: wait for its completion, it writes its own report to ${inbox}. Never record a report written in its place`);
   }
   // Every check before the report leaves the inbox: a refused record keeps it where it was.
@@ -597,6 +626,10 @@ async function cmdGate(root, { pos }) {
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (['merged', 'parked'].includes(st.phase)) throw new OrchError(`${st.id} is ${st.phase}`);
+  if (st.phase === 'working') {
+    const live = liveSubAgent(cfg, st, { role: 'worker', sessions: campaignSessions(root) });
+    if (live) throw new OrchError(`the worker "${live.label}" is still running: wait for its completion, then orch record ${st.id} worker`, 4);
+  }
   process.env.ORCH_RUN = `${st.id} r${st.round}`; // the commands' artifact scopes belong to this run (their cleanup)
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
@@ -788,6 +821,9 @@ async function cmdFix(root, { pos, flags }) {
   const cfg = loadConfig(root);
   const st = activeState(root, id);
   if (!['gate-failed', 'rejected'].includes(st.phase)) throw new OrchError(`${st.id} is in phase ${st.phase}: a fix follows a failed gate or a rejecting checker`);
+  const sessions = campaignSessions(root);
+  const live = liveSubAgent(cfg, st, { role: 'worker', anyRound: true, sessions });
+  if (live) throw new OrchError(`the worker "${live.label}" is still running: wait for its completion before orch fix ${st.id}; do not start another worker`, 4);
   if (recheckable(st) && !flags.anyway) throw new OrchError(`no checker of round ${st.round} found a defect, they could not verify (NEEDS EVIDENCE): orch recheck ${st.id} runs them again without using a round. Only when the worker must add something checkable: orch fix ${st.id} --anyway`);
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
@@ -826,7 +862,7 @@ async function cmdFix(root, { pos, flags }) {
   cleanRun(root, cfg, st.id); // the rounds before the last two
   tracker.setStatus(st.id, cfg.tracker.status.inProgress);
   tracker.comment(st.id, `correction round ${st.round}/${roundLimit(st, cfg)}${scope ? ' (files added to the card: this round does not count)' : ''}`);
-  out(`round ${st.round}/${roundLimit(st, cfg)}${scope ? ` (files added: ${added.join(', ')}; this round does not count)` : ''}: ${file}`, `next: ${nextAction(st, cfg)}`);
+  out(`round ${st.round}/${roundLimit(st, cfg)}${scope ? ` (files added: ${added.join(', ')}; this round does not count)` : ''}: ${file}`, `next: ${nextAction(st, cfg, sessions)}`);
 }
 
 // Puts back the tree the gate passed when something changed the worktree after it: a sub-agent's "undo" with
@@ -1354,9 +1390,10 @@ async function cmdStatus(root, { pos, flags }) {
   const runs = path.join(orchDir(root), 'runs');
   const ids = pos[0] ? [pos[0].toUpperCase()] : fs.existsSync(runs) ? fs.readdirSync(runs).filter(d => fs.existsSync(path.join(runs, d, 'state.json'))) : [];
   const states = ids.map(i => loadState(root, i)).filter(s => pos[0] || flags.all || s.phase !== 'merged' || s.finishPending?.length || unresolvedUntested(s));
-  if (flags.json) { console.log(JSON.stringify(states.map(s => ({ id: s.id, phase: s.phase, round: s.round, gate: s.gate, verdicts: s.verdicts, untestedMerge: unresolvedUntested(s) || undefined, unsafeMerge: unresolvedUnsafe(s) ? s.unsafeMerge : undefined, next: nextAction(s, cfg), metrics: metrics(s) })), null, 2)); return; }
+  const sessions = states.some(s => s.phase === 'working') ? campaignSessions(root) : null;
+  if (flags.json) { console.log(JSON.stringify(states.map(s => ({ id: s.id, phase: s.phase, round: s.round, gate: s.gate, verdicts: s.verdicts, untestedMerge: unresolvedUntested(s) || undefined, unsafeMerge: unresolvedUnsafe(s) ? s.unsafeMerge : undefined, next: nextAction(s, cfg, sessions), metrics: metrics(s) })), null, 2)); return; }
   const late = s => lateReports(root, s).map(l => `  LATE REPORT: checker ${l.tag} of round ${l.round}, never recorded (${l.verdict}): ${l.file}. ${l.round === s.round && s.phase === 'rejected' ? `Record it: orch record ${s.id} checker --tag ${l.tag}` : `${s.phase === 'working' ? 'Send its findings to the worker now (sessions_send); ' : ''}the next orch fix gives it to the worker`}`);
-  out(states.length ? states.map(s => [statusLine(s, cfg), ...late(s)].join('\n')).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
+  out(states.length ? states.map(s => [statusLine(s, cfg, sessions), ...late(s)].join('\n')).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
 }
 
 async function cmdPrompt(root, { pos }) {

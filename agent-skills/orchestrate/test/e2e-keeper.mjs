@@ -18,9 +18,9 @@ let n = 0;
 const SESSIONS = path.join(base, 'sessions.json');
 const T0 = Date.now();
 const at = minutes => String(T0 + minutes * 60000);
-const orch = (args, { code = 0, now } = {}) => {
+const orch = (args, { code = 0, now, nodeArgs = [] } = {}) => {
   // The runtime's sessions come from SESSIONS (none by default: unknown), never from an openclaw on this machine.
-  const r = spawnSync(process.execPath, [ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, ...(now ? { ORCH_NOW: now } : {}) } });
+  const r = spawnSync(process.execPath, [...nodeArgs, ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, ...(now ? { ORCH_NOW: now } : {}) } });
   assert.equal(r.status, code, `orch ${args.join(' ')} exited ${r.status}:\n${r.stdout}${r.stderr}`); n++;
   return r.stdout + r.stderr;
 };
@@ -100,6 +100,7 @@ assert.equal(keeper(99.7).notify, undefined); n++;
 
 // 4. Progress resets the count; a worker within its time limit is waited for, past it the coordinator is woken.
 orch(['start', 'SB-1']);
+testLiveWorkers();
 const nowMin = () => Math.ceil((Date.now() - T0) / 60000);
 is(keeper(nowMin() + 30), 'wait', /SB-1: worker within its time limit/, 'worker running');
 d = keeper(nowMin() + 71);
@@ -410,6 +411,133 @@ has(orch(['finish', 'SB-5.1', '--approved-by', 'Owner', '--override', 'coordinat
 has(orch(['config']), /at the round limit the coordinator decides/, 'config shows the mode');
 orch(['prompt', 'SB-2', 'advisor'], { code: 1 }); // not at its limit
 write('.orchestrate/config.json', JSON.stringify(cfg));
+
+// Keep the existing keeper scenarios intact: exercise the command guards on SB-1, then restore its opening state.
+function testLiveWorkers() {
+  const dir = path.join(REPO, '.orchestrate/runs/SB-1');
+  const sf = path.join(dir, 'state.json');
+  const cf = path.join(REPO, '.orchestrate/campaign.json');
+  const tf = path.join(REPO, 'backlog/tasks/sb-1 - Card.md');
+  const initialState = fs.readFileSync(sf);
+  const initialCampaign = fs.readFileSync(cf);
+  const initialCard = fs.readFileSync(tf);
+  const initial = JSON.parse(initialState);
+  const coord = { key: campaign().session };
+  const worker = { key: 'worker', label: 'SB-1 worker r0', status: 'running', updatedAt: Date.now() };
+  const sessions = (rows, coordinator = true) => fs.writeFileSync(SESSIONS, JSON.stringify({ sessions: [...(coordinator ? [coord] : []), ...rows] }));
+  const restore = () => { fs.writeFileSync(sf, initialState); fs.writeFileSync(cf, initialCampaign); fs.writeFileSync(tf, initialCard); };
+  const note = label => console.log(`ok live-worker: ${label}`);
+  const wait = /next: the worker "SB-1 worker r0(?: \(retry\))?" is running \(since [^)]+\): wait for its completion, do not start another; then orch record SB-1 worker/;
+  const spawn = /next: delegate the worker[^\n]*label "SB-1 worker r0"/;
+
+  for (const status of ['running', 'queued']) {
+    sessions([{ ...worker, status }]);
+    has(orch(['gate', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion, then orch record SB-1 worker/, 'busy gate message');
+    assert.deepEqual(fs.readFileSync(sf), initialState, 'busy gate leaves state byte-identical'); n++;
+    assert.ok(!fs.readdirSync(dir).some(f => /^gate-r.*\.txt$/.test(f)), 'busy gate writes no gate file'); n++;
+  }
+  note('gate running/queued -> exit 4; no gate file; state byte-identical');
+  for (const command of [['status', 'SB-1'], ['status', '--json'], ['next']]) {
+    const text = orch(command);
+    if (command.includes('--json')) has(JSON.parse(text).find(s => s.id === 'SB-1').next, /wait for its completion, do not start another/, 'JSON status waits');
+    else { has(text, wait, 'live worker advice waits'); assert.doesNotMatch(text, /next: delegate the worker/, 'no duplicate spawn advice'); n++; }
+  }
+  sessions([{ ...worker, label: ' sb-1   WORKER r0 (retry)' }]);
+  orch(['gate', 'SB-1'], { code: 4 });
+  sessions([{ ...worker, status: 'done' }, { ...worker, key: 'retry', label: 'SB-1 worker r0 (retry)' }]);
+  has(orch(['status', 'SB-1']), wait, 'a live retry counts even with an ended session');
+  note('status/next wait for a live worker; retries and normalized labels count');
+
+  // A preload counts fixture reads without calling OpenClaw, even when a command shows several working runs.
+  const reads = path.join(base, 'session-reads.log');
+  const preload = path.join(base, 'count-session-reads.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';\nconst read = fs.readFileSync;\nfs.readFileSync = function (file, ...args) { if (String(file) === process.env.ORCH_SESSIONS_JSON) fs.appendFileSync(${JSON.stringify(reads)}, 'read\\n'); return read.call(this, file, ...args); };\n`);
+  write('.orchestrate/runs/SB-2/state.json', JSON.stringify({ ...initial, id: 'SB-2' }));
+  sessions([worker, { ...worker, key: 'worker2', label: 'SB-2 worker r0' }]);
+  for (const args of [['status'], ['status', '--json'], ['next']]) {
+    fs.writeFileSync(reads, '');
+    has(orch(args, { nodeArgs: ['--import', preload] }), /SB-2 worker r0/, 'several runs shown');
+    assert.equal(fs.readFileSync(reads, 'utf8'), 'read\n', 'one session lookup per command'); n++;
+  }
+  fs.rmSync(path.join(REPO, '.orchestrate/runs/SB-2'), { recursive: true });
+  note('status/status --json/next read sessions once for multiple runs');
+
+  const opened = Date.parse(initial.events.at(-1).t);
+  const allowed = [
+    ['ended status', { ...worker, status: 'done' }],
+    ['endedAt', { ...worker, endedAt: Date.now() }],
+    ['past time limit', { ...worker, updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 }],
+    ['before phase', { ...worker, updatedAt: opened - 60001 }],
+    ['round boundary', { ...worker, label: 'SB-1 worker r10' }],
+    ['future time (skewed clock)', { ...worker, updatedAt: Date.now() + 10 * 60000 }],
+    ['time beyond any date', { ...worker, updatedAt: 8640000000000001 }],
+    ['time not a number', { ...worker, updatedAt: 'Infinity' }],
+    ['no campaign', worker],
+    ['inactive campaign', worker],
+    ['no coordinator', worker],
+    ['unknown runtime', worker],
+  ];
+  for (const [label, session] of allowed) {
+    restore();
+    if (label === 'past time limit') fs.writeFileSync(sf, JSON.stringify({ ...initial, events: initial.events.map(e => ({ ...e, t: new Date(session.updatedAt - 1000).toISOString() })) }));
+    sessions([session], label !== 'no coordinator');
+    if (label === 'no campaign') fs.rmSync(cf);
+    if (label === 'inactive campaign') fs.writeFileSync(cf, JSON.stringify({ ...campaign(), active: false }));
+    if (label === 'unknown runtime') fs.writeFileSync(SESSIONS, 'unreadable');
+    has(orch(['status', 'SB-1']), spawn, `${label}: status still offers the worker`);
+    const text = orch(['next']);
+    if (['no campaign', 'inactive campaign', 'no coordinator', 'unknown runtime'].includes(label)) {
+      has(text, /next: orch start SB-2/, `${label}: next keeps its offline queue advice`);
+    } else has(text, spawn, `${label}: next offers the worker`);
+    has(orch(['gate', 'SB-1'], { code: 2 }), /WARN  the worker report was not recorded[\s\S]*GATE: FAIL/, `${label}: gate runs as before`);
+    assert.ok(fs.existsSync(path.join(dir, 'gate-r0.txt')), `${label}: gate result written`); n++;
+  }
+  note('gate runs for ended/expired/old-phase/other-round workers and unknown runtime');
+  note('status/next offer spawn when not live; unknown runtime keeps existing queue advice');
+
+  // A normal failed round followed by a fix and a second failed gate gives a genuine round-1 failure.
+  restore(); sessions([]);
+  orch(['gate', 'SB-1'], { code: 2 }); orch(['fix', 'SB-1']); orch(['gate', 'SB-1'], { code: 2 });
+  const failedState = fs.readFileSync(sf);
+  const failed = JSON.parse(failedState);
+  assert.equal(failed.round, 1); n++;
+  const beforeFix = fs.readdirSync(path.join(dir, 'prompts')).sort();
+  const oldWorker = { ...worker, updatedAt: opened - 60001 }; // before the current phase, still within its time limit
+  for (const status of ['running', 'queued']) {
+    sessions([{ ...oldWorker, status }]);
+    has(orch(['fix', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion before orch fix SB-1/, 'old worker blocks fix');
+    assert.deepEqual(fs.readFileSync(sf), failedState, 'busy fix leaves state and round byte-identical'); n++;
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'prompts')).sort(), beforeFix, 'busy fix writes no second brief'); n++;
+  }
+  sessions([{ ...worker, label: 'SB-1 worker r10 (retry)' }]);
+  orch(['fix', 'SB-1'], { code: 4 });
+  assert.deepEqual(fs.readFileSync(sf), failedState); n++;
+  note('fix blocks an earlier-round worker -> exit 4; state/round/briefs unchanged');
+  for (const label of ['SB-1.2 worker r0', 'SB-10 worker r0', 'SB-1 worker extra r0', 'SB-1 worker r0x', 'SB-1 checker a r0']) {
+    fs.writeFileSync(sf, failedState); sessions([{ ...worker, label }]);
+    has(orch(['fix', 'SB-1']), /round 2\/2:/, `${label}: does not block fix`);
+    assert.equal(JSON.parse(fs.readFileSync(sf)).round, 2); n++;
+  }
+  note('fix ignores SB-1.2/SB-10, other roles and malformed worker labels');
+  for (const session of [{ ...worker, status: 'done' }, { ...worker, endedAt: Date.now() }, { ...worker, updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 }]) {
+    fs.writeFileSync(sf, failedState); sessions([session]); orch(['fix', 'SB-1']);
+  }
+  note('fix allows ended and expired workers');
+
+  // Only working gates are guarded: a recorded worker's gate keeps its existing behaviour.
+  restore(); sessions([]);
+  write('.orchestrate/runs/SB-1/inbox/worker.md', 'done\n');
+  sessions([worker]);
+  has(orch(['record', 'SB-1', 'worker'], { code: 1 }), /the sub-agent "SB-1 worker r0" is still running: wait for its completion, it writes its own report to .*Never record a report written in its place/, 'record message and exit unchanged');
+  assert.deepEqual(fs.readFileSync(sf), initialState); n++;
+  assert.ok(fs.existsSync(path.join(dir, 'inbox/worker.md'))); n++;
+  sessions([{ ...worker, status: 'done' }]); orch(['record', 'SB-1', 'worker']);
+  sessions([worker]); orch(['gate', 'SB-1'], { code: 2 });
+  note('record retains exit 1/message; gate outside working remains unchanged');
+
+  restore();
+  fs.rmSync(SESSIONS);
+}
 
 function has(t, re, label) { assert.match(t, re, label); n++; }
 console.log(`e2e-keeper: ${n} checks passed in ${REPO}`);
