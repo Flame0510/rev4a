@@ -1,6 +1,6 @@
 ---
 name: rev4a-deep-review
-description: Deep anti-regression code review of a Rev4a branch or uncommitted working tree before commit or merge. Runs four parallel read-only reviewers (regressions, edge cases and failure modes, security, docs and language), then validates every finding against the code and, where possible, a running instance, and delivers one report in Italian. Use for "deep review", "deep code review", "anti-regression review", "review before commit".
+description: Deep anti-regression code review of a Rev4a branch or uncommitted working tree before commit or merge. Runs four parallel read-only reviewers (regressions, edge cases and failure modes, security, docs and language), then validates every finding against the code and, where possible, a running instance, and delivers one report in the maintainer's language. Use for "deep review", "deep code review", "anti-regression review", "review before commit".
 ---
 
 # Rev4a Deep Code Review
@@ -123,7 +123,8 @@ Reviewers work in English and are **read-only**:
   timings — are checked like any other claim.
 - Structure: code fences balanced, relative `.md` links resolve.
 - Language: zero Italian in code, comments, identifiers, UI strings, logs, docs and
-  this skill. Report `file:line` and the text. Only the final report is in Italian.
+  this skill. Report `file:line` and the text. Only the final report is in the
+  maintainer's language.
 
 ## 3. Validate every finding (orchestrator — mandatory)
 
@@ -158,8 +159,8 @@ Reading has missed defects that a single request would have shown.
 
 ## 4. Report
 
-One unified report **in Italian** for the maintainer. One line for the problem, one for
-the fix. No wall of text.
+One unified report **in the maintainer's language** for the maintainer. One line
+for the problem, one for the fix. No wall of text.
 
 ```
 ## Deep Review — <branch or "working tree">

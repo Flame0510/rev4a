@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-09
+> **Last updated:** 2026-11-10
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -3358,9 +3358,9 @@ Snoozes the spend and loop alarms of one agent: the daemon keeps evaluating it a
 
 **Auth:** browser cookie or Bearer
 
-**Body:** `{ "agent": "newsroom", "hours": 24 }` — `agent` is an agent id, a container name or `vendor:<name>` (the alarm's `scope`); `hours` is optional (default 24, at most 720).
+**Body:** `{ "agent": "writer", "hours": 24 }` — `agent` is an agent id, a container name or `vendor:<name>` (the alarm's `scope`); `hours` is optional (default 24, at most 720).
 
-**Response:** `{ "ok": true, "agent": "newsroom", "until": 1790876025355 }` (`until` in milliseconds).
+**Response:** `{ "ok": true, "agent": "writer", "until": 1790876025355 }` (`until` in milliseconds).
 
 **Errors:** `400` for an invalid `agent` or `hours`; `500` when the database cannot be written.
 

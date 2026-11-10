@@ -305,7 +305,7 @@ test('redact: Basic, token-only URLs, GitHub/Slack/AWS keys, --password, a value
 test('redact: ordinary npm and build output is untouched', () => {
   for (const line of [
     'npm http fetch GET 200 https://registry.npmjs.org/next 120ms', 'added 412 packages in 38s', '✓ Compiled successfully in 41s',
-    'npm error Unable to authenticate, your authentication token seems to be invalid.', 'author: the maintainer',
+    'npm error Unable to authenticate, your authentication token seems to be invalid.', 'author: Jane Doe',
     'monkey: banana', 'tokenizer: 1.2.3', 'node_modules/keyv: 4.5.4', 'FOO=1 BAR=2',
   ]) {
     assert.equal(S.redact(line), line);

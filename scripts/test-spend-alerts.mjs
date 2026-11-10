@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Tests for lib/spend-alerts.js (FEAT-15): the spend and loop alarms, on in-memory SQLite.
- * The incident figures are the real, measured ones (docs/dev/API-REFERENCE.md): 1,417 calls in
- * 14 hours (~101 an hour), ~64k prompt tokens a call, 12 errors, $6.81; the session context
- * (sessions.list totalTokens) was ~560k against a 200k window.
+ * The spend-spike scenario uses 14 hours at ~101 calls an hour and ~64k prompt tokens a
+ * call, totaling $6.81; the session context (sessions.list totalTokens) is ~560k against
+ * a 200k window.
  *
  *   node scripts/test-spend-alerts.mjs
  */
@@ -66,38 +66,38 @@ function t(name, fn) {
   try { fn(); passed++; results.push(['PASS', name]); console.log(`ok - ${name}`); } catch (e) { results.push(['FAIL', name]); console.error(`FAIL - ${name}\n${e.stack}`); process.exitCode = 1; }
 }
 
-// ── The real incident ────────────────────────────────────────────────────────
+// ── Spend spike scenario ────────────────────────────────────────────────────
 
-/** newsroom: a few cents a day for 14 days, then 14 hours of ~101 calls an hour at ~64k prompt tokens, $6.81 in all. */
-function newsroom(d, hoursOfIncident) {
-  history(d.costsDb, 'newsroom', 14, (b) => [2, { calls: 20, prompt: 600_000, cost: [0.05, 0.3, 0.1, 0.2, 0.15][b % 5] / 2 }]);
+/** Low daily spend for 14 days, followed by 14 hours of ~101 calls an hour at ~64k prompt tokens, totaling $6.81. */
+function writer(d, hoursOfIncident) {
+  history(d.costsDb, 'writer', 14, (b) => [2, { calls: 20, prompt: 600_000, cost: [0.05, 0.3, 0.1, 0.2, 0.15][b % 5] / 2 }]);
   for (let i = 1; i <= hoursOfIncident; i++) {
-    put(d.costsDb, { agent: 'newsroom', hour: CUR - i * H, calls: 101, prompt: 101 * 64_000, completion: 101 * 300, errors: i % 7 === 0 ? 2 : 1, cost: 6.81 / 14 });
+    put(d.costsDb, { agent: 'writer', hour: CUR - i * H, calls: 101, prompt: 101 * 64_000, completion: 101 * 300, errors: i % 7 === 0 ? 2 : 1, cost: 6.81 / 14 });
   }
 }
 
-t('incident, whole 14 hours: spend.unusual fires, spend.loop does not (12 errors in 1,417 calls)', () => {
+t('incident, whole 14 hours: spend.unusual fires, spend.loop does not (16 errors in 1,414 calls)', () => {
   const d = dbs();
-  newsroom(d, 14);
-  const ev = pass(d, { resolveContainer: (a) => (a === 'newsroom' ? 'newsroom-agent' : null) });
+  writer(d, 14);
+  const ev = pass(d, { resolveContainer: (a) => (a === 'writer' ? 'writer-agent' : null) });
   assert.deepEqual(rules(ev), ['unusual']);
   assert.equal(ev[0].metric, 'spend.unusual');
-  assert.equal(ev[0].container, 'newsroom-agent');
-  assert.match(ev[0].message, /newsroom: \$6\.81 in the last 24 hours; its usual day is/);
+  assert.equal(ev[0].container, 'writer-agent');
+  assert.match(ev[0].message, /writer: \$6\.81 in the last 24 hours; its usual day is/);
 });
 
 t('incident, early: silent under the $2 floor, fires once the day is out of proportion', () => {
   const early = dbs();
-  newsroom(early, 3); // $1.46
+  writer(early, 3); // $1.46
   assert.deepEqual(pass(early), []);
   const later = dbs();
-  newsroom(later, 5); // $2.43, ~16x the usual day
+  writer(later, 5); // $2.43, ~16x the usual day
   assert.deepEqual(rules(pass(later)), ['unusual']);
 });
 
 t('incident, the session: 560k tokens in a 200k window fires spend.session, once', () => {
   const d = dbs();
-  d.stateDb.prepare("INSERT INTO agent_sessions (container, session_key, kind, total_tokens, context_tokens, updated_at) VALUES ('newsroom-agent', 'agent:main:main', 'main', 560000, 200000, ?)").run(NOW - 60_000);
+  d.stateDb.prepare("INSERT INTO agent_sessions (container, session_key, kind, total_tokens, context_tokens, updated_at) VALUES ('writer-agent', 'agent:main:main', 'main', 560000, 200000, ?)").run(NOW - 60_000);
   const ev = pass(d);
   assert.deepEqual(rules(ev), ['session']);
   assert.equal(ev[0].metric, 'spend.session');
@@ -107,10 +107,10 @@ t('incident, the session: 560k tokens in a 200k window fires spend.session, once
 
 t('a synthetic failing hour (80 failures in 95 calls, 5M prompt tokens) fires spend.loop; 12 errors in a day do not', () => {
   const d = dbs();
-  put(d.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
+  put(d.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
   assert.deepEqual(rules(pass(d)), ['loop']);
   const q = dbs();
-  put(q.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 9, cost: 0.3 });
+  put(q.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 9, cost: 0.3 });
   assert.deepEqual(pass(q), []);
 });
 
@@ -336,7 +336,7 @@ t('hours inside a gap keep their day out of the median', () => {
 
 t('cooldown, restart safety and the resolved note after two clean evaluations', () => {
   const d = dbs();
-  put(d.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
+  put(d.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
   assert.equal(pass(d).length, 1);
   assert.equal(pass(d, { nowMs: NOW + 5 * 60_000 }).length, 0, 'cooldown (the state is in the database: a restart repeats nothing)');
   const later = NOW + H * 1000; // the hour moves on; the agent is quiet
@@ -349,7 +349,7 @@ t('cooldown, restart safety and the resolved note after two clean evaluations', 
 
 t('a delivery that throws sets no cooldown, is logged and does not stop the other rules', () => {
   const d = dbs();
-  put(d.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
+  put(d.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
   session(d, { total_tokens: 560_000 });
   const seen = [];
   const errors = [];
@@ -357,23 +357,23 @@ t('a delivery that throws sets no cooldown, is logged and does not stop the othe
   pass(d, { deliver: flaky, onError: (e, ev) => errors.push(`${ev.rule}: ${e.message}`) });
   assert.deepEqual(seen, ['session'], 'the session rule still ran');
   assert.deepEqual(errors, ['loop: disk full']);
-  assert.equal(d.stateDb.prepare("SELECT COUNT(*) AS n FROM alert_state WHERE alert_key = 'spend:loop:newsroom'").get().n, 0);
+  assert.equal(d.stateDb.prepare("SELECT COUNT(*) AS n FROM alert_state WHERE alert_key = 'spend:loop:writer'").get().n, 0);
   assert.deepEqual(rules(pass(d)), ['loop'], 'the next pass delivers it');
 });
 
 t('a snoozed agent is evaluated but not alerted; by container name too; alerts after the snooze', () => {
-  const mk = () => { const d = dbs(); put(d.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 }); return d; };
+  const mk = () => { const d = dbs(); put(d.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 }); return d; };
   const d = mk();
-  const until = sa.snooze(d.stateDb, 'newsroom', 24, NOW);
+  const until = sa.snooze(d.stateDb, 'writer', 24, NOW);
   assert.equal(until, NOW + 24 * H * 1000);
   assert.deepEqual(pass(d), []);
-  assert.ok(sa.activeSnoozes(d.stateDb, NOW).has('newsroom'));
+  assert.ok(sa.activeSnoozes(d.stateDb, NOW).has('writer'));
   const e = mk();
-  sa.snooze(e.stateDb, 'newsroom-agent', undefined, NOW);
-  assert.deepEqual(pass(e, { resolveContainer: () => 'newsroom-agent' }), []);
+  sa.snooze(e.stateDb, 'writer-agent', undefined, NOW);
+  assert.deepEqual(pass(e, { resolveContainer: () => 'writer-agent' }), []);
   assert.throws(() => sa.snooze(e.stateDb, 'bad scope; drop', 1, NOW));
   const f = mk();
-  sa.snooze(f.stateDb, 'newsroom', 1, NOW - 2 * H * 1000);
+  sa.snooze(f.stateDb, 'writer', 1, NOW - 2 * H * 1000);
   assert.equal(pass(f).length, 1);
 });
 
@@ -448,7 +448,7 @@ t('agent_sessions gets context_tokens: mapListRow reads contextTokens, an old ta
 
 t('disabled by REV4A_SPEND_ALERTS=false; non-positive and malformed thresholds fall back to the defaults', () => {
   const d = dbs();
-  put(d.costsDb, { agent: 'newsroom', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
+  put(d.costsDb, { agent: 'writer', hour: LAST, calls: 95, prompt: 5_000_000, errors: 80, cost: 0.3 });
   assert.deepEqual(pass(d, { config: sa.configFromEnv({ REV4A_SPEND_ALERTS: 'false' }) }), []);
   const bad = sa.configFromEnv({ REV4A_SPEND_LOOP_MIN_FAILURES: '0', REV4A_SPEND_DAY_RATIO: '-3', REV4A_SPEND_DAY_FLOOR_TOKENS: 'abc', REV4A_SPEND_SESSION_SHARE: '5', REV4A_SPEND_LOOP_MIN_PROMPT_TOKENS: '0' });
   assert.equal(bad.loopMinFailures, 10);
