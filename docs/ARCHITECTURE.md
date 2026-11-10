@@ -729,6 +729,30 @@ Enabling an assignment (`lib/credentials/delivery.ts`, pure parts in
 
 MongoDB (`lib/credentials/mongodb.ts`) adds steps around the same store write: before step 2 it checks for `mongosh` 2.13.0 under `/root/.local` in the agent and installs it when missing or another version (5 minutes allowed; a failure stops the switch-on before anything is written); it then deploys the shared skill `rev4a-mongodb` to the host's shared skills directory (`ensureRev4aSkill()`), writes the store entry `REV4A_MONGODB_URI` and the skill entry, reloads, and asks `openclaw skills info rev4a-mongodb --json` whether the skill is eligible (60 s). When it is not eligible, or the answer cannot be read, the switch-on fails and the store and skill entries are removed again. A check that times out also fails the switch-on but rolls nothing back, since the state is unknown; the next switch-on retries. A switch-off removes the entries and keeps `mongosh`.
 
+Credential config patches and secrets reloads allow 150 seconds each; other native and
+managed commands default to 30 seconds. After a config-patch timeout, a direct config-file
+read (5 seconds, no Gateway call) confirms the sent values before delivery continues. An
+unconfirmed patch or reload returns a clear retry message, with redaction preserved.
+There is no request-wide timeout on self-hosted Rev4a: the route's declared
+`maxDuration = 300` is a serverless setting. A slow switch can take a few minutes
+(and longer for a MongoDB install or queue wait); the UI keeps its loading state throughout.
+The config lock is held until every exec transport returns or is killed, including fallback
+retries, so an older delivery cannot resume writing after the next queued writer starts.
+
+After startup sync, `instrumentation.ts` launches a background credential timeout repair
+without awaiting delivery. It checks running agents for enabled assignments whose
+`last_error` contains "timed out or was killed" or "exit 137". One agent at a time, it waits
+for the agent's Gateway (up to 2 minutes; otherwise it is left for the next start), then
+switches each of those credentials on again through `enableAssignment`, the Switch's own path,
+so a success supersedes the other credential of that provider. When two credentials of the same
+provider timed out on one agent, neither is repaired (which one the user meant is unknown) and a
+line says to choose in Credentials. The outcome is logged once per agent from the returned status.
+The repair is one attempt per assignment: a failure records its own (new) error, which the
+selector no longer matches, so later starts do not retry it in a loop; Redeliver in Credentials
+or the agent's next start, restart or update re-applies it. A successful delivery clears `last_error`, making the repair
+idempotent on the next start. Stopped agents retain their usual start-time re-apply.
+No schema, secret payload, provider key file, environment file or volume format changes.
+
 Two providers skip the environment entry, because it cannot work
 (`lib/credentials/managed.ts`):
 

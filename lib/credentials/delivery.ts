@@ -1,4 +1,4 @@
-import { dockerExec, dockerExecShell, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
+import { dockerExec, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { listAgentContainers as listAgentRows } from '@/lib/subscriptions';
@@ -9,6 +9,7 @@ import { getProvider } from './providers';
 import { listAgentContainers as listAgentContainerInfo } from './detect';
 import {
   getAssignment,
+  listAllAssignments,
   listLiveForAgent,
   recordAssignment,
   removalRecordState,
@@ -19,6 +20,7 @@ import {
   assertDeliverable,
   needsNativeRemoval,
   nativeProvider,
+  NATIVE_TIMEOUT_MS,
   redact,
   runDisable,
   runEnable,
@@ -65,7 +67,7 @@ async function listAgentContainers(): Promise<string[]> {
 /**
  * Run a shell snippet inside a container.
  *
- * Goes through `dockerExecShell`, which spawns docker with an argv array and no
+ * Goes through the injected exec, which spawns docker with an argv array and no
  * host shell in between, so `script` reaches `sh -c` inside the container
  * verbatim. That matters: were the command assembled as one string for a host
  * shell, a `$(...)` or a backtick anywhere in it — including inside a secret
@@ -79,12 +81,12 @@ async function listAgentContainers(): Promise<string[]> {
  * the host process table nor in any rejection built from that argv.
  */
 async function containerExec(
-  container: string,
+  exec: NativeExec,
   script: string,
   timeoutMs = 30000,
   env?: Record<string, string>,
 ): Promise<void> {
-  await dockerExecShell(container, script, { timeoutMs, env });
+  await exec.run(['sh', '-c', script], env, { timeoutMs });
 }
 
 /** Printed after the file, so its absence proves the read was cut short. */
@@ -110,9 +112,9 @@ const READ_COMPLETE = '\x04';
  * terminator is still printed, and the caller correctly gets '' — an agent from the
  * `custom` template starts without a TOOLS.md until OpenClaw writes one.
  */
-async function containerRead(container: string, path: string): Promise<string | null> {
+async function containerRead(exec: NativeExec, path: string): Promise<string | null> {
   try {
-    const raw = await dockerExecShell(container, `cat ${path} 2>/dev/null; printf '\\4'`, {
+    const raw = await exec.run(['sh', '-c', `cat ${path} 2>/dev/null; printf '\\4'`], undefined, {
       timeoutMs: 5000,
       maxBuffer: 512 * 1024,
     });
@@ -262,14 +264,11 @@ function writeAtomically(content: string, path: string): string {
  * container (docker exec only). Throws when TOOLS.md cannot be read, so a removal that did
  * not happen is never reported as done.
  */
-async function removeProviderRow(container: string, providerId: string): Promise<void> {
-  const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
-  if (!safe) return;
-
+async function removeProviderRow(exec: NativeExec, providerId: string): Promise<void> {
   const entry = PROVIDER_ENTRIES[providerId];
   if (!entry) return;
 
-  const existing = await containerRead(safe, TOOLS_MD_PATH);
+  const existing = await containerRead(exec, TOOLS_MD_PATH);
   // A failed read must not lead to a write (an unreadable file is not an empty one).
   if (existing === null) throw new Error('TOOLS.md could not be read');
   const si = existing.indexOf(MARKER_START);
@@ -280,7 +279,7 @@ async function removeProviderRow(container: string, providerId: string): Promise
   const entries = rowsToEntries(rows);
   const newBlock = entries.length ? buildBlock(entries) : '';
   const patched = existing.slice(0, si) + newBlock + existing.slice(ei + MARKER_END.length);
-  await containerExec(safe, writeAtomically(patched, TOOLS_MD_PATH));
+  await containerExec(exec, writeAtomically(patched, TOOLS_MD_PATH));
 }
 
 // ── Old-way artefacts (written by earlier releases) ──────────────────────
@@ -290,9 +289,7 @@ async function removeProviderRow(container: string, providerId: string): Promise
  * TOOLS.md row. Never throws: returns what failed, as short messages, so the caller can say
  * the removal was only partial instead of reporting success.
  */
-async function cleanLegacy(container: string, providerId: string): Promise<string[]> {
-  const safe = container.replace(/[^a-zA-Z0-9_.-]/g, '');
-  if (!safe) return [];
+async function cleanLegacy(exec: NativeExec, providerId: string): Promise<string[]> {
   const warnings: string[] = [];
 
   const script: Record<string, string> = {
@@ -305,22 +302,20 @@ async function cleanLegacy(container: string, providerId: string): Promise<strin
     notion: 'rm -rf /root/.config/notion',
   };
   if (script[providerId]) {
-    try { await containerExec(safe, script[providerId], 10000); }
+    try { await containerExec(exec, script[providerId], 10000); }
     catch { warnings.push('the old CLI files could not be removed'); }
   }
-  try { await removeProviderRow(safe, providerId); }
+  try { await removeProviderRow(exec, providerId); }
   catch { warnings.push('the TOOLS.md row could not be removed'); }
   return warnings;
 }
 
 // ── Native delivery: OpenClaw secret store + skill config ──────────────────
 
-const NATIVE_TIMEOUT_MS = 30_000;
-
 function execFor(container: string): NativeExec {
   return {
-    run: (argv, env, opts) => dockerExec(container, argv, { timeoutMs: opts?.timeoutMs ?? NATIVE_TIMEOUT_MS, ...(env ? { env } : {}) }),
-    runWithInput: (argv, input) => dockerExecWithInput(container, argv, input, { timeoutMs: NATIVE_TIMEOUT_MS }),
+    run: (argv, env, opts) => dockerExec(container, argv, { ...opts, timeoutMs: opts?.timeoutMs ?? NATIVE_TIMEOUT_MS, ...(env ? { env } : {}) }),
+    runWithInput: (argv, input, opts) => dockerExecWithInput(container, argv, input, { timeoutMs: opts?.timeoutMs ?? NATIVE_TIMEOUT_MS }),
   };
 }
 
@@ -373,7 +368,7 @@ async function applyDisable(exec: NativeExec, providerId: string, values: readon
   };
   if (providerId === 'github-pat') {
     await attempt('remove the GitHub identity', () => githubDisable(exec));
-    await attempt('remove the github skill entry', () => runDisable(exec, providerId, values));
+    errors.push(...await runDisable(exec, providerId, values));
   } else {
     await attempt('remove the Vercel config', () => vercelDisable(exec));
   }
@@ -443,8 +438,9 @@ export async function enableAssignment(
   return serialized(name, async (): Promise<SyncResult> => {
     // A re-delivery (secret edited) must not switch back on what was switched off meanwhile.
     if (opts.onlyIfEnabled && !getAssignment(profileId, name)?.enabled) return { container: name, status: 'ok' };
+    const exec = execFor(name);
     try {
-      await applyEnable(execFor(name), profile.providerId, getSecret(profileId));
+      await applyEnable(exec, profile.providerId, getSecret(profileId));
     } catch (e) {
       const error = (e as Error).message;
       // An unsupported version refused delivery before writing anything. Preserve any
@@ -456,7 +452,7 @@ export async function enableAssignment(
       return { container: name, status: 'error', error };
     }
     // Migration: only this provider, only this agent. Idempotent.
-    const warnings = await cleanLegacy(name, profile.providerId);
+    const warnings = await cleanLegacy(exec, profile.providerId);
     try {
       supersedeSiblings(profileId, profile.providerId, name);
       recordAssignment(profileId, name, { enabled: true, mode, ok: true });
@@ -519,15 +515,16 @@ export async function disableAssignment(
       return { container: name, status: 'ok' };
     }
 
+    const exec = execFor(name);
     let errors: string[] = [];
     if (existing || opts.held) {
       try {
-        errors = await applyDisable(execFor(name), profile.providerId, secretValues(profileId));
+        errors = await applyDisable(exec, profile.providerId, secretValues(profileId));
       } catch (e) {
         errors = [redact((e as Error).message, secretValues(profileId))];
       }
     }
-    const warnings = await cleanLegacy(name, profile.providerId);
+    const warnings = await cleanLegacy(exec, profile.providerId);
 
     const removalState = removalRecordState(existing, opts.held === true, errors);
     if (removalState) {
@@ -591,6 +588,64 @@ export async function reapplyAssignments(container: string): Promise<void> {
         } catch { /* logged above */ }
       }
     }).catch((e) => console.warn(`[credentials] re-apply failed on ${name}:`, (e as Error).message));
+  }
+}
+
+/**
+ * Repair enabled assignments left failed by the old 30-second exec kill. Started in the
+ * background after startup sync; agents are handled sequentially, using the same locked
+ * consistency pass as lifecycle actions. Successful re-apply clears last_error, making
+ * later starts a no-op. Stopped agents keep their usual start-time re-apply.
+ */
+/** How long the startup repair waits for one agent's Gateway before leaving it for the next start. */
+const REPAIR_READY_TIMEOUT_MS = 2 * 60_000;
+
+export async function repairCredentialTimeoutsAtStartup(): Promise<void> {
+  // One read of the assignments table; most starts find nothing and return before Docker.
+  const byAgent = new Map<string, ReturnType<typeof listAllAssignments>>();
+  for (const a of listAllAssignments()) {
+    if (!a.enabled || !/timed out or was killed|exit 137/i.test(a.lastError ?? '')) continue;
+    const list = byAgent.get(a.agentId);
+    if (list) list.push(a); else byAgent.set(a.agentId, [a]);
+  }
+  if (!byAgent.size) return;
+  const agents = await listAgentRows({ fresh: true });
+  for (const agent of agents) {
+    if (!agent.running) continue;
+    const timedOut = byAgent.get(agent.container);
+    if (!timedOut) continue;
+    // Two timed-out switch-ons of the same provider on one agent: which one the user meant is
+    // not knowable, and repairing either would supersede the other. Leave both as they are.
+    const perProvider = new Map<string, number>();
+    const providerOf = (id: string): string => { try { return getProfile(id)?.providerId ?? id; } catch { return id; } };
+    for (const a of timedOut) perProvider.set(providerOf(a.profileId), (perProvider.get(providerOf(a.profileId)) ?? 0) + 1);
+    const affected = timedOut.filter((a) => perProvider.get(providerOf(a.profileId)) === 1);
+    if (affected.length < timedOut.length) {
+      console.warn(`[rev4a] Credentials not re-applied on ${agent.container}: two credentials of the same service timed out; switch on the one to keep in Credentials`);
+    }
+    if (!affected.length) continue;
+    // A Gateway still starting would turn the repair into a connection error, which is not
+    // retried at the next start: wait for it first (same wait as a start or an update).
+    if (!(await waitForGatewayReady(agent.container, REPAIR_READY_TIMEOUT_MS))) {
+      console.warn(`[rev4a] Credentials re-apply after a timeout skipped: ${agent.container} (Gateway not ready; retried at the next start)`);
+      continue;
+    }
+    try {
+      // Only the switch-on that timed out, through the same path as the Switch: on success it
+      // supersedes the other credential of that provider, so the agent ends with exactly the
+      // one the user chose (a full re-apply would deliver both, in table order). A switch-off
+      // made meanwhile is respected (onlyIfEnabled).
+      let failed = false;
+      for (const a of affected) {
+        const r = await enableAssignment(a.profileId, agent.container, a.mode, { onlyIfEnabled: true });
+        if (r.status === 'error') failed = true;
+      }
+      if (failed) console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${agent.container}`);
+      else console.log(`[rev4a] Credentials re-applied after a timeout: ${agent.container}`);
+    } catch {
+      // No exception text: it may originate from the vault or an agent command.
+      console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${agent.container}`);
+    }
   }
 }
 

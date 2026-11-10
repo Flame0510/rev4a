@@ -199,23 +199,174 @@ test('assertDeliverable (used for vercel and github too) refuses an agent below 
 
 // ── failure paths, with the exec primitives injected ─────────────────────────────────
 
-function fakeExec({ failOn = () => false, version = 'OpenClaw 2026.9.9 (bcfc888)' } = {}) {
+function fakeExec({ failOn = () => false, version = 'OpenClaw 2026.9.9 (bcfc888)', onCall = () => '' } = {}) {
   const calls = [];
   return {
     calls,
-    run: async (argv, env) => {
-      calls.push({ argv, env, input: null });
+    run: async (argv, env, opts) => {
+      const call = { argv, env, opts, input: null };
+      calls.push(call);
       if (argv[1] === '--version') return version;
       if (failOn(argv)) throw new Error(`exit 1 while running ${argv.join(' ')}`);
-      return '';
+      return onCall(call);
     },
-    runWithInput: async (argv, input) => {
-      calls.push({ argv, env: undefined, input });
+    runWithInput: async (argv, input, opts) => {
+      const call = { argv, env: undefined, opts, input };
+      calls.push(call);
       if (failOn(argv, input)) throw new Error(`patch refused: ${input}`);
-      return '';
+      return onCall(call);
     },
   };
 }
+
+test('config read-back matches only sent keys, including SecretRefs and plaintext env', () => {
+  for (const provider of ['github-pat', 'notion', 'trello', 'mongodb']) {
+    const patch = n.enablePatch(provider, SECRETS[provider]);
+    const config = structuredClone(patch);
+    config.gateway = { port: 3000 };
+    const entry = config.skills.entries[n.NATIVE_PROVIDERS[provider].skill.name];
+    entry.otherSetting = 'preserved';
+    const file = JSON.stringify(config);
+    assert.equal(n.configPatchMatches(patch, file), true, provider);
+    entry.enabled = false;
+    assert.equal(n.configPatchMatches(patch, JSON.stringify(config)), false, provider);
+    assert.equal(n.configPatchMatches(patch, '{}'), false, provider);
+    assert.equal(JSON.stringify(patch), JSON.stringify(n.enablePatch(provider, SECRETS[provider])), 'no mutation');
+  }
+  const patch = n.enablePatch('trello', SECRETS.trello);
+  const wrongSecret = structuredClone(patch);
+  wrongSecret.skills.entries.trello.env.TRELLO_TOKEN = 'old-token';
+  assert.equal(n.configPatchMatches(patch, JSON.stringify(wrongSecret)), false);
+});
+
+test('config read-back follows merge-patch deletion and array replacement semantics', () => {
+  const patch = n.disablePatch('notion');
+  for (const config of [{}, { skills: {} }, { skills: { entries: {} } }, { skills: { entries: { github: { enabled: true } } } }]) {
+    assert.equal(n.configPatchMatches(patch, JSON.stringify(config)), true);
+  }
+  for (const value of [null, false, {}, { enabled: true }]) {
+    assert.equal(n.configPatchMatches(patch, JSON.stringify({ skills: { entries: { notion: value } } })), false);
+  }
+  assert.equal(n.configPatchMatches({ list: [{ a: 1 }, null, 2] }, '{"list":[{"a":1},null,2],"other":true}'), true);
+  for (const list of [[{ a: 1, b: 2 }, null, 2], [{ a: 1 }, null, 2, 3], [null, { a: 1 }, 2]]) {
+    assert.equal(n.configPatchMatches({ list: [{ a: 1 }, null, 2] }, JSON.stringify({ list })), false);
+  }
+  assert.equal(n.configPatchMatches({ key: {} }, '{}'), false);
+  for (const file of ['', '{"skills":', 'null', '[]', 'true', '{"skills":null}', '{"skills":false}']) {
+    assert.equal(n.configPatchMatches(patch, file), false, file);
+  }
+  assert.equal(n.configPatchMatches({ key: false }, '{"key":0}'), false);
+  assert.equal(n.configPatchMatches({ key: '1' }, '{"key":1}'), false);
+});
+
+test('config comparison matrix accepts a 2 MiB unrelated value without weakening type or deletion checks', () => {
+  const patch = { skills: { entries: { github: { enabled: true } } } };
+  const checks = {
+    extraKeys: n.configPatchMatches(patch, JSON.stringify({ ...patch, unrelated: 'x'.repeat(2 * 1024 * 1024) })),
+    missingDeletionAncestor: n.configPatchMatches(n.disablePatch('notion'), '{}'),
+    nullStillPresent: n.configPatchMatches(n.disablePatch('notion'), '{"skills":{"entries":{"notion":null}}}'),
+    wrongType: n.configPatchMatches({ key: false }, '{"key":0}'),
+    reorderedArray: n.configPatchMatches({ list: [1, 2] }, '{"list":[2,1]}'),
+    truncatedJson: n.configPatchMatches(patch, '{"skills":'),
+    nullRoot: n.configPatchMatches(patch, 'null'),
+  };
+  assert.deepEqual(checks, { extraKeys: true, missingDeletionAncestor: true, nullStillPresent: false,
+    wrongType: false, reorderedArray: false, truncatedJson: false, nullRoot: false });
+  console.log(JSON.stringify(checks));
+});
+
+test('reload steps get 150 seconds on enable and disable; other steps keep 30 seconds', async () => {
+  assert.equal(n.OPENCLAW_RELOAD_TIMEOUT_MS, 150000);
+  assert.equal(n.NATIVE_TIMEOUT_MS, 30000);
+  for (const disable of [false, true]) {
+    const exec = fakeExec();
+    if (disable) assert.deepEqual(await n.runDisable(exec, 'trello'), []);
+    else await n.runEnable(exec, 'trello', SECRETS.trello);
+    for (const c of exec.calls) {
+      assert.equal(c.opts?.timeoutMs ?? n.NATIVE_TIMEOUT_MS, c.argv.includes('patch') || c.argv.includes('reload') ? 150000 : 30000);
+    }
+  }
+});
+
+test('slow patch that lands: plain file read confirms it, then reload runs', async () => {
+  for (const provider of ['github-pat', 'trello', 'notion', 'mongodb']) {
+    const patch = n.enablePatch(provider, SECRETS[provider]);
+    const exec = fakeExec({ onCall: ({ argv, opts }) => {
+      if (argv.includes('patch')) throw new Error('docker exec timed out or was killed (exit 137) after 150000ms');
+      if (argv[0] === 'cat') {
+        assert.deepEqual(argv, ['cat', '/root/.openclaw/openclaw.json']);
+        assert.equal(opts.timeoutMs, 5000);
+        return JSON.stringify(patch);
+      }
+      return '';
+    } });
+    await n.runEnable(exec, provider, SECRETS[provider]);
+    assert.ok(exec.calls.at(-1).argv.includes('reload'));
+    assert.equal(exec.calls.filter((c) => c.argv.includes('patch')).length, 1, 'never resubmit a timed-out patch');
+    for (const c of exec.calls) for (const value of Object.values(SECRETS[provider])) {
+      assert.ok(!JSON.stringify([c.argv, c.env]).includes(value), 'secret stays off argv/env');
+    }
+  }
+});
+
+test('slow patch that does not land, or unreadable config: clear error and no later enable steps', async () => {
+  for (const file of ['{}', '{"skills":', new Error('read failed with secret data')]) {
+    const exec = fakeExec({ onCall: ({ argv, input }) => {
+      if (argv.includes('patch')) throw new Error(`docker exec timed out after 150000ms ${input}`);
+      if (argv[0] === 'cat') { if (file instanceof Error) throw file; return file; }
+      return '';
+    } });
+    await assert.rejects(n.runEnable(exec, 'trello', SECRETS.trello), { message: n.CONFIG_PATCH_PENDING_ERROR });
+    assert.equal(exec.calls.at(-1).argv[0], 'cat');
+    assert.ok(!exec.calls.some((c) => c.argv.includes('reload')));
+  }
+});
+
+test('ordinary patch failures are redacted and do not trigger read-back', async () => {
+  const exec = fakeExec({ failOn: (a) => a.includes('patch') });
+  await assert.rejects(n.runEnable(exec, 'trello', SECRETS.trello), /patch refused/);
+  assert.ok(!exec.calls.some((c) => c.argv[0] === 'cat'));
+});
+
+test('slow disable patch that landed continues; unconfirmed removal still attempts reload and reports failure', async () => {
+  for (const file of ['{}', '{"skills":{"entries":{"notion":{"enabled":true}}}}']) {
+    const exec = fakeExec({ onCall: ({ argv }) => {
+      if (argv.includes('patch')) throw new Error('docker exec agent: timed out');
+      if (argv[0] === 'cat') return file;
+      return '';
+    } });
+    const errors = await n.runDisable(exec, 'notion');
+    assert.ok(exec.calls.at(-1).argv.includes('reload'));
+    assert.deepEqual(errors, file === '{}' ? [] : [`remove the skill entry: ${n.CONFIG_PATCH_PENDING_ERROR}`]);
+  }
+});
+
+test('a secrets reload timeout reports uncertainty without raw exec output', async () => {
+  const exec = fakeExec({ onCall: ({ argv }) => {
+    if (argv.includes('reload')) throw new Error('docker exec timed out or was killed (exit 137) after 150000ms');
+    return '';
+  } });
+  await assert.rejects(n.runEnable(exec, 'notion', SECRETS.notion), {
+    message: 'The secrets reload could not be confirmed (OpenClaw is slow to reload); try again in a minute.',
+  });
+  assert.ok(!exec.calls.some((c) => c.argv[0] === 'cat'), 'config read cannot confirm a reload');
+});
+
+test('two slow reloads after a long queue keep full deadlines and still read back the patch', async () => {
+  let elapsedMs = 300000;
+  const exec = fakeExec({ onCall: ({ argv, opts }) => {
+    if (argv.includes('patch') || argv.includes('reload')) {
+      assert.equal(opts.timeoutMs, 150000);
+      elapsedMs += 158000;
+    }
+    if (argv.includes('patch')) throw new Error('docker exec timed out');
+    if (argv[0] === 'cat') return JSON.stringify(n.enablePatch('github-pat', SECRETS['github-pat']));
+    return '';
+  } });
+  await n.runEnable(exec, 'github-pat', SECRETS['github-pat']);
+  assert.equal(elapsedMs, 616000);
+  assert.ok(exec.calls.at(-1).argv.includes('reload'));
+});
 
 test('a failed rm mid-way still attempts every other step', async () => {
   const exec = fakeExec({ failOn: (a) => a.includes('TRELLO_API_KEY') });

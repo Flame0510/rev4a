@@ -128,7 +128,7 @@ export async function ensureMongosh(exec: NativeExec): Promise<'present' | 'inst
     output = await exec.run([...MONGOSH_INSTALL_ARGV], undefined, { timeoutMs: MONGOSH_INSTALL_TIMEOUT_MS });
   } catch (e) {
     const msg = (e as Error).message;
-    const cause = isTimeout(msg) ? `timed out after ${MONGOSH_INSTALL_TIMEOUT_MS / 60_000} minutes: ` : '';
+    const cause = isTimeout(msg) ? 'timed out: ' : '';
     throw new Error(`Could not install mongosh: ${cause}${lastLines(msg, 3)}`);
   }
   if ((await installedVersion(exec)) !== MONGOSH_VERSION) {

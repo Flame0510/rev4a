@@ -2978,7 +2978,7 @@ Update label and/or secret of a credential. A changed secret is re-delivered to 
 
 A filled-in field is checked like on create (400 on a bad value, including a `uri` that is not a string); a blank or `null` field keeps the stored one and is not checked.
 
-Re-delivery runs two agents at a time and the route declares `maxDuration = 300`.
+Re-delivery runs two agents at a time. The route declares `maxDuration = 300` for serverless platforms; self-hosted Rev4a does not enforce it.
 
 Secret fields are **merged** onto the stored payload, not substituted for it:
 only the fields carrying a non-empty value are written, and every blank field
@@ -3012,11 +3012,45 @@ Switch the credential on or off for agents.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected', held?: boolean, intentOnly?: boolean }` (`held: true` on a switch-off says the page saw this credential in the container, so the removal runs even when Rev4a has no enabled row for it; `intentOnly: true` with `enabled: false` only clears Rev4a's own setting and runs nothing in the container, for a row whose agent holds ANOTHER credential of the same provider, since the removal is provider-wide and would delete that one; it is refused for a row with a removal pending; both must be booleans, else 400) or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). A container write answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — try again when it finishes`); `intentOnly` and `forget` run no container command and bypass this check. `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). Background re-apply after create, recreate, update, edit, restore, rollback, start and restart does not go through this check. The route allows up to 300 seconds for a batch of up to 100 items.
+**Body:** `{ agent: string, enabled: boolean, mode?: 'env'|'protected', held?: boolean, intentOnly?: boolean }` (`held: true` on a switch-off says the page saw this credential in the container, so the removal runs even when Rev4a has no enabled row for it; `intentOnly: true` with `enabled: false` only clears Rev4a's own setting and runs nothing in the container, for a row whose agent holds ANOTHER credential of the same provider, since the removal is provider-wide and would delete that one; it is refused for a row with a removal pending; both must be booleans, else 400) or `{ assignments: [...] }` (1 to 100). `protected` is reserved and returns a per-agent error. `{ agent, forget: true }` drops the row of an agent that no longer exists (409 while the container still exists). A container write answers **409 with nothing written** when the agent is stopped or busy with a job (`Not running — start the agent to change its credentials` / `Busy: <reason> — try again when it finishes`); `intentOnly` and `forget` run no container command and bypass this check. `enableAssignment`/`disableAssignment` apply the same refusal as a per-container error (so the legacy sync routes report it in `results`). Background re-apply after create, recreate, update, edit, restore, rollback, start and restart does not go through this check. The route declares `maxDuration = 300` for serverless platforms; self-hosted Rev4a does not enforce it. A batch accepts up to 100 items.
 
 **Response:** `{ results: { container, status: 'ok'|'error', error?: string }[], agents: [...] }` (same `agents` as GET). When the changes were made but only the final read of the rows failed, the answer is still 200 with `{ results, refreshFailed: true }` and no `agents`; the caller re-reads with GET. A delivery failure is a per-agent result and the assignment's `lastError`, not an HTTP error. 404 for an unknown credential or, when enabling, an unknown agent. Errors never contain secret values.
 
 Enabling needs OpenClaw 2026.9.0 or newer on the agent (Trello and MongoDB need 2026.9.9: Trello's image ships the `jq` its skill requires, MongoDB is the only release it was verified on); an older agent returns a per-agent version refusal without creating an enabled assignment or changing a prior assignment. A success updates `last_synced_at` and the profile status and writes a `sync` audit entry. A failed delivery sets the error status without changing `last_synced_at`, which records the last successful delivery. A result may carry `warning` when the switch worked but something an earlier release wrote (old CLI files, the TOOLS.md row) could not be removed.
+
+**Slow OpenClaw reloads.** Credential config patches and secrets reloads each request a
+150-second deadline (`OPENCLAW_RELOAD_TIMEOUT_MS`), on enable, disable, MongoDB rollback
+and background re-apply. Other native and managed steps keep their 30-second default;
+MongoDB retains its existing five-minute install and 60-second skill-check ceilings.
+After a config-patch timeout, Rev4a reads `/root/.openclaw/openclaw.json` directly with
+`cat` (up to 5 seconds, no Gateway call). If every patched value matches, it continues
+with the remaining delivery steps; unrelated config keys are ignored and a `null` patch
+requires that key to be absent. An absent, unreadable, incomplete or mismatching file
+returns **"The agent is still applying the change (OpenClaw is slow to reload); try again
+in a minute."** No patch is resubmitted during this recovery. A secrets reload timeout
+cannot be confirmed from the file and returns **"The secrets reload could not be
+confirmed (OpenClaw is slow to reload); try again in a minute."** These errors appear
+in the per-agent result and `lastError`, with no raw timeout text or secret values.
+
+One switch can take a few minutes on a slow agent, longer when MongoDB must install
+mongosh or the agent config lock is queued. Self-hosted Rev4a does not enforce the
+route's serverless `maxDuration = 300`; there is no request-wide delivery deadline.
+Each step waits for its docker exec to return or be killed, including any timeout-wrapper
+fallback, before releasing the agent config lock. The UI keeps the active row in a loading state (switch spinner or action-button
+spinner) and sibling actions disabled until the request settles.
+
+After startup sync, a background repair checks running agents for enabled assignments
+whose `last_error` contains "timed out or was killed" or "exit 137" (the old 30-second
+kill). One agent at a time it waits for the agent's Gateway (up to 2 minutes, else the next
+start retries), switches each such credential on again through the Switch's own path (a success
+supersedes the other credential of that provider; two timed-out credentials of one provider are
+left alone, with a log line asking to choose in Credentials) and logs
+`[rev4a] Credentials re-applied after a timeout: <agent>` or a failure line per agent.
+It never waits for delivery during dashboard startup. Success clears `last_error`, so
+the next start skips the repaired assignment; stopped agents retain their usual
+start-time re-apply. Other failed enabled assignments and pending removals keep their
+existing lifecycle retry and manual **Redeliver** / **Retry removal** paths.
+Credential payloads, version floors, stdin transport and redaction are unchanged.
 
 Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). Every Gateway CLI call of the delivery (reload, GitHub RPCs) runs through `lib/gateway-cli.ts`, which uses the token in `/root/.agent-token` when present (a rotated token) and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
 

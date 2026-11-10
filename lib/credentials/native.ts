@@ -107,6 +107,13 @@ export function storeRemoveArgv(name: string): string[] {
 
 export const CONFIG_PATCH_ARGV: readonly string[] = ['openclaw', 'config', 'patch', '--stdin'];
 export const SECRETS_RELOAD_ARGV: readonly string[] = ['openclaw', 'secrets', 'reload'];
+export const NATIVE_TIMEOUT_MS = 30_000;
+/** Config patches and secrets reloads can stall while OpenClaw scans plugin metadata. */
+export const OPENCLAW_RELOAD_TIMEOUT_MS = 150_000;
+export const CONFIG_PATCH_PENDING_ERROR = 'The agent is still applying the change (OpenClaw is slow to reload); try again in a minute.';
+const CONFIG_READ_ARGV = ['cat', '/root/.openclaw/openclaw.json'];
+const CONFIG_READ_TIMEOUT_MS = 5_000;
+const CONFIG_READ_MAX_BUFFER = 32 * 1024 * 1024;
 /**
  * Environment for the reload: the agent's Gateway listens on port 3000, not OpenClaw's
  * default. The URL goes in the environment, never as --url/--token in argv (the token
@@ -253,8 +260,66 @@ export function redact(message: string, values: readonly string[]): string {
 /** The two ways to run a command inside an agent. delivery.ts binds them to docker exec. */
 export interface NativeExec {
   /** `opts.timeoutMs` overrides the default deadline (the mongosh install takes minutes). */
-  run(argv: string[], env?: Record<string, string>, opts?: { timeoutMs?: number }): Promise<string>;
-  runWithInput(argv: string[], input: string): Promise<string>;
+  run(argv: string[], env?: Record<string, string>, opts?: { timeoutMs?: number; maxBuffer?: number }): Promise<string>;
+  runWithInput(argv: string[], input: string, opts?: { timeoutMs?: number }): Promise<string>;
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * Does a complete config file reflect this JSON merge patch? Objects match only patched
+ * keys; null requires absence (including an absent ancestor); arrays replace as a whole.
+ * Invalid/truncated JSON never proves success. Neither input is modified or logged.
+ */
+export function configPatchMatches(patch: unknown, file: string): boolean {
+  const exact = (expected: unknown, actual: unknown): boolean => {
+    if (Array.isArray(expected)) return Array.isArray(actual) && expected.length === actual.length
+      && expected.every((v, i) => exact(v, actual[i]));
+    if (isObject(expected)) return isObject(actual) && Object.keys(expected).length === Object.keys(actual).length
+      && Object.entries(expected).every(([k, v]) => Object.hasOwn(actual, k) && exact(v, actual[k]));
+    return expected === actual;
+  };
+  const matches = (expected: Record<string, unknown>, actual: unknown): boolean => {
+    if (actual !== undefined && !isObject(actual)) return false;
+    return Object.entries(expected).every(([key, value]) => {
+      const present = isObject(actual) && Object.hasOwn(actual, key);
+      const current = present ? actual[key] : undefined;
+      if (value === null) return !present;
+      if (isObject(value)) return (present || Object.keys(value).length > 0) && matches(value, current);
+      return present && exact(value, current);
+    });
+  };
+  try {
+    const config: unknown = JSON.parse(file);
+    return isObject(patch) && isObject(config) && matches(patch, config);
+  } catch { return false; }
+}
+
+const isTimeout = (e: unknown): boolean => /timed out/i.test((e as Error).message);
+
+/** A CLI timeout does not prove the Gateway failed to write the patch. Read the file directly. */
+async function applyConfigPatch(exec: NativeExec, patch: object): Promise<void> {
+  try {
+    await exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch), { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS });
+  } catch (e) {
+    if (!isTimeout(e)) throw e;
+    try {
+      // A large openclaw.json (many agents, sessions or plugins) must not fail the read-back.
+      const file = await exec.run([...CONFIG_READ_ARGV], undefined, { timeoutMs: CONFIG_READ_TIMEOUT_MS, maxBuffer: CONFIG_READ_MAX_BUFFER });
+      if (configPatchMatches(patch, file)) return;
+    } catch { /* An unreadable file cannot confirm the patch. */ }
+    throw new Error(CONFIG_PATCH_PENDING_ERROR);
+  }
+}
+
+async function reloadSecrets(exec: NativeExec): Promise<void> {
+  try {
+    await exec.run(secretsReloadExecArgv(), { ...SECRETS_RELOAD_ENV }, { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS });
+  } catch (e) {
+    if (!isTimeout(e)) throw e;
+    throw new Error('The secrets reload could not be confirmed (OpenClaw is slow to reload); try again in a minute.');
+  }
 }
 
 /**
@@ -285,8 +350,8 @@ export async function runEnable(exec: NativeExec, providerId: string, secret: Re
       await exec.runWithInput(storeSetArgv(input.name), input.value); // name in argv, value on stdin
     }
     const patch = enablePatch(providerId, secret);
-    if (patch) await exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch));
-    await exec.run(secretsReloadExecArgv(), { ...SECRETS_RELOAD_ENV });
+    if (patch) await applyConfigPatch(exec, patch);
+    await reloadSecrets(exec);
   } catch (e) {
     if (e instanceof UnsupportedNativeVersionError) throw e;
     throw new Error(redact((e as Error).message, values));
@@ -307,8 +372,8 @@ export async function runDisable(exec: NativeExec, providerId: string, secretVal
   };
   for (const e of p.env) await attempt(`remove ${e.name}`, () => exec.run(storeRemoveArgv(e.name)));
   const patch = disablePatch(providerId);
-  if (patch) await attempt('remove the skill entry', () => exec.runWithInput([...CONFIG_PATCH_ARGV], JSON.stringify(patch)));
-  await attempt('reload', () => exec.run(secretsReloadExecArgv(), { ...SECRETS_RELOAD_ENV }));
+  if (patch) await attempt('remove the skill entry', () => applyConfigPatch(exec, patch));
+  await attempt('reload', () => reloadSecrets(exec));
   return errors;
 }
 

@@ -27,6 +27,7 @@ export async function resolve(specifier, context, next) {
 `;
 register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
 const m = await import('../lib/credentials/managed.ts');
+const n = await import('../lib/credentials/native.ts');
 const gw = await import('../lib/gateway-cli.ts');
 
 let passed = 0;
@@ -44,8 +45,8 @@ function fakeExec(onCall = () => '') {
   const calls = [];
   return {
     calls,
-    run: async (argv, env) => { const call = { argv, env: env ?? {} }; calls.push(call); return onCall(call, calls.length); },
-    runWithInput: async (argv, input) => { const call = { argv, env: {}, input }; calls.push(call); return onCall(call, calls.length); },
+    run: async (argv, env, opts) => { const call = { argv, env: env ?? {}, opts }; calls.push(call); return onCall(call, calls.length); },
+    runWithInput: async (argv, input, opts) => { const call = { argv, env: {}, input, opts }; calls.push(call); return onCall(call, calls.length); },
   };
 }
 
@@ -78,6 +79,46 @@ function runRpcScript(script, input, sdkSource, childSource) {
 
 test('handoff name matches the OpenClaw schema', () => {
   for (let i = 0; i < 20; i++) assert.match(m.githubHandoffName(), /^github-setup-[a-f0-9]{32}$/);
+});
+
+test('GitHub continues to managed RPCs after a timed-out skill patch is confirmed on disk', async () => {
+  let clock = 0;
+  let file = '{}';
+  const raw = fakeExec(({ argv, input, opts }) => {
+    if (argv[1] === '--version') return 'OpenClaw 2026.10.10';
+    if (argv.includes('patch')) {
+      assert.equal(opts.timeoutMs, 150000);
+      file = input;
+      clock += 150000;
+      throw new Error('docker exec timed out or was killed (exit 137) after 150000ms');
+    }
+    if (argv[0] === 'cat') return file;
+    clock += 5000;
+    return '';
+  });
+  const exec = raw;
+  await n.runEnable(exec, 'github-pat', { token: TOKEN });
+  await m.removeStoreEntries(exec, ['GH_TOKEN', 'GITHUB_TOKEN']);
+  await m.githubEnable(exec, TOKEN);
+  const rpcCalls = raw.calls.filter((c) => c.input?.includes('"method"'));
+  assert.deepEqual(rpcCalls.map((c) => JSON.parse(c.input).method), ['secrets.store.set', 'tools.github.configure']);
+  assert.ok(rpcCalls.every((c) => (c.opts?.timeoutMs ?? n.NATIVE_TIMEOUT_MS) === 30000), 'managed RPCs keep their existing deadline');
+  assertNoTokenInExec(raw.calls);
+  assert.equal(clock, 175000);
+});
+
+test('an unconfirmed skill patch stops before the GitHub handoff is written', async () => {
+  const raw = fakeExec(({ argv }) => {
+    if (argv[1] === '--version') return 'OpenClaw 2026.10.10';
+    if (argv.includes('patch')) throw new Error('docker exec timed out after 150000ms');
+    if (argv[0] === 'cat') return '{}';
+    return '';
+  });
+  await assert.rejects((async () => {
+    await n.runEnable(raw, 'github-pat', { token: TOKEN });
+    await m.githubEnable(raw, TOKEN);
+  })(), { message: n.CONFIG_PATCH_PENDING_ERROR });
+  assert.ok(!raw.calls.some((c) => c.input?.includes('"method"')));
 });
 
 test('github enable: no argv/env carries the token; RPC payloads travel only on stdin', async () => {

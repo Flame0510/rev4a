@@ -33,6 +33,11 @@ export async function register() {
       // Best-effort — don't block startup if sync fails
       console.warn('[rev4a] Failed to sync agents on startup');
     }
+    // An update must repair enabled credentials left failed by the old 30-second kill.
+    // Never await the deliveries: a slow Gateway must not delay dashboard startup.
+    import('./lib/credentials/delivery')
+      .then(({ repairCredentialTimeoutsAtStartup }) => repairCredentialTimeoutsAtStartup())
+      .catch(() => console.warn('[rev4a] Could not re-apply credentials after a timeout on startup'));
     // Prices that change with the time of day (DeepSeek off-peak): write the new rates
     // into every agent at each change, so OpenClaw prices each call at the rate it ran at.
     // A startup sync that missed an agent is written again by the first check.

@@ -25,6 +25,7 @@ export async function resolve(specifier, context, next) {
 register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
 register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(import.meta.dirname + '/'));
 const m = await import('../lib/credentials/mongodb.ts');
+const n = await import('../lib/credentials/native.ts');
 const { validateSecret } = await import('../lib/credentials/providers.ts');
 
 let passed = 0;
@@ -131,8 +132,8 @@ function mockExec({ version = 'OpenClaw 2026.9.9 (abc)', installed = '', install
       if (failOn(l)) throw new Error(`exit 1 in ${l}`);
       return '';
     },
-    runWithInput: async (argv, input) => {
-      const l = label(argv); calls.push({ label: l, argv, input });
+    runWithInput: async (argv, input, opts) => {
+      const l = label(argv); calls.push({ label: l, argv, input, opts });
       if (failOn(l)) throw new Error(`refused ${l}: ${input}`);
       return '';
     },
@@ -253,7 +254,7 @@ test('skills info timed out: the switch-on fails but nothing is rolled back (a w
 
 test('an install that timed out says so', async () => {
   const exec = mockExec({ installFails: 'docker exec c: timed out — npm http fetch GET 200' });
-  await assert.rejects(m.enableMongodb(exec, SECRET, deps()), /^Error: Could not install mongosh: timed out after 5 minutes: /);
+  await assert.rejects(m.enableMongodb(exec, SECRET, deps()), /^Error: Could not install mongosh: timed out: /);
 });
 
 test('a rollback that also fails says so, without the secret', async () => {
@@ -279,6 +280,38 @@ test('a re-apply (same path) with mongosh on the volume skips the install and re
   await m.enableMongodb(exec, SECRET, deps());
   assert.ok(exec.labels().includes('skills-info'));
   assert.ok(!exec.labels().includes('install'));
+});
+
+test('MongoDB enable and rollback patches/reloads get the longer deadline', async () => {
+  const raw = mockExec({ installed: '2.13.0', skillInfo: '{"eligible":false}' });
+  const exec = raw;
+  await assert.rejects(m.enableMongodb(exec, SECRET, deps()), /not eligible/);
+  const reloads = raw.calls.filter((c) => ['config-patch', 'reload'].includes(c.label));
+  assert.equal(reloads.length, 4, 'enable and rollback each patch and reload');
+  for (const c of reloads) assert.equal(c.opts.timeoutMs, 150000, c.label);
+  for (const c of raw.calls.filter((c) => ['version', 'check', 'store-set', 'store-rm'].includes(c.label))) {
+    assert.equal(c.opts?.timeoutMs ?? n.NATIVE_TIMEOUT_MS, 30000, c.label);
+  }
+});
+
+test('MongoDB install retains five minutes and later rollback retains full reload deadlines', async () => {
+  let elapsedMs = 0;
+  const raw = mockExec({ skillInfo: '{"eligible":false}' });
+  const exec = {
+    run: async (argv, env, opts) => {
+      if (argv[0] === 'npm') {
+        assert.equal(opts.timeoutMs, 300000);
+        elapsedMs += 300000;
+      }
+      return raw.run(argv, env, opts);
+    },
+    runWithInput: (...args) => raw.runWithInput(...args),
+  };
+  await assert.rejects(m.enableMongodb(exec, SECRET, deps()), /not eligible/);
+  assert.equal(elapsedMs, 300000);
+  for (const c of raw.calls.filter((c) => ['config-patch', 'reload'].includes(c.label))) {
+    assert.equal(c.opts.timeoutMs, 150000, c.label);
+  }
 });
 
 // ── save-time validation ───────────────────────────────────────────────────────────────
