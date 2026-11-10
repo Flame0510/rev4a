@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decide } from '../scripts/lib/keeper.mjs';
 
 const ORCH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'orch.mjs');
 const base = process.argv[2] ? path.resolve(process.argv[2]) : fs.mkdtempSync(path.join(os.tmpdir(), 'orch-keeper-'));
@@ -104,8 +105,8 @@ testLiveWorkers();
 const nowMin = () => Math.ceil((Date.now() - T0) / 60000);
 is(keeper(nowMin() + 30), 'wait', /SB-1: worker within its time limit/, 'worker running');
 d = keeper(nowMin() + 71);
-is(d, 'wake', /SB-1: no step from the worker for \d+ min, past its time limit; check its session.*sessions_spawn/, 'worker overdue');
-assert.equal(d.next, 'check the worker session of SB-1; start it again only if it is gone'); n++;
+is(d, 'wake', /SB-1: no step from the worker for \d+ min, past its time limit; check its session.*orch prompt SB-1 worker --resume/, 'worker overdue');
+assert.equal(d.next, 'check the worker session of SB-1; only if it is gone, run orch prompt SB-1 worker --resume, then start the worker from that file using its next: line'); n++;
 assert.equal(campaign().wakes.count, 1, 'count restarted after progress'); n++;
 // The coordinator may have started it again (no orch command records that): a full time limit before the next wake.
 orch(['status']);
@@ -367,6 +368,7 @@ sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:mai
 d = keeper(nowMin() + 45);
 is(d, 'wake', /SB-5\.1: the session "SB-5\.1 worker r0" ended without leaving a report/, 'ended without report: wake');
 assert.match(d.next, /^read its last answer \(sessions_history\)/); n++;
+assert.match(d.next, /otherwise run orch prompt SB-5\.1 worker --resume, then start the worker from that file/); n++;
 // Restarted with the same label: OpenClaw lists the newest first; the running one counts, not the ended one.
 sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w2', label: 'SB-5.1 worker r0 (retry)', status: 'running', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'done', updatedAt: Date.now() - 1000 }]);
 is(keeper(nowMin() + 70), 'wait', /SB-5\.1: worker within its time limit/, 'restarted: the running session counts');
@@ -459,6 +461,11 @@ function testLiveWorkers() {
     has(orch(args, { nodeArgs: ['--import', preload] }), /SB-2 worker r0/, 'several runs shown');
     assert.equal(fs.readFileSync(reads, 'utf8'), 'read\n', 'one session lookup per command'); n++;
   }
+  fs.writeFileSync(reads, '');
+  orch(['prompt', 'SB-1', 'worker', '--resume'], { code: 4, nodeArgs: ['--import', preload] });
+  assert.equal(fs.readFileSync(reads, 'utf8'), 'read\n', 'resume uses one session snapshot'); n++;
+  assert.deepEqual(fs.readFileSync(sf), initialState); n++;
+  note('resume reads sessions once and refuses a live worker before consuming the allowance');
   fs.rmSync(path.join(REPO, '.orchestrate/runs/SB-2'), { recursive: true });
   note('status/status --json/next read sessions once for multiple runs');
 
@@ -539,5 +546,251 @@ function testLiveWorkers() {
   fs.rmSync(SESSIONS);
 }
 
+// Pure keeper fixtures pin the complete decisions from 11be312 wherever recovery wording is unchanged.
+function testRestartDecisions() {
+  const t = 1800000000000;
+  const eventAt = (minutes, extra = {}) => ({ t: new Date(t + minutes * 60000).toISOString(), kind: 'start', ...extra });
+  const run = (id, extra = {}) => ({ id, phase: 'working', round: 0, events: [eventAt(0)], ...extra });
+  const ctx = {
+    now: t + 20 * 60000, campaign: { active: true, startedAt: new Date(t).toISOString() }, runs: [run('A')], lastActivity: t,
+    busy: null, blocked: [], eligible: [], waiting: [], remaining: [{ id: 'A' }], standing: true,
+    limits: { workerTimeoutSec: 3600, checkerTimeoutSec: 1800 }, nextFor: () => 'spawn fixture', progress: 'fixture',
+  };
+  const snapshot = (name, extra, expected) => {
+    assert.deepEqual(decide({ ...ctx, ...extra }), { ...expected, progress: 'fixture' }, name); n++;
+  };
+  snapshot('base: worker within limit', {}, { action: 'wait', reason: 'A: worker within its time limit', escalations: [] });
+  snapshot('base: busy', { busy: 'a harness' }, { action: 'wait', reason: 'running: a harness', escalations: [], partial: true, busy: 'a harness' });
+  snapshot('base: eligible work', { runs: [], eligible: [{ id: 'B' }] }, {
+    action: 'wake', reason: '1 card(s) can start and nobody works on them (quiet for 20 min)', next: 'orch start B', wakeCount: 1, escalations: [],
+  });
+  snapshot('base: coordinator step', { runs: [run('A', { phase: 'worked' })] }, {
+    action: 'wake', reason: 'A waits for the coordinator (worked) and nothing happened for 20 min', next: 'spawn fixture', wakeCount: 1, escalations: [],
+  });
+  snapshot('base: ready without consent', { standing: false, runs: [run('A', { phase: 'ready' })] }, {
+    action: 'escalate', reason: "A is ready and waits for the owner's merge ok",
+    escalations: [{ key: 'ready:A:r0', reason: "A is ready and waits for the owner's merge ok" }],
+  });
+  snapshot('base: overdue map', { now: t + 90 * 60000, campaign: { active: true, overdue: { A: t + 75 * 60000 } } }, {
+    action: 'wait', reason: 'A: worker within its time limit', escalations: [],
+  });
+  snapshot('base: done', { runs: [], remaining: [] }, { action: 'done', reason: 'every card in the campaign is done', escalations: [] });
+  snapshot('base: off', { campaign: null }, { action: 'off', reason: 'no active campaign (orch campaign start)', escalations: [] });
+
+  // Checker recovery remains byte-for-byte the base text, both without a report and past its time limit.
+  const checker = run('A', { phase: 'checking' });
+  const expected = { A: { opened: t, labels: [{ label: 'A checker a r0', who: 'checker', tag: 'a' }] } };
+  snapshot('base: checker ended', { runs: [checker], expected, sessions: [{ label: 'A checker a r0', status: 'done', updatedAt: t }] }, {
+    action: 'wake', reason: 'A: the session "A checker a r0" ended without leaving a report',
+    next: 'read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise start it again: spawn fixture',
+    wakeCount: 1, overdue: 'A', escalations: [],
+  });
+  snapshot('base: checker overdue', { now: t + 41 * 60000, runs: [checker] }, {
+    action: 'wake', reason: 'A: no step from the checker for 41 min, past its time limit; check its session: if it still works, wait for it, if it is gone, start it again (spawn fixture)',
+    next: 'check the checker session of A; start it again only if it is gone', wakeCount: 1, overdue: 'A', escalations: [],
+  });
+  console.log('ok restart keeper: no-restart decisions match 11be312 snapshots; checker recovery text unchanged');
+
+  const restart = (role, model, minutes = 0) => eventAt(minutes, { kind: 'restart', round: 0, role, model });
+  const one = run('A', { events: [eventAt(0), restart('worker', 'w')] });
+  assert.deepEqual(decide({ ...ctx, runs: [one] }), decide(ctx), 'one restart: no advice or decision change'); n++;
+  const two = [one, run('B', { events: [eventAt(0), restart('worker', 'w')] })];
+  const notice = { key: 'restarts:worker:w', reason: 'the worker (model w) stopped without a report 2 times in this campaign (cards A, B): consider another model for this role in the config' };
+  const baseline = decide({ ...ctx, runs: two.map(st => ({ ...st, events: [eventAt(0)] })) });
+  const withRestarts = decide({ ...ctx, runs: two });
+  assert.deepEqual(withRestarts, { ...baseline, escalations: [notice] }); n++;
+  console.log(`escalation from test run: ${notice.reason}`);
+  const mixed = [one, run('B', { events: [restart('worker', 'other')] })];
+  assert.deepEqual(decide({ ...ctx, runs: mixed }).escalations, []); n++;
+  mixed.push(run('C', { events: [restart('worker', 'other'), restart('checker', 'w'), restart('checker', 'w')] }));
+  assert.deepEqual(decide({ ...ctx, runs: mixed }).escalations.map(e => e.key), ['restarts:worker:other', 'restarts:checker:w']); n++;
+  const due = { ...ctx, now: t + 80 * 60000, runs: two };
+  assert.equal(decide(due).action, 'wake'); n++;
+  assert.deepEqual(decide(due).escalations, [notice]); n++;
+  const clock = { ...ctx, now: t + 90 * 60000, runs: [run('A', { events: [eventAt(0), restart('worker', 'w', 80)] })] };
+  assert.equal(decide(clock).reason, 'A: worker within its time limit'); n++;
+  assert.equal(decide({ ...clock, now: t + 151 * 60000 }).action, 'wake'); n++;
+  assert.equal(decide({ ...clock, now: t + 151 * 60000, campaign: { active: true, overdue: { A: t + 145 * 60000 } } }).action, 'wait'); n++;
+  console.log('ok restart keeper: counts per role/model across cards; advice preserves wake/wait; restart and overdue reset timeout');
+
+  const freshCampaign = { ...ctx.campaign, startedAt: eventAt(10).t };
+  assert.deepEqual(decide({ ...ctx, campaign: freshCampaign, runs: two }).escalations, []); n++;
+  const atBoundary = [one, run('B', { events: [restart('worker', 'w', 10)] })];
+  assert.deepEqual(decide({ ...ctx, campaign: freshCampaign, runs: atBoundary }).escalations, []); n++;
+  atBoundary[0] = run('A', { events: [restart('worker', 'w', 10)] });
+  assert.deepEqual(decide({ ...ctx, campaign: freshCampaign, runs: atBoundary }).escalations, [notice]); n++;
+  for (const offset of [-1, 0, 1]) {
+    const e = { ...restart('worker', 'w'), t: new Date(t + 10 * 60000 + offset).toISOString() };
+    const d = decide({ ...ctx, campaign: freshCampaign, runs: [run('A', { events: [e] }), run('B', { events: [e] })] });
+    assert.equal(d.escalations.length, offset < 0 ? 0 : 1); n++;
+  }
+  console.log('ok restart campaign boundary: earlier campaign -> no advice; startedAt -1/0/+1 ms -> 0/1/1 notices');
+
+  const prepared = run('A', { prompt: 'worker-r0-resume.md', events: [eventAt(0), restart('worker', 'w', 80)] });
+  const resumed = { ...ctx, runs: [prepared], expected: { A: { opened: t, labels: [{ label: 'A worker r0', who: 'worker' }] } }, nextFor: st => `spawn ${st.prompt}` };
+  // Even an expected window from an old caller cannot match a session that predates the current round's restart.
+  for (const offset of [-1, 0, 1]) {
+    const d = decide({ ...resumed, now: t + 91 * 60000, sessions: [{ label: 'A worker r0', status: 'done', updatedAt: t + 80 * 60000 + offset }] });
+    assert.equal(d.action, 'wake'); n++;
+    if (offset < 0) assert.equal(d.next, 'start it now: spawn worker-r0-resume.md');
+    else assert.match(d.next, /split the card .*or park it .*or ask the owner/);
+    n++;
+    assert.doesNotMatch(d.next, /--resume/); n++;
+  }
+  for (const offset of [-1, 0, 1]) {
+    const d = decide({ ...resumed, now: t + 90 * 60000 + offset, sessions: [] });
+    assert.equal(d.action, offset < 0 ? 'wait' : 'wake'); n++;
+  }
+  const overdue = decide({ ...resumed, now: t + 151 * 60000, sessions: null });
+  assert.match(overdue.next, /split the card .*or park it/); n++;
+  assert.doesNotMatch(overdue.next, /--resume/); n++;
+  const nextRound = { ...prepared, round: 1 };
+  const nextRoundDue = decide({ ...ctx, now: t + 151 * 60000, runs: [nextRound] });
+  assert.match(nextRoundDue.next, /orch prompt A worker --resume/); n++;
+  console.log('ok restart window: session -1/0/+1 ms -> prepared spawn/split/split; idle boundary -> wait/wake/wake; past-limit resume not repeated; next round allowed');
+}
+
+// Exercise ctx assembly and persistent once-per-campaign keys, including a card that has already closed.
+function testRestartNotices() {
+  const cf = path.join(REPO, '.orchestrate/campaign.json');
+  const sf1 = path.join(REPO, '.orchestrate/runs/SB-1/state.json');
+  const sf2 = path.join(REPO, '.orchestrate/runs/SB-2/state.json');
+  const saved = [cf, sf1, sf2].map(f => [f, fs.readFileSync(f)]);
+  const configBytes = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'));
+  const start = { t: new Date().toISOString(), kind: 'start' };
+  const restart = { ...start, kind: 'restart', role: 'worker', model: 'w', round: 0 };
+  const s1 = { ...JSON.parse(saved[1][1]), phase: 'working', finishPending: [], events: [start, restart] };
+  const s2 = { ...JSON.parse(saved[2][1]), phase: 'working', events: [start] };
+  write('.orchestrate/campaign.json', JSON.stringify({ ...campaign(), active: true, scope: ['SB-1', 'SB-2'], scopeLabel: 'restart fixtures', reported: {}, wakes: null }));
+  fs.writeFileSync(sf1, JSON.stringify(s1)); fs.writeFileSync(sf2, JSON.stringify(s2));
+  keeper(nowMin() + 1); // acknowledge the earlier fixture's config restore, independent of restart notices
+  let d = keeper(nowMin() + 2);
+  assert.equal(d.action, 'wait'); assert.equal(d.notify, undefined); n += 2;
+  s2.events.push(restart); fs.writeFileSync(sf2, JSON.stringify(s2));
+  d = keeper(nowMin() + 2);
+  assert.equal(d.action, 'wait'); n++;
+  assert.match(d.notify, /the worker \(model w\) stopped without a report 2 times in this campaign \(cards SB-1, SB-2\): consider another model for this role in the config/); n++;
+  assert.ok(campaign().reported['restarts:worker:w']); n++;
+  assert.equal(keeper(nowMin() + 3).notify, undefined); n++;
+  s1.phase = 'merged'; fs.writeFileSync(sf1, JSON.stringify(s1));
+  keeper(nowMin() + 4);
+  assert.ok(campaign().reported['restarts:worker:w'], 'closed card still counted'); n++;
+  // Even if old run history leaves the scope (a split archives it), its role/model was already reported.
+  s1.events = [start]; fs.writeFileSync(sf1, JSON.stringify(s1));
+  keeper(nowMin() + 4);
+  s2.events.push(restart); fs.writeFileSync(sf2, JSON.stringify(s2));
+  assert.equal(keeper(nowMin() + 5).notify, undefined); n++;
+  s2.events.push({ ...restart, model: 'other' }, { ...restart, model: 'other' }, { ...restart, role: 'checker' }, { ...restart, role: 'checker' });
+  fs.writeFileSync(sf2, JSON.stringify(s2));
+  d = keeper(nowMin() + 6);
+  assert.match(d.notify, /worker \(model other\)/); assert.match(d.notify, /checker \(model w\)/); n += 2;
+  assert.deepEqual(Object.keys(campaign().reported).filter(k => k.startsWith('restarts:')).sort(), ['restarts:checker:w', 'restarts:worker:other', 'restarts:worker:w']); n++;
+  d = keeper(nowMin() + 80);
+  assert.equal(d.action, 'wake'); assert.equal(d.notify, undefined); n += 2;
+  // Out-of-scope restarts are ignored, and finishing still delivers fresh advice alongside completion.
+  write('.orchestrate/campaign.json', JSON.stringify({ ...campaign(), scope: ['SB-1'], reported: {}, wakes: null }));
+  s1.phase = 'working'; fs.writeFileSync(sf1, JSON.stringify(s1));
+  assert.equal(keeper(nowMin() + 2).notify, undefined); n++;
+  write('.orchestrate/campaign.json', JSON.stringify({ ...campaign(), scope: ['SB-1', 'SB-2'], reported: {}, wakes: null }));
+  s1.phase = 'merged'; s2.phase = 'merged'; s2.finishPending = [];
+  fs.writeFileSync(sf1, JSON.stringify(s1)); fs.writeFileSync(sf2, JSON.stringify(s2));
+  const card2 = path.join(REPO, 'backlog/tasks/sb-2 - Card.md');
+  const savedCard = fs.readFileSync(card2);
+  setStatus('SB-2', 'Done');
+  d = keeper(nowMin() + 2);
+  assert.equal(d.action, 'done'); assert.match(d.notify, /worker \(model w\)[^]*is complete/); n += 2;
+  fs.writeFileSync(card2, savedCard);
+  assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/config.json')), configBytes); n++;
+  for (const [file, bytes] of saved) fs.writeFileSync(file, bytes);
+  console.log('ok restart keeper: owner told once per role/model, including closed cards; no repeat after history leaves scope; other work proceeds; config unchanged');
+}
+
+// Use the actual split/setAside path: the first restart must survive archival before any advice was emitted.
+function testArchivedRestarts() {
+  write('docs/restart-parent.md', 'Parent fixture.\n');
+  write('docs/restart-child.md', 'Child fixture.\n');
+  write('docs/restart-second.md', 'Second child fixture.\n');
+  write('backlog/tasks/sb-6 - Card.md', card('SB-6', 'docs/restart-parent.md'));
+  g('add', 'docs/restart-parent.md', 'docs/restart-child.md', 'docs/restart-second.md', 'backlog/tasks/sb-6 - Card.md');
+  g('commit', '-q', '-m', 'archived restart fixtures');
+  orch(['campaign', 'stop']);
+  orch(['campaign', 'start', '--session', 'S', '--scope', 'SB-6']);
+  const configBytes = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'));
+  orch(['start', 'SB-6']);
+  orch(['prompt', 'SB-6', 'worker', '--resume']);
+  const decision = () => JSON.parse(orch(['campaign', 'status', '--json'])).decision;
+  assert.deepEqual(decision().escalations, []); n++;
+  orch(['park', 'SB-6', '--reason', 'split fixture']);
+  const splitFile = path.join(base, 'restart-split.json');
+  fs.writeFileSync(splitFile, JSON.stringify([{
+    title: 'Child restart fixture', kind: 'content', owned: ['docs/restart-child.md'], dependencies: [],
+    goal: 'Exercise the split child while keeping the parent restart in the same campaign.',
+    acceptance: ['The child documentation describes the restart fixture.'],
+  }, {
+    title: 'Second child restart fixture', kind: 'content', owned: ['docs/restart-second.md'], dependencies: [],
+    goal: 'Keep the second part of the split separate from the first child and its worker.',
+    acceptance: ['The second documentation describes its separate fixture.'],
+  }]));
+  has(orch(['card', 'split', 'SB-6', '--from', splitFile]), /was set aside in .orchestrate\/archive\/SB-6-before-split-/);
+  assert.ok(!fs.existsSync(path.join(REPO, '.orchestrate/runs/SB-6/state.json'))); n++;
+  const archiveDir = path.join(REPO, '.orchestrate/archive');
+  const archived = fs.readdirSync(archiveDir).find(d => d.startsWith('SB-6-before-split-'));
+  const archivedState = JSON.parse(fs.readFileSync(path.join(archiveDir, archived, 'state.json')));
+  assert.equal(archivedState.events.filter(e => e.kind === 'restart').length, 1); n++;
+  assert.deepEqual(decision().escalations, []); n++;
+  orch(['start', 'SB-6.1']);
+  orch(['prompt', 'SB-6.1', 'worker', '--resume']);
+  const d = decision();
+  assert.equal(d.action, 'wait'); n++;
+  assert.equal(d.escalations.length, 1); n++;
+  assert.equal(d.escalations[0].key, 'restarts:worker:w'); n++;
+  const emitted = keeper(nowMin() + 1);
+  assert.equal(emitted.action, 'wait'); n++;
+  has(emitted.notify, /stopped without a report 2 times in this campaign \(cards SB-6\.1, SB-6\)/);
+  assert.equal(keeper(nowMin() + 2).notify, undefined); n++;
+  console.log(`ok archived restart: parent resumed, parked/split/archived, child resumed -> ${d.escalations[0].reason}`);
+  console.log('ok archived restart: advice emitted once; decision remains wait; no config writes');
+
+  // A campaign scoped only to the child must not count its archived parent.
+  const cf = path.join(REPO, '.orchestrate/campaign.json');
+  const parentScope = fs.readFileSync(cf);
+  write('.orchestrate/campaign.json', JSON.stringify({ ...campaign(), scope: ['SB-6.1'] }));
+  assert.deepEqual(decision().escalations, []); n++;
+  fs.writeFileSync(cf, parentScope);
+  // Starting a later campaign with exactly the same cards must not report either historical restart again.
+  orch(['campaign', 'start', '--force', '--session', 'S', '--scope', 'SB-6']);
+  assert.deepEqual(decision().escalations, []); n++;
+  assert.equal(keeper(nowMin() + 1).notify, undefined); n++;
+  assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/config.json')), configBytes); n++;
+  console.log('ok restart history: archived parent outside child-only scope ignored; new campaign over same scope -> no historical advice');
+}
+
+// History is advice: malformed states/events never break a decision, and one restart seen twice (open and archived
+// during the same check) counts once.
+function testRestartHistoryRobust() {
+  const t = 1800000000000;
+  const at = m => new Date(t + m * 60000).toISOString();
+  const restart = (round, m) => ({ t: at(m), kind: 'restart', round, role: 'worker', model: 'w' });
+  const base = {
+    now: t + 20 * 60000, campaign: { active: true, startedAt: at(0) }, runs: [], lastActivity: t, busy: null, blocked: [],
+    eligible: [], waiting: [], remaining: [{ id: 'A' }], standing: true,
+    limits: { workerTimeoutSec: 3600, checkerTimeoutSec: 1800 }, nextFor: () => 'spawn fixture', progress: 'fixture',
+  };
+  const plain = decide({ ...base, restartRuns: [] });
+  const malformed = [null, 7, 'x', {}, { id: 3, events: [] }, { id: 'B', events: {} }, { id: 'C', events: [null, 5, { kind: 'restart' }] },
+    { id: 'D', events: [{ kind: 'restart', t: { toString: null }, role: 'worker', model: 'w' }] },
+    { id: 'E', events: [{ kind: 'restart', t: at(1), role: { toString: null }, model: 'w' }] }];
+  assert.deepEqual(decide({ ...base, restartRuns: malformed }), plain, 'malformed history leaves the decision as without it'); n++;
+  const a = { id: 'A', events: [restart(0, 5)] };
+  assert.deepEqual(decide({ ...base, restartRuns: [a, structuredClone(a)] }).escalations, plain.escalations, 'the same restart open and archived counts once'); n++;
+  const two = decide({ ...base, restartRuns: [a, { id: 'A', events: [restart(0, 5), restart(1, 9)] }] }).escalations.filter(e => e.key.startsWith('restarts:'));
+  assert.equal(two.length, 1); assert.match(two[0].reason, /2 times/); n += 2;
+  console.log('ok restart history: malformed states/events skipped; a restart seen twice counts once; distinct restarts still count');
+}
+
+testRestartDecisions();
+testRestartNotices();
+testRestartHistoryRobust();
+testArchivedRestarts();
 function has(t, re, label) { assert.match(t, re, label); n++; }
 console.log(`e2e-keeper: ${n} checks passed in ${REPO}`);

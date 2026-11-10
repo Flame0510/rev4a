@@ -22,8 +22,13 @@ export const sameLabel = (actual, expected) => norm(actual) === norm(expected) |
 // Ended as OpenClaw counts it: a terminal status or an end time. Anything else (running, queued, yielded, none) is live.
 export const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.status) || Boolean(s.endedAt);
 
+// A prepared resume starts a new worker window in this round, even if the coordinator never spawned it.
+export const workerRestartAt = st => Date.parse([...(st.events ?? [])].reverse()
+  .find(e => e.kind === 'restart' && e.role === 'worker' && e.round === st.round)?.t ?? '') || 0;
+
 /**
- * ctx: { now, campaign, runs (open run states in scope: id, phase, round, events, finishPending), lastActivity (ms),
+ * ctx: { now, campaign, runs (open run states in scope: id, phase, round, events, finishPending),
+ * restartRuns (all run states in scope, including closed and archived cards; defaults to runs), lastActivity (ms),
  * busy (string or null), busySince (ms, when that same thing was first seen running), othersRunning (a sub-agent of a
  * run outside the scope is within its time limit), blocked ([{ id, why }]), eligible ([{ id }]), waiting ([{ id,
  * reasons }] cards in scope that cannot start or have no run), remaining (cards in scope not finished), standing (bool),
@@ -35,7 +40,43 @@ export const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.sta
  * escalations reported before must not be taken as cleared.
  */
 export function decide(ctx) {
-  return { ...decideAll(ctx), progress: ctx.progress };
+  const d = decideAll(ctx);
+  // Model advice accompanies the usual decision; it never blocks a wake or turns a wait into an escalation, and an
+  // error while reading history only drops the advice.
+  if (ctx.campaign?.active) try {
+    const counts = new Map();
+    const startedAt = Date.parse(ctx.campaign.startedAt ?? '') || 0;
+    // The same run can be read twice in one check (open, then archived by a split meanwhile): per run and per
+    // role/model, the larger of its readings counts, never their sum.
+    const perRun = new Map();
+    for (const st of ctx.restartRuns ?? ctx.runs) {
+      // History is advice only: a malformed state or event is skipped, never allowed to break the decision.
+      if (!st || typeof st.id !== 'string' || !Array.isArray(st.events)) continue;
+      const reading = new Map();
+      for (const e of st.events) {
+        if (!e || typeof e !== 'object' || e.kind !== 'restart' || typeof e.t !== 'string' || !(Date.parse(e.t) >= startedAt)) continue;
+        if (typeof e.role !== 'string' || typeof e.model !== 'string') continue;
+        const key = `restarts:${e.role}:${e.model}`;
+        reading.set(key, { role: e.role, model: e.model, n: (reading.get(key)?.n ?? 0) + 1 });
+      }
+      const run = perRun.get(st.id) ?? new Map();
+      for (const [key, r] of reading) if (r.n > (run.get(key)?.n ?? 0)) run.set(key, r);
+      perRun.set(st.id, run);
+    }
+    for (const [id, run] of perRun) {
+      for (const [key, r] of run) {
+        if (!counts.has(key)) counts.set(key, { role: r.role, model: r.model, n: 0, cards: new Set() });
+        const count = counts.get(key);
+        count.n += r.n; count.cards.add(id);
+      }
+    }
+    const advice = [];
+    for (const [key, { role, model, n, cards }] of counts) {
+      if (n >= 2) advice.push({ key, reason: `the ${role} (model ${model}) stopped without a report ${n} times in this campaign (cards ${[...cards].join(', ')}): consider another model for this role in the config` });
+    }
+    d.escalations.push(...advice);
+  } catch { /* advice only: the decision above stands */ }
+  return { ...d, progress: ctx.progress };
 }
 
 function decideAll(ctx) {
@@ -90,19 +131,25 @@ function decideAll(ctx) {
         continue;
       }
       const limit = (st.phase === 'working' ? ctx.limits.workerTimeoutSec : ctx.limits.checkerTimeoutSec) * 1000 + c.graceMinutes * 60000;
-      // The clock restarts at the last wake for this run: the coordinator may have started the sub-agent again, which
-      // no orch command records, so it gets a full time limit before the next wake.
+      // The last event (including restart) or overdue wake gives the sub-agent a full time limit.
+      const resume = `orch prompt ${st.id} worker --resume, then start the worker from that file using its next: line`;
+      const restartedAt = who === 'worker' ? workerRestartAt(st) : 0;
+      const workerRecovery = restartedAt
+        ? `split the card (orch card split ${st.id}) or park it (orch park ${st.id}), or ask the owner: this round already used its worker resume`
+        : `run ${resume}`;
       // A sub-agent the run waits for but that is not running: never started (the coordinator ended its turn first) or
       // ended without a report. Known only when the runtime's sessions could be read; checked once the phase has been
       // open for idleMinutes and the coordinator is quiet.
       const exp = ctx.expected?.[st.id];
-      if (ctx.sessions && exp && quiet && ctx.now - exp.opened >= c.idleMinutes * 60000) {
+      const opened = Math.max(exp?.opened ?? 0, restartedAt);
+      if (ctx.sessions && exp && quiet && ctx.now - opened >= c.idleMinutes * 60000) {
         // A label with a report in the inbox (any age) has finished: the report rule handles it. Otherwise the label is
         // live when any of its sessions since the phase opened is live (a restart leaves the ended one in the list),
         // and ended when its latest one ended.
         const reported = new Set((ctx.reports?.[st.id] ?? []).map(r => r.tag ?? null));
         const gone = exp.labels.filter(x => !reported.has(x.tag ?? null)).map(x => {
-          const mine = ctx.sessions.filter(s => sameLabel(s.label, x.label) && (s.updatedAt ?? 0) >= exp.opened - 60000);
+          // No clock tolerance across a resume: an earlier session belongs to the stopped worker.
+          const mine = ctx.sessions.filter(s => sameLabel(s.label, x.label) && (s.updatedAt ?? 0) >= (restartedAt ? opened : opened - 60000));
           return { ...x, s: mine.find(s => !ended(s)) ?? mine.sort((a, b) => b.updatedAt - a.updatedAt)[0] };
         }).filter(x => !x.s || ended(x.s));
         if (gone.length) {
@@ -112,14 +159,14 @@ function decideAll(ctx) {
             never.length ? `${st.id}: no OpenClaw session ${never.join(', ')} was started for this ${who === 'worker' ? 'round' : 'gate'}` : null,
             ended.length ? `${st.id}: the session ${ended.join(', ')} ended without leaving a report` : null,
           ].filter(Boolean).join('; '), next: ended.length && !never.length
-            ? `read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise start it again: ${ctx.nextFor(st)}`
+            ? `read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise ${who === 'worker' ? workerRecovery : `start it again: ${ctx.nextFor(st)}`}`
             : `start it now: ${ctx.nextFor(st)}`, overdue: st.id }); // the restarted sub-agent gets a full time limit
           continue;
         }
       }
       const since = Math.max(last, c.overdue?.[st.id] ?? 0);
       if (ctx.now - since < limit) { running = true; waits.push(`${st.id}: ${who} within its time limit`); continue; }
-      due.push({ overdue: st.id, reason: `${st.id}: no step from the ${who} for ${min(ctx.now - last)} min, past its time limit; check its session: if it still works, wait for it, if it is gone, start it again (${ctx.nextFor(st)})`, next: `check the ${who} session of ${st.id}; start it again only if it is gone` });
+      due.push({ overdue: st.id, reason: `${st.id}: no step from the ${who} for ${min(ctx.now - last)} min, past its time limit; check its session: if it still works, wait for it, if it is gone, ${who === 'worker' ? workerRecovery : `start it again (${ctx.nextFor(st)})`}`, next: `check the ${who} session of ${st.id}; ${who === 'worker' ? `only if it is gone, ${workerRecovery}` : 'start it again only if it is gone'}` });
       continue;
     }
     // A run at its round limit that the coordinator decides itself: while its advisor sub-agent is at work, it waits.

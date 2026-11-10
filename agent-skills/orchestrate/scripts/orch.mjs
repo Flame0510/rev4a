@@ -20,6 +20,7 @@
 //   orch park <id> --reason <why>                            status Blocked, worktree kept
 //   orch status [<id>] [--json]                              where each run is and what to do next
 //   orch prompt <id> worker|checker                          print the path of the current prompt file(s)
+//   orch prompt <id> worker --resume                         continue a stopped worker once per round
 //   orch harness <name> [--in <id>]                          run one harness now (base branch, or a task's worktree)
 //   orch card new|split|check|normalise …                    create and fix cards in the skill's format (lib/card-cmd.mjs)
 //   orch card set-aside <id>                                 set a card's run aside (done by split; reruns a half-done one)
@@ -38,7 +39,7 @@ import {
   readSuiteMarker, reusablePass, reuseMaxAgeHours, runHarness, shq, testRule, updateSuiteMarker, withHarnessLock,
 } from './lib/harness.mjs';
 import { cardRules } from './lib/card.mjs';
-import { CAMPAIGN_DEFAULTS, decide, sameLabel, wakeMessage } from './lib/keeper.mjs';
+import { CAMPAIGN_DEFAULTS, decide, sameLabel, wakeMessage, workerRestartAt } from './lib/keeper.mjs';
 import { cmdCard } from './lib/card-cmd.mjs';
 import { validatePolicy } from './lib/artifacts.mjs';
 import { applyGc, planGc, scopeBytes, sweepTemp } from './lib/artifact-gc.mjs';
@@ -47,7 +48,7 @@ import { evaluate } from './lib/select.mjs';
 import { excludeOnce, fill, git, lastLines, minutes, now, OrchError, readJson, redactSecrets, sh, writeAtomic, writeJson } from './lib/util.mjs';
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BOOL = new Set(['anyway', 'force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned']);
+const BOOL = new Set(['anyway', 'force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned', 'resume']);
 
 function parseArgs(argv) {
   const pos = []; const flags = { set: [] };
@@ -108,10 +109,11 @@ function checksFor(cfg, task) { return [...cfg.checks, ...task.checks]; }
 // ---------------------------------------------------------------------------------------------------- next action
 
 // When the current phase was opened: a report older than that belongs to an earlier round. Working opens with start or
-// fix, checking with the gate (local) or the push (PR).
+// fix or a current-round resume, checking with the gate (local) or the push (PR).
 function phaseOpenedAt(st) {
   const kinds = st.phase === 'working' ? ['start', 'fix'] : ['gate', 'push', 'recheck'];
-  return Date.parse([...st.events].reverse().find(e => kinds.includes(e.kind))?.t ?? 0) || 0;
+  const opened = Date.parse([...st.events].reverse().find(e => kinds.includes(e.kind))?.t ?? 0) || 0;
+  return st.phase === 'working' ? Math.max(opened, workerRestartAt(st)) : opened;
 }
 
 // Look up the runtime once per command, and only during a campaign. Unknown means the usual offline behaviour.
@@ -125,13 +127,15 @@ function campaignSessions(root) {
 function liveSubAgent(cfg, st, { role, tag = null, anyRound = false, sessions }) {
   const limitMs = (role === 'worker' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000;
   const now = Date.now();
+  const restartedAt = role === 'worker' && st.phase === 'working' ? workerRestartAt(st) : 0;
+  const opened = restartedAt || phaseOpenedAt(st) - 60000;
   return sessions?.find(s => {
     // A time that is not a real date, or lies in the future (a skewed clock), never blocks: it could block forever.
     if (!Number.isFinite(s.updatedAt) || s.updatedAt > now + 60000 || Number.isNaN(new Date(s.updatedAt).getTime())) return false;
     const round = anyRound ? s.label.match(/\s+r(\d+)(?:\s|$)/i)?.[1] : st.round;
     return round !== undefined && sameLabel(s.label, `${st.id} ${role}${tag ? ` ${tag}` : ''} r${round}`)
       && ['running', 'queued'].includes(s.status) && !s.endedAt
-      && (anyRound || s.updatedAt >= phaseOpenedAt(st) - 60000)
+      && (anyRound || s.updatedAt >= opened)
       && now - s.updatedAt < limitMs;
   });
 }
@@ -1495,9 +1499,31 @@ async function cmdStatus(root, { pos, flags }) {
   out(states.length ? states.map(s => [statusLine(s, cfg, sessions), ...late(s)].join('\n')).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
 }
 
-async function cmdPrompt(root, { pos }) {
+async function cmdPrompt(root, { pos, flags }) {
   const st = loadState(root, need(pos[0], 'task id'));
   const role = need(pos[1], 'worker|checker|advisor');
+  if (flags.resume) {
+    if (role !== 'worker' || st.phase !== 'working') throw new OrchError('--resume requires a worker in phase working');
+    const cfg = loadConfig(root);
+    const sessions = campaignSessions(root);
+    const live = liveSubAgent(cfg, st, { role: 'worker', sessions });
+    if (live) throw new OrchError(`the worker "${live.label}" is still running: wait for its completion, then orch record ${st.id} worker`, 4);
+    if (st.events.some(e => e.kind === 'restart' && e.role === 'worker' && e.round === st.round)) {
+      throw new OrchError(`the worker of round ${st.round} stopped twice; split the card (orch card split ${st.id}) or park it (orch park ${st.id}), or ask the owner`, 3);
+    }
+    const brief = fs.readFileSync(st.prompt, 'utf8');
+    const capped = text => block(text.split('\n').filter(Boolean).slice(0, 60));
+    const stat = git(['diff', '--stat', '--no-renames', '--no-ext-diff', '--no-textconv', st.base, '--'], st.worktree);
+    const untracked = git(['ls-files', '--others', '--exclude-standard'], st.worktree);
+    const file = path.join(runDir(root, st.id), 'prompts', `worker-r${st.round}-resume.md`);
+    writeAtomic(file, `${brief}\n\n${fill(tpl('resume'), { stat: capped(stat), untracked: capped(untracked) })}`);
+    st.prompt = file;
+    event(st, 'restart', { round: st.round, role: 'worker', model: cfg.roles.worker });
+    saveState(root, st);
+    recordActivity(root, 'prompt');
+    out(file, `next: ${spawnLine(cfg, 'worker', st, st.prompt, cfg.limits.workerTimeoutSec)}`);
+    return;
+  }
   if (role === 'advisor') {
     // The brief for the sub-agent that advises the coordinator on a run at its round limit (split or park).
     const cfg = loadConfig(root);
@@ -1782,8 +1808,23 @@ async function keeperDecision(root, cfg, campaign) {
   const now_ = Number(process.env.ORCH_NOW) || Date.now();
   const busy = busyNow(root, cfg);
   const activity = lastActivity(root, cfg, campaign, states.map(s => s.mtime));
+  // Splitting moves a run out of runs/. Its restarts still belong to this campaign's history, not its open work.
+  const archiveDir = path.join(orchDir(root), 'archive');
+  // Only archives written since the campaign started can hold its restarts; a file that cannot be read or parsed is
+  // skipped (history is advice, it never stops the keeper). An archive restored with an older mtime is not read:
+  // at worst the model advice comes later, never a wrong decision, and each tick does not reread every archive.
+  const campaignStart = Date.parse(campaign.startedAt ?? '') || 0;
+  const archived = [];
+  for (const d of (() => { try { return fs.readdirSync(archiveDir); } catch { return []; } })()) {
+    const file = path.join(archiveDir, d, 'state.json');
+    try {
+      if (fs.statSync(file).mtimeMs < campaignStart - 60000) continue;
+      const st = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (st && typeof st.id === 'string' && Array.isArray(st.events) && inScope(st.id)) archived.push(st);
+    } catch { /* missing, unreadable or malformed: skipped */ }
+  }
   return decide({
-    now: now_, campaign, runs: open, lastActivity: activity,
+    now: now_, campaign, runs: open, restartRuns: [...states.map(s => s.st).filter(st => inScope(st.id)), ...archived], lastActivity: activity,
     busy, busySince: busy && campaign.busy?.what === busy ? campaign.busy.since : null,
     othersRunning: states.some(({ st }) => !inScope(st.id) && ['working', 'checking'].includes(st.phase)
       && now_ - (Date.parse(st.events.at(-1)?.t ?? 0) || 0) < (st.phase === 'working' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000),
@@ -1879,7 +1920,7 @@ async function cmdKeeper(root, { flags }) {
     const reported = campaign.reported ?? {};
     const fresh = d.escalations.filter(e => !reported[e.key]);
     // A reported key is forgotten only when a full look found its cause gone (a stuck report: when progress changed).
-    const keep = k => !k.startsWith('busy:') && (k.startsWith('stuck:') ? k === `stuck:${d.progress}` : d.partial);
+    const keep = k => k.startsWith('restarts:') || (!k.startsWith('busy:') && (k.startsWith('stuck:') ? k === `stuck:${d.progress}` : d.partial));
     const kept = Object.entries(reported).filter(([k]) => keep(k) && !d.escalations.some(e => e.key === k));
     const next = { ...campaign, reported: Object.fromEntries([...kept, ...d.escalations.map(e => [e.key, reported[e.key] ?? now()])]) };
     // What is running, and since when (a hung command is reported after the longest sub-agent limit).
@@ -1895,7 +1936,7 @@ async function cmdKeeper(root, { flags }) {
     } else if (d.action === 'escalate' && !fresh.length) {
       Object.assign(result, { action: 'wait', reason: `already reported to the owner: ${d.reason}` });
     } else if (d.action === 'done') {
-      result.notify = `[orch keeper] Campaign "${campaign.scopeLabel}" is complete: ${d.reason}.`;
+      result.notify = [result.notify, `[orch keeper] Campaign "${campaign.scopeLabel}" is complete: ${d.reason}.`].filter(Boolean).join('\n');
       Object.assign(next, { active: false, stoppedAt: now(), stopReason: 'done' });
     }
     // Unconfirmed since the decision started: the next look reports it on the unconfirmed path, with its own notice.
@@ -2107,9 +2148,11 @@ export async function runCli() {
   }
   try {
     const root = primaryRoot();
+    const args = parseArgs(rest);
     // The coordinator's activity, for the campaign keeper: any orch command but the keeper's own.
-    if (!['keeper', 'campaign', 'fix'].includes(name)) recordActivity(root, name);
-    await fn(root, parseArgs(rest));
+    // A refused resume writes nothing; a successful one records activity after saving its brief and event.
+    if (!['keeper', 'campaign', 'fix'].includes(name) && !(name === 'prompt' && args.flags.resume)) recordActivity(root, name);
+    await fn(root, args);
   } catch (e) {
     if (!(e instanceof OrchError)) throw e;
     console.error(`orch: ${e.message}`);

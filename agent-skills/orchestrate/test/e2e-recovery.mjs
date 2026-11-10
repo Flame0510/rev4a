@@ -13,12 +13,13 @@ const base = process.argv[2] ? path.resolve(process.argv[2]) : fs.mkdtempSync(pa
 fs.rmSync(base, { recursive: true, force: true });
 const REPO = path.join(base, 'p');
 const KILL = path.join(base, 'kill-next-check');
+const SESSIONS = path.join(base, 'sessions.json'); // absent means unknown; never invoke the real runtime
 fs.mkdirSync(REPO, { recursive: true });
 
 let n = 0;
-const orch = (args, code = 0) => {
+const orch = (args, code = 0, extraEnv = {}) => {
   const r = spawnSync(process.execPath, [ORCH, ...args], {
-    cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, GH_TOKEN: 'gh-secret', OPENCLAW_GATEWAY_TOKEN: 'oc-secret', PROJECT_KEY: 'kept' }, // secret-ok: test fixture
+    cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ORCH_SESSIONS_JSON: SESSIONS, GH_TOKEN: 'gh-secret', OPENCLAW_GATEWAY_TOKEN: 'oc-secret', PROJECT_KEY: 'kept', ...extraEnv }, // secret-ok: test fixture
   });
   assert.equal(r.status, code, `orch ${args.join(' ')} exited ${r.status}:\n${r.stdout}${r.stderr}`); n++;
   return r.stdout + r.stderr;
@@ -141,5 +142,134 @@ delete process.env.GIT_SSH; delete process.env.GIT_SSH_COMMAND; // the developer
 gitCall(['ls-remote', 'git@example.invalid:x/y.git'], REPO, { allowFail: true });
 assert.match(fs.existsSync(sshLog) ? fs.readFileSync(sshLog, 'utf8') : '', /custom ssh: .*example\.invalid/, 'core.sshCommand is used'); n++;
 g('config', '--unset', 'core.sshCommand');
+
+// 7. A stopped worker continues from its current worktree once per round, with no runtime required.
+write('src/d.mjs', 'export const d = 1;\n');
+write('backlog/tasks/sb-4 - Card.md', card('SB-4', 'src/d.mjs'));
+g('add', 'src/d.mjs', 'backlog/tasks/sb-4 - Card.md'); g('commit', '-q', '-m', 'resume fixture');
+orch(['start', 'SB-4']);
+const resumeDir = path.join(REPO, '.orchestrate/runs/SB-4');
+const sf = path.join(resumeDir, 'state.json');
+const initial = state('SB-4');
+const original = fs.readFileSync(initial.prompt, 'utf8');
+const configBytes = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'));
+write('src/d.mjs', 'export const d = 2;\n', WT('SB-4'));
+write('src/unfinished.mjs', '// partial work\n', WT('SB-4'));
+orch(['campaign', 'start', '--session', 'resume-coordinator', '--scope', 'SB-4']);
+const sessions = rows => fs.writeFileSync(SESSIONS, JSON.stringify({ sessions: [{ key: 'resume-coordinator' }, ...rows] }));
+const worker = { key: 'worker', label: 'SB-4 worker r0', updatedAt: Date.now() };
+const beforeLive = fs.readFileSync(sf);
+const beforeLiveActivity = fs.readFileSync(path.join(REPO, '.orchestrate/activity'));
+const beforeLiveFiles = fs.readdirSync(path.join(resumeDir, 'prompts'));
+for (const status of ['running', 'queued']) {
+  sessions([{ ...worker, status }]);
+  has(orch(['prompt', 'SB-4', 'worker', '--resume'], 4), /the worker "SB-4 worker r0" is still running: wait for its completion, then orch record SB-4 worker/);
+  assert.deepEqual(fs.readFileSync(sf), beforeLive); n++;
+  assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/activity')), beforeLiveActivity); n++;
+  assert.deepEqual(fs.readdirSync(path.join(resumeDir, 'prompts')), beforeLiveFiles); n++;
+  assert.equal(fs.readFileSync(initial.prompt, 'utf8'), original); n++;
+}
+console.log('ok resume guard: running/queued -> exit 4; state/activity/brief unchanged; allowance unused');
+fs.rmSync(SESSIONS); // unknown runtime is allowed, even during a campaign
+let resumeOut = orch(['prompt', 'SB-4', 'worker', '--resume']);
+const resumeFile = resumeOut.split('\n')[0];
+const resumed = state('SB-4');
+const resumeBrief = fs.readFileSync(resumeFile, 'utf8');
+assert.equal(resumeFile, fs.realpathSync(path.join(resumeDir, 'prompts/worker-r0-resume.md'))); n++;
+assert.ok(resumeBrief.startsWith(`${original}\n\n`)); n++;
+has(resumeBrief, /## A worker before you stopped without a report[\s\S]*Do not start over[\s\S]*same report/);
+has(resumeBrief, /src\/d\.mjs\s+\|/); has(resumeBrief, /src\/unfinished\.mjs/);
+assert.equal(resumed.prompt, resumeFile); assert.equal(resumed.round, initial.round); assert.equal(resumed.phase, 'working'); n += 3;
+assert.deepEqual(resumed.events.slice(0, -1), initial.events); n++;
+const { t: restartedAt, ...restart } = resumed.events.at(-1);
+assert.ok(Number.isFinite(Date.parse(restartedAt))); n++;
+assert.deepEqual(restart, { kind: 'restart', round: 0, role: 'worker', model: 'w' }); n++;
+has(resumeOut, /next: delegate the worker.*worker-r0-resume\.md/);
+assert.equal(orch(['prompt', 'SB-4', 'worker']).trim(), resumeFile); n++;
+console.log('ok resume: original brief + diff stat + untracked; prompt/event/next updated without using a round');
+console.log(`resume section from test run:\n${resumeBrief.slice(original.length).trim()}`);
+
+const beforeRefusal = fs.readFileSync(sf);
+const beforeActivity = fs.readFileSync(path.join(REPO, '.orchestrate/activity'));
+const beforeFiles = fs.readdirSync(path.join(resumeDir, 'prompts'));
+has(orch(['prompt', 'SB-4', 'worker', '--resume'], 3), /worker of round 0 stopped twice; split the card \(orch card split SB-4\) or park it \(orch park SB-4\), or ask the owner/);
+assert.deepEqual(fs.readFileSync(sf), beforeRefusal); n++;
+assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/activity')), beforeActivity); n++;
+assert.deepEqual(fs.readdirSync(path.join(resumeDir, 'prompts')), beforeFiles); n++;
+assert.equal(fs.readFileSync(resumeFile, 'utf8'), resumeBrief); n++;
+orch(['prompt', 'SB-4', 'checker', '--resume'], 1);
+orch(['prompt', 'SB-4', 'advisor', '--resume'], 1);
+console.log('ok resume: second attempt -> exit 3; state, activity, prompt bytes and file list unchanged');
+
+// Resume prepared, coordinator interrupted before spawning: the old session cannot consume the second-stop path.
+const campaignPath = path.join(REPO, '.orchestrate/campaign.json');
+const preparedCampaign = fs.readFileSync(campaignPath);
+const keeperAt = Date.now() + 11 * 60000;
+const keeper = () => {
+  fs.writeFileSync(campaignPath, preparedCampaign); // each probe begins without a previous wake's backoff
+  return JSON.parse(orch(['keeper', '--json'], 0, { ORCH_NOW: String(keeperAt) }).trim().split('\n').at(-1));
+};
+assert.equal(keeper().action, 'wait'); n++;
+console.log('ok interrupted resume: unknown runtime -> wait');
+for (const [label, rows] of [
+  ['empty', []],
+  ['old-ended', [{ ...worker, status: 'done', updatedAt: Date.parse(restartedAt) - 1 }]],
+  ['old-running', [{ ...worker, status: 'running', updatedAt: Date.parse(restartedAt) - 1 }]],
+]) {
+  sessions(rows);
+  const d = keeper();
+  assert.equal(d.action, 'wake'); n++;
+  has(d.next, /^start it now: delegate the worker.*worker-r0-resume\.md/);
+  assert.doesNotMatch(d.next, /--resume/); n++;
+  console.log(`ok interrupted resume: ${label} -> start it now: spawn worker-r0-resume.md`);
+}
+has(orch(['status', 'SB-4']), /next: delegate the worker.*worker-r0-resume\.md/);
+// A replacement that really did start remains guarded; if it ends, do not offer another resume in this round.
+sessions([{ ...worker, status: 'running', updatedAt: Date.parse(restartedAt) }]);
+has(orch(['status', 'SB-4']), /wait for its completion, do not start another/);
+orch(['prompt', 'SB-4', 'worker', '--resume'], 4);
+assert.deepEqual(fs.readFileSync(sf), beforeRefusal); n++;
+assert.equal(keeper().action, 'wait'); n++;
+sessions([{ ...worker, status: 'done', updatedAt: Date.parse(restartedAt) }]);
+const stoppedAgain = keeper();
+has(stoppedAgain.next, /split the card .*or park it .*or ask the owner/);
+assert.doesNotMatch(stoppedAgain.next, /--resume/); n++;
+console.log('ok interrupted resume: replacement running -> wait/exit 4; replacement ended -> split/park/owner, no second --resume');
+fs.rmSync(SESSIONS);
+fs.writeFileSync(campaignPath, preparedCampaign);
+
+// A real checker rejection opens a correction round; its current fix brief, rather than the first brief, is preserved.
+fs.rmSync(path.join(WT('SB-4'), 'src/unfinished.mjs'));
+orch(['gate', 'SB-4']);
+write(ckr('SB-4'), 'HIGH: unfinished change\nEXECUTED: fixture -> failed\nVERDICT: FAIL\n');
+orch(['record', 'SB-4', 'checker']);
+const failedBytes = fs.readFileSync(sf);
+orch(['prompt', 'SB-4', 'worker', '--resume'], 1);
+assert.deepEqual(fs.readFileSync(sf), failedBytes); n++;
+assert.ok(!fs.existsSync(path.join(resumeDir, 'prompts/worker-r1-resume.md'))); n++;
+orch(['fix', 'SB-4']);
+const fix = state('SB-4');
+assert.equal(fix.round, 1); n++;
+const fixBrief = fs.readFileSync(fix.prompt, 'utf8');
+
+// Include staged additions in the diff against the base; both evidence blocks stop at 60 lines.
+for (let i = 0; i < 65; i++) write(`resume-fixtures/staged-${String(i).padStart(2, '0')}.txt`, 'partial\n', WT('SB-4'));
+const staged = spawnSync('git', ['add', 'resume-fixtures'], { cwd: WT('SB-4'), encoding: 'utf8' });
+assert.equal(staged.status, 0, staged.stderr); n++;
+for (let i = 0; i < 65; i++) write(`resume-fixtures/untracked-${String(i).padStart(2, '0')}.txt`, 'unfinished\n', WT('SB-4'));
+resumeOut = orch(['prompt', 'SB-4', 'worker', '--resume']);
+const nextBrief = fs.readFileSync(state('SB-4').prompt, 'utf8');
+assert.ok(nextBrief.startsWith(`${fixBrief}\n\n`)); n++;
+const section = nextBrief.slice(fixBrief.length);
+const blocks = [...section.matchAll(/```text\n([^]*?)\n```/g)].map(m => m[1].split('\n'));
+assert.deepEqual(blocks.map(b => b.length), [60, 60]); n++;
+has(blocks[0].join('\n'), /resume-fixtures\/staged-00\.txt/);
+has(blocks[1].join('\n'), /resume-fixtures\/untracked-00\.txt/);
+assert.doesNotMatch(section, /(?:staged|untracked)-64\.txt/); n++;
+assert.equal(state('SB-4').round, 1); n++;
+assert.equal(state('SB-4').events.filter(e => e.kind === 'restart').length, 2); n++;
+has(resumeOut, /next: delegate the worker.*worker-r1-resume\.md/);
+assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/config.json')), configBytes); n++;
+console.log('ok resume: outside working -> exit 1; after fix -> allowed; current fix brief kept; both lists capped at 60 lines; config unchanged');
 
 console.log(`e2e-recovery: ${n} checks passed in ${REPO}`);

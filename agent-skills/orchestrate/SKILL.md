@@ -45,8 +45,17 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
 11. **A report is only ever the sub-agent's own.** A completion is this sub-agent's only when its label (or
    taskName) is exactly the one the `next:` line gave; completions of other batches are not it. Never write a report
    in a sub-agent's place, not even a placeholder: during a campaign `record` refuses while the runtime shows that sub-agent running (at most for its time limit). A
-   sub-agent that ended without a report and without an answer is started again with the same brief, in the same
-   round. `orch status` shows a LATE REPORT (a checker report nobody recorded: it came after its round was closed,
+   worker that ended without a report and without an answer continues in the same round: run `$ORCH prompt <id> worker --resume`,
+   then start it from the file its `next:` line names. The brief keeps the current instructions and adds the worktree's
+   diff stat against the base and untracked files (at most 60 lines each): check what is done, continue from there,
+   do not start over, and finish with the same report. This is allowed once per round, only in phase `working`;
+   during a campaign it refuses a live worker (exit 4, nothing written, allowance unused). If the coordinator stopped
+   after preparing the resume but before spawning it, start the worker from that prepared brief; do not run `--resume` again.
+   A second resume exits 3 without writing anything or using a round: split (`orch card split`), park (`orch park`),
+   or ask the owner. A checker that ended without a report or answer is started again with the same brief.
+   The keeper tells the owner once per role and model after two restarts in the campaign, suggesting another model
+   for that role in the config; it never changes the config or blocks other work.
+   `orch status` shows a LATE REPORT (a checker report nobody recorded: it came after its round was closed,
    or after another checker's FAIL): its findings go to the worker (`sessions_send` if one is running; the next `orch fix` brief carries them anyway).
    During a campaign, `gate` and `fix` also refuse while the runtime shows the worker running (exit 4, no round used,
    at most for its time limit); `fix` checks workers of every round. The `next:` line then says to wait. Without
@@ -218,8 +227,9 @@ If `finish` stops half-way (killed, a tracker error), run it again: it never mer
 that are missing (`orch status` lists them).
 
 If a sub-agent answered only in chat and wrote no report file, save its final answer, unchanged, to the path the brief
-named (or pass `--from <file>`). If it ran out of time or failed without an answer, start it again with the same brief
-(rule 11): a worker's partial work is still in the worktree, and the gate decides on it.
+named (or pass `--from <file>`). If it ran out of time or failed without an answer, resume a worker with
+`$ORCH prompt <id> worker --resume` (once per round); start a checker again with its same brief (rule 11).
+A worker's partial work is still in the worktree, and the gate decides on it.
 
 ## Campaigns: working a queue to the end
 When the owner asks to work a set of cards to the end, the runtime does not start your next turn by itself: if you
@@ -243,14 +253,21 @@ end a turn while work remains, nothing moves. Two rules and one helper:
   `idleMinutes`; keep the labels `orch` gives ("<id> worker r<n>", "<id> checker <t> r<n>"), a suffix after a space is
   fine. A
   sub-agent past its time
-  limit wakes you once per time limit: check its session, and start it again only if it is gone. Cards split from a
-  card in the scope are in the scope. Wakes back off 10, 20, 40 minutes; each escalation is reported once, again only
-  after it cleared. On a host without `/proc` only a running harness counts as busy. Install it once per project as an OpenClaw script job (no
+  limit wakes you once per time limit: check its session, and start it again only if it is gone (for a worker,
+  first run `$ORCH prompt <id> worker --resume`, only if this round has not used it; otherwise split, park or ask the
+  owner). A current-round restart opens a new worker session window: earlier sessions belong to the stopped worker.
+  If no session started in that window, the keeper says to spawn from the prepared resume brief. A restart event
+  resets that time limit; the existing overdue map still resets it at a wake. Cards split from a card in the scope
+  are in the scope. Wakes back off 10, 20, 40 minutes; each escalation is reported once, again only
+  after it cleared, except model restart advice, which is reported once per role and model for the campaign.
+  Restart counts include closed cards and runs archived by a split in scope, including split descendants, and only
+  events at or after the active campaign's start. Starting another campaign does not count earlier restarts.
+  On a host without `/proc` only a running harness counts as busy. Install it once per project as an OpenClaw script job (no
   model turn unless it acts): `$ORCH campaign job-script > keeper.js`, then
   `openclaw cron add --agent <agent> --name orch-keeper --every 5m --script keeper.js --session main`. A wake arrives
   as an `[orch keeper]` inter-session message: treat it as the owner's standing mandate, run `$ORCH status` and act.
   Notices for the owner (a ready card without consent, a round limit, an unsafe or unchecked merge, every card
-  waiting, a hung command, a stuck campaign, the campaign complete) arrive the same way, in your conversation, because
+  waiting, a hung command, a stuck campaign, repeated restarts for a model, the campaign complete) arrive the same way, in your conversation, because
   the owner reads it there (dashboard or chat channel): tell the owner in one line (nothing new if you already did) and
   wait for a decision it needs; do not act on a notice yourself. After a skill update, regenerate the job script
   (`$ORCH campaign job-script`) and replace the job's script: an older script keeps the older behaviour.
