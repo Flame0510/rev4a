@@ -98,13 +98,14 @@ export default function ConfigPageClient() {
         body: JSON.stringify({ env: changes }),
       });
       const data = await res.json();
-      if (data.status === 'ok') {
+      if (res.ok && data.status === 'ok') {
         loadedEnvRef.current = savedEnv;
         setStatus('ok');
         setStatusMsg('Environment variables saved. Restart Rev4a to apply them.');
         if (restart) {
           setRestarting(true);
-          await fetch('/api/config/restart', { method: 'POST' });
+          const restartRes = await fetch('/api/config/restart', { method: 'POST' });
+          if (!restartRes.ok) throw new Error('Configuration saved, but Rev4a could not restart. Try again.');
           setTimeout(() => {
             setRestarting(false);
             setStatus('idle');
@@ -113,7 +114,7 @@ export default function ConfigPageClient() {
         }
       } else {
         setStatus('error');
-        setStatusMsg(data.error || 'Error');
+        setStatusMsg(data.error || `Could not save configuration (HTTP ${res.status})`);
       }
     } catch (e: unknown) {
       setRestarting(false);
@@ -247,13 +248,19 @@ export default function ConfigPageClient() {
             <Button
               variant="primary"
               size="md"
-              loading={restarting}
+              loading={status === 'saving' || restarting}
               disabled={status === 'saving' || restarting}
               onClick={() => setConfirmAction('restart')}
             >
-              {restarting ? 'Restarting...' : 'Save & Restart'}
+              {restarting ? 'Restarting…' : status === 'saving' ? 'Saving…' : 'Save & Restart'}
             </Button>
           </div>
+
+          {statusMsg && (status === 'error' || status === 'ok') && (
+            <Surface tone={status === 'error' ? 'danger' : 'success'}>
+              <p role={status === 'error' ? 'alert' : 'status'}>{statusMsg}</p>
+            </Surface>
+          )}
 
           {/* Confirm modal */}
           <Modal

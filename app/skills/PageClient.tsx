@@ -224,7 +224,13 @@ export default function SkillsPage() {
       });
       const data = await res.json();
       if (data.ok) {
-        showToast(`Promoted "${skill.name}" to shared skills${data.overwritten ? ' (overwritten)' : ''}`);
+        let message = `Promoted "${skill.name}" to shared skills${data.overwritten ? ' (overwritten)' : ''}`;
+        if (data.skippedCount > 0) {
+          const sample: string[] = data.skipped ?? [];
+          message += ` — ${data.skippedCount} file${data.skippedCount === 1 ? '' : 's'} skipped`;
+          if (sample.length) message += `: ${sample.join(', ')}${data.skippedCount > sample.length ? ', …' : ''}`;
+        }
+        showToast(message);
         await load();
       } else {
         showToast(`Error: ${data.error}`);

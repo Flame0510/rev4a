@@ -73,7 +73,7 @@ Read before starting:
 | Memory | `sum of the memory limits of every agent that will run at the same time + 1 GB ≤ Docker MemTotal`. An agent with no limit counts as its current `docker stats` usage + 1 GB. When it does not hold, stop and ask the owner to stop agents or to pick a bigger host. |
 | Host continuity | A laptop stays on AC power for live tests. Prevent idle sleep without changing permanent power settings. Record sleep/wake evidence if observation pauses: suspended-host intervals invalidate readiness, timeout and observation measurements. |
 | Owner | Available for the up-front ok, the Connect step, the oks listed in Rules, and the end. Told that their Rev4a instance is replaced for a while and that their agents must not be updated from it. |
-| Secrets | The scripts sign an admin cookie from `REV4A_JWT_SECRET` (the environment, else the `.env` named by `REV4A_ENV_FILE`, `$REV4A_DATA_DIR/.env` or `~/.config/rev4a/.env`), never printed: it must be the secret of the instance under test. The branch's data copy holds `.env`, `provider-keys.json` and the databases: it stays outside the repository and is removed at the end. |
+| Secrets | The scripts call the API with `Authorization: Bearer <REV4A_TOKEN>` (the environment, else the `.env` named by `REV4A_ENV_FILE`, `$REV4A_DATA_DIR/.env` or `~/.config/rev4a/.env`), never printed: it must be the token of the instance under test. The branch's data copy holds `.env`, `provider-keys.json` and the databases: it stays outside the repository and is removed at the end. |
 
 ```bash
 docker info --format '{{.MemTotal}}'                                              # bytes
@@ -449,7 +449,7 @@ node $S/schema-diff.mjs --from-image openclaw-agent-base:$FROM --to-image opencl
   Expiry during a long update is not migration loss: reopen the same browser and test approval on TO.
 - `snapshot.mjs` checks first that the container runs, that its Gateway answers `/startupz` "started"
   within `--settle` + 300 s, and that this Rev4a lists it (`GET /api/agents`); any failure is exit 2
-  with `ok:false` in `index.json` (often a wrong `REV4A_BASE_URL` or `REV4A_JWT_SECRET`). It then waits
+  with `ok:false` in `index.json` (often a wrong `REV4A_BASE_URL` or `REV4A_TOKEN`). It then waits
   until the container has been up `--settle` seconds (default 180) with CPU under `--max-cpu`
   (default 80 %), retries each failed item once after `--retry-wait` seconds (default 30), and exits
   2 when more than a third of the required items still fail. It refuses an agent whose Rev4a name is

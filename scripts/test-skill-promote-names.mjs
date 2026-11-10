@@ -5,7 +5,7 @@
  * Boundaries: helper.sh, .hidden, ...., ..env and 255-byte names pass; traversal, dot paths,
  * separators, NUL, CR/LF, empty and 256-byte names fail. Exactly 1 MiB passes; +1 is skipped
  * for extras and returns 413 for SKILL.md. At most 200 safe extra reads are attempted.
- * Round 2: 150,000 listed extras retain exact skipped counts with only 50 sampled names;
+ * Round 2: 50,000 listed extras retain exact skipped counts with only 50 sampled names;
  * regular-file/dangling-link directories return 403; realpath catches swapped ancestors;
  * O_NOFOLLOW refuses final-file symlinks introduced after lstat for SKILL.md and extras.
  */
@@ -145,7 +145,7 @@ await test('malicious listing cannot escape; skipped names retain their exact JS
     const r = await s.promote();
     assert.equal(r.status, 200);
     assert.equal(r.body.ok, true);
-    assert.deepEqual(r.body.skipped, bad.map(n => n.length > 120 ? `${n.slice(0, 120)}…` : n), 'long names are truncated in the sample');
+    assert.deepEqual(r.body.skipped, [...bad.map(n => n.length > 120 ? `${n.slice(0, 120)}…` : n), 'scripts/'], 'long names are truncated; folders are reported as skipped');
     assert.equal(r.body.extraCopied, good.length);
     assert.deepEqual(s.reads, ['SKILL.md', ...good], 'unsafe entries never reach cat');
     assert.equal(r.body.destPath, path.join(s.dir, 'SKILL.md'));

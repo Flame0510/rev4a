@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-08
+> **Last updated:** 2026-11-09
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -40,14 +40,16 @@ is needed; cookie flags and the 7-day lifetime are unchanged.
 `proxy.ts` checks every POST/PUT/PATCH/DELETE to `/api` or `/api/*` carrying the
 `rev4a_token` cookie and no `Authorization` header, before route authentication:
 
-- With `Origin`, its host and port must equal `Host` (case-insensitive), or its full
+- Literal `Origin: null` is always refused. Otherwise, `Sec-Fetch-Site: same-origin`
+  is accepted first, even with a mismatched or malformed `Origin`. The browser computes
+  this metadata from the real page and target URLs, including behind a proxy rewriting `Host`.
+- Without that same-origin metadata, a present `Origin` must be well-formed and its
+  host and port must equal `Host` (case-insensitive), or its full
   origin must be listed in `REV4A_ALLOWED_ORIGINS` (comma-separated HTTP(S) origins,
   e.g. `https://rev4a.example.com`). Schemes and ports are significant for the allowlist;
   sibling subdomains, wildcards and forwarded headers do not grant trust.
   Host and Origin use the Origin scheme to normalize default ports: explicit and
   implicit HTTP :80 / HTTPS :443 match; non-default ports must still match exactly.
-- `Origin: null` and malformed origins are refused, including when fetch metadata says
-  `same-origin`. A present `Origin` takes precedence over fetch metadata.
 - Without `Origin`, `Sec-Fetch-Site: cross-site` and `same-site` are refused.
   `same-origin`, `none` and missing metadata are allowed for older browsers and clients.
 
@@ -57,8 +59,9 @@ GET/HEAD/OPTIONS and requests without the session cookie are unaffected. The upd
 runs first and retains its existing 503 response and exemptions. This check applies to
 update-exempt routes too. It does not replace the terminal WebSocket's own Origin check.
 
-Normally no setting is required. For a reverse proxy that rewrites `Host`, list only the
-dashboard's trusted public origins in `REV4A_ALLOWED_ORIGINS` and restart Rev4a.
+Normally no setting is required. For an older browser without fetch metadata behind a
+reverse proxy that rewrites `Host`, list only the dashboard's trusted public origins in
+`REV4A_ALLOWED_ORIGINS` and restart Rev4a.
 
 ### API-only auth
 `Authorization: Bearer <REV4A_TOKEN>`. No other fallback is accepted: a `?token=` query
@@ -175,9 +178,11 @@ including an existing file with broader permissions.
 **Body:** `{ "password": "..." }` — minimum 8 characters
 
 **Errors:** `400` invalid JSON, missing/non-string password, fewer than 8 characters,
-or a value containing CR, LF or NUL (names `REV4A_PASSWORD`); `403` missing/wrong setup
+or a value containing CR, LF or NUL (names `REV4A_PASSWORD`), or a password `.env` cannot
+hold faithfully (contains `$`, or a single quote combined with leading/trailing spaces, `#`
+or a leading quote; same rules as `PUT /api/config/env`); `403` missing/wrong setup
 code; `409` already configured, including a request paused reading its body while
-another request finished setup; `500` the `.env` file could not be written. The file
+another request finished setup, or an existing `.env` with multi-line/ambiguous values; `500` the `.env` file could not be written. The file
 is freshly read and configuration synchronously rechecked immediately before writing.
 
 **Response:** `{ "status": "ok" }`
@@ -501,9 +506,10 @@ Update environment variables on the VPS host.
 
 **Side effects:**
 - Patches the persistent data directory's `.env` (linked from the project root)
-  line by line. Only the first assignment of a submitted key is replaced with
-  `KEY=value` (or removed when a stored non-empty value is cleared); an absent
-  non-empty key is appended. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
+  by physical line, preserving CRLF, CR and LF separators. The last assignment of an
+  edited key is replaced with `KEY=value` and its earlier duplicates are removed;
+  clearing a stored non-empty value removes every assignment of that key. An absent
+  non-empty key is appended. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment such as `REV4A_TOKEN="t" # comment`), or a backslash immediately before a same-kind quote (including the closing quote) is ambiguous across tools: an edit then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
   Every other line, including unknown operator keys, comments, blank lines, order
   and line endings, is preserved. Stored parsed values are compared first, so
   unchanged empty assignments (`KEY=`, `KEY=""`, `KEY=''`) retain their original bytes. An unchanged full GET-to-PUT round trip
@@ -529,6 +535,8 @@ Update environment variables on the VPS host.
 
 **Response:** `{ "status": "ok", "updated": ["REV4A_PASSWORD", ...] }`
 `updated` lists keys whose assignment changed; ignored and unchanged keys are omitted.
+
+**Writing:** values are serialised so Next.js and Rev4a read them back exactly (`#`, leading/trailing spaces or a leading quote -> single-quoted). `400` for a value containing `$` (`The value for <key> contains '$': Next.js expands it ...`: Next expands `$VAR` even single-quoted and overrides the launcher's value), for one that cannot be represented (a single quote together with leading/trailing spaces, `#` or a leading quote; a trailing backslash inside quotes: `The value for <key> cannot be stored in .env as typed ...`), or containing U+2028/U+2029 (`... contains a Unicode line separator ...`). `409` when `.env` itself is not plain (multi-line or ambiguous values): edit it by hand.
 
 **Errors (400):** `Keys not allowed: ...`, `Invalid environment key: <key>`, or
 `Invalid value for <key>: must be a string without CR, LF or NUL characters`.
@@ -1805,8 +1813,9 @@ Without `job`, the existing root navigation is unchanged.
 
 The target host is derived from the `Host` header, with the agent's published port;
 callers cannot choose it through a parameter. To keep dashboard cookies away from
-agent ports, `localhost` (case-insensitive, including `localhost.`), `::1` and `[::1]`
-map to `127.0.0.1`, and any `127.x.y.z` maps to `localhost`. Other hosts, including
+agent ports, `localhost` (case-insensitive, including `localhost.`) maps to `127.0.0.1`;
+`::1`, `[::1]` and any `127.x.y.z` map to `localhost`, which resolves to both loopback
+address families so IPv6-only publishes remain reachable. Other hosts, including
 LAN/public IPs, domains and `localhost.example.com`, stay unchanged. Both link kinds
 use this mapping, including the one-time link's `gatewayUrl` fragment. Paths, query
 parameters and authentication fragment values are preserved.
@@ -2831,8 +2840,10 @@ Copy a skill from an agent's workspace to the shared skills directory, making it
 - `extraCopied`: number of additional files (beyond SKILL.md) copied from the skill directory
 - `skipped`: up to **50** extra filenames omitted because they are unsafe, exceed a limit, cannot be read or cannot be safely written. Names are returned as JSON strings (control characters are escaped); a name longer than 120 characters is cut to 120 followed by `…`, so the response stays small. Promotion still succeeds for the remaining files.
 - `skippedCount`: total number of omitted extra-file entries, including those beyond the 50-name response sample. Listings are scanned iteratively; at most 200 safe names are retained for copying, and later entries are counted without being read.
+- The Skills page reports partial promotion with the skipped count and filename sample;
+  an ellipsis indicates more omitted entries than the returned sample.
 - The folder listing (`ls -1p`) is limited to 1 MiB: over it the promote answers **413** and writes nothing; any other listing failure answers **502** and writes nothing (it is never treated as "no extra files").
-- Extra filenames must be plain names of at most 255 UTF-8 bytes: empty names, `.`, `..`, `/`, `\\`, NUL, CR and LF are rejected. `.hidden`, `....` and `..env` are allowed. Directories are not copied.
+- Extra filenames must be plain names of at most 255 UTF-8 bytes: empty names, `.`, `..`, `/`, `\\`, NUL, CR and LF are rejected. `....` and `..env` are allowed. The listing is `ls -1p` without `-a`, so dot-files are never listed or copied. Folders are not copied: they are reported in `skipped` (as `name/`).
 - Each file is limited to **1 MiB (1,048,576 bytes)**, inclusive. An oversized `SKILL.md` returns **413** before any host writes; an oversized extra is skipped. At most **200** safe extra-file reads are attempted (failed and oversized reads count); later names are skipped.
 - Every host write checks that its resolved path is inside the skill directory and that the directory's current real path is inside the shared skills root's real path. Symlink directories (including nested skill-name components), regular files in place of directories, and symlink or non-regular file destinations are refused: **403** for the skill directory or `SKILL.md`, or `skipped` for an extra. Dangling symlinks are refused too. Files are opened with `O_NOFOLLOW` before writing through the descriptor, so a final-file symlink introduced after the checks is also refused without truncating its target. Existing regular files can still be overwritten.
 - The skill name is validated against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`

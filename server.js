@@ -33,6 +33,7 @@ const path = require('path');
 const next = require('next');
 const { CLIENT_IP_HEADER, clientAddress, parseTrustedProxies } = require('./lib/client-address.js');
 const { passwordFingerprint, fingerprintEquals } = require('./lib/session-fingerprint.js');
+const { unquoteEnvValue } = require('./lib/env-file.js');
 
 const PORT = parseInt(process.env.PORT || '3740', 10);
 const TERMINAL_WS_PORT = parseInt(process.env.TERMINAL_WS_PORT || '3741', 10);
@@ -65,7 +66,7 @@ function authEnvValue(key) {
   if (process.env[key]) return process.env[key];
   try {
     const m = new RegExp(`^${key}=(.*)$`, 'm').exec(fs.readFileSync(path.join(DATA_DIR, '.env'), 'utf8'));
-    return m ? m[1].trim() : '';
+    return m ? unquoteEnvValue(m[1]) : '';
   } catch {
     return '';
   }

@@ -8,7 +8,6 @@
 //   2  the result would not be trustworthy (agent down, Rev4a unreachable, snapshot incomplete…);
 //   3  triage.mjs only: escalate to the full track.
 import { execFileSync } from 'node:child_process';
-import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -618,9 +617,12 @@ export const schemaKnows = (map, p) => ['named', 'map'].includes(schemaLookup(ma
 
 // ── The Rev4a API ───────────────────────────────────────────────────────────
 
-/** REV4A_JWT_SECRET from the environment or the install's .env (lib/rev4a-auth.js reads the same). */
-function jwtSecret() {
-  if (process.env.REV4A_JWT_SECRET) return process.env.REV4A_JWT_SECRET;
+/**
+ * REV4A_TOKEN from the environment or the install's .env: the API's own Bearer credential.
+ * (Since SEC-21 a session cookie must carry the password fingerprint; the Bearer path needs none.)
+ */
+function apiToken() {
+  if (process.env.REV4A_TOKEN) return process.env.REV4A_TOKEN;
   // Same lookup as the server (lib/rev4a-paths.ts): REV4A_DATA_DIR first, then the default.
   const candidates = [
     process.env.REV4A_ENV_FILE,
@@ -630,20 +632,10 @@ function jwtSecret() {
   for (const file of candidates) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
-    const m = text.match(/^REV4A_JWT_SECRET=(.*)$/m);
-    if (m) return m[1].trim().replace(/^["']|["']$/g, '');
+    const m = [...text.matchAll(/^\s*(?:export\s+)?REV4A_TOKEN\s*=([^\r\n]*)$/gm)].pop();
+    if (m) return m[1].trim().replace(/^(['"])(.*)\1$/, '$2');
   }
-  throw new UsageError('REV4A_JWT_SECRET not found: set it, or REV4A_ENV_FILE to the .env of the Rev4a instance under test');
-}
-
-const b64url = (v) => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url');
-
-/** An admin session cookie for the local Rev4a, signed like the login route does (HS256). Never printed. */
-function adminCookie() {
-  const now = Math.floor(Date.now() / 1000);
-  const body = `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({ role: 'admin', iat: now, exp: now + 3600 })}`;
-  const sig = createHmac('sha256', jwtSecret()).update(body).digest('base64url');
-  return `rev4a_token=${body}.${sig}`;
+  throw new UsageError('REV4A_TOKEN not found: set it, or REV4A_ENV_FILE to the .env of the Rev4a instance under test');
 }
 
 /**
@@ -652,12 +644,12 @@ function adminCookie() {
  * success exit status in the snapshot index. Calls time out after 120 s by default.
  */
 export async function api(method, apiPath, body, { baseUrl = process.env.REV4A_BASE_URL || 'http://localhost:3740', timeoutMs = 120_000 } = {}) {
-  const cookie = adminCookie();
+  const auth = `Bearer ${apiToken()}`;
   let res;
   try {
     res = await fetch(new URL(apiPath, baseUrl), {
       method,
-      headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      headers: { Authorization: auth, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });

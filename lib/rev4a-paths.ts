@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
-import { assertEnvKey, assertEnvValue } from './env-file.js';
+import { assertEnvKey, assertEnvValue, applyEnvEdits } from './env-file.js';
 
 /**
  * Centralised Rev4a data directory.
@@ -127,8 +127,9 @@ export function loadEnvVars(): Record<string, string> {
 }
 
 /**
- * Write a key-value pair to the persistent .env file.
- * Replaces existing value for the same key, appends if missing.
+ * Write a key-value pair to the persistent .env file through the shared plain-file editor
+ * (lib/env-file.js applyEnvEdits): replaces the last assignment of the key and drops earlier
+ * duplicates, appends if missing, '' removes it; throws NOT_PLAIN_ENV / UNSAFE_ENV_VALUE.
  */
 export function writeEnvVar(key: string, value: string): void {
   assertEnvKey(key);
@@ -141,26 +142,9 @@ export function writeEnvVar(key: string, value: string): void {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
-  const lines = content.split('\n');
-  let found = false;
-  const updated = lines.map((line) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith(`${key}=`)) {
-      found = true;
-      return `${key}=${value}`;
-    }
-    return line;
-  });
-
-  if (!found) {
-    updated.push(`${key}=${value}`);
-  }
-
-  fs.writeFileSync(ENV_FILE, updated.join('\n').trim() + '\n', {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-  fs.chmodSync(ENV_FILE, 0o600);
+  const next = applyEnvEdits(content, [[key, value]]).content;
+  fs.writeFileSync(ENV_FILE, next, { encoding: 'utf-8', mode: 0o600 });
+  try { fs.chmodSync(ENV_FILE, 0o600); } catch { /* owner differs: the write itself succeeded */ }
 
   // Also set in process.env so current process picks it up immediately
   process.env[key] = value;

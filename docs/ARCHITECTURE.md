@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-08
+> **Last updated:** 2026-11-09
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -554,8 +554,9 @@ using the Origin's scheme: explicit and implicit HTTP :80 / HTTPS :443 are equiv
 while other ports remain significant. For browsers that send no
 fetch metadata behind a reverse proxy that rewrites `Host`, an operator can explicitly trust the dashboard's public origin through `REV4A_ALLOWED_ORIGINS`,
 a comma-separated list of full HTTP(S) origins; its comparisons include scheme and port,
-never wildcards. `X-Forwarded-Host` is not trusted by this check. Opaque (`null`) and
-malformed origins are refused. Without `Origin`, `Sec-Fetch-Site: cross-site` or
+never wildcards. `X-Forwarded-Host` is not trusted by this check. Literal `Origin: null`
+is always refused; malformed or mismatched origins are accepted only by the earlier
+`Sec-Fetch-Site: same-origin` branch. Without `Origin`, `Sec-Fetch-Site: cross-site` or
 `same-site` is refused; `same-origin`, `none` or absent metadata passes. Refusals are 403 JSON:
 `{ "error": "Cross-site request refused" }`.
 

@@ -5,15 +5,15 @@
  * PUT  /api/config/env  — upsert one or more env vars
  *
  * Only keys prefixed with REV4A_ or PROVIDER_ are exposed.
- * Auth: requireAuthJWT (browser cookie or bearer token) — API routes are
- * never covered by proxy.ts, it explicitly exempts /api/*.
+ * Auth: requireAuthJWT (browser cookie or bearer token). proxy.ts does not authenticate /api/*,
+ * but its update guard and origin guard (cross-site writes) do run on it.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { assertEnvKey, assertEnvValue, classifyEnvLines, isPlainEnvFile, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
+import { applyEnvEdits, assertEnvKey, assertEnvValue, classifyEnvLines, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -101,50 +101,24 @@ export async function PUT(request: NextRequest) {
     const changes = entries.filter(([key, value]) => (key in current)
       ? value !== current[key]
       : value !== '' && value !== (process.env[key] ?? ''));
-    if (changes.length > 0 && !isPlainEnvFile(content)) {
-      return NextResponse.json({
-        error: '.env has a multi-line or unusual value: edit it by hand, Rev4a will not guess where a value ends',
-      }, { status: 409 });
-    }
+    let next = content;
+    let updated: string[] = [];
     try {
       for (const [key, value] of changes) assertEnvValue(key, value);
+      if (changes.length > 0) ({ content: next, updated } = applyEnvEdits(content, changes as Array<[string, string]>));
     } catch (e) {
-      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+      const err = e as Error & { code?: string };
+      if (err.code === 'NOT_PLAIN_ENV') return NextResponse.json({ error: err.message }, { status: 409 });
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    let next = content;
-    const newline = content.includes('\r\n') ? '\r\n' : '\n';
-    const updated: string[] = [];
-    for (const [key, value] of changes) {
-      assertEnvValue(key, value);
-      const classified = classifyEnvLines(next);
-      const lines = classified.map((line) => line.text);
-      const index = classified.findIndex((line) => line.key === key);
-      if (index === -1) {
-        // An unchanged GET-injected setting is not a new user setting.
-        if (value === '' || value === process.env[key]) continue;
-        if (lines.length && !lines[lines.length - 1].endsWith('\n')) {
-          lines[lines.length - 1] += newline;
-        }
-        lines.push(`${key}=${value}${newline}`);
-      } else if (value === '') {
-        lines.splice(index, classified[index].endIndex - index + 1);
-      } else {
-        const end = classified[index].endIndex;
-        const ending = lines[end].endsWith('\r\n') ? '\r\n'
-          : lines[end].endsWith('\n') ? '\n' : '';
-        lines.splice(index, end - index + 1, `${key}=${value}${ending}`);
-      }
-      next = lines.join('');
-      updated.push(key);
-    }
-
     if (next === content) {
       // Nothing to write, but a loose mode is still tightened (the file holds secrets).
       try { if ((fs.statSync(ENV_FILE).mode & 0o077) !== 0) fs.chmodSync(ENV_FILE, 0o600); } catch { /* missing: nothing to protect */ }
       return NextResponse.json({ status: 'ok', updated: [] });
     }
     fs.writeFileSync(ENV_FILE, next, { encoding: 'utf-8', mode: 0o600 });
-    fs.chmodSync(ENV_FILE, 0o600);
+    // The save succeeded; a file owned by another user cannot be chmod-ed: warn, do not fail it.
+    try { fs.chmodSync(ENV_FILE, 0o600); } catch (e) { console.warn('[config/env] could not tighten .env to 0600:', (e as NodeJS.ErrnoException).code); }
 
     // Reload systemd so EnvironmentFile= picks up .env changes on next restart.
     // No need to write individual Environment= lines into unit files —

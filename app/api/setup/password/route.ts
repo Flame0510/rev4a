@@ -15,39 +15,13 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { isConfigured, requireAuthIfConfigured } from '@/lib/rev4a-auth';
-import { assertEnvValue } from '@/lib/env-file';
+import { applyEnvEdits, assertEnvValue, hasEnvAssignment } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 function generateSecret(len: number): string {
   return crypto.randomBytes(len).toString('base64url').slice(0, len);
-}
-
-/**
- * True only if an actual assignment line for `key` exists — a commented-out
- * or incidental mention (`# old REV4A_TOKEN=…`) does not count. A substring
- * check here would report the key as present and skip generating it, leaving
- * the instance without a usable secret.
- */
-function hasEnvKey(content: string, key: string): boolean {
-  return content.split('\n').some((line) => line.trimStart().startsWith(`${key}=`));
-}
-
-/** Replace the assignment line for `key`, or append one if none exists. */
-function upsertEnvLine(content: string, key: string, value: string): string {
-  assertEnvValue(key, value);
-  const lines = content.split('\n');
-  let replaced = false;
-  const updated = lines.map((line) => {
-    if (!replaced && line.trimStart().startsWith(`${key}=`)) {
-      replaced = true;
-      return `${key}=${value}`;
-    }
-    return line;
-  });
-  if (!replaced) updated.push(`${key}=${value}`);
-  return updated.join('\n');
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -68,13 +42,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
+  if (!body?.password) {
+    return NextResponse.json({ error: 'REV4A_PASSWORD is required' }, { status: 400 });
+  }
   try {
     assertEnvValue('REV4A_PASSWORD', body?.password);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
-  }
-  if (!body?.password) {
-    return NextResponse.json({ error: 'REV4A_PASSWORD is required' }, { status: 400 });
   }
 
   if (body.password.length < 8) {
@@ -96,12 +70,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
-    content = upsertEnvLine(content, 'REV4A_PASSWORD', body.password);
-    if (!hasEnvKey(content, 'REV4A_JWT_SECRET')) {
-      content = upsertEnvLine(content, 'REV4A_JWT_SECRET', generateSecret(64));
-    }
-    if (!hasEnvKey(content, 'REV4A_TOKEN')) {
-      content = upsertEnvLine(content, 'REV4A_TOKEN', generateSecret(32));
+    const edits: Array<[string, string]> = [['REV4A_PASSWORD', body.password]];
+    if (!hasEnvAssignment(content, 'REV4A_JWT_SECRET')) edits.push(['REV4A_JWT_SECRET', generateSecret(64)]);
+    if (!hasEnvAssignment(content, 'REV4A_TOKEN')) edits.push(['REV4A_TOKEN', generateSecret(32)]);
+    try {
+      // One physical line per assignment, values written so every reader gets them back intact.
+      ({ content } = applyEnvEdits(content, edits));
+    } catch (e) {
+      const err = e as Error & { code?: string };
+      return NextResponse.json({ error: err.message }, { status: err.code === 'NOT_PLAIN_ENV' ? 409 : 400 });
     }
 
     // No await between the fresh file read above, this check and the write. A request
@@ -112,8 +89,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 409 },
       );
     }
-    fs.writeFileSync(ENV_FILE, content.trim() + '\n', { encoding: 'utf-8', mode: 0o600 });
-    fs.chmodSync(ENV_FILE, 0o600);
+    fs.writeFileSync(ENV_FILE, content, { encoding: 'utf-8', mode: 0o600 });
+    try { fs.chmodSync(ENV_FILE, 0o600); } catch (e) { console.warn('[setup/password] could not tighten .env to 0600:', (e as NodeJS.ErrnoException).code); }
 
     // Update in-memory so proxy redirects work before restart
     process.env.REV4A_PASSWORD = body.password;

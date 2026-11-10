@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-11-07
+> **Last updated:** 2026-11-09
 
 ## Layering
 
@@ -235,6 +235,21 @@ on a route without an inference binding never appears in the associated count.
 **Skeleton.** `SubscriptionsSkeleton.tsx` mirrors the real page with the shared `Skeleton` primitive and the `ui-accordion` classes: the page header, an open accordion with its header (title, "N of M" area, account line), the Models block with chips and N agent rows, each a name line, a status pill, the model line and the button. `loading.tsx` and the page's own initial state render the same component, so the hand-over has no jump.
 
 **Connect dialog.** `ConnectModal` (same file) uses the shared `Modal`: it starts the login (`POST …/openai/login`), then polls `GET …/login?agentId=` every 2 s with an `AbortController` ref that cancels the previous poll, and ticks a 1 s countdown to the code's expiry. States: waiting for the agent, link + code (large, Copy button), connected (email), failed / expired / cancelled (message and Retry). Cancel and closing the dialog while the login runs call `DELETE …/login`. **MODEL section.** `ModelSection` is the one place that chooses the agent's model. It loads the catalogue and the agent's model as before, plus, apart and with `AbortController` refs, the agent's connection (`GET /api/subscriptions?agentId=`) and, only when connected, the subscription models (`GET /api/subscriptions/models`). The primary picker and each fallback picker pass two `groups` to `Select` ("Rev4a proxy", "ChatGPT subscription"; the second is absent until the models arrive or when the agent is not connected). Choosing a subscription primary while the fallback list is empty pre-fills the previous primary as the first fallback with the note "Used when the ChatGPT subscription reaches its usage limit". `app/agents/SubscriptionLine.tsx` is the read-only status line under the pickers ("Loading subscription models…", or "Subscription: not connected — connect it on Subscriptions"). `ModelSection` marks a bare `openai/<id>` reference with a `subscription:` prefix when it sends it to `PUT /api/gateway/agent`, so it is not confused with a Rev4a catalogue model of the same name (stored as `rev4a/openai/<id>`).
+
+## Config save feedback and skill promotion
+
+Config (`app/config/PageClient.tsx`) keeps save errors, including API 400/409 recovery
+instructions, in a shared danger `Surface` with `role="alert"` beside **Save & Restart**.
+The confirmation closes after the attempt so this persistent feedback is visible; edits
+and the last successful baseline are retained for retry. Feedback clears on the next
+attempt and success uses a success `Surface`. Failed saves never request a restart.
+Both the page action and confirmation button show **Saving…** / **Restarting…** with
+`Button loading` and stay disabled while the action runs.
+
+Skills (`app/skills/PageClient.tsx`) uses its existing toast for promotion outcomes.
+When `skippedCount > 0`, it includes the skipped-file count and `skipped` filename sample,
+with an ellipsis if the total exceeds the sample. Complete promotion keeps its existing
+success message, including the overwritten indication.
 
 ## Login page lock
 

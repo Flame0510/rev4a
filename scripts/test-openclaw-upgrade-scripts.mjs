@@ -103,7 +103,7 @@ else console.log('{"jobs":[]}');
   try {
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [path.join(S,'seed.mjs'),'--container','agent_fixture','--cleanup','--work',work,'--base-url',`http://127.0.0.1:${server.address().port}`], {
-        env: { ...process.env, PATH: bin+path.delimiter+process.env.PATH, REV4A_JWT_SECRET:'unit-test-signing-secret-only' }, stdio:'ignore', // secret-ok: loopback fixture signing value
+        env: { ...process.env, PATH: bin+path.delimiter+process.env.PATH, REV4A_TOKEN:'unit-test-api-token-only', HOME: work }, stdio:'ignore', // secret-ok: loopback fixture API token
       });
       child.on('error',reject); child.on('exit',resolve);
     });

@@ -148,7 +148,7 @@ Loader settings are no longer read from `.env`: at start
 `rev4a serve` comments out `NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
 `LD_LIBRARY_PATH` and `DYLD_*` lines in `.env` (Next.js reads `.env` itself for the build
 and the server, so ignoring them in the launcher alone is not enough) and logs the key
-names, never the values. Set such options in the shell or systemd environment instead.
+names, never the values. Set such options in the shell or systemd environment instead. After the line repair, the launcher asks Next.js's own `.env` loader (`@next/env`, in a separate process) which keys it would load from the package root: if a loader key is still there in a form the line repair cannot follow (for example the key and its `=` on different lines), Rev4a refuses to start and logs the key name with the file to fix (if that check itself cannot run, it logs a warning and starts, relying on the line repair and on `server.js` removing loader keys Next loaded). Values are written so that Next.js and Rev4a read them back exactly: a value with `#`, leading or trailing spaces or a leading quote is single-quoted; a value containing `$` is refused with 400 (Next.js expands `$VAR` in every `.env` value it loads, even single-quoted, and its server overwrites what the launcher passed, so a password with `$` would change after a restart; values already in `.env` are not touched), and so is one that cannot be represented (a single quote combined with leading/trailing spaces, `#` or a leading quote; a backslash at the end of a quoted value; a Unicode line separator).
 Loader settings inherited from the operator's shell or systemd environment are preserved,
 including `NODE_OPTIONS=--max-old-space-size=4096`. Other operator-defined keys still
 reach child processes. The setup code is runtime-only: Config never returns or
@@ -160,7 +160,7 @@ valid when saving other keys. Existing passwords and stored data are unchanged.
 preserving other keys (including `GATEWAY_TOKEN` and `PORT`), comments, blank lines
 and order. Values shown from the process environment are not saved unless edited.
 Unchanged values (also empty ones) stay byte-for-byte intact, and an unchanged
-GET-to-PUT round trip does not write the file. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
+GET-to-PUT round trip does not write the file. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment such as `REV4A_TOKEN="t" # comment`), or a backslash immediately before a same-kind quote (including the closing quote) is ambiguous across tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
 `REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
 `REV4A_TERMINAL_SECRET` and `REV4A_SETUP_CODE` are never returned by Config and are
 silently ignored on save, including from older open tabs. At startup, `rev4a serve`
@@ -171,6 +171,21 @@ also cleared from the base child environment before fresh per-boot values are se
 Previously deleted keys and comments cannot be restored automatically. No database, provider
 key file or agent volume changes are required; older agents and rollback remain
 compatible with the resulting `.env`.
+
+**FIX-133 update note:** Config edits now replace the last assignment of an edited key
+and remove earlier duplicates; clearing a stored non-empty value removes all its assignments.
+Config and runtime-key cleanup operate on physical lines only after the plain-file check
+above, preserving unrelated settings. Ambiguous quotes are refused with visible recovery
+instructions beside **Save & Restart**. Previously deleted settings cannot be reconstructed.
+The automatic, logged loader repair also recognizes lone CR separators, `KEY: value` and
+`export KEY=` forms, retaining original line endings; it comments matching lines even inside
+quoted multiline values, while runtime cleanup skips non-plain files. Run it again and
+it makes no further changes. A partial skill promotion now reports skipped files. Control UI
+links from `::1` / `[::1]` use `localhost` so IPv6-only publishes remain reachable while
+using a separate cookie host; older agents retain the token-link fallback. CLI image
+commands and git updates pass literal arguments and checkout paths without a shell.
+No database, provider key file or agent volume migration is required, no new startup
+scan of stored data is added, and older releases can still read the resulting files on rollback.
 
 ---
 

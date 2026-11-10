@@ -354,7 +354,7 @@ try {
     const context = vm.createContext({ ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', CONFIG_DIR: tmp,
       readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync, mkdirSync: fs.mkdirSync,
       statSync: fs.statSync, chmodSync: fs.chmodSync, existsSync: () => true,
-      log: (_tag, text) => logs.push(text), seedAgentToken: () => {}, randomString: () => 'fixture',
+      log: (_tag, text) => logs.push(text), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {}, randomString: () => 'fixture',
       require: (name) => { assert.equal(name, 'fs'); return { symlinkSync: () => {} }; },
       assertEnvValue: envFile.assertEnvValue,
       disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,

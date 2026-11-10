@@ -276,8 +276,12 @@ function hostForUrl(hostname: string): string {
 
 /** Use a different loopback cookie host: browsers share cookies across ports. */
 export function controlUiHostFor(dashboardHost: string): { host: string; isolated: boolean } {
-  if (/^localhost\.?$/i.test(dashboardHost) || dashboardHost === '::1' || dashboardHost === '[::1]') {
+  if (/^localhost\.?$/i.test(dashboardHost)) {
     return { host: '127.0.0.1', isolated: true };
+  }
+  // localhost resolves to both loopback families, including IPv6-only publishes.
+  if (dashboardHost === '::1' || dashboardHost === '[::1]') {
+    return { host: 'localhost', isolated: true };
   }
   if (/^127(?:\.\d{1,3}){3}$/.test(dashboardHost)
     && dashboardHost.split('.').every((part) => Number(part) <= 255)) {

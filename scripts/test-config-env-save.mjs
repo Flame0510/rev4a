@@ -92,12 +92,47 @@ await test('PUT appends absent settings and removes only the requested line', as
   }
 });
 
-await test('PUT edits the first duplicate only and leaves unrelated quoted settings intact', async () => {
-  const h = harness('# before\n REV4A_TOKEN = "t"\nREV4A_TOKEN=last\nREV4A_OTHER=\'q\'\n');
-  await h.put({ REV4A_TOKEN: 'u' });
-  assert.equal(h.content, '# before\nREV4A_TOKEN=u\nREV4A_TOKEN=last\nREV4A_OTHER=\'q\'\n');
-  await h.put({ REV4A_TOKEN: '' });
-  assert.equal(h.content, '# before\nREV4A_TOKEN=last\nREV4A_OTHER=\'q\'\n');
+await test('PUT replaces the last duplicate, removes earlier duplicates, and GET reads the new value', async () => {
+  for (const newline of ['\n', '\r\n', '\r']) {
+    for (const ending of [newline, '']) {
+      const content = ['# before', ' export REV4A_PASSWORD = "first"', 'REV4A_OTHER=\'q\'',
+        '# between', 'REV4A_PASSWORD=last'].join(newline) + ending;
+      const h = harness(content);
+      assert.equal((await h.get()).body.env.REV4A_PASSWORD, 'last');
+      assert.equal((await h.put({ REV4A_PASSWORD: 'replacement' })).status, 200); // secret-ok: synthetic fixture
+      assert.equal(h.content, ['# before', 'REV4A_OTHER=\'q\'', '# between', 'REV4A_PASSWORD=replacement'].join(newline) + ending);
+      assert.equal((await h.get()).body.env.REV4A_PASSWORD, 'replacement');
+      const clear = harness(content);
+      await clear.put({ REV4A_PASSWORD: '' });
+      assert.equal(clear.content, ['# before', 'REV4A_OTHER=\'q\'', '# between', ''].join(newline));
+      assert.equal((await clear.get()).body.env.REV4A_PASSWORD, undefined);
+    }
+  }
+});
+
+await test('backslashes before same-kind quotes refuse edits and runtime repair without swallowing other keys', async () => {
+  for (const quote of ["'", '"', '`']) {
+    for (const newline of ['\n', '\r\n', '\r']) {
+      for (const value of [`${quote}password\\${quote}`, `${quote}password\\\\${quote}`, `${quote}pass\\${quote}word${quote}`]) {
+        for (const key of ['REV4A_PASSWORD', 'REV4A_SERVER_PID']) {
+          const content = [`${key}=${value}`, 'REV4A_JWT_SECRET=keep-secret', 'REV4A_DB=/keep/events.db', ''].join(newline);
+          assert.equal(envFile.isPlainEnvFile(content), false);
+          const h = harness(content);
+          assert.equal((await h.put({ REV4A_PASSWORD: 'replacement' })).status, 409); // secret-ok: synthetic fixture
+          assert.equal(h.content, content);
+          assert.deepEqual(h.effects, []);
+          assert.deepEqual(envFile.removeRuntimeEnvLines(content), { content, removed: [], skipped: true });
+        }
+      }
+    }
+  }
+  // Ordinary backslashes and a slash before a different quote stay safe for line edits.
+  const content = "REV4A_SERVER_PID='path\\folder'\r\nREV4A_PASSWORD='pass\\\"word'\nREV4A_DB=/keep/events.db";
+  assert.equal(envFile.isPlainEnvFile(content), true);
+  assert.equal(envFile.removeRuntimeEnvLines(content).content, content.split('\r\n')[1]);
+  const h = harness(content);
+  await h.put({ REV4A_PASSWORD: 'replacement' }); // secret-ok: synthetic fixture
+  assert.equal(h.content, content.replace("REV4A_PASSWORD='pass\\\"word'", 'REV4A_PASSWORD=replacement'));
 });
 
 await test('runtime-only keys are hidden and silently ignored, even from an old tab', async () => {
@@ -238,7 +273,7 @@ await test('startup removes only exact runtime assignments, logs names, and is i
     writeFileSync: (_file, next) => { content = next; writes.push(next); },
     statSync: () => ({ mode: 0o600 }),
     chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
-    log: (_tag, message) => logs.push(message), seedAgentToken: () => {},
+    log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {},
     disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
   });
   const run = () => vm.runInContext(`${ensure.getText(ast)}\nensureEnv();`, context);
@@ -298,7 +333,9 @@ function clientHarness() {
       Surface: () => {}, Pill: () => {} }, '../components/PasswordInput': PasswordInput,
   }, { AbortController, setTimeout: () => {}, fetch: async (url, options) => {
     calls.push({ url, options });
-    return { json: async () => options?.method === 'PUT' ? { status: outcome } : { env: { ...initial } } };
+    return { ok: typeof outcome === 'string' ? outcome === 'ok' : false,
+      status: typeof outcome === 'object' ? outcome.status : 200,
+      json: async () => options?.method === 'PUT' ? (typeof outcome === 'object' ? outcome.body : { status: outcome }) : { env: { ...initial } } };
   } });
   function render() {
     index = 0;
@@ -366,6 +403,53 @@ await test('client omits reverted edits and retries failed saves against the las
   await flush();
   const bodies = h.calls.filter((call) => call.options?.method === 'PUT').map((call) => JSON.parse(call.options.body));
   assert.deepEqual(bodies, [{ env: {} }, { env: { REV4A_TOKEN: 'retry' } }, { env: { REV4A_TOKEN: 'retry' } }]);
+});
+
+await test('Config renders persistent 400/409 recovery messages beside Save, keeps edits, and does not restart on failure', async () => {
+  for (const status of [400, 409]) {
+    const h = clientHarness();
+    h.render();
+    await flush();
+    h.change('retry');
+    const error = status === 409 ? '.env has an unusual value: edit it by hand' : 'Invalid value for REV4A_TOKEN';
+    h.setOutcome({ status, body: { error } });
+    h.confirm('restart')();
+    await flush();
+    const nodes = h.render();
+    assert.ok(nodes.some((node) => node.props.role === 'alert' && node.props.children === error));
+    assert.equal(h.hooks[5], null, 'dialog closes to expose the persistent recovery message');
+    assert.equal(h.hooks[0].REV4A_TOKEN, 'retry', 'failed saves keep the edited value');
+    assert.equal(h.calls.filter((call) => call.url.endsWith('/restart')).length, 0);
+    assert.ok(h.render().some((node) => node.props.role === 'alert' && node.props.children === error));
+    h.setOutcome('ok');
+    h.confirm('save')();
+    await flush();
+    assert.ok(!h.render().some((node) => node.props.role === 'alert'));
+  }
+});
+
+await test('FIX-133: a value that cannot be written faithfully is refused (400) and nothing is written; a quoted-looking one is single-quoted', async () => {
+  const content = 'REV4A_TOKEN=t\nGATEWAY_TOKEN=g\n';
+  for (const value of ["'password\\'", "'mixed' #x"]) {
+    const h = harness(content);
+    const r = await h.put({ REV4A_TOKEN: value });
+    assert.equal(r.status, 400, value);
+    assert.equal(h.content, content);
+  }
+  const ok = harness(content);
+  assert.equal((await ok.put({ REV4A_TOKEN: 'plain-value_with.symbols and spaces' })).status, 200);
+  const quoted = harness(content);
+  assert.equal((await quoted.put({ REV4A_TOKEN: '"quoted' })).status, 200);
+  assert.ok(quoted.content.split('\n').includes("REV4A_TOKEN='\"quoted'"));
+});
+
+await test('FIX-133: U+2028 / U+2029 inside a value keep the file plain and editable', async () => {
+  const note = 'REV4A_NOTE=a b c';
+  const content = note + '\nGATEWAY_TOKEN=g\n';
+  const h = harness(content);
+  assert.equal((await h.put({ REV4A_TOKEN: 'new' })).status, 200);
+  assert.ok(h.content.split('\n').includes(note));
+  assert.ok(h.content.split('\n').includes('GATEWAY_TOKEN=g'));
 });
 
 console.log(`\n${passed} config environment save checks passed`);

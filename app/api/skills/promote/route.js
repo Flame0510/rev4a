@@ -191,7 +191,9 @@ export async function POST(request) {
       const newline = listRaw.indexOf('\n', start);
       const file = listRaw.slice(start, newline === -1 ? listRaw.length : newline);
       start = newline === -1 ? listRaw.length : newline + 1;
-      if (file === 'SKILL.md' || (file.endsWith('/') && isSafeSkillPromoteName(file.slice(0, -1)))) continue;
+      if (file === 'SKILL.md') continue;
+      // Folders are not copied (only the skill's top-level files are): report them as skipped.
+      if (file.endsWith('/') && isSafeSkillPromoteName(file.slice(0, -1))) { skip(file); continue; }
       if (!isSafeSkillPromoteName(file) || extraFiles.length >= SKILL_PROMOTE_MAX_EXTRA_FILES) {
         skip(file);
         continue;

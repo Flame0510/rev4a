@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-08
+> **Last updated:** 2026-11-09
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -70,7 +70,8 @@ Every agent is created with:
 - `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback: true`, so the Control UI opens on whatever host the agent is reached on, and pages from other origins are refused
 - `--init`: Docker's tini runs as PID 1, with OpenClaw as its child, and collects orphaned processes the moment they exit. Without it `openclaw-gateway` is PID 1 and never collects them: every process a tool leaves behind (Chrome, builds, scripts) stays a zombie and counts against the container's pids limit (9 365 on the VPS) until the container cannot start anything. Measured before the fix: 1 542 zombies in one agent after four days of browsing and builds. tini forwards `docker stop`'s SIGTERM, so OpenClaw still shuts down cleanly. Set at create and in `recreateAgentContainer` (recreate, update, edit); an existing agent gets it the next time it is recreated.
 
-The port is auto-assigned starting from 3000 (or user-specified).
+The first automatically assigned host port block is 3700–3709 (or user-specified);
+the gateway listens on port 3000 inside the container.
 
 Domain and HTTPS routing (Traefik) is an external concern — operators can
 configure it on top of the base setup if needed, but Rev4a does not couple
@@ -82,13 +83,13 @@ When environment variables are saved via the Config page (Save & Restart):
 
 1. The client sends only values changed since the last successful load or save.
    The data directory's `.env` (`~/.config/rev4a/.env`; the `.env` in the installation
-   root is a link to it) is patched in place: replace only the first assignment of
-   an edited key, append a new key, or remove that assignment when a stored
-   non-empty value is cleared. Unchanged empty assignments stay intact.
+   root is a link to it) is patched by physical line: replace the last assignment of
+   an edited key and remove its earlier duplicates, append a new key, or remove all
+   assignments of a stored non-empty value when cleared. Unchanged empty assignments stay intact.
    Other keys (including `GATEWAY_TOKEN`, `PORT` and operator-defined settings),
    comments, blank lines, order and line endings stay intact. An unchanged value
    retains its quoting, including when an older open tab sends the entire GET result.
-   Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, or a value on the next line, is parsed differently by different tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit. Unchanged stored values are
+   Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment such as `REV4A_TOKEN="t" # comment`), or a backslash immediately before a same-kind quote (including the closing quote) is ambiguous across tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit. Unchanged stored values are
    compared before validation and left untouched. New values must be strings
    without CR, LF or NUL; invalid entries reject the entire
    request with `400` naming the key. Every `.env` assignment writer uses the shared
@@ -115,7 +116,9 @@ keys and comments cannot be reconstructed and are not restored. Databases, provi
 key files and agent volumes are unchanged; older agents need no changes. The repair
 runs only on a plain `.env` (one-line assignments; `isPlainEnvFile` in
 `lib/env-file.js`) and is skipped, with a log line, otherwise. The loader-key repair
-is line based on purpose: it only ever comments a line out, so it is safe on any file. The launcher also clears
+is line based on purpose: it comments matching lines even inside multiline quoted values
+or after an unterminated quote. It recognizes CRLF, CR and LF, `KEY=value`, `KEY: value`
+and `export` prefixes, retaining the original separators. The launcher also clears
 runtime-only keys inherited from the shell or systemd's `EnvironmentFile` from
 the base child environment before setting fresh per-boot credentials. The repair
 creates no new configuration format, so previous releases
@@ -128,7 +131,7 @@ Before a password exists, `/setup` asks for the setup code and a password of at 
 with a `[SETUP]` hint in its terminal (or `journalctl -u rev4a` under systemd). It
 passes the code only to `server.js`, never writes it to disk, and generates no code
 for an already-configured install. Direct Next.js starts generate and log one code
-on the first protected setup request instead.
+on the first protected setup request instead. The password is stored so it reads back exactly: one containing `$`, or a single quote together with leading/trailing spaces, `#` or a leading quote, is refused with 400, and an existing `.env` with multi-line or ambiguous values makes setup answer 409.
 
 All pre-setup API calls use `x-rev4a-setup-code`: password setup, agent-image reads
 and downloads, setup restart, and wizard status/complete/reset. Case, dashes and
@@ -146,7 +149,7 @@ On upgrade (and at every start), the launcher comments out loader-control lines 
 `# Disabled by Rev4a: …`). Next.js loads `.env` on its own for `next build` and for the
 server, so skipping them in the launcher is not enough. It logs the key names once
 (never the values) and also skips them when it reads `.env`; other operator keys are
-still passed to children. `server.js` snapshots inherited loader keys before
+still passed to children. After the line repair, the launcher asks Next.js's own `.env` loader (`@next/env`, in a separate process) which keys it would load from the package root: if a loader key is still there in a form the line repair cannot follow (for example the key and its `=` on different lines), Rev4a refuses to start and logs the key name with the file to fix (if that check itself cannot run, it logs a warning and starts, relying on the line repair and on `server.js` removing loader keys Next loaded). Values are written so that Next.js and Rev4a read them back exactly: a value with `#`, leading or trailing spaces or a leading quote is single-quoted; a value containing `$` is refused with 400 (Next.js expands `$VAR` in every `.env` value it loads, even single-quoted, and its server overwrites what the launcher passed, so a password with `$` would change after a restart; values already in `.env` are not touched), and so is one that cannot be represented (a single quote combined with leading/trailing spaces, `#` or a leading quote; a backslash at the end of a quoted value; a Unicode line separator). `server.js` snapshots inherited loader keys before
 requiring Next, then removes newly added loader keys after `app.prepare()` so
 Next's own `.env` loading cannot pass them to updater or other child processes.
 Operator settings inherited from the shell or systemd are retained in both the
@@ -503,7 +506,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 - Name, image, template, status, ports, IP
 - TG channel status chip (green = connected, hidden if not configured)
 - **Shared gateway token** — text input with Save & Sync. Changing the token saves it to `data/agents-token.json` and pushes it to all running containers.
-- **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container. Local dashboards use a different cookie host: `localhost` (case-insensitive, also `localhost.`) and `::1` open on `127.0.0.1`; any `127.x.y.z` opens on `localhost`. Both the page and the `gatewayUrl` fragment use that host, because cookies are shared across ports. LAN/public IPs and domains keep the dashboard host; use HTTPS there to protect the session cookie. For those unchanged hosts, plain-HTTP requests with `REV4A_FORCE_INSECURE_COOKIE=1` log a warning once per process without changing the redirect. While the agent's Gateway is still starting the card shows a `STARTING m:ss` chip (`GET /api/agents/gateway`); while the Gateway answers 503 **Open** reads *Starting…* and is disabled. When it gives no answer at all (normal in the first seconds of a boot) the chip shows but Open stays enabled. After 10 minutes without readiness the chip reads NOT READY and Open is enabled again; a container in a restart loop reaches NOT READY too (the 10 minutes count from the first start Rev4a saw, not from each restart; they start again when Rev4a restarts). Only a real 503 disables Open; a failed, missing or unexpected readiness answer never does.
+- **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container. Local dashboards use a different cookie host: `localhost` (case-insensitive, also `localhost.`) opens on `127.0.0.1`; `::1`, `[::1]` and any `127.x.y.z` open on `localhost`, which resolves to both loopback address families. Both the page and the `gatewayUrl` fragment use that host, because cookies are shared across ports. LAN/public IPs and domains keep the dashboard host; use HTTPS there to protect the session cookie. For those unchanged hosts, plain-HTTP requests with `REV4A_FORCE_INSECURE_COOKIE=1` log a warning once per process without changing the redirect. While the agent's Gateway is still starting the card shows a `STARTING m:ss` chip (`GET /api/agents/gateway`); while the Gateway answers 503 **Open** reads *Starting…* and is disabled. When it gives no answer at all (normal in the first seconds of a boot) the chip shows but Open stays enabled. After 10 minutes without readiness the chip reads NOT READY and Open is enabled again; a container in a restart loop reaches NOT READY too (the 10 minutes count from the first start Rev4a saw, not from each restart; they start again when Rev4a restarts). Only a real 503 disables Open; a failed, missing or unexpected readiness answer never does.
 - **Agent creation wizard** — multi-step form at `/agents/create`.
 - **Channel Manager** — each agent detail panel has a Channels section with Telegram configuration and pairing management. Pending requests (a sender's `/start` creates one) show an **Approve** button; approved senders show **Revoke** with a confirmation. Approved senders are OpenClaw's pairing store, not the agent config: on 2026.9.x the SQLite store, read and revoked through OpenClaw's own store functions (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 - **Browser access** — the detail panel section right after Channels. From OpenClaw 9.x each new browser must be approved once before the Control UI connects: the section lists requests waiting for approval (Approve / Reject) and approved browsers (Rename / Revoke), and the agent card shows a "browser waiting" badge. The **Open** buttons first ask the agent for a one-time link that pairs the browser with no approval, and open the plain token link when none can be issued (the agent is stopped, or the link fails). **Invite link** gives a link to send to someone else: their browser passes gateway auth and waits in the approval list until approved. The link carries the gateway token every agent shares; changing the agents token invalidates every link sent. All of it runs the OpenClaw CLI inside the container asynchronously.

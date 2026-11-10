@@ -20,7 +20,7 @@
  * Graceful shutdown on Ctrl+C / SIGTERM stops all children cleanly.
  */
 
-const { spawn, execSync, spawnSync } = require('child_process');
+const { spawn, execSync, execFileSync, spawnSync } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, chmodSync } = require('fs');
 const { join, dirname } = require('path');
 const crypto = require('crypto');
@@ -222,7 +222,7 @@ function ensureAgentImage() {
   const remoteRef = `${registry}:${IMAGE_REVISION.registryTag(version, pin)}`;
 
   try {
-    const r = execSync(`docker image inspect ${localRef} --format '{{.Id}}'`, { stdio: 'pipe', timeout: 10_000 });
+    const r = execFileSync('docker', ['image', 'inspect', localRef, '--format', '{{.Id}}'], { stdio: 'pipe', timeout: 10_000 });
     if (r.toString().trim()) {
       log('IMAGE', `Agent base image ${localRef} already exists`);
       return;
@@ -233,13 +233,13 @@ function ensureAgentImage() {
 
   log('IMAGE', `Pulling agent base image ${remoteRef}…`);
   try {
-    execSync(`docker pull ${remoteRef}`, { stdio: 'inherit', timeout: 1_800_000 });
+    execFileSync('docker', ['pull', remoteRef], { stdio: 'inherit', timeout: 1_800_000 });
     if (pin) {
-      execSync(`docker tag ${remoteRef} ${IMAGE_REVISION.revisionRef(AGENT_VERSIONS.localRepository, version, pin)}`, { stdio: 'inherit', timeout: 10_000 });
+      execFileSync('docker', ['tag', remoteRef, IMAGE_REVISION.revisionRef(AGENT_VERSIONS.localRepository, version, pin)], { stdio: 'inherit', timeout: 10_000 });
     }
-    execSync(`docker tag ${remoteRef} ${localRef}`, { stdio: 'inherit', timeout: 10_000 });
+    execFileSync('docker', ['tag', remoteRef, localRef], { stdio: 'inherit', timeout: 10_000 });
     try {
-      execSync(`docker rmi ${remoteRef}`, { stdio: 'pipe', timeout: 30_000 }); // untag; the layers stay
+      execFileSync('docker', ['rmi', remoteRef], { stdio: 'pipe', timeout: 30_000 }); // untag; the layers stay
     } catch { /* keeping the registry reference is harmless */ }
     log('IMAGE', `Agent base image pulled and tagged as ${localRef}`);
     return;
@@ -260,8 +260,8 @@ function ensureAgentImage() {
   log('IMAGE', `Building agent base image ${localRef} (this will take a few minutes)…`);
   log('IMAGE', '  → pulling node:24-bookworm-slim + installing OpenClaw + tooling');
   try {
-    execSync(
-      `docker build --build-arg OPENCLAW_VERSION=${version} -t ${localRef} -f "${DOCKERFILE}" "${join(DOCKERFILE, '..')}"`,
+    execFileSync(
+      'docker', ['build', '--build-arg', `OPENCLAW_VERSION=${version}`, '-t', localRef, '-f', DOCKERFILE, join(DOCKERFILE, '..')],
       { stdio: 'inherit', timeout: 3_600_000 },
     );
     log('IMAGE', 'Agent base image built successfully');
@@ -396,11 +396,11 @@ function loadEnv() {
   const result = {};
   try {
     const content = readFileSync(envFile, 'utf-8');
-    for (const line of content.split('\n')) {
+    for (const line of content.split(/\r\n|\r|\n/)) {
       const trimmed = line.trim();
-      if (trimmed.startsWith('#') || !trimmed.includes('=')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      const key = trimmed.slice(0, eqIdx).trim();
+      const assignment = trimmed.match(/^(?:export\s+)?([^\s=#][^\s=]*?)\s*(?:=\s*|:\s+)([^\r\n]*)$/);
+      if (!assignment) continue;
+      const key = assignment[1];
       if (key === 'REV4A_SETUP_CODE') continue;
       // Ignore loader controls even in an older .env already affected by injection.
       // Other operator-defined keys remain supported. Never log their values.
@@ -411,7 +411,7 @@ function loadEnv() {
         }
         continue;
       }
-      let val = trimmed.slice(eqIdx + 1).trim();
+      let val = assignment[2].trim();
 
       // Strip surrounding quotes (single or double)
       if (
@@ -429,6 +429,41 @@ function loadEnv() {
   return result;
 }
 
+/**
+ * The loader keys (NODE_OPTIONS, LD_*, DYLD_*...) Next.js would load from the .env files at
+ * the package root, read by Next's own @next/env in a separate process (it writes what it
+ * loads into its own process.env). Empty when @next/env cannot be run: the line repair and
+ * server.js's strip remain the protection then.
+ */
+function loaderKeysNextWouldLoad() {
+  const script = [
+    'const { loadEnvConfig } = require(require.resolve("@next/env", { paths: [process.argv[1]] }));',
+    'const r = loadEnvConfig(process.argv[1], false, { info() {}, error() {} }, true);',
+    'process.stdout.write(JSON.stringify(Object.keys(r.parsedEnv || {})));',
+  ].join('\n');
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!isLoaderEnvKey(k)) env[k] = v;
+  const result = spawnSync(process.execPath, ['-e', script, ROOT], { env, encoding: 'utf-8', timeout: 15_000 });
+  if (result.status !== 0) {
+    log('ENV', 'Warning: could not check .env with Next.js\'s loader; relying on the line repair');
+    return [];
+  }
+  try {
+    return [...new Set(JSON.parse(result.stdout).filter((key) => isLoaderEnvKey(key)))];
+  } catch {
+    return [];
+  }
+}
+
+/** Stop before anything runs Next when its loader would still load a loader key (logged by name). */
+function refuseIfLoaderKeysLeft() {
+  const leftover = loaderKeysNextWouldLoad();
+  if (leftover.length > 0) {
+    log('ENV', `Refusing to start: a .env file at ${ROOT} or ${ENV_SOURCE} defines ${leftover.join(', ')} in a form Rev4a cannot disable automatically. Remove it by hand (set loader options in the service environment), then start Rev4a again.`);
+    process.exit(1);
+  }
+}
+
 function ensureEnv() {
   let configured = false;
   try {
@@ -438,9 +473,15 @@ function ensureEnv() {
     if (err.code !== 'ENOENT') throw err;
   }
   if (configured) {
-    if ((statSync(ENV_SOURCE).mode & 0o777) & ~0o600) {
-      chmodSync(ENV_SOURCE, 0o600);
-      log('ENV', 'Tightened .env permissions to 0600');
+    // Best effort: a .env owned by another user (created with sudo) cannot be chmod-ed by
+    // the service; warn and start rather than crash-loop after the update.
+    try {
+      if ((statSync(ENV_SOURCE).mode & 0o777) & ~0o600) {
+        chmodSync(ENV_SOURCE, 0o600);
+        log('ENV', 'Tightened .env permissions to 0600');
+      }
+    } catch (err) {
+      log('ENV', `Warning: could not tighten .env permissions to 0600 (${err.code || err.message}); check its owner`);
     }
     log('ENV', 'Configuration found');
     // Before anything runs Next (the build in preflight loads .env on its own).
@@ -448,8 +489,13 @@ function ensureEnv() {
     const repaired = disableLoaderEnvLines(current);
     const runtimeRepair = removeRuntimeEnvLines(repaired.content);
     if (runtimeRepair.content !== current) {
-      writeFileSync(ENV_SOURCE, runtimeRepair.content, { encoding: 'utf-8', mode: 0o600 });
-      chmodSync(ENV_SOURCE, 0o600);
+      try {
+        writeFileSync(ENV_SOURCE, runtimeRepair.content, { encoding: 'utf-8', mode: 0o600 });
+        try { chmodSync(ENV_SOURCE, 0o600); } catch { /* owner differs: warned above */ }
+      } catch (err) {
+        // A loader key that could not be commented out is caught by refuseIfLoaderKeysLeft below.
+        log('ENV', `Warning: could not write the .env repair (${err.code || err.message})`);
+      }
     }
     if (repaired.disabled.length > 0) {
       log('ENV', `Disabled unsafe .env key(s): ${[...new Set(repaired.disabled)].join(', ')} (set loader options in the service environment instead)`);
@@ -464,6 +510,10 @@ function ensureEnv() {
     if (!existsSync(ENV_LINK)) {
       try { require('fs').symlinkSync(ENV_SOURCE, ENV_LINK); } catch {}
     }
+    // The line repair above cannot follow every form Next's dotenv accepts (a key and its
+    // '=' on different lines, ...). Ask Next's own loader what it would load, and refuse to
+    // start rather than let a loader setting from .env reach the build or the server.
+    refuseIfLoaderKeysLeft();
     // Seed agent token file if missing
     seedAgentToken();
     return;
@@ -509,6 +559,8 @@ function ensureEnv() {
 
   // Symlink in package root so Next.js server finds it
   try { require('fs').symlinkSync(ENV_SOURCE, ENV_LINK); } catch {}
+  // A fresh .env holds none, but .env.local / .env.production at the package root may.
+  refuseIfLoaderKeysLeft();
 
   seedAgentToken();
 }
@@ -542,6 +594,16 @@ function build() {
 }
 
 // ── Version check ───────────────────────────────────────────────────────────
+
+/** Keep paths and configuration out of shell syntax, with one deadline for the update. */
+function updateGitCheckout(root) {
+  const deadline = Date.now() + 30 * 60_000;
+  for (const [command, args] of [['git', ['pull']], ['npm', ['install']], ['npm', ['run', 'build']]]) {
+    const timeout = deadline - Date.now();
+    if (timeout <= 0) throw new Error('Git update timed out');
+    execFileSync(command, args, { cwd: root, stdio: 'inherit', timeout });
+  }
+}
 
 function checkVersion() {
   try {
@@ -938,15 +1000,11 @@ if (cmd === 'update') {
     if (isGitRepo) {
       console.log('Detected git repo — pulling and building…');
       UPDATE_STATE.writeUpdate(DATA_DIR, 'building');
-      execSync(`cd ${root} && git pull && npm install && npm run build`, {
-        stdio: 'inherit',
-        // npm install + a full build: minutes, not two.
-        timeout: 30 * 60_000,
-      });
+      updateGitCheckout(root);
       try { target = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || latest; } catch { /* keep latest */ }
     } else {
       console.log('Using npm global install…');
-      execSync(`npm install -g ${PKG_NAME}@${latest}`, {
+      execFileSync('npm', ['install', '-g', `${PKG_NAME}@${latest}`], {
         stdio: 'inherit',
         timeout: 20 * 60_000,
       });

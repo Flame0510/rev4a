@@ -1,4 +1,6 @@
 export const RUNTIME_ONLY_ENV_KEYS: readonly string[];
+/** Physical lines, including their original CRLF, CR or LF separators. */
+export function splitEnvLines(content: string): string[];
 export interface EnvFileLine {
   text: string;
   continuation: boolean;
@@ -19,5 +21,11 @@ export function stripUninheritedLoaderEnv(
   warn: (message: string) => void,
 ): void;
 export function disableLoaderEnvLines(content: string): { content: string; disabled: string[] };
-/** One-line assignments only; automatic line edits refuse anything else. */
+/** One-line assignments without ambiguous quotes; automatic line edits refuse anything else. */
 export function isPlainEnvFile(content: string): boolean;
+/** Text after KEY= that every reader reads back as `value`; throws code UNSAFE_ENV_VALUE otherwise. */
+export function serializeEnvValue(key: string, value: string): string;
+/** Edits on a plain .env (codes NOT_PLAIN_ENV / UNSAFE_ENV_VALUE on refusal). */
+export function applyEnvEdits(content: string, edits: Array<[string, string]>): { content: string; updated: string[] };
+export function unquoteEnvValue(raw: string): string;
+export function hasEnvAssignment(content: string, key: string): boolean;

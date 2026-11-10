@@ -87,13 +87,13 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     title: 'Config',
     description: 'Rev4a application configuration page. View and manage settings that control how Rev4a behaves.',
     actions: ['View current configuration values', 'Modify configuration settings', 'Save changes to update Rev4a behavior', 'Set the default memory limit offered for new agents (Agent defaults)'],
-    hints: 'Saved environment values are written to the .env file; restart Rev4a for those to take effect. Time zone (the zone the dashboard shows times in; by default the one of the server) is saved to settings.json and applies at once. Agent defaults (the default memory limit for new agents) are saved to agent-defaults.json and apply at once, without a restart; they only prefill the create wizard and never change an existing agent.',
+    hints: 'Saved environment values are written to the .env file (only the lines you changed; other lines are kept); restart Rev4a for those to take effect. A value containing $ is refused (Next.js would expand it), and if .env has multi-line or ambiguous values the save is refused with a message beside Save & Restart: edit .env by hand. Time zone (the zone the dashboard shows times in; by default the one of the server) is saved to settings.json and applies at once. Agent defaults (the default memory limit for new agents) are saved to agent-defaults.json and apply at once, without a restart; they only prefill the create wizard and never change an existing agent.',
   },
   '/login': {
     title: 'Login',
     description: 'Password page for the dashboard. Enter the Rev4a password to open a session (a cookie that lasts 7 days).',
     actions: ['Enter the password and press Enter or Log in'],
-    hints: 'Wrong passwords are throttled per address: from the 6th wrong password the address is locked for 30 s, doubling up to 15 minutes (HTTP 429), and the page shows how long to wait. Restarting Rev4a clears the lock.',
+    hints: 'Wrong passwords are throttled per address: from the 6th wrong password the address is locked for 30 s, doubling up to 15 minutes (HTTP 429), and the page shows how long to wait. Restarting Rev4a clears the lock. After a password change (once Rev4a restarts) and after updating to 1.24.0, every browser has to log in again.',
   },
   '/lineage': {
     title: 'Lineage',
@@ -123,7 +123,7 @@ const PAGE_CONTEXT: Record<string, PageContext> = {
     title: 'Skills',
     description: 'Agent skills available in the workspace — reusable prompt/tool bundles that agents can invoke on demand.',
     actions: ['Browse all available skills', 'View skill name, description, and what it does', 'Understand which skills agents can use in conversations', 'Skills starting with rev4a- are Rev4a\'s own and are read-only'],
-    hints: 'Skills are like pre-built capabilities. An agent can be told "use the weather skill" and it will know how to respond.',
+    hints: 'Skills are like pre-built capabilities. An agent can be told "use the weather skill" and it will know how to respond. Promoting a skill copies SKILL.md and its top-level files (at most 200, 1 MiB each); folders, dot-files and unsafe names are not copied, and the message after Promote lists what was skipped.',
   },
 };
 

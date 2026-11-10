@@ -146,7 +146,7 @@ await main(USAGE, SPEC, async (args) => {
   const agentsAnswer = await api('GET', '/api/agents', undefined, apiOpts);
   const listed = Array.isArray(agentsAnswer.json) && agentsAnswer.json.some((a) => a.name === container || (agent.agentId && a.agentId === agent.agentId));
   index.preflight.api = { status: agentsAnswer.status, listed };
-  if (agentsAnswer.status !== 200) fail(`the Rev4a API answered ${agentsAnswer.status} to GET /api/agents (${agentsAnswer.text.slice(0, 200)}): wrong --base-url, or REV4A_JWT_SECRET is not the one of the instance under test`);
+  if (agentsAnswer.status !== 200) fail(`the Rev4a API answered ${agentsAnswer.status} to GET /api/agents (${agentsAnswer.text.slice(0, 200)}): wrong --base-url, or REV4A_TOKEN is not the one of the instance under test`);
   if (!listed) fail(`the Rev4a API does not list ${container}: is this the Rev4a that manages this agent?`);
   const id = agent.agentId || container;
   writeIndex();

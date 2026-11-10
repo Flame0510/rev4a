@@ -110,12 +110,14 @@ export function getApiKey(provider: string, storedKeys: Record<string, string>):
 }
 
 /** Only diagnostic identifiers may reach logs; fetch messages can contain credentials. */
-export function upstreamErrorDetails(error: unknown): { name: string; code?: string | number } {
-  const err = error as { name?: unknown; code?: unknown } | null;
+export function upstreamErrorDetails(error: unknown): { name: string; code?: string | number; cause?: string } {
+  const err = error as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
   const identifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(value);
   return {
     name: identifier(err?.name) ? err.name : 'Error',
     ...(identifier(err?.code) || typeof err?.code === 'number' ? { code: err.code } : {}),
+    // undici's "fetch failed" keeps the reason (ECONNREFUSED, ENOTFOUND, ...) in cause.code.
+    ...(identifier(err?.cause?.code) ? { cause: err.cause.code } : {}),
   };
 }
 

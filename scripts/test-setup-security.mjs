@@ -136,7 +136,7 @@ await test('config PUT rejects every invalid value with its key before writing a
     const response = await h.load('app/api/config/env/route.ts').PUT(h.req({ env: { REV4A_TEST: value } },
       null, { authorization: 'Bearer test-bearer' }));
     assert.equal(response.status, 200);
-    assert.equal(h.files.get(ENV_FILE), value === '' ? '' : `REV4A_TEST=${value}\n`);
+    assert.equal(h.files.get(ENV_FILE), value === '' ? '' : `REV4A_TEST=${envFile.serializeEnvValue('REV4A_TEST', value)}\n`);
   }
   const h = harness({ REV4A_TOKEN: 'test-bearer' }); // secret-ok
   const response = await h.load('app/api/config/env/route.ts').PUT(h.req({
@@ -221,6 +221,37 @@ await test('loader repair is line based: it only comments lines out, also inside
       else assert.equal(line, before[i]);
     });
     assert.deepEqual(envFile.disableLoaderEnvLines(r.content).disabled, []);
+  }
+});
+
+await test('loader repair covers Next dotenv CR separators, colon assignments and exports, preserving separators', () => {
+  for (const separator of ['\r', '\n', '\r\n']) {
+    for (const assignment of ['NODE_OPTIONS=--import=/fixture/injected.mjs',
+      'NODE_OPTIONS: --import=/fixture/injected.mjs', ' export NODE_OPTIONS = --import=/fixture/injected.mjs']) {
+      const prefix = `REV4A_PASSWORD=abcdefgh${separator}`;
+      const content = `${prefix}${assignment}\n# keep\rPORT=3740\r\n`;
+      const repaired = envFile.disableLoaderEnvLines(content);
+      assert.deepEqual(repaired.disabled, ['NODE_OPTIONS']);
+      assert.ok(repaired.content.startsWith(prefix));
+      assert.ok(repaired.content.endsWith(`${assignment}\n# keep\rPORT=3740\r\n`));
+      assert.deepEqual(repaired.content.match(/\r\n|\r|\n/g), content.match(/\r\n|\r|\n/g));
+      assert.equal(envFile.disableLoaderEnvLines(repaired.content).content, repaired.content);
+      const module = { exports: {} };
+      vm.runInNewContext(fs.readFileSync(require.resolve('@next/env'), 'utf8'), {
+        module, exports: module.exports, require, __dirname: '/mock', process: { env: {} }, console,
+      });
+      const [, before] = module.exports.processEnv([{ path: '.env', contents: content, env: {} }], '/mock');
+      assert.equal(before.NODE_OPTIONS, '--import=/fixture/injected.mjs', 'the original fixture reaches Next');
+      // A fresh isolated parser prevents Next's per-process cache from reusing the original.
+      const cleanModule = { exports: {} };
+      vm.runInNewContext(fs.readFileSync(require.resolve('@next/env'), 'utf8'), {
+        module: cleanModule, exports: cleanModule.exports, require, __dirname: '/mock', process: { env: {} }, console,
+      });
+      const [, after] = cleanModule.exports.processEnv([{ path: '.env', contents: repaired.content, env: {} }], '/mock');
+      assert.equal(after.NODE_OPTIONS, undefined);
+      assert.equal(after.REV4A_PASSWORD, 'abcdefgh');
+      assert.equal(after.PORT, '3740');
+    }
   }
 });
 
@@ -407,6 +438,26 @@ await test('launcher filters loader controls already present in old .env, warns 
   assert.equal(h.logs.filter(({ tag }) => tag === 'SETUP').length, 0);
 });
 
+await test('launcher skips loader keys after lone CR, with colon syntax and export prefixes', () => {
+  const keys = ['NODE_OPTIONS', 'NODE_REPL_EXTERNAL_MODULE', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_CUSTOM'];
+  for (const separator of ['\r', '\n', '\r\n']) {
+    const content = ['REV4A_PASSWORD=abcdefgh', ...keys.flatMap((key) =>
+      [`${key}=SENTINEL_PRIVATE_VALUE`, `${key}: SENTINEL_PRIVATE_VALUE`, `export ${key}=SENTINEL_PRIVATE_VALUE`]),
+      'export CUSTOM_OPERATOR_KEY=keep', 'PROVIDER_VENDOR.OPTION=keep-too', 'VENDOR@OPTION=legacy'].join(separator);
+    const h = launcher(content);
+    const parsed = vm.runInContext('loadEnv()', h.context);
+    assert.equal(parsed.REV4A_PASSWORD, 'abcdefgh');
+    assert.equal(parsed.CUSTOM_OPERATOR_KEY, 'keep');
+    for (const child of h.children) {
+      for (const key of keys) assert.equal(child.env[key], undefined);
+      assert.equal(child.env['PROVIDER_VENDOR.OPTION'], 'keep-too');
+      assert.equal(child.env['VENDOR@OPTION'], 'legacy');
+    }
+    for (const key of keys) assert.equal(h.logs.filter(({ message }) => message.endsWith(`key ${key}`)).length, 1);
+    assert.ok(!JSON.stringify(h.logs).includes('SENTINEL_PRIVATE_VALUE'));
+  }
+});
+
 await test('launcher generates a fresh code only before configuration and passes it only to server.js', () => {
   const a = launcher('REV4A_PASSWORD=\nREV4A_SETUP_CODE=untrusted-file-value\n');
   const b = launcher('');
@@ -516,7 +567,7 @@ await test('the default .env generator validates assignments too, before any wri
       existsSync: () => false, ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', CONFIG_DIR: '/mock',
       readFileSync: () => { throw Object.assign(new Error('Missing'), { code: 'ENOENT' }); },
       log: () => {}, mkdirSync: () => {}, randomString: () => value,
-      assertEnvValue: validator.assertEnvValue, seedAgentToken: () => {},
+      assertEnvValue: validator.assertEnvValue, seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {},
       writeFileSync: (_file, content) => writes.push(content), require: () => ({ symlinkSync: () => {} }),
       chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
       statSync: () => ({ mode: 0o600 }),
@@ -542,7 +593,7 @@ await test('default .env generation preserves existing files and aborts on read 
         if (error) throw Object.assign(new Error(error), { code: error });
         return 'PROVIDER_KEEP=existing\n';
       },
-      log: () => {}, seedAgentToken: () => {}, writeFileSync: (...args) => writes.push(args),
+      log: () => {}, seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {}, writeFileSync: (...args) => writes.push(args),
       statSync: () => ({ mode: 0o600 }),
       chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
       disableLoaderEnvLines: envFile.disableLoaderEnvLines,
@@ -610,6 +661,33 @@ await test('setup UI uses the shared Input, sends the code header and guards rep
   assert.equal(calls[0].options.headers['x-rev4a-setup-code'], CODE);
   assert.deepEqual(JSON.parse(calls[0].options.body), { password: '12345678' }); // secret-ok
   assert.deepEqual(saved, [CODE]);
+});
+
+await test('FIX-133: when Next would still load a loader key from .env, the launcher refuses to start', () => {
+  const exits = []; const logs = [];
+  const context = vm.createContext({
+    ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', existsSync: () => true,
+    readFileSync: () => 'REV4A_PASSWORD=x\nNODE_OPTIONS\n=--import=/x.mjs\n', writeFileSync: () => {}, chmodSync: () => {}, statSync: () => ({ mode: 0o100600 }),
+    log: (_t, m) => logs.push(m), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => ['NODE_OPTIONS'], ROOT: '/mock/root',
+    disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
+    process: { exit: (c) => { exits.push(c); throw new Error('exit'); } },
+  });
+  assert.throws(() => vm.runInContext(cliFunction('refuseIfLoaderKeysLeft') + '\n' + cliFunction('ensureEnv') + '\nensureEnv();', context), /exit/);
+  assert.deepEqual(exits, [1]);
+  assert.ok(logs.some((m) => m.startsWith('Refusing to start') && m.includes('NODE_OPTIONS')));
+  assert.ok(!logs.join('\n').includes('/x.mjs'), 'the value is never logged');
+});
+
+await test('FIX-133: setup keeps existing secrets in every accepted line form (CR, CRLF, export, spaces)', async () => {
+  for (const content of ['REV4A_JWT_SECRET=keepjwt\rREV4A_TOKEN=keeptok\r', 'REV4A_JWT_SECRET=keepjwt\r\nREV4A_TOKEN=keeptok\r\n',
+    'export REV4A_JWT_SECRET=keepjwt\nREV4A_TOKEN = keeptok\n']) {
+    const h = harness({ REV4A_SETUP_CODE: CODE }, content);
+    const r = await h.load('app/api/setup/password/route.ts').POST(h.req({ password: 'abcdefgh' }, CODE)); // secret-ok
+    assert.equal(r.status, 200, JSON.stringify(content));
+    const saved = h.files.get(ENV_FILE);
+    assert.ok(saved.includes('keepjwt') && saved.includes('keeptok'), JSON.stringify(saved));
+    assert.equal((saved.match(/REV4A_JWT_SECRET/g) || []).length, 1);
+  }
 });
 
 console.log(`\nEXECUTED: test-setup-security.mjs — ${passed} setup security checks passed`);

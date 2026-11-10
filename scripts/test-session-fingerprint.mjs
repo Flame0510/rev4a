@@ -56,6 +56,7 @@ function harness(env = { REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwt
     'next/server': next, jose, fs: mockFs, crypto: require('node:crypto'),
     './session-fingerprint.js': fingerprint,
     '@/lib/rev4a-paths': { ENV_FILE, REV4A_DATA: '/fixture' },
+    '@/lib/env-file': require('../lib/env-file.js'),
     '@/lib/login-throttle': require('../lib/login-throttle.js'),
     '@/lib/client-address': require('../lib/client-address.js'),
     '@/lib/update-state': { currentUpdate: () => null }, path,
@@ -73,7 +74,7 @@ function harness(env = { REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwt
   const functions = ast.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text));
   assert.equal(functions.length, names.length, 'extract every terminal auth function');
   const context = {
-    ...globals, ...fingerprint, fs: mockFs, path, DATA_DIR: '/fixture',
+    ...globals, ...fingerprint, fs: mockFs, path, DATA_DIR: '/fixture', unquoteEnvValue: require('../lib/env-file.js').unquoteEnvValue,
     TextEncoder, jwtVerify: jose.jwtVerify,
   };
   vm.runInNewContext(functions.map((node) => node.getText(ast)).join('\n'), context, { filename: 'server-auth.js' });

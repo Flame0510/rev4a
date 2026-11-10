@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-11-09
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -64,9 +64,10 @@ OpenClaw update. On agent images built since 2026-10-06, what an agent installs 
 `apt-get install` / `apt install` is recorded (with the apt sources and keys it added) and
 installed again automatically in the background after a recreate; packages installed before
 that image, local `.deb` files and tools installed another way (`npm -g`, downloaded
-binaries) are not, and should live under `/root/.local`. The dashboard does not show the
-outcome yet: it is in `/root/.rev4a/packages-status.json` inside the agent (open the agent's
-terminal), with the state `running`, `ok`, `partial`, `failed` or `nothing-to-do`.
+binaries) are not, and should live under `/root/.local`. The agent detail panel's
+**SYSTEM PACKAGES** section shows the restore outcome, restored packages, version changes
+and failures. The underlying status is also in `/root/.rev4a/packages-status.json` inside
+the agent, with the state `running`, `ok`, `partial`, `failed` or `nothing-to-do`.
 
 **Updating an agent:** the detail panel's "OPENCLAW VERSION" section shows the version the
 agent runs and, when a newer one is downloaded, **Update to <version>**. The update takes
@@ -149,7 +150,7 @@ A read-only, per-agent overview of what OpenClaw puts in the agent's prompt. Pic
 Blank files are skipped and a missing file shows as "missing". A linked (symlinked) file is followed by OpenClaw but its size is not read here, so the page marks it unknown and leaves it out of the total. A sub-agent session gets AGENTS.md only (OpenClaw's system-prompt docs: "Sub-agent sessions only inject AGENTS.md"); MEMORY.md is also left out of cron, group and channel sessions. TOOLS.md and HEARTBEAT.md are not injected; the page only mentions them when present.
 
 ### Config (`/config`)
-Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. The client sends only edited values. Config patches `.env` in place, preserving other keys, comments, blank lines, order and line endings; a daemon-reload is attempted only after a file change. Unchanged values stay intact. If `.env` has a multi-line or unterminated quoted value, a Config edit answers 409 and the file must be edited by hand. Allowed settings shown from the process environment are saved only if edited. A full unchanged GET-to-PUT round trip does not write the file. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
+Rev4a application settings. View and modify environment variables (password, tokens, secrets), restart the server. The client sends only edited values. Config patches `.env` in place, preserving other keys, comments, blank lines, order and line endings; a daemon-reload is attempted only after a file change. Unchanged values stay intact. Edits use physical lines: the last assignment of an edited key is replaced and earlier duplicates are removed; clearing a stored non-empty value removes all its assignments. If `.env` has a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment), or a backslash immediately before a same-kind quote, Config answers 409 without writing. Edit that file by hand. Save errors remain visible beside Save & Restart after the dialog closes, and the edited values remain available for retry. Allowed settings shown from the process environment are saved only if edited. A full unchanged GET-to-PUT round trip does not write the file. The **Time zone** card sets the zone the dashboard shows times in (saved to `settings.json`, by default the server's own zone, applied at once). The **Agent defaults** section (the default memory limit offered for new agents) is saved to `agent-defaults.json` and applies at once, without a restart; the "restart Rev4a" hint is for the `.env` values only. It only prefills the create wizard and never changes an existing agent.
 
 ### Plugins (`/plugins`)
 Browse the OpenClaw plugins of one agent, read from its container (pick the agent at the top; a stopped agent must be started first). Search by name, id or description and filter enabled or disabled. Each row shows the version, whether it is enabled, and how many tools and hooks it adds. The page is read-only for now: turning plugins on or off is not available yet. The list is cached for about a minute and Reload refreshes it.
@@ -160,7 +161,7 @@ Skill registry showing all skills across three sources:
 - **Per-agent** — skills in each agent's workspace (`<workspace>/skills`), shown with agent label
 - **Bundled** — skills shipped with OpenClaw (read-only)
 
-Filter by source, view and edit SKILL.md content, and **promote** agent-local skills to shared with one click. Skills whose name starts with `rev4a-` are Rev4a's own: they show "Managed by Rev4a" and are read-only (no Edit, no Delete, and a workspace skill cannot be promoted under such a name).
+Filter by source, view and edit SKILL.md content, and **promote** agent-local skills to shared with one click. A partial promotion reports the skipped-file count and returned filename sample in its toast, with an ellipsis when more were skipped. Skills whose name starts with `rev4a-` are Rev4a's own: they show "Managed by Rev4a" and are read-only (no Edit, no Delete, and a workspace skill cannot be promoted under such a name).
 
 ### Setup (`/setup`)
 First-run password setup. Enter the **Setup code** printed by `rev4a serve` in its
@@ -168,7 +169,7 @@ terminal or service journal (`journalctl -u rev4a`), then choose a password of a
 least 8 characters. The code changes at every start until setup finishes; case,
 dashes and spaces do not matter. Direct Next.js starts (`npm run dev`) print it on
 the first setup request. Setup sets `REV4A_PASSWORD` and any missing JWT secret,
-then requires login. Already-configured installs never require a setup code.
+then requires login. Already-configured installs never require a setup code. The password is stored so it reads back exactly: one containing `$`, or a single quote together with leading/trailing spaces, `#` or a leading quote, is refused with 400, and an existing `.env` with multi-line or ambiguous values makes setup answer 409.
 All setup/wizard API calls require the code before a password exists and normal
 authentication afterwards. New environment values reject non-strings, CR, LF and NUL;
 clearing a stored non-empty Config value removes its assignment, while unchanged
@@ -182,8 +183,12 @@ settings inherited from the operator's shell or systemd. Runtime-only keys
 silently ignored on Config writes, including older open tabs. The launcher
 removes their real assignments from `.env` at startup, logging names only, and
 clears inherited copies from the base child environment before setting fresh
-per-boot credentials. Both repairs preserve assignment-like text inside quoted
-multiline values and are idempotent. Deleted operator keys and comments cannot
+per-boot credentials. The runtime-key repair skips non-plain files entirely (with a log
+message); on plain files it removes only physical assignment lines. The loader-key repair
+comments out matching physical lines even inside quoted multiline values or after an
+unterminated quote. It recognizes CRLF, CR and LF separators, `KEY=value`, `KEY: value`
+and `export` prefixes, preserving the original separators. Both repairs are idempotent.
+Deleted operator keys and comments cannot
 be reconstructed automatically. File read failures other than a missing file abort
 environment writes; existing dotted keys are preserved when saving other keys.
 
