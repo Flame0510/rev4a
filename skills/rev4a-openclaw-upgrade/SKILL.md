@@ -396,7 +396,13 @@ codex plugin, custom config keys. Restore a neutralized copy of a real backup in
    ```
    The input is only read. In `openclaw.json` it removes `channels` and their `bindings`, sets
    `cron.enabled` to `false`, removes the Gateway token or password, the Rev4a provider's key and its
-   `x-rev4a-agent` header, `skills.entries.*.env` and `.apiKey`, and replaces every other string under
+   `x-rev4a-agent` header (the provider `apiKey` may be an SEC-20 derived agent token;
+   it must be removed even though no per-agent server-side secret is stored; a deleted
+   id retained in the historical known set still receives attribution, exactly like a
+   legacy header, while ids outside that set meter as `unknown`. Deletion removes the
+   container holding the token; root-key rotation revokes all tokens, and the next sync
+   supplies fresh credentials to running and stopped agents),
+   `skills.entries.*.env` and `.apiKey`, and replaces every other string under
    a secret-looking key (token, apiKey, password, secret…) with `rev4a-neutralized`. In the state
    database it deletes the `secret_store_entries` rows and the stored sign-ins (`authProfiles.store`),
    then vacuums it. It drops `.agent-token`, `.openclaw/credentials/`, `agents/*/agent/auth-profiles.json`,

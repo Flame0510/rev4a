@@ -4,7 +4,7 @@
  * OpenAI-compatible chat completions endpoint.
  * POST /api/provider/v1/chat/completions
  *
- * Authentication is the `rev4a` entry of provider-keys.json, or REV4A_API_KEY.
+ * Authentication accepts derived agent tokens, the shared gateway key, or REV4A_API_KEY.
  * See `app/api/provider/auth.ts` — in particular why the other entries in that
  * file, which are upstream credentials rather than passwords, must not be
  * accepted here.
@@ -24,7 +24,6 @@ import {
   upstreamErrorDetails,
   type MeterContext,
 } from '@/app/api/provider/upstream';
-import { AGENT_HEADER } from '@/lib/proxy-usage';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -60,7 +59,8 @@ export async function POST(request: NextRequest) {
   const start = Date.now();
 
   try {
-    if (!isGatewayClient(request)) {
+    const caller = isGatewayClient(request);
+    if (!caller) {
       return errorResponse(
         'Invalid API key. Use your Rev4a API key from the Gateway page via Authorization: Bearer <key>.',
         'authentication_error',
@@ -95,10 +95,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Which agent is calling: every agent shares one key, so the proxy tells them apart by
-    // the header the startup sync writes into each one. No header, metered as 'unknown'.
+    // Token identities ignore the header and require a known agent. Legacy calls keep
+    // their historical header resolution and hourly allowance for not-yet-known ids.
     const meter: MeterContext = {
-      agent: resolveMeterAgent(request.headers.get(AGENT_HEADER)),
+      agent: resolveMeterAgent(caller.agentId, caller.kind === 'agent'),
       provider,
       model,
       startMs: start,

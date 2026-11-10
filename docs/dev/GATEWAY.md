@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-11-06
+> **Last updated:** 2026-11-10
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -64,8 +64,8 @@ Provider API keys are stored in `data/provider-keys.json`:
 }
 ```
 
-The `rev4a` entry is the master gateway token. Agent containers authenticate
-against the Rev4a provider proxy using this token. See [`PROVIDERS.md`](PROVIDERS.md).
+The `rev4a` entry is the shared root key. Agent containers authenticate with their
+own HMAC-derived proxy token; unsynced legacy clients may still use the shared key. See [`PROVIDERS.md`](PROVIDERS.md).
 
 ### Sync Flow
 
@@ -97,14 +97,30 @@ Steps 4–6 for one container run inside that agent's `openclaw.json` write queu
 (`lib/agent-config-lock.ts`), as does `patchRev4aProvider`: a credential, subscription, Telegram or
 model write to the same agent waits its turn instead of racing the sync and losing an update.
 
-### Agent identity header (proxy metering)
+### Agent proxy identity (proxy metering)
+
+`buildRev4aProviderConfig(version, agentId)` writes `apiKey: r4a1.<agentId>.<mac>`,
+derived from the shared key without a per-agent server-side store. The proxy
+meters the authenticated token id after known-agent resolution; the header cannot
+override it. Ids outside the known set meter as `unknown`. The known set is the
+historical `agent_cost_sources` table, not a live-container list: a deleted id
+retained there still receives attribution, just like a legacy header naming it.
+The token lives in the container removed on deletion; deletion does not revoke a
+copied token. Without an agent id, the generic block keeps the shared key. Rotate
+the root to revoke every agent token; the next sync supplies fresh tokens to
+running agents (and stopped containers too). Shared-key and `REV4A_API_KEY` callers
+retain legacy header metering.
 
 The `rev4a` block also carries `headers: { "x-rev4a-agent": "<AGENT_ID of that container>" }`
 (`buildRev4aProviderConfig(version, agentId)`; one value per container, from the AGENT_ID label, the
-container name when it has none; `patchRev4aProvider` reads the same label, so every path writes the same id). OpenClaw sends it with every request to the proxy, and the proxy meters the call
-under that agent (`docs/dev/PROVIDERS.md`, Metering). The startup sync, `Sync all` and the per-agent patch
-(create, update, edit, recreate) all write it; an agent not yet synced sends no header and is metered as
-`unknown`.
+container name when it has none; `patchRev4aProvider` reads the same label, so every path writes the same id).
+OpenClaw sends it for compatibility with older Rev4a readers and the upgrade skill.
+Startup sync, Sync All and per-agent patch (create, update, edit, recreate) write both
+token and header. Sync All already includes stopped containers too; agents skipped
+or missed keep their old shared key and continue on the legacy path until synced.
+See [PROVIDERS.md](PROVIDERS.md#sec-20-update-and-rollback-notes) for update, backup
+and verified `v1.24.0` rollback behavior (successful startup sync restores shared
+keys for running and stopped agents; skipped/failed agents need a later sync/patch).
 
 ### Costs: OpenClaw prices every call
 

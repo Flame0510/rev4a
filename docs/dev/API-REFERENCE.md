@@ -719,15 +719,22 @@ taking them out could hide an unpriced paid model.
 - `proxy`: what the Rev4a provider proxy metered over the same UTC days (`proxy_usage_hourly`, written
   by the proxy for every call it carries, with the provider's own token counts and `priceAt()` at the time
   of the call), next to each agent's recorded figure. `byAgent` pairs them by AGENT_ID (the
-  `x-rev4a-agent` header the startup sync writes into each agent): `recorded` is OpenClaw's, `metered`
+  authenticated agent proxy token; legacy shared-key/`REV4A_API_KEY` callers still use
+  `x-rev4a-agent`, with its existing bounded resolution): `recorded` is OpenClaw's, `metered`
   the proxy's (`null` when nothing went through the proxy), `combined` the larger of the two, `gap` the
   proxy's excess (0 if none), `flagged` true when the proxy saw more than 20 % and more than 0.10 USD above
   the agent (never true for `unknown` and `assistant`, which have no recorded figure). Proxy rows
-  under both an agent's AGENT_ID and its container name are merged into that agent before `combined` is computed. Agents left out of `byAgent` (stopped, nothing recorded in the range) are still paired by AGENT_ID or container name, with a recorded figure of 0. Callers no known agent claims are listed on their own with `container`/`name` null:
-  `agent: "unknown"` (a request without the header, e.g. an agent not yet synced or another client) and
+  under both an agent's AGENT_ID and its container name are merged into that agent before `combined` is computed. Agents left out of `byAgent` (stopped, nothing recorded in the range) are still paired by AGENT_ID or container name, with a recorded figure of 0.
+  Token ids retained in the historical `agent_cost_sources` known set still receive
+  attribution after deletion, exactly like legacy headers naming them. Deletion removes
+  the container holding the token; revoke copied tokens by rotating the shared gateway
+  key, then sync running agents for fresh tokens (stopped containers also sync).
+  Callers no known agent claims are listed on their own with `container`/`name` null:
+  `agent: "unknown"` (a token id outside that set, or a legacy caller without a valid
+  accepted header; token identities ignore the header) and
   `agent: "assistant"` (PULSE). `recordedCost`, `meteredCost` and `combinedCost` are sums over those
   lines; `combinedCost` is the spend the page counts. The `unknown` line keeps its metered figures but its
-  `combined` is 0: calls without the header may be an agent's own spend that the agent already
+  `combined` is 0: unidentified calls may be an agent's own spend that the agent already
   recorded (an agent not yet synced), so adding them would count it twice; `assistant` is added (PULSE
   is recorded nowhere else). `available: false` (no lines) when `costs.db`
   has no `proxy_usage_hourly` yet, or when reading it failed; `totals`, `daily` and the other lists are unchanged and stay the

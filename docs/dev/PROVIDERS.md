@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-11-08
+> **Last updated:** 2026-11-10
 
 This document covers the Rev4a Provider Gateway (proxy), the provider key
 endpoints, and how agent containers authenticate against the Rev4a proxy.
@@ -17,7 +17,7 @@ connecting directly to upstream APIs.
 ```
 Agent Container          Rev4a Gateway              Upstream API
      │                         │                         │
-     │ Authorization: Bearer <rev4a-key>               │
+     │ Authorization: Bearer <agent-proxy-token>               │
      │ POST /api/provider/v1/chat/completions            │
      │ model: rev4a/deepseek/deepseek-flash         │
      │────────────────────────>│                         │
@@ -32,8 +32,8 @@ Agent Container          Rev4a Gateway              Upstream API
 
 ### Authentication
 
-The Gateway authenticates requests against `data/provider-keys.json`. The
-`Authorization` Bearer token must match the value of the 'rev4a' entry:
+The Gateway authenticates `Authorization` Bearer credentials using the shared
+`rev4a` key in `data/provider-keys.json` as the root for derived agent tokens:
 
 ```json
 {
@@ -43,11 +43,20 @@ The Gateway authenticates requests against `data/provider-keys.json`. The
 
 | Token match | Result |
 |---|---|
-| Matches `rev4a` key | Authenticated — returns all enabled models or proxies the chat request |
+| Valid derived agent token | Authenticated — identity comes from the token; caller header ignored |
+| Matches `rev4a` key or `REV4A_API_KEY` | Authenticated — legacy identity from `x-rev4a-agent` |
 | No match | `GET /models` returns empty list, `POST /chat/completions` returns 401 |
 | No token | Same as no match |
 
-Only the 'rev4a' entry is checked. Other provider keys in the file (e.g.
+Agent tokens are `r4a1.<agentId>.<mac>`, where `mac` is the canonical base64url
+encoding of the full 32-byte HMAC-SHA256 with key = the shared `rev4a` key and
+message = `"rev4a:agent-proxy:v1\0" + agentId` (the separator is a NUL byte).
+Ids must match `AGENT_ID_RE` in `lib/proxy-usage.js`. The pure helpers in
+`lib/agent-proxy-token.js` reject empty keys and invalid ids and verify in constant
+time. No per-agent secret is stored on the server; rotating the shared key
+invalidates every derived token. `REV4A_API_KEY` cannot derive agent credentials.
+
+Only the 'rev4a' entry roots these tokens. Other provider keys in the file (e.g.
 `deepseek`, `openrouter`) are ignored for authentication — they are used as
 upstream credentials by the proxy, not as client tokens.
 
@@ -79,7 +88,7 @@ fetches upstream models or sends upstream credentials.
 
 | Auth state | Response |
 |---|---|
-| Valid `rev4a` token | All offered models |
+| Valid agent token, shared `rev4a` key, or `REV4A_API_KEY` | All offered models |
 | Invalid token | `total: 0`, empty `data` array |
 | No token | `total: 0`, empty `data` array |
 
@@ -113,17 +122,21 @@ model string.
 **Metering.** The proxy is also the meter: after every upstream answer (2xx and errors, streaming
 and not) it adds one call to `proxy_usage_hourly` in `costs.db` — hour, caller, provider, model, calls,
 prompt / completion / cached tokens as the provider reports them, errors, and the cost at `priceAt()` for
-the moment the call started (so DeepSeek's peak and off-peak bands are right). All agents share one gateway
-key, so the caller is named by the `x-rev4a-agent` header: the startup sync writes
-`models.providers.rev4a.headers` = `{ "x-rev4a-agent": "<AGENT_ID>" }` into each agent (OpenClaw sends
-these headers with every request to that provider). A request without a valid header is metered as
-`unknown`; PULSE (`/api/assistant`) is metered as `assistant`. The header is not forwarded upstream.
-The header is bounded, because anyone holding the gateway key can send any value: `assistant` and `unknown` in
-it are not accepted (reserved, metered as `unknown`), and a valid id is always accepted when it is a known agent
-(the `agent_id` or `container` values in `agent_cost_sources`, read at most every 60 s and never from Docker).
-Any other valid id (an agent created since the daemon's last cost pass, at most five minutes ago, or every id when
-that set cannot be read) is accepted up to 200 distinct ones per process per hour; beyond that the call is metered
-as `unknown`.
+the moment the call started (so DeepSeek's peak and off-peak bands are right). For an agent token,
+the caller is the authenticated id in the token, regardless of `x-rev4a-agent`. It must also be a
+known agent (`agent_id` or `container` in `agent_cost_sources`, cached for at most 60 s, never read
+from Docker). This set retains historical agents: a deleted agent id still meters under its id
+while its row remains, exactly like a legacy header naming that id. Deletion removes the
+container holding the token; it does not revoke a copied token. Rotate the shared gateway key
+to revoke all agent tokens, then sync to give running agents fresh tokens (Sync All also
+rewrites stopped containers). An id outside the known set, or an unavailable set, meters as `unknown`;
+a newly created agent can stay `unknown` until the daemon's cost pass and the cache refresh.
+The sync still writes `models.providers.rev4a.headers` = `{ "x-rev4a-agent": "<AGENT_ID>" }` for older
+Rev4a readers and upgrade tooling. This header is not forwarded upstream.
+Only shared-key and `REV4A_API_KEY` callers use the header, with unchanged legacy rules: missing,
+malformed or reserved (`assistant` / `unknown`, case-insensitive) values meter as `unknown`; known
+ids always pass; other valid ids share a 200-distinct-ids-per-process-per-hour allowance. Token calls
+do not use or consume that allowance. PULSE calls upstream directly and remains metered as `assistant`.
 A streamed call carries its usage only in a last chunk that the client has to ask for, so for `stream: true`
 the proxy sets `stream_options.include_usage` on the upstream request itself, to every upstream (a
 provider that rejected the field would answer 400; DeepSeek and OpenAI accept it), and forwards that chunk (a
@@ -227,7 +240,8 @@ Inside each agent container, the `openclaw.json` file has this structure for the
       "rev4a": {
         "baseUrl": "http://host.docker.internal:3740/api/provider/v1",
         "api": "openai-completions",
-        "apiKey": "<gateway-token>",
+        "apiKey": "r4a1.<agentId>.<mac>",
+        "headers": { "x-rev4a-agent": "<agentId>" },
         "models": [
           { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash" },
           { "id": "deepseek/deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
@@ -250,8 +264,31 @@ Key points:
 - `models.providers.rev4a.models` uses model IDs **without** the `rev4a/` prefix
 - `agents.defaults.model.primary` uses the model ID **with** the `rev4a/` 
   prefix (as it would appear at runtime). No fallbacks are set by default.
-- The `apiKey` value must match the 'rev4a' entry in `data/provider-keys.json`
-  for the container to successfully authenticate against the Gateway
+- The `apiKey` is derived for that agent id from the shared `rev4a` key. A generic
+  block built without an agent id keeps the shared key and no header.
+
+### SEC-20 update and rollback notes
+
+Existing shared-key agents continue to work through the legacy path until sync or
+patch replaces their provider block. Startup Sync All rewrites both running and
+stopped containers (`docker ps -a`), except agents skipped for an active operation
+or backup, or whose config cannot be read/written; its outcome is logged. Those
+missed keep working with the shared key until a later successful sync or patch.
+The rewrite is idempotent and uses the existing bounded per-container operations;
+there is no table scan, schema migration, new dependency, or change to `.env` or
+`provider-keys.json`. Older OpenClaw agents receive the same provider shape and
+version-specific model fields; only the opaque API credential changes.
+
+Rollback to the previous release (`v1.24.0`, verified in local tagged code)
+self-heals on a successful startup sync: `instrumentation.ts` calls
+`syncAllAgents()`, which replaces the whole block, including `apiKey`, with the
+shared key. That release also includes stopped containers, so they are rewritten
+on that sync too. Skipped/failed agents need a later successful sync or provider
+patch; a plain container start does not itself patch this block. Until rewritten,
+the previous proxy rejects a derived token. No stored data needs restoring.
+Backups contain the derived credential: restoring under the same id and unchanged
+shared key keeps it valid; after a rotation it needs a fresh sync/patch. The upgrade
+skill's `neutralize-backup.mjs` already removes the provider `apiKey` and identity header.
 
 ---
 

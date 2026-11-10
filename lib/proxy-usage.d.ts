@@ -2,6 +2,7 @@
 
 export function markMeteringGap(costsDbPath: string, atMs?: number): void;
 export const AGENT_HEADER: string;
+export const AGENT_ID_RE: RegExp;
 export const UNKNOWN_AGENT: string;
 export const ASSISTANT_AGENT: string;
 export const HOUR_S: number;
@@ -52,7 +53,7 @@ export function createAgentResolver(opts: {
   now?: () => number;
   ttlMs?: number;
   maxUnverified?: number;
-}): (headerValue: unknown) => string;
+}): (agentValue: unknown, requireKnown?: boolean) => string;
 export function extractUsage(json: unknown): ProxyUsage | null;
 export function usageFromBody(text: string): ProxyUsage | null;
 export function createSseUsageParser(): SseUsageParser;

@@ -245,7 +245,8 @@ function openUsageStore(): UsageStore | null {
 }
 
 /**
- * agent_id and container values of the agents Rev4a knows (the daemon fills agent_cost_sources).
+ * Historical agent_id and container values (the daemon fills agent_cost_sources).
+ * Deletion does not prune these rows: this is a known-id set, not a live-agent lookup.
  * Prepared on each read (at most once a minute): before the daemon's first pass the table does
  * not exist, which must not stop the metering — the resolver treats the throw as "none known".
  */
@@ -264,12 +265,12 @@ function loadKnownAgents(): string[] {
 const agentResolver = createAgentResolver({ loadKnown: loadKnownAgents });
 
 /**
- * The agent a request is metered under, from its `x-rev4a-agent` header: a known agent, or
- * 'unknown' (see createAgentResolver). Reads the known set at most once a minute and never
- * touches Docker.
+ * Resolve the identity selected by auth. Tokens require a known agent; legacy header
+ * identities keep their bounded allowance (see createAgentResolver). Reads the known
+ * set at most once a minute and never touches Docker.
  */
-export function resolveMeterAgent(headerValue: string | null): string {
-  return agentResolver(headerValue);
+export function resolveMeterAgent(agentId: string | null, requireKnown = false): string {
+  return agentResolver(agentId, requireKnown);
 }
 
 /**

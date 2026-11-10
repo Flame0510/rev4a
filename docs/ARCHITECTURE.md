@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-09
+> **Last updated:** 2026-11-10
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -648,7 +648,7 @@ point to the Rev4a provider proxy instead of using direct API keys.
 ```
 Agent Container          Rev4a Gateway              Provider API
      │                         │                         │
-     │ Authorization: Bearer <gateway-token>             │
+     │ Authorization: Bearer <agent-proxy-token>             │
      │ POST /api/provider/v1/chat/completions            │
      │ model: rev4a/deepseek-flash                     │
      │────────────────────────>│                         │
@@ -664,8 +664,8 @@ Agent Container          Rev4a Gateway              Provider API
 **Key characteristics:**
 
 - The Rev4a server in `app/api/provider/v1/` acts as an OpenAI-compatible proxy
-- Authentication uses `data/provider-keys.json` — the Bearer token must match
-  the 'rev4a' entry
+- Authentication verifies a per-agent HMAC token derived from the `rev4a` entry
+  of `data/provider-keys.json`; shared-key and `REV4A_API_KEY` callers remain supported
 - Model lists (`GET /api/provider/v1/models`) return an empty list on invalid
   or missing token, preventing information leakage
 - Chat requests (`POST /api/provider/v1/chat/completions`) return 401 on
@@ -674,13 +674,23 @@ Agent Container          Rev4a Gateway              Provider API
   never inside agent containers
 - The Gateway page (`/gateway`) provides a UI to manage provider keys and
   sync them to agent containers via `PUT /api/gateway/provider`
-- The proxy meters every call per agent. Each agent sends its AGENT_ID in an
-  `x-rev4a-agent` header (written into its `models.providers.rev4a.headers` by the sync); a call
-  without a valid one is metered as `unknown`. Each finished call (status, the provider's own
+- The proxy meters every call per agent using the authenticated id from
+  `r4a1.<agentId>.<mac>` (`lib/agent-proxy-token.js`, full HMAC-SHA256 rooted in the
+  shared key). The id must be known in `agent_cost_sources`, otherwise it meters
+  as `unknown`. This historical set retains deleted ids, which still receive attribution
+  exactly like legacy headers naming them. Deletion removes the container holding the
+  token, without revoking a copied token; rotate the shared key to revoke all agent
+  tokens, then sync running agents for fresh credentials (stopped containers also sync).
+  A token caller's `x-rev4a-agent` header is ignored. Sync still writes
+  it for compatibility; only shared-key/`REV4A_API_KEY` legacy calls trust it. Each finished call (status, the provider's own
   token counts, the price in force at that moment) is added to `proxy_usage_hourly` in `costs.db`,
   one row per hour, agent, provider and model. Metering is best effort and off the response path,
   and bounded: a locked `costs.db` costs at most about 200 ms, then metering is skipped for 60 s.
-  Agent ids the daemon does not know yet are accepted up to 200 distinct ones per process per hour.
+  Legacy header ids the daemon does not know yet are accepted up to 200 distinct ones per process per hour.
+  Token identities never use that allowance. Startup sync migrates running and
+  stopped agents idempotently; rollback to `v1.24.0` restores shared keys through
+  its startup sync, with skipped/failed agents needing a later successful sync/patch.
+  See the SEC-20 update notes in PROVIDERS.md.
 
 See [GATEWAY.md](dev/GATEWAY.md) and [PROVIDERS.md](dev/PROVIDERS.md) for
 detailed documentation.

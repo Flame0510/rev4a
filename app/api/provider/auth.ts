@@ -1,11 +1,10 @@
 /**
  * Who may call the Rev4a Provider Gateway.
  *
- * One credential opens this door: the `rev4a` entry of `provider-keys.json`.
- * That is the value `buildRev4aProviderConfig()` writes into every agent
- * container, and `syncAllAgents()` refuses to run without it, so it is the only
- * token any legitimate client holds. `REV4A_API_KEY` is accepted alongside it
- * for callers configured before the key moved into the file.
+ * Agents present a token derived from the `rev4a` entry of provider-keys.json.
+ * Its authenticated id takes precedence over any caller-supplied header.
+ * The shared key and REV4A_API_KEY remain accepted for legacy callers, whose
+ * metering identity still comes from the compatibility header.
  *
  * **Why this is its own module.** The two v1 routes each carried their own copy
  * of the check and the copies had drifted — one guarded the empty token, the
@@ -28,6 +27,14 @@
  */
 import { timingSafeEqual } from 'crypto';
 import { readProviderKeys } from '@/app/api/gateway/provider/keys';
+import { verifyAgentProxyToken } from '@/lib/agent-proxy-token';
+import { AGENT_HEADER } from '@/lib/proxy-usage';
+
+export interface GatewayCaller {
+  kind: 'agent' | 'legacy';
+  /** Authenticated token id, or the untrusted legacy header (resolved before metering). */
+  agentId: string | null;
+}
 
 /** Compare without leaking length or position through timing. */
 function secretEquals(a: string, b: string): boolean {
@@ -41,25 +48,31 @@ function secretEquals(a: string, b: string): boolean {
 }
 
 /**
- * True when the request carries the gateway credential.
+ * The caller identity when the request carries a gateway credential, else null.
  *
- * Never true for an absent or empty token, whatever the key file contains: an
+ * Never accepts an absent or empty token, whatever the key file contains: an
  * entry saved as `""` would otherwise match a request with no Authorization
  * header at all.
  */
-export function isGatewayClient(request: Request): boolean {
+export function isGatewayClient(request: Request): GatewayCaller | null {
   const token = (request.headers.get('Authorization') || '')
     .replace(/^Bearer\s+/i, '')
     .trim();
-  if (!token) return false;
+  if (!token) return null;
 
   // provider-keys.json is hand-editable: a non-string value must deny, not throw.
   // Buffer.from on a number raises, and the models route has no catch.
   const gatewayKey: unknown = readProviderKeys()['rev4a'];
-  if (typeof gatewayKey === 'string' && gatewayKey && secretEquals(token, gatewayKey)) return true;
+  const agentId = verifyAgentProxyToken(gatewayKey, token);
+  if (agentId !== null) return { kind: 'agent', agentId };
+  if (typeof gatewayKey === 'string' && gatewayKey && secretEquals(token, gatewayKey)) {
+    return { kind: 'legacy', agentId: request.headers.get(AGENT_HEADER) };
+  }
 
   const masterKey = process.env.REV4A_API_KEY;
-  if (masterKey && secretEquals(token, masterKey)) return true;
+  if (masterKey && secretEquals(token, masterKey)) {
+    return { kind: 'legacy', agentId: request.headers.get(AGENT_HEADER) };
+  }
 
-  return false;
+  return null;
 }

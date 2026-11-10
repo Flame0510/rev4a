@@ -322,8 +322,10 @@ export function dashboardCosts(): {
 
 /**
  * What the Rev4a provider proxy saw from one caller (proxy_usage_hourly, written by the
- * proxy itself — lib/proxy-usage.js). `agent` is the AGENT_ID the agent sends in its
- * `x-rev4a-agent` header, `unknown` for a request without one, `assistant` for PULSE.
+ * proxy itself — lib/proxy-usage.js). `agent` is the AGENT_ID named by the agent's own proxy
+ * token (or, for a caller still on the shared key, its `x-rev4a-agent` header), `assistant` for
+ * PULSE, `unknown` otherwise: a token whose id is not a known agent, or a shared-key call with no
+ * usable header (a shared-key header may name an agent not seen yet, within the resolver's bound).
  */
 export interface ProxyAgentRow {
   agent: string; calls: number; promptTokens: number; completionTokens: number; cachedTokens: number;

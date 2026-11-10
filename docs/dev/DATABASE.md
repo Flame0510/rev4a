@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-11-06
+> **Last updated:** 2026-11-10
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (events and the agents' sessions, below), `metrics.db` (machine and container metrics, see
@@ -567,7 +567,7 @@ CREATE TABLE agent_cost_sources (
 -- upserts and adds. See lib/proxy-usage.js.
 CREATE TABLE proxy_usage_hourly (
   hour INTEGER NOT NULL,      -- start of the UTC hour, Unix seconds
-  agent TEXT NOT NULL,        -- AGENT_ID from the x-rev4a-agent header (bounded: see PROVIDERS.md); 'unknown' otherwise; 'assistant' for PULSE
+  agent TEXT NOT NULL,        -- known AGENT_ID from proxy token; legacy header fallback (see PROVIDERS.md); unknown otherwise; assistant for PULSE
   provider TEXT NOT NULL,     -- upstream provider ('deepseek', 'openrouter', ...)
   model TEXT NOT NULL,        -- upstream model id, without the provider
   calls INTEGER NOT NULL DEFAULT 0,
@@ -584,6 +584,15 @@ CREATE TABLE proxy_usage_hourly (
 `proxy_usage_hourly` is the proxy's own meter, next to what each agent's OpenClaw recorded
 (`agent_cost_daily`): it counts every call the proxy carried, including those an agent never
 records (a failed context compaction is not in OpenClaw's usage). The Costs page shows both and counts the larger.
+SEC-20 changes only caller attribution: derived tokens identify a known agent, ignoring
+the compatibility header; ids outside the known set become `unknown`. The known set
+is the historical `agent_id` / `container` values in `agent_cost_sources`, cached for
+at most 60 s. Deletion does not prune them, so a retained deleted id still receives
+attribution, just like a legacy header naming it. Deletion removes the container
+holding the token; rotate the shared gateway key to revoke all tokens, then sync
+running agents for fresh credentials (stopped containers also sync). Shared-key and
+`REV4A_API_KEY` calls keep the existing bounded header rules. No schema or historical
+figures change. See PROVIDERS.md for sync and rollback notes.
 It is additive: a release without it ignores the table, and an install without it (before the first update) has
 none until the daemon or the first proxied call creates it.
 

@@ -29,6 +29,7 @@ import { activeEditAgentIds } from '@/lib/agent-edit-state';
 import { getAgentDisplayNames } from '@/lib/agent-names';
 import { priceAt, type ModelCost } from '@/lib/model-pricing';
 import { AGENT_HEADER } from '@/lib/proxy-usage';
+import { deriveAgentProxyToken } from '@/lib/agent-proxy-token';
 
 const PROVIDER_GATEWAY_BASE_URL = detectProviderGatewayUrl();
 
@@ -266,14 +267,14 @@ export interface Rev4aProviderConfig {
   baseUrl: string;
   apiKey: string;
   api: string;
-  /** Sent with every request to the proxy; names the agent so the proxy can meter per agent. */
+  /** Compatibility identity header for older Rev4a readers; token identity takes precedence. */
   headers: Record<string, string>;
   models: Rev4aModelEntry[];
 }
 
 /**
- * `agentId` is the container's AGENT_ID (the proxy's metering key). Without one the block
- * carries no header and the agent's calls are metered as 'unknown'.
+ * `agentId` binds the API credential to the container's identity. Without one the generic
+ * block keeps the shared key and no header (legacy, metered as 'unknown').
  */
 export function buildRev4aProviderConfig(version?: string | null, agentId?: string | null): Rev4aProviderConfig {
   const providerKeys = readProviderKeys();
@@ -281,7 +282,7 @@ export function buildRev4aProviderConfig(version?: string | null, agentId?: stri
   const activeModels = getActiveRev4aModels(version);
   return {
     baseUrl: PROVIDER_GATEWAY_BASE_URL,
-    apiKey: rev4aApiKey,
+    apiKey: agentId == null ? rev4aApiKey : deriveAgentProxyToken(rev4aApiKey, agentId),
     api: 'openai-completions',
     headers: agentId ? { [AGENT_HEADER]: agentId } : {},
     models: activeModels,
@@ -289,8 +290,8 @@ export function buildRev4aProviderConfig(version?: string | null, agentId?: stri
 }
 
 /**
- * The AGENT_ID label of a container, which is what syncAllAgents writes as the metering
- * header; the container name only when there is no label (or Docker cannot say).
+ * The AGENT_ID label used for the token and compatibility header; the container name
+ * only when there is no label (or Docker cannot say).
  */
 function containerAgentIdSync(name: string): string {
   try {

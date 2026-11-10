@@ -199,6 +199,42 @@ test('resolver: the known set is read at most once per minute', () => {
   assert.equal(loads, 2);
 });
 
+test('resolver: token identities require known ids and cannot borrow or consume the legacy allowance', () => {
+  let t = 0;
+  let known = ['atlas'];
+  const r = createAgentResolver({ loadKnown: () => known, now: () => t, maxUnverified: 1 });
+  assert.equal(r('atlas', true), 'atlas');
+  assert.equal(r('never-known', true), 'unknown');
+  assert.equal(r('new-legacy'), 'new-legacy');
+  assert.equal(r('new-legacy', true), 'unknown');
+  assert.equal(r('another'), 'unknown');
+  known = [];
+  t += 60_001;
+  assert.equal(r('atlas', true), 'unknown');
+  const unreadable = createAgentResolver({ loadKnown: () => { throw new Error('unavailable'); } });
+  assert.equal(unreadable('atlas', true), 'unknown');
+  assert.equal(unreadable('atlas'), 'atlas');
+});
+
+test('resolver: explicit source removal refreshes at 60000 ms; unknown tokens preserve all 200 legacy slots', () => {
+  let t = 0, loads = 0;
+  let known = ['atlas'];
+  const r = createAgentResolver({ loadKnown: () => { loads++; return known; }, now: () => t });
+  assert.equal(r('atlas', true), 'atlas');
+  // Explicit source maintenance, not agent deletion (deletion retains history).
+  known = [];
+  for (const [time, expected, expectedLoads] of [[59_999, 'atlas', 1], [60_000, 'unknown', 2], [60_001, 'unknown', 2]]) {
+    t = time;
+    assert.equal(r('atlas', true), expected);
+    assert.equal(loads, expectedLoads);
+    console.log(`     TTL ${time}: ${expected}, loads=${loads}`);
+  }
+  for (let i = 0; i < 1000; i++) assert.equal(r('token' + i, true), 'unknown');
+  for (let i = 1; i <= 200; i++) assert.equal(r('legacy' + i), 'legacy' + i);
+  assert.equal(r('legacy201'), 'unknown');
+  console.log('     1000 unknown token calls; legacy 199=legacy199 200=legacy200 201=unknown');
+});
+
 test('resolver: an unreadable or empty known set accepts at most 200 distinct ids per hour', () => {
   for (const loadKnown of [() => { throw new Error('locked'); }, () => []]) {
     let t = Date.UTC(2026, 9, 7, 10, 5);
