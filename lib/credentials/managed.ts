@@ -17,11 +17,12 @@
  *   reach and every command fails ("... under scope <team>"). The CLI's own files
  *   (`auth.json` + `config.json` with `currentTeam`) are the delivery that works.
  *
- * The secret never enters the script text nor the host argv: values travel through
- * `docker exec -e NAME` and every JSON body is built here with `JSON.stringify`.
- * Inside the container the GitHub handoff is unavoidably on argv for the second the call runs:
- * `openclaw gateway call secrets.store.set --params "$REV4A_STORE_PARAMS"` only takes --params, so
- * a root user on the host could see it in `ps` meanwhile. Rev4a's own argv and logs never carry it.
+ * GitHub RPC bodies travel on stdin to the public Gateway SDK: the PAT never enters
+ * argv, the environment or script text. Older OpenClaw without that SDK uses a logged
+ * compatibility fallback to `gateway call --params`, exposing the PAT in container
+ * argv during that call only (visible to host users). It still arrives on stdin, never
+ * in an environment variable. Vercel's file bodies travel through `docker exec -e NAME`.
+ * Every JSON body is built here with `JSON.stringify`; logs redact secret values.
  * Redaction and the secret-store `rm` argv are the ones native.ts uses.
  */
 
@@ -67,19 +68,79 @@ export function githubInheritParams(): string {
   return JSON.stringify({ scope: 'agent', agentId: OPENCLAW_AGENT_ID, mode: 'inherit' });
 }
 
+/**
+ * Only our import probe emits the marker, and it is a fresh random nonce per call sent on stdin:
+ * no output of OpenClaw can contain it by chance, so neither SDK chatter nor an RPC answer can
+ * select or hide the fallback.
+ */
+const GITHUB_RPC_SCRIPT = `
+const chunks = []; for await (const c of process.stdin) chunks.push(c);
+const { method, params, marker } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+let callGatewayFromCli;
+try {
+  ({ callGatewayFromCli } = await import('openclaw/plugin-sdk/gateway-runtime'));
+} catch (e) {
+  if (e.code !== 'ERR_MODULE_NOT_FOUND' && e.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw e;
+}
+if (typeof callGatewayFromCli !== 'function') {
+  process.stdout.write(marker);
+} else {
+  try {
+    await callGatewayFromCli(method, { url: process.env.OPENCLAW_GATEWAY_URL,
+      token: process.env.OPENCLAW_GATEWAY_TOKEN, timeout: '15000', json: true }, params);
+  } catch (e) {
+    // The message only, like \`openclaw gateway call\`: never a stack trace. Any secret value of
+    // the params is masked here, before the text leaves the container (the host redacts again).
+    let msg = String(e && e.message ? e.message : e);
+    if (params && typeof params.value === 'string' && params.value) msg = msg.split(params.value).join('***');
+    process.stderr.write('Gateway call failed: ' + msg);
+    // exitCode, not exit(): the process ends after stderr is flushed, so the text is never cut.
+    process.exitCode = 1;
+  }
+}
+`;
+
+/** Legacy CLI has no stdin params option. Only this fallback puts the PAT in container argv. */
+const GITHUB_LEGACY_RPC_SCRIPT = `
+import { spawnSync } from 'node:child_process';
+const chunks = []; for await (const c of process.stdin) chunks.push(c);
+const { method, params } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+const result = spawnSync('openclaw', ['gateway', 'call', method, '--params', JSON.stringify(params)],
+  { stdio: ['ignore', 'ignore', 'inherit'] });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`;
+
+function githubRpcArgv(script: string): string[] {
+  return ['sh', '-c', gatewayShellScript([
+    `export OPENCLAW_GATEWAY_URL=${GATEWAY_URL}`,
+    'cd "$(dirname "$(readlink -f "$(command -v openclaw)")")" && exec node --input-type=module -e "$1"',
+  ].join('; ')), 'sh', script];
+}
+
+/** Share one transport for both enable RPCs, logging the legacy fallback once per enable. */
+function githubRpc(exec: NativeExec): (method: string, params: string) => Promise<void> {
+  let legacy = false;
+  return async (method, params) => {
+    const marker = `REV4A_GITHUB_SDK_UNAVAILABLE_${randomBytes(16).toString('hex')}`;
+    const input = JSON.stringify({ method, params: JSON.parse(params), marker });
+    if (!legacy) {
+      const output = await exec.runWithInput(githubRpcArgv(GITHUB_RPC_SCRIPT), input);
+      if (!output.includes(marker)) return;
+      legacy = true;
+      console.warn('[credentials] GitHub Gateway SDK unavailable; using legacy argv fallback (PAT visible in container process argv during delivery).');
+    }
+    await exec.runWithInput(githubRpcArgv(GITHUB_LEGACY_RPC_SCRIPT), input);
+  };
+}
+
 /** Place the handoff and bind the managed identity. Throws a message free of the token. */
 export async function githubEnable(exec: NativeExec, token: string): Promise<void> {
   const name = githubHandoffName();
-  const script = [
-    'openclaw gateway call secrets.store.set --params "$REV4A_STORE_PARAMS" >/dev/null',
-    'openclaw gateway call tools.github.configure --params "$REV4A_CONF_PARAMS" >/dev/null',
-  ].join(' && ');
+  const call = githubRpc(exec);
   try {
-    await exec.run(['sh', '-c', gatewayShellScript(script)], {
-      OPENCLAW_GATEWAY_URL: GATEWAY_URL,
-      REV4A_STORE_PARAMS: githubStoreParams(name, token),
-      REV4A_CONF_PARAMS: githubConfigureParams(name),
-    });
+    await call('secrets.store.set', githubStoreParams(name, token));
+    await call('tools.github.configure', githubConfigureParams(name));
   } catch (e) {
     // The handoff holds the token and is only consumed by a successful configure: do not leave it behind.
     try { await exec.run(handoffRmArgv(name)); } catch { /* the enable error below is the one to report */ }
@@ -118,8 +179,8 @@ export async function githubDisable(exec: NativeExec): Promise<void> {
 /**
  * The team to pin as `currentTeam`: the account's default when the token can reach
  * it, otherwise the first accessible team (a personal account usually has none).
- * Named exactly as the previous release did — it is what kept the "ledger" scope
- * error away when the account default was a team the token could not use.
+ * Named exactly as the previous release did — it is what kept the scope error
+ * away when the account default was a team the token could not use.
  */
 export async function discoverVercelTeam(token: string): Promise<string | null> {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
