@@ -31,30 +31,54 @@
 
 ## Quick Start
 
-```bash
-# Requirements: Node.js 22+ and Docker
-git clone https://github.com/Flame0510/rev4a.git
-cd 'rev4a'
-npm install
+On an Ubuntu VPS, install Node.js 22 and the build tools first. Rev4a does not install
+Node.js. These commands run Rev4a as root, with its data in `/root/.config/rev4a`.
+Use `sudo` from a sudo-enabled account or as root.
 
-# One command to start everything:
-rev4a serve
+```bash
+# Node.js 22, build tools and the current npm package (it provides the rev4a command).
+# Each step runs only if the previous one succeeded.
+sudo apt-get update \
+  && sudo apt-get install -y curl build-essential \
+  && curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+  && sudo bash /tmp/nodesource_setup.sh \
+  && sudo apt-get install -y nodejs \
+  && sudo npm i -g @flame0510/project-aether
+
+# Then, once the install above finished without errors, start everything:
+sudo rev4a serve
 ```
 
-Rev4a auto-builds on first run, generates `.env` with credentials,
-and starts all services. Open `http://localhost:3740`, enter the **Setup code** printed
-by `rev4a serve`, and choose your dashboard password. With systemd, find the code in
-`journalctl -u rev4a`. It changes on each start until a password exists; configured
-installs do not print or require it. If you start Next.js directly (`npm run dev`),
-the first setup request prints the code in that process's terminal.
-An npm install also builds the dashboard during installation; it fails if the
-production build cannot complete. Startup checks for `.next/BUILD_ID` and retries an
-incomplete build before starting the server. The published package includes a dependency
-lock and the TypeScript packages needed to build from a global installation.
+The npm install compiles native modules and builds the dashboard. On first start,
+`rev4a serve` creates `/root/.config/rev4a/.env`, installs Docker if missing on Linux
+when run as root, creates `rev4a-network`, pulls the agent image, and starts all services.
+Wait for the dashboard to listen on port 3740 and the `[SETUP]` code to appear.
+
+**Plain HTTP or HTTPS:** HTTPS through a reverse proxy is recommended. If you use plain
+HTTP by IP, stop the foreground server with **Ctrl+C**, set
+`REV4A_FORCE_INSECURE_COOKIE=1` in `~/.config/rev4a/.env` (root's file in this guide),
+and restart before opening the dashboard; otherwise login loops after the wizard:
+
+```bash
+printf '\nREV4A_FORCE_INSECURE_COOKIE=1\n' | sudo tee -a /root/.config/rev4a/.env
+sudo rev4a serve
+```
+
+Open `http://<server>:3740` (replace `<server>` with your VPS IP), or your HTTPS
+dashboard address. Enter the **Setup code** printed by the current `rev4a serve`,
+choose your dashboard password, and complete the wizard. The code changes on each
+start until a password exists; configured installs do not print or require it.
+
+Then [run it as a service](./CONNECT.md#run-it-as-a-service-systemd) so it starts on
+boot. [CONNECT.md](./CONNECT.md#deploy-on-a-vps) has the full VPS guide, including
+the systemd unit and logs.
 
 ```bash
 # Custom port:
-rev4a serve --port 8080
+sudo rev4a serve --port 8080
+
+# Or via the environment:
+sudo env PORT=8080 rev4a serve
 ```
 
 > **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
@@ -70,10 +94,27 @@ rev4a serve --port 8080
 | Dependency | Minimum | Notes |
 |---|---|---|
 | Node.js | 22 | Required for the dashboard server |
-| Docker | 24+ | Required for creating agent containers |
+| Build tools | `make`, `g++`, `python3` | Native modules (`better-sqlite3`, `node-pty`) compile on Linux. Install `build-essential` on Debian/Ubuntu; Ubuntu 24.04 already includes `python3` |
+| Docker | 24+ | Required for creating agent containers; installed by `rev4a serve` if missing when run as root on Linux |
 | npm | 10+ | Comes with Node.js |
 
 **That's it.** No PostgreSQL, no Redis, no external services.
+
+---
+
+## Development
+
+Contributors can work from a git clone after installing the prerequisites above:
+
+```bash
+git clone https://github.com/Flame0510/rev4a.git
+cd rev4a
+npm install
+npm run dev
+```
+
+The development server uses port 3720. Direct Next.js starts (`npm run dev`) print
+the setup code in that terminal on the first setup request.
 
 ---
 
@@ -88,6 +129,7 @@ already filled in — you normally never set these by hand. See
 | `PORT` | `3740` | No | Dashboard HTTP port |
 | `TERMINAL_WS_PORT` | `3741` | No | Loopback port of the container terminal server (the browser uses the dashboard's port) |
 | `REV4A_PASSWORD` | — | Yes | Dashboard login password (set via the setup wizard) |
+| `REV4A_FORCE_INSECURE_COOKIE` | — | No | Set to `1` for plain HTTP by IP to avoid login loops; restart after changing it. Prefer HTTPS through a reverse proxy |
 | `REV4A_TOKEN` | auto-generated | Yes | Bearer token for API routes and agent calls |
 | `REV4A_JWT_SECRET` | auto-generated | Yes | Secret for auth cookies |
 | `REV4A_API_KEY` | auto-generated | No | API key for the Gateway provider endpoint |
@@ -259,7 +301,7 @@ at container creation time.
 | **Agent runtime** | OpenClaw | Proprietary | Claude Code | Claude Code |
 | **Database** | SQLite (zero setup) | PostgreSQL + Redis | SQLite | SQLite |
 | **External services** | None | PostgreSQL + Redis | None | None |
-| **Install** | git clone + npm | docker compose | bash script | npm install |
+| **Install** | npm global package | docker compose | bash script | npm install |
 
 ---
 
