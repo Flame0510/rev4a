@@ -211,12 +211,13 @@ async function runUpdateStart(agentId: string, requestedVersion?: string): Promi
   const name = (container.Name ?? '').replace(/^\//, '');
 
   const images = await listLocalAgentImages();
-  const fromVersion = await containerOpenClawVersion({ name, imageId: container.Image ?? '', running: true }, images);
+  const fromVersion = await containerOpenClawVersion({ id: container.Id, name, imageId: container.Image ?? '', running: true }, images);
   if (!fromVersion) throw new UpdateRefusedError('The OpenClaw version this agent runs could not be read');
 
   const toVersion = requestedVersion ?? newestLocalSupportedVersion(images);
   if (!toVersion || !isSupportedVersion(toVersion)) throw new UpdateRefusedError('No supported OpenClaw version to update to is downloaded');
-  if (!(await localVersionExists(toVersion))) throw new UpdateRefusedError(`OpenClaw ${toVersion} is not downloaded`);
+  // The compatibility lookup throws on unknown; only confirmed existence may start an update.
+  if ((await localVersionExists(toVersion)) !== true) throw new UpdateRefusedError(`OpenClaw ${toVersion} is not downloaded`);
   if (compareVersions(toVersion, fromVersion) <= 0) {
     throw new UpdateRefusedError(`The agent already runs OpenClaw ${fromVersion}; ${toVersion} is not newer`);
   }
@@ -380,7 +381,7 @@ export async function updateCandidate(agentId: string): Promise<{
   if (!container) return { currentVersion: null, candidate: null };
   const images = await listLocalAgentImages();
   const currentVersion = await containerOpenClawVersion(
-    { name: (container.Name ?? '').replace(/^\//, ''), imageId: container.Image ?? '', running: container.State?.Running === true },
+    { id: container.Id, name: (container.Name ?? '').replace(/^\//, ''), imageId: container.Image ?? '', running: container.State?.Running === true },
     images,
   );
   const newest = newestLocalSupportedVersion(images);
@@ -482,7 +483,8 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
   const fromVersion = row.from_version as string;
   const file = row.backup_file as string;
   try {
-    if (!(await localVersionExists(fromVersion))) {
+    // Unknown throws before stopping the agent or touching its image/volume; false means missing.
+    if ((await localVersionExists(fromVersion)) === false) {
       if (!isSupportedVersion(fromVersion)) {
         throw new Error(`The image for OpenClaw ${fromVersion} is not available locally and this Rev4a cannot download it`);
       }

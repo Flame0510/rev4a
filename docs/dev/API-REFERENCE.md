@@ -872,11 +872,18 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 **Notes:**
 - `openclawVersion` comes from the image's `org.opencontainers.image.version` label (read by
   image id, so also for an image that lost every tag) or version tag, else from
-  `openclaw --version` inside the running container (cached per image id); `null` for a
-  stopped agent whose image carries neither.
+  `openclaw --version` inside the running container (cached per Docker container id and
+  image id, or name + image id without a container id; ten minutes on success, five on
+  failure; only metadata is cached per image id). A stopped agent whose image carries
+  neither returns its own unexpired cached exec version, or `null` without one. Exec-derived versions
+  remain available for display and update planning, but never select recreate/edit images.
+  Malformed image tag arrays (including any non-string element) are treated as
+  unknown metadata; they do not fail the agent listing.
 - `updateAvailable` is `true` when a newer supported OpenClaw version is downloaded.
 - `newBuildAvailable` is `true` when the image this release pins for the agent's version is
   downloaded and the agent's container runs a different image id (a recreate moves it).
+  The version must come from image metadata (including inspection by id); an exec-only
+  legacy version never produces this prompt because recreate retains that image id.
 - `controlPort` is the host port published for the Control UI. No link or token is
   returned: the Open buttons go through `GET /api/agents/[id]/open-control-ui`
 - Containers are discovered via Docker API with label filter `AGENT_ID`
@@ -1365,7 +1372,19 @@ answers `202` once it has started.
 The image is `openclaw-agent-base:<version>` for the version the agent runs
 (`resolveRecreateImage()` in `lib/agent-images.ts`). When that tag is missing but the
 container's image is still here, the image is tagged; when it is gone, a supported
-version is pulled. An agent whose version cannot be read keeps its exact image id.
+version is pulled. Recreate and edit use only image metadata (label or version tag,
+including inspection by image id); an image with neither keeps its current image id,
+regardless of the version reported inside the container.
+An image or version-tag inspection error, timeout, malformed tag array or inconclusive response keeps the
+current image id without retagging. Only a confirmed missing version tag permits tagging
+the current image. Only a confirmed missing legacy image permits falling back to
+`Config.Image` (which may be `:latest`);
+without a current image id or that confirmed fallback, the job refuses before
+removing the container. Display and update/restore planning may still read the
+version inside a legacy container: these answers are cached by Docker container id
+and image id (name + image id if no container id is available), for ten minutes on
+success or five minutes on failure. Recreating on the same image with a new Docker
+container id therefore reads the new container's version.
 
 Flow (each step recorded in `agent_recreates`):
 1. **Cold backup** `agent-<id>-prerecreate-<ts>.tar.gz` — the agent stops for it, so
@@ -1522,7 +1541,10 @@ resolved (`resolvedAtMs` set) is still accepted: the panel offers it as "Roll ba
 name to be typed; the route itself does not ask. Starting a rollback clears `resolved_at` and `resolution`, so an
 interrupted rollback is red again with Roll back.
 
-1. The previous version's image is made local (pulled when it is a supported version).
+1. The previous version's image is made local (pulled only when its version tag is
+   confirmed missing and the version is supported). An inconclusive lookup fails the
+   job with `Could not check the local image for <version>; try again.` before any
+   pull, retag, stop or volume restore.
 2. The agent is stopped and its volume replaced by the pre-update backup.
 3. The container is recreated on `openclaw-agent-base:<from>` and must report that version.
 

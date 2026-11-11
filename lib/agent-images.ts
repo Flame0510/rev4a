@@ -42,7 +42,7 @@ export interface LocalAgentImage {
 
 interface DockerImage {
   Id: string;
-  RepoTags?: string[] | null;
+  RepoTags?: unknown;
   Labels?: Record<string, string> | null;
   Size?: number;
 }
@@ -53,6 +53,13 @@ interface DockerContainer {
 }
 
 const tagPrefix = `${LOCAL_IMAGE_REPOSITORY}:`;
+
+/** Docker uses null for an untagged image; any non-string array element is unreadable metadata. */
+function imageTags(value: unknown): string[] | null {
+  if (value == null) return [];
+  if (!Array.isArray(value) || !value.every((tag): tag is string => typeof tag === 'string')) return null;
+  return value.filter((tag) => tag !== '<none>:<none>');
+}
 
 function versionFromTags(tags: string[]): string | null {
   for (const tag of tags) {
@@ -80,11 +87,11 @@ export async function listLocalAgentImages(): Promise<LocalAgentImage[]> {
   }
 
   return (Array.isArray(images) ? images : []).map((img) => {
-    const tags = (img.RepoTags ?? []).filter((t) => t !== '<none>:<none>');
+    const tags = imageTags(img.RepoTags);
     return {
       id: img.Id,
-      tags,
-      version: parseOpenClawVersion(img.Labels?.[VERSION_LABEL]) ?? versionFromTags(tags),
+      tags: tags ?? [],
+      version: tags === null ? null : parseOpenClawVersion(img.Labels?.[VERSION_LABEL]) ?? versionFromTags(tags),
       sizeBytes: img.Size ?? 0,
       usedBy: usedBy.get(img.Id) ?? [],
     };
@@ -108,29 +115,34 @@ export const newestLocalSupportedVersion = (images: LocalAgentImage[]): string |
   localSupportedVersions(images)[0] ?? null;
 
 /**
- * Whether an image reference (a tag or an id) exists locally. `dockerFetch` resolves
- * Docker's error bodies too, so a 404 is told apart by the missing `Id`.
+ * Image existence is unknown on transport/daemon failures. Only Docker's explicit
+ * not-found response confirms a missing image; a failed read must not select a moving tag.
  */
-async function imageExists(reference: string): Promise<boolean> {
+async function imagePresence(reference: string): Promise<'exists' | 'missing' | 'unknown'> {
   try {
-    const info = await dockerFetch<{ Id?: unknown }>('GET', `/images/${encodeURIComponent(reference)}/json`);
-    return typeof info?.Id === 'string';
-  } catch {
-    return false;
+    const info = await dockerFetch<{ Id?: unknown; RepoTags?: unknown; message?: unknown }>('GET', `/images/${encodeURIComponent(reference)}/json`);
+    if (typeof info?.Id === 'string' && info.Id && imageTags(info.RepoTags) !== null) return 'exists';
+    // Also accept the not-found body from transports that resolve error responses.
+    return typeof info?.message === 'string' && /^No such image\b/i.test(info.message) ? 'missing' : 'unknown';
+  } catch (error) {
+    const message = (error as Error | null)?.message;
+    return typeof message === 'string' && /^Docker error 404:/.test(message) ? 'missing' : 'unknown';
   }
 }
 
-/** An image inspected by id: its repository tags and the version its label names. Null when it is gone. */
+/** An image inspected by id: its tags and labelled version. Null when missing or unreadable. */
 async function inspectImageById(id: string): Promise<{ id: string; tags: string[]; version: string | null } | null> {
   try {
-    const info = await dockerFetch<{ Id?: unknown; RepoTags?: string[] | null; Config?: { Labels?: Record<string, string> | null } | null }>(
+    const info = await dockerFetch<{ Id?: unknown; RepoTags?: unknown; Config?: { Labels?: Record<string, string> | null } | null }>(
       'GET',
       `/images/${encodeURIComponent(id)}/json`,
     );
-    if (typeof info?.Id !== 'string') return null;
+    if (typeof info?.Id !== 'string' || !info.Id) return null;
+    const tags = imageTags(info.RepoTags);
+    if (tags === null) return null;
     return {
       id: info.Id,
-      tags: (info.RepoTags ?? []).filter((t) => t !== '<none>:<none>'),
+      tags,
       version: parseOpenClawVersion(info.Config?.Labels?.[VERSION_LABEL]),
     };
   } catch {
@@ -138,43 +150,63 @@ async function inspectImageById(id: string): Promise<{ id: string; tags: string[
   }
 }
 
-/** Whether `openclaw-agent-base:<version>` exists locally. */
-export const localVersionExists = (version: string): Promise<boolean> => imageExists(localImageRef(version));
+/** A missing tag permits recovery; an unknown lookup must never authorize image changes. */
+export const localVersionPresence = (version: string): Promise<'exists' | 'missing' | 'unknown'> =>
+  imagePresence(localImageRef(version));
+
+/** Boolean compatibility for existing callers: false means confirmed missing; unknown refuses. */
+export async function localVersionExists(version: string): Promise<boolean> {
+  const presence = await localVersionPresence(version);
+  if (presence === 'unknown') throw new Error(`Could not check the local image for ${version}; try again.`);
+  return presence === 'exists';
+}
 
 /**
- * Versions read from inside containers, keyed by image id: an image never changes
- * version. A failed read is remembered for a few minutes too, so a container whose
- * image is not OpenClaw does not cost a `docker exec` on every agent list poll.
+ * Image metadata can be shared by image id. Versions read inside a container belong
+ * only to that container instance and image id: its writable layer can change the answer.
+ * Without an instance id, use name + image id. Successful exec reads expire after ten
+ * minutes, failed reads after five, to avoid one exec per agent list poll.
  */
-const versionByImageId = new Map<string, { version: string | null; at: number }>();
+const versionByImageId = new Map<string, string>();
+const versionByContainer = new Map<string, { version: string | null; at: number }>();
 const UNKNOWN_VERSION_TTL_MS = 5 * 60 * 1000;
+const EXEC_VERSION_TTL_MS = 10 * 60 * 1000;
+
+/** Image metadata only: a container's exec output must never select a replacement image. */
+export async function imageOpenClawVersion(imageId: string, images: LocalAgentImage[]): Promise<string | null> {
+  const known = images.find((img) => img.id === imageId)?.version ?? versionByImageId.get(imageId);
+  if (known) return known;
+  // An image that lost every tag is absent from the list; inspect by id also works stopped.
+  const image = imageId ? await inspectImageById(imageId) : null;
+  const version = image?.version ?? versionFromTags(image?.tags ?? []);
+  if (version) versionByImageId.set(imageId, version);
+  return version;
+}
 
 /**
  * The OpenClaw version a container runs: its image's label or version tag, else
  * `openclaw --version` inside the running container, for images built before the
- * label existed (a release published as `:latest` only). Null for a stopped container
- * whose image carries neither.
+ * label existed (a release published as `:latest` only). A stopped container without
+ * image metadata returns its own unexpired cached exec answer, or null without one.
  */
 export async function containerOpenClawVersion(
-  container: { name: string; imageId: string; running: boolean },
+  container: { id?: string; name: string; imageId: string; running: boolean },
   images: LocalAgentImage[],
 ): Promise<string | null> {
-  const fromImage = images.find((img) => img.id === container.imageId)?.version;
+  const fromImage = images.find((img) => img.id === container.imageId)?.version ?? versionByImageId.get(container.imageId);
   if (fromImage) return fromImage;
-  const cached = versionByImageId.get(container.imageId);
-  if (cached && (cached.version || Date.now() - cached.at < UNKNOWN_VERSION_TTL_MS)) return cached.version;
-  // An image that lost every tag is not in the listed set, but still carries its label:
-  // inspecting it by id works for a stopped container too, which the exec below cannot.
-  const fromLabel = container.imageId ? (await inspectImageById(container.imageId))?.version ?? null : null;
-  if (fromLabel) {
-    versionByImageId.set(container.imageId, { version: fromLabel, at: Date.now() });
-    return fromLabel;
-  }
+  const cacheKey = JSON.stringify(container.id
+    ? ['id', container.id, container.imageId]
+    : ['name', container.name, container.imageId]);
+  const cached = versionByContainer.get(cacheKey);
+  if (cached && Date.now() - cached.at < (cached.version ? EXEC_VERSION_TTL_MS : UNKNOWN_VERSION_TTL_MS)) return cached.version;
+  const fromMetadata = await imageOpenClawVersion(container.imageId, images);
+  if (fromMetadata) return fromMetadata;
   if (!container.running) return null;
   const version = parseOpenClawVersion(
-    await dockerExecNoFail(container.name, ['openclaw', '--version'], { timeoutMs: 30_000 }),
+    await dockerExecNoFail(container.id || container.name, ['openclaw', '--version'], { timeoutMs: 30_000 }),
   );
-  versionByImageId.set(container.imageId, { version, at: Date.now() });
+  versionByContainer.set(cacheKey, { version, at: Date.now() });
   return version;
 }
 
@@ -341,10 +373,12 @@ export function runDocker(
 async function keepPreviousImage(version: string, incomingRef: string): Promise<void> {
   try {
     const inspect = (ref: string) =>
-      dockerFetch<{ Id?: unknown; RepoTags?: string[] | null }>('GET', `/images/${encodeURIComponent(ref)}/json`);
+      dockerFetch<{ Id?: unknown; RepoTags?: unknown }>('GET', `/images/${encodeURIComponent(ref)}/json`);
     const [current, incoming] = await Promise.all([inspect(localImageRef(version)), inspect(incomingRef)]);
     if (typeof current?.Id !== 'string' || typeof incoming?.Id !== 'string' || current.Id === incoming.Id) return;
-    const hasRevTag = (current.RepoTags ?? []).some(
+    const tags = imageTags(current.RepoTags);
+    if (tags === null) return;
+    const hasRevTag = tags.some(
       (t) => t.startsWith(`${LOCAL_IMAGE_REPOSITORY}:${version}-rev.`) && isRevisionTag(t.slice(tagPrefix.length)),
     );
     if (hasRevTag) return;
@@ -467,8 +501,11 @@ export async function pruneAgentImages(): Promise<string[]> {
  *
  * When the tag is missing but the container's image is still here (an agent created
  * from `:latest` before version tags), that image gets the version tag. When the image
- * is gone too, a supported version is pulled. An agent whose version cannot be read
- * keeps the exact image id it runs.
+ * is gone too, a supported version is pulled. Only image metadata establishes the
+ * version here; an image without a version label or tag keeps its exact image id.
+ * An inconclusive image or version-tag check also keeps that id, without retagging.
+ * Only a confirmed missing image permits the original configured reference as a
+ * legacy fallback.
  */
 export async function resolveRecreateImage(container: {
   Name?: string;
@@ -476,18 +513,21 @@ export async function resolveRecreateImage(container: {
   Config?: { Image?: string };
   State?: { Running?: boolean };
 }): Promise<string> {
-  const name = (container.Name ?? '').replace(/^\//, '');
   const imageId = container.Image ?? '';
   const images = await listLocalAgentImages();
-  const version = await containerOpenClawVersion(
-    { name, imageId, running: container.State?.Running === true },
-    images,
-  );
+  const version = await imageOpenClawVersion(imageId, images);
 
   if (version) {
     const ref = localImageRef(version);
-    if (await localVersionExists(version)) return ref;
-    if (imageId && (await imageExists(imageId))) {
+    const tagPresence = await localVersionPresence(version);
+    if (tagPresence === 'exists') return ref;
+    if (tagPresence === 'unknown') {
+      if (imageId) return imageId;
+      throw new Error('Cannot safely determine this agent\'s image: version-tag inspection was inconclusive and no current image id is available');
+    }
+    const presence = imageId ? await imagePresence(imageId) : 'unknown';
+    if (presence === 'unknown' && imageId) return imageId;
+    if (presence === 'exists') {
       await runDocker(['tag', imageId, ref], { timeoutMs: 30_000 });
       return ref;
     }
@@ -498,7 +538,8 @@ export async function resolveRecreateImage(container: {
     throw new Error(`The image for OpenClaw ${version} is not available locally`);
   }
 
-  if (imageId && (await imageExists(imageId))) return imageId;
-  if (container.Config?.Image) return container.Config.Image;
-  throw new Error('Cannot tell which image this agent runs');
+  const presence = imageId ? await imagePresence(imageId) : 'unknown';
+  if (imageId && presence !== 'missing') return imageId;
+  if (presence === 'missing' && container.Config?.Image) return container.Config.Image;
+  throw new Error('Cannot safely determine this agent\'s image: no current image id or confirmed missing-image fallback');
 }

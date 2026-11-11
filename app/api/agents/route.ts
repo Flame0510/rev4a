@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dockerAvailable, dockerFetch } from '@/lib/docker-socket';
-import { containerOpenClawVersion, listLocalAgentImages, newestLocalSupportedVersion, type LocalAgentImage } from '@/lib/agent-images';
+import { containerOpenClawVersion, imageOpenClawVersion, listLocalAgentImages, newestLocalSupportedVersion, type LocalAgentImage } from '@/lib/agent-images';
 import { LOCAL_IMAGE_REPOSITORY, compareVersions, newBuildAvailableFor } from '@/lib/agent-versions';
 
 export const dynamic = 'force-dynamic';
@@ -79,9 +79,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // its image is not tagged `openclaw-agent-base` (an image left untagged, or
         // pinned by id). The image name alone would miss those.
         const openclawVersion = await containerOpenClawVersion(
-          { name: (c.Names?.[0] || '').replace(/^\//, ''), imageId: c.ImageID || '', running: c.State === 'running' },
+          { id: c.Id, name: (c.Names?.[0] || '').replace(/^\//, ''), imageId: c.ImageID || '', running: c.State === 'running' },
           images,
         );
+        // Recreate acts only on image metadata, so an exec-only version cannot
+        // promise a different build. Inspect by id also covers unlisted images.
+        const imageVersion = await imageOpenClawVersion(c.ImageID || '', images);
         const isAgentBase = image.startsWith(LOCAL_IMAGE_REPOSITORY)
           || images.some((img) => img.id === c.ImageID)
           || openclawVersion !== null;
@@ -129,7 +132,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           updateAvailable: !!(openclawVersion && newestLocal && compareVersions(newestLocal, openclawVersion) > 0),
           // The build this release pins for the agent's version is downloaded and the
           // container runs another image: a recreate moves it to the pinned build.
-          newBuildAvailable: !!(openclawVersion && c.ImageID && newBuildAvailableFor(openclawVersion, images, c.ImageID)),
+          newBuildAvailable: !!(imageVersion && c.ImageID && newBuildAvailableFor(imageVersion, images, c.ImageID)),
         };
       }),
     );

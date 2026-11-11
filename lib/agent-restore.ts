@@ -69,7 +69,7 @@ async function prepareRestore(agentId: string, file: string): Promise<RestorePla
     const container = await inspectAgentContainer(agentId);
     const name = container?.Name?.replace(/^\//, '');
     if (!container?.Id || !container.Image || !name) throw new RestoreRefusedError('The agent container could not be inspected');
-    const targetVersion = await containerOpenClawVersion({ name, imageId: container.Image, running: container.State?.Running === true }, await listLocalAgentImages());
+    const targetVersion = await containerOpenClawVersion({ id: container.Id, name, imageId: container.Image, running: container.State?.Running === true }, await listLocalAgentImages());
     const compatible = checkBackupCompatibility(inspection, targetVersion);
     if (!compatible.compatible || !targetVersion) throw new RestoreRefusedError(compatible.reason ?? 'Backup compatibility could not be established');
     return { directory, inspection, container, name, targetVersion };

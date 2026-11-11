@@ -177,9 +177,25 @@ The central container, running the Next.js dashboard + orchestration API.
   volume on a version this build cannot run. `lib/agent-images.ts`
   lists local `openclaw-agent-base:<version>` images through the Docker API, reads an
   agent's version (image label or tag, else `openclaw --version` in the container, cached
-  per image id), reads the registry tag list over HTTP (cached 10 min), pulls a version
-  and resolves the image a recreate uses. Images are never addressed as `:latest`: create
-  takes the newest supported version downloaded, recreate the agent's own.
+  per Docker container id and image id, falling back to name + image id without a
+  container id; successful exec answers expire after 10 minutes, failed answers after
+  5 minutes; only metadata is cached per image id), reads the
+  registry tag list over HTTP (cached 10 min), pulls a version and resolves the image
+  a recreate uses. Create takes the newest supported version downloaded under its version
+  tag; recreate uses the agent's own version. Recreate and
+  edit select images from metadata only (including inspection by image id); an image
+  without a version label or tag keeps its current image id regardless of exec output.
+  Failed or inconclusive image or version-tag inspections keep that id too; only a
+  confirmed missing version tag permits tagging the current image. Tag arrays must
+  contain strings only; malformed metadata is unknown and cannot select a version.
+  `localVersionPresence()` preserves exists/missing/unknown; the boolean compatibility
+  lookup throws on unknown, so update, rollback and download callers cannot mistake
+  a failed read for permission to replace a tag. Rollback pulls only a confirmed
+  missing version tag; an unknown lookup refuses before stopping the agent or restoring
+  data. The new-build recreate prompt uses metadata versions only, never an exec-only version.
+  Only a confirmed missing legacy image falls back to its original configured
+  reference (possibly `:latest`);
+  without either safe choice, resolution fails before removing the old container.
 - **Cold backups** are `lib/cold-backup.ts`. The agent is stopped and a detached helper
   container, `rev4a-backup-<id>` from the agent's own image, archives its volume to
   `<REV4A_DATA>/backups` (bind-mounted at `/backup`) as `.partial`, reads it back and renames it,
