@@ -257,6 +257,9 @@ const stagingFs = {
 let failRead = false;
 let failWrite = false;
 let dockerUnavailable = false;
+const fleet = 'c-atlas\trunning\tatlas\nc-beta\texited\tbeta';
+let containerListing = fleet;
+let catalogueStatus = 'available';
 let busy = [];
 let backup = '';
 const config = { agents: { defaults: { model: 'unchanged' } }, padding: 'x'.repeat(400_000), models: { providers: { custom: { apiKey: 'fixture-custom' } } } };
@@ -265,7 +268,7 @@ const sync = load('app/api/gateway/sync.ts', {
     execSync: (command) => {
       if (command.startsWith('docker ps -a')) {
         if (dockerUnavailable) throw new Error('fixture Docker unavailable');
-        return 'c-atlas\trunning\tatlas\nc-beta\texited\tbeta';
+        return containerListing;
       }
       if (command.startsWith('docker ps --filter')) return backup;
       assert.fail(`Unexpected mock command: ${command}`);
@@ -294,7 +297,7 @@ const sync = load('app/api/gateway/sync.ts', {
   fs: stagingFs, os: { tmpdir: () => '/virtual/sec20' }, path,
   '@/lib/agent-config-lock': { withAgentConfigLock: async (_, fn) => fn() }, '@/lib/docker-exec': {},
   './provider/keys': { readProviderKeys: () => stored },
-  '@/lib/model-catalogue': { bundledCatalogueStatus: () => 'available', loadOfferedModels: () => [] },
+  '@/lib/model-catalogue': { bundledCatalogueStatus: () => catalogueStatus, loadOfferedModels: () => [] },
   '@/lib/container-file': { singleFileFromTar: () => ({ body: Buffer.from(JSON.stringify(config)), mode: 0o600 }) },
   '@/lib/docker-utils': { detectProviderGatewayUrl: () => 'http://fixture/api/provider/v1' },
   '@/lib/agent-versions': { parseOpenClawVersion: () => '2026.11.2', isSupportedVersion: () => true },
@@ -320,6 +323,72 @@ await test('builder: each agent gets its own credential; generic block keeps sha
   stored.rev4a = '';
   assert.throws(() => sync.buildRev4aProviderConfig(null, 'atlas'), /gateway key/);
   stored.rev4a = key;
+});
+await test('sync: an empty install succeeds with or without a gateway key', async () => {
+  const previousStored = stored;
+  writes.clear();
+  containerListing = '';
+  try {
+    // A missing provider-keys.json reads as {}, not just an empty rev4a entry.
+    for (const keys of [{}, { rev4a: '' }, { rev4a: key }]) {
+      stored = keys;
+      const outcome = await sync.syncAllAgents();
+      assert.equal(outcome.ok, true, 'startup must take its success log branch');
+      assert.equal(outcome.summary, 'No agent containers to sync.');
+      assert.equal(outcome.total, 0);
+      assert.equal(outcome.activeModels, 0);
+      assert.equal(Object.hasOwn(outcome, 'configError'), false);
+      assert.equal(Object.hasOwn(outcome, 'dockerError'), false);
+      assert.equal(outcome.synced.length + outcome.stopped.length + outcome.failed.length, 0);
+    }
+    assert.equal(writes.size, 0);
+  } finally {
+    stored = previousStored;
+    containerListing = fleet;
+  }
+});
+await test('sync: missing key still reports the same error with agents or unreachable Docker', async () => {
+  const previousStored = stored;
+  stored = {};
+  writes.clear();
+  try {
+    for (const listing of ['c-atlas\trunning\tatlas', 'c-beta\texited\tbeta', fleet]) {
+      containerListing = listing;
+      for (const unreachable of [false, true]) {
+        dockerUnavailable = unreachable;
+        const outcome = await sync.syncAllAgents();
+        const error = 'REV4A_API_KEY not found in provider-keys.json (add "rev4a" key)';
+        assert.equal(outcome.ok, false);
+        assert.equal(outcome.configError, error);
+        assert.equal(outcome.summary, `Not applied to any agent: ${error}.`);
+        assert.equal(outcome.total, 0, 'preserve the existing configError outcome');
+        assert.equal(Object.hasOwn(outcome, 'dockerError'), false);
+        assert.equal(outcome.synced.length + outcome.stopped.length + outcome.failed.length, 0);
+      }
+    }
+    assert.equal(writes.size, 0);
+  } finally {
+    stored = previousStored;
+    containerListing = fleet;
+    dockerUnavailable = false;
+  }
+});
+await test('sync: catalogue-unavailable check keeps its existing behavior with a gateway key', async () => {
+  catalogueStatus = 'unavailable';
+  writes.clear();
+  try {
+    for (const listing of ['', fleet]) {
+      containerListing = listing;
+      const outcome = await sync.syncAllAgents();
+      assert.equal(outcome.ok, false);
+      assert.equal(outcome.configError, 'models.config.json could not be read, so there is no catalogue to push');
+      assert.equal(outcome.total, 0);
+    }
+    assert.equal(writes.size, 0);
+  } finally {
+    containerListing = fleet;
+    catalogueStatus = 'available';
+  }
 });
 await test('sync: running and stopped agents migrate idempotently without changing other config', async () => {
   for (let pass = 0; pass < 2; pass++) {

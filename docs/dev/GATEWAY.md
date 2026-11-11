@@ -69,6 +69,8 @@ own HMAC-derived proxy token; unsynced legacy clients may still use the shared k
 
 ### Sync Flow
 
+At startup, a missing gateway key is not a warning when Docker confirms there are no agent containers (`No agent containers to sync.`); existing containers or an unreachable Docker daemon retain the missing-key error, and the catalogue-unavailable check is unchanged.
+
 When a provider key is saved, a model toggle is changed, Sync All is pressed, Rev4a
 starts, or a time-of-day price changes (see [Costs](#costs-openclaw-prices-every-call)),
 the Gateway:

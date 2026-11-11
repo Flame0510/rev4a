@@ -265,7 +265,9 @@ carries the cause and `ok` is false. For this toggle that case is refused up fro
 with `503`, so it appears here only if Docker drops between the check and the sync;
 on a provider key save (`POST`) it is reported, not refused. `configError` is set,
 and nothing is attempted, when the gateway key is missing or `models.config.json`
-could not be read.
+could not be read — except a missing gateway key on an install with no agent
+containers (a fresh install): that sync reports `ok: true` and
+`No agent containers to sync.` with no `configError`.
 
 **Side effects:**
 - Writes `models.providers.rev4a` to each agent container's `openclaw.json`
