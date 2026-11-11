@@ -29,9 +29,10 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 }
 
-/** The cost line under a node; none for a container node. */
+/** What a session costs: a ChatGPT subscription session shows the word, never its list price; none for a container node. */
 function costText(d: TreeNode): string | null {
-  return d._agentNode || d._virtualRoot ? null : formatCost(d.cost_usd);
+  if (d._agentNode || d._virtualRoot) return null;
+  return d.uses_subscription ? 'subscription' : formatCost(d.cost_usd);
 }
 
 function draw(
@@ -117,7 +118,7 @@ function draw(
             `<div>agent: ${escapeHtml(d.data.container ?? '-')}</div>`,
             `<div>kind: ${escapeHtml(d.data.kind ?? '-')}</div>`,
             `<div>model: ${escapeHtml(d.data.model ?? '-')}</div>`,
-            `<div>cost: ${escapeHtml(formatCost(d.data.cost_usd))}</div>`,
+            `<div>cost: ${escapeHtml(costText(d.data) ?? '-')}</div>`,
             `<div>status: ${escapeHtml(d.data.state ?? 'idle')}</div>`,
             ...(d.data.hint ? [`<div>${escapeHtml(d.data.hint)}</div>`] : []),
           ]

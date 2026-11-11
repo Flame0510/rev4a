@@ -16,7 +16,7 @@ export interface IDashboardObserver {
 
 function sessionsFingerprint(list: unknown[]): string {
   return (list as Partial<Record<string, unknown>>[])
-    .map((s) => [s.uid ?? s.id, s.parent_uid ?? s.parent_id, s.status, s.cost_usd, s.label, s.updated_at, s.ended_at, s.gone_at, s.total_tokens, s.agent_name].join('|'))
+    .map((s) => [s.uid ?? s.id, s.parent_uid ?? s.parent_id, s.status, s.cost_usd, s.uses_subscription, s.label, s.updated_at, s.ended_at, s.gone_at, s.total_tokens, s.agent_name].join('|'))
     .join('\n');
 }
 

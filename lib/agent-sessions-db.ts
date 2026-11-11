@@ -3,6 +3,7 @@
 // Every read is defensive: when the table does not exist yet (collector not shipped or not run),
 // the answer is empty, never an error.
 import type Database from 'better-sqlite3';
+import { isSubscriptionProvider } from './agent-costs';
 
 export type Session = {
   uid: string;
@@ -23,6 +24,11 @@ export type Session = {
   output_tokens: number | null;
   total_tokens: number | null;
   cost_usd: number | null;
+  /**
+   * OpenClaw priced this session under a ChatGPT subscription route (`openai` / `openai-codex`):
+   * the UI shows "subscription" instead of a dollar amount. `cost_usd` keeps its value.
+   */
+  uses_subscription: boolean;
   cron_job_id: string | null;
   started_at: number | null;
   updated_at: number | null;
@@ -72,6 +78,7 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 
 export function toSession(row: Row, parentExists: boolean): Session {
   const parentKey = str(row.parent_key);
+  const provider = str(row.provider);
   return {
     uid: sessionUid(row.container, row.session_key),
     container: row.container,
@@ -86,11 +93,12 @@ export function toSession(row: Row, parentExists: boolean): Session {
     status: str(row.status),
     last_error: str(row.last_error),
     model: str(row.model),
-    provider: str(row.provider),
+    provider,
     input_tokens: num(row.input_tokens),
     output_tokens: num(row.output_tokens),
     total_tokens: num(row.total_tokens),
     cost_usd: num(row.cost_usd), // NULL stays null: unknown is never 0
+    uses_subscription: isSubscriptionProvider(provider),
     cron_job_id: str(row.cron_job_id),
     started_at: num(row.started_at),
     updated_at: num(row.updated_at),
@@ -120,36 +128,69 @@ function existingParents(db: Database.Database, rows: Row[]): Set<string> {
   return found;
 }
 
+/** One agent_cost_sessions row as far as this read needs it. `provider` is absent on an older costs.db. */
+type CostSessionRow = { session_id: string; cost: number | null; provider?: string | null };
+
 /**
  * Fills cost_usd that the listing left NULL (cron runs never carry one) from costs.db
- * agent_cost_sessions, by (container, session_id). Read-only, bound parameters; the table may be
- * missing (any error leaves the sessions as they are). A cost of 0 is "not priced", so it stays null.
+ * agent_cost_sessions, by (container, session_id), and settles `uses_subscription`: when the session
+ * itself has no provider, the row's provider decides. A cost of 0 is "not priced", so it stays null.
+ * A price recorded under a subscription provider is never copied into a session that is not a
+ * subscription session: that list price is not spend. Read-only, bound parameters; a missing table
+ * leaves the sessions as they are, and an older table without the `provider` column is read as
+ * before (the session's own provider alone decides).
  */
 export function fillCostsFromCostsDb(costsDb: Database.Database | null | undefined, sessions: Session[]): Session[] {
   if (!costsDb) return sessions;
   try {
+    // A session is looked up when it may need a price OR when its provider is unknown (the row's
+    // provider then decides whether its calls were covered by a subscription).
     const wanted = new Map<string, Set<string>>();
     for (const s of sessions) {
-      if (s.cost_usd !== null || !s.session_id) continue;
+      if (!s.session_id) continue;
+      if (s.cost_usd !== null && s.provider !== null) continue;
       if (!wanted.has(s.container)) wanted.set(s.container, new Set());
       wanted.get(s.container)!.add(s.session_id);
     }
     if (!wanted.size) return sessions;
-    const found = new Map<string, number>();
+    const found = new Map<string, { cost: number | null; provider: string | null }>();
     for (const [container, ids] of wanted) {
       const all = [...ids];
       for (let i = 0; i < all.length; i += 200) {
         const chunk = all.slice(i, i + 200);
-        const sql = `SELECT session_id, cost FROM agent_cost_sessions WHERE container = ? AND session_id IN (${chunk.map(() => '?').join(', ')})`;
-        for (const r of costsDb.prepare(sql).all(container, ...chunk) as { session_id: string; cost: number | null }[]) {
-          if (typeof r.cost === 'number' && Number.isFinite(r.cost) && r.cost > 0) found.set(sessionUid(container, r.session_id), r.cost);
+        const inList = chunk.map(() => '?').join(', ');
+        let rows: CostSessionRow[];
+        try {
+          rows = costsDb
+            .prepare(`SELECT session_id, cost, provider FROM agent_cost_sessions WHERE container = ? AND session_id IN (${inList})`)
+            .all(container, ...chunk) as CostSessionRow[];
+        } catch (e) {
+          // Only an older costs.db without the provider column reads costs as before; any other error
+          // (a busy database) reaches the outer catch, which leaves the sessions as they are.
+          if (!/no such column/i.test(String((e as Error)?.message))) throw e;
+          rows = costsDb
+            .prepare(`SELECT session_id, cost FROM agent_cost_sessions WHERE container = ? AND session_id IN (${inList})`)
+            .all(container, ...chunk) as CostSessionRow[];
+        }
+        for (const r of rows) {
+          const cost = typeof r.cost === 'number' && Number.isFinite(r.cost) ? r.cost : null;
+          const provider = typeof r.provider === 'string' ? r.provider : null;
+          found.set(sessionUid(container, r.session_id), { cost, provider });
         }
       }
     }
     if (!found.size) return sessions;
     return sessions.map((s) => {
-      const cost = s.session_id ? found.get(sessionUid(s.container, s.session_id)) : undefined;
-      return cost === undefined ? s : { ...s, cost_usd: cost };
+      const row = s.session_id ? found.get(sessionUid(s.container, s.session_id)) : undefined;
+      if (!row) return s;
+      const usesSubscription = s.provider !== null ? isSubscriptionProvider(s.provider) : isSubscriptionProvider(row.provider);
+      // A subscription's list price must not become the spend of a paid session.
+      const copyCost = row.cost !== null && row.cost > 0 && !(isSubscriptionProvider(row.provider) && !usesSubscription);
+      return {
+        ...s,
+        uses_subscription: usesSubscription,
+        cost_usd: s.cost_usd === null && copyCost ? row.cost : s.cost_usd,
+      };
     });
   } catch {
     return sessions;

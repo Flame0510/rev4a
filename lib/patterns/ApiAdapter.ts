@@ -61,6 +61,8 @@ export function adaptSession(raw: Record<string, unknown>): Session {
     total_tokens: toNumber(raw.total_tokens),
     // null stays null: an unpriced session is "not priced", never $0.
     cost_usd: toNumber(raw.cost_usd),
+    // An older server sends nothing: today's dollar display stays.
+    uses_subscription: raw.uses_subscription === true,
     cron_job_id: toString(raw.cron_job_id),
     started_at: toTimeMs(raw.started_at),
     updated_at: toTimeMs(raw.updated_at),

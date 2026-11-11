@@ -600,7 +600,7 @@ cap). Until the daemon has written the table the answer is empty, never an error
       "status": "done", "last_error": null,
       "model": "gpt-5.4", "provider": "openai-codex",
       "input_tokens": 12500, "output_tokens": 3200, "total_tokens": 15700,
-      "cost_usd": null, "cron_job_id": null,
+      "cost_usd": null, "uses_subscription": true, "cron_job_id": null,
       "started_at": 1749200000000, "updated_at": 1749201000000, "ended_at": 1749201000000,
       "archived_at": null, "gone_at": null,
       "id": "agent:main:subagent:3f2c", "parent_id": "agent:main:main"
@@ -613,7 +613,13 @@ cap). Until the daemon has written the table the answer is empty, never an error
 
 `parent_uid` is set only when the parent row exists in the same container (`parent_kind` is `spawn` for a
 real sub-agent link, `cron` for a cron run, `nav` for a navigation parent). `cost_usd` is `null` when
-OpenClaw did not price the session, never 0. `id` and `parent_id` are the old field names, kept for
+OpenClaw did not price the session, never 0. `uses_subscription` is `true` when the session runs on a
+ChatGPT subscription (`openai` or `openai-codex`, the `isSubscriptionProvider` rule in
+`lib/agent-costs.ts`); when the session's `provider` is `null`, the `provider` of the matching
+`costs.db` `agent_cost_sessions` row for the same `(container, session_id)` decides. The Lineage shows
+`subscription` instead of a dollar amount for such a session; `cost_usd` still carries OpenClaw's
+figure and is not changed. The field is on every session object of `GET /api/sessions`,
+`GET /api/session`, `GET /api/sessions/[id]` and the SSE `sessions` frame. `id` and `parent_id` are the old field names, kept for
 one release. `version` changes whenever the daemon stored a change. `total` is the real number of matching
 sessions: when it is larger than `sessions.length` the list was capped, and the Lineage page shows
 "Showing N of M sessions".

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useResponsive } from '../design-system';
-import type { SessionDetail } from '@/lib/types';
+import type { Session, SessionDetail } from '@/lib/types';
 import { Rev4aApiClient } from '@/lib/patterns/ApiClient';
 import { deriveSessionDisplayLabel, sessionState } from '@/lib/patterns/sessionPresentation';
 import {
@@ -32,6 +32,12 @@ function formatStamp(ms: number | null | undefined): string {
     second: '2-digit',
     hourCycle: 'h23',
   });
+}
+
+/** A subscription session shows the word, never the list price OpenClaw recorded; a paid one keeps $… / not priced. */
+function costLabel(session: Pick<Session, 'uses_subscription' | 'cost_usd'>): string {
+  if (session.uses_subscription) return 'subscription';
+  return session.cost_usd === null ? 'not priced' : formatUsd(session.cost_usd);
 }
 
 interface SessionDrawerProps {
@@ -209,7 +215,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
               </Row>
               {session.last_error && <Row label="ERROR">{truncate(session.last_error, 200)}</Row>}
               <Row label="MODEL">{[session.provider, session.model].filter(Boolean).join(' / ') || '-'}</Row>
-              <Row label="COST">{session.cost_usd === null ? 'not priced' : formatUsd(session.cost_usd)}</Row>
+              <Row label="COST">{costLabel(session)}</Row>
               <Row label="TOKENS">
                 in: {formatTokens(session.input_tokens)} out: {formatTokens(session.output_tokens)} total: {formatTokens(session.total_tokens)}
               </Row>
@@ -242,7 +248,7 @@ export default function SessionDrawer({ sessionId, onClose }: SessionDrawerProps
               <div key={child.uid} style={{ fontSize: 12 }}>
                 <div>{truncate(deriveSessionDisplayLabel(child), 44)}</div>
                 <Muted>
-                  {child.status || 'idle'} {child.cost_usd === null ? 'not priced' : formatUsd(child.cost_usd)}
+                  {child.status || 'idle'} {costLabel(child)}
                 </Muted>
               </div>
             ))}

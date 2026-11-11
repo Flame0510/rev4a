@@ -373,6 +373,7 @@ export function buildSessionTree(sessions: Session[], agents: AgentOption[], fil
         container,
         model: s.model,
         cost_usd: s.cost_usd,
+        uses_subscription: s.uses_subscription,
         children: [],
       });
     }

@@ -5,7 +5,31 @@
  *   node scripts/test-agent-sessions-api.mjs
  */
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { createRequire, register } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// The module imports the subscription rule (`./agent-costs`, extensionless): Node's ESM resolver
+// needs the extension, so add the same tiny resolver hook the other lib tests use.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const hooks = `
+import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const ROOT = ${JSON.stringify(root)};
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith('@/')) {
+    const base = ROOT + '/' + specifier.slice(2);
+    for (const e of ['.ts', '.js']) if (existsSync(base + e)) return next(pathToFileURL(base + e).href, context);
+  }
+  if (specifier.startsWith('.') && !/\\.[a-z]+$/.test(specifier) && context.parentURL?.startsWith('file:')) {
+    const base = new URL(specifier, context.parentURL).pathname;
+    for (const e of ['.ts', '.js']) if (existsSync(base + e)) return next(pathToFileURL(base + e).href, context);
+  }
+  return next(specifier, context);
+}
+`;
+register('data:text/javascript,' + encodeURIComponent(hooks), pathToFileURL(root + '/'));
+
 const Database = createRequire(import.meta.url)('better-sqlite3');
 const m = await import('../lib/agent-sessions-db.ts');
 
@@ -164,6 +188,69 @@ test('cost: a NULL cost is filled from costs.db by (container, session_id); 0 or
   assert.equal(m.listSessions(d, { now: NOW, costsDb: noTable }).sessions.length, r.sessions.length);
   assert.equal(by('a1', 'agent:main:dashboard:d').cost_usd, null);
   assert.equal(m.listSessions(d, { now: NOW }).sessions.find((s) => s.session_key === 'agent:main:subagent:x').cost_usd, null);
+});
+
+test('subscription: openai and openai-codex mark the session, the API cost is untouched', () => {
+  const d = new Database(':memory:');
+  seed(d);
+  d.prepare("UPDATE agent_sessions SET provider = 'openai', cost_usd = 3.28 WHERE container = 'a2' AND session_key = 'agent:main:main'").run();
+  d.prepare("UPDATE agent_sessions SET provider = 'openai-codex', cost_usd = 1.43 WHERE container = 'a1' AND session_key = 'agent:main:subagent:x'").run();
+  const r = m.listSessions(d, { now: NOW });
+  const a2 = r.sessions.find((s) => s.container === 'a2' && s.session_key === 'agent:main:main');
+  const sub = r.sessions.find((s) => s.container === 'a1' && s.session_key === 'agent:main:subagent:x');
+  assert.equal(a2.uses_subscription, true);
+  assert.equal(a2.cost_usd, 3.28, 'the API cost is kept, only the display changes');
+  assert.equal(sub.uses_subscription, true);
+  assert.equal(sub.cost_usd, 1.43);
+  const detail = m.getSession(d, { container: 'a2', key: 'agent:main:main' });
+  assert.equal(detail.session.uses_subscription, true);
+});
+
+test('paid providers are not subscription sessions and keep their cost', () => {
+  const d = new Database(':memory:');
+  seed(d);
+  d.prepare("UPDATE agent_sessions SET provider = 'deepseek', cost_usd = 0.5 WHERE container = 'a2' AND session_key = 'agent:main:main'").run();
+  d.prepare("UPDATE agent_sessions SET provider = 'rev4a' WHERE container = 'a1' AND session_key = 'agent:main:main'").run();
+  d.prepare("UPDATE agent_sessions SET provider = 'openrouter' WHERE container = 'a1' AND session_key = 'agent:main:subagent:x'").run();
+  const r = m.listSessions(d, { now: NOW });
+  const by = (container, key) => r.sessions.find((s) => s.container === container && s.session_key === key);
+  assert.equal(by('a2', 'agent:main:main').uses_subscription, false);
+  assert.equal(by('a2', 'agent:main:main').cost_usd, 0.5);
+  assert.equal(by('a1', 'agent:main:main').uses_subscription, false);
+  assert.equal(by('a1', 'agent:main:subagent:x').uses_subscription, false);
+});
+
+test('provider NULL: the costs.db provider decides; a subscription price never becomes a paid session cost', () => {
+  const d = new Database(':memory:');
+  seed(d);
+  d.prepare("UPDATE agent_sessions SET session_id = 'S-main' WHERE container = 'a1' AND session_key = 'agent:main:main'").run();
+  d.prepare("UPDATE agent_sessions SET session_id = 'S-sub', provider = 'deepseek' WHERE container = 'a1' AND session_key = 'agent:main:subagent:x'").run();
+  d.prepare("UPDATE agent_sessions SET session_id = 'S-paid', cost_usd = NULL WHERE container = 'a2' AND session_key = 'agent:main:main'").run();
+  const c = new Database(':memory:');
+  c.exec('CREATE TABLE agent_cost_sessions (container TEXT NOT NULL, session_id TEXT NOT NULL, provider TEXT, cost REAL NOT NULL DEFAULT 0, PRIMARY KEY (container, session_id))');
+  c.prepare("INSERT INTO agent_cost_sessions VALUES ('a1', 'S-main', 'openai', 3.28), ('a1', 'S-sub', 'openai', 1.43), ('a2', 'S-paid', 'deepseek', 0.75)").run();
+  const r = m.listSessions(d, { now: NOW, costsDb: c });
+  const by = (container, key) => r.sessions.find((s) => s.container === container && s.session_key === key);
+  assert.equal(by('a1', 'agent:main:main').uses_subscription, true, 'the costs.db row reports the subscription');
+  assert.equal(by('a1', 'agent:main:subagent:x').uses_subscription, false, 'the session provider wins');
+  assert.equal(by('a1', 'agent:main:subagent:x').cost_usd, null, 'a subscription list price is not the spend of a paid session');
+  assert.equal(by('a2', 'agent:main:main').uses_subscription, false);
+  assert.equal(by('a2', 'agent:main:main').cost_usd, 0.75, 'a paid cost is still filled');
+  const detail = m.getSession(d, { container: 'a1', key: 'agent:main:main', costsDb: c });
+  assert.equal(detail.session.uses_subscription, true);
+});
+
+test('an older costs.db without a provider column: no throw, costs filled as before', () => {
+  const d = new Database(':memory:');
+  seed(d);
+  d.prepare("UPDATE agent_sessions SET session_id = 'S-main' WHERE container = 'a1' AND session_key = 'agent:main:main'").run();
+  const c = new Database(':memory:');
+  c.exec('CREATE TABLE agent_cost_sessions (container TEXT NOT NULL, session_id TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0)');
+  c.prepare("INSERT INTO agent_cost_sessions VALUES ('a1', 'S-main', 0.4)").run();
+  const r = m.listSessions(d, { now: NOW, costsDb: c });
+  const s = r.sessions.find((x) => x.container === 'a1' && x.session_key === 'agent:main:main');
+  assert.equal(s.cost_usd, 0.4);
+  assert.equal(s.uses_subscription, false);
 });
 
 test('cron runs do not crowd out main and sub-agent sessions (per-job trimming, real total)', () => {

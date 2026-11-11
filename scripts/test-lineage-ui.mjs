@@ -127,6 +127,18 @@ test('adapter: ms timestamps, null cost stays null, legacy parent_id maps into t
   assert.equal(adaptSession({ container: 'c1', session_key: 'k', status: 'weird' }).status, '');
 });
 
+test('adapter: uses_subscription is true only when the server says so; the tree carries it', () => {
+  assert.equal(adaptSession({ container: 'c1', session_key: 'k' }).uses_subscription, false, 'an older server keeps today display');
+  assert.equal(adaptSession({ container: 'c1', session_key: 'k', uses_subscription: true }).uses_subscription, true);
+  assert.equal(adaptSession({ container: 'c1', session_key: 'k', uses_subscription: 'true' }).uses_subscription, false);
+  const t = P.buildSessionTree([
+    row('c1', MAIN1, { kind: 'main' }),
+    row('c1', 'agent:main:subagent:sub', { kind: 'subagent', parent_uid: `c1|${MAIN1}`, parent_kind: 'spawn', uses_subscription: true }),
+  ], agents, 'all');
+  assert.equal(find(t, 'c1|agent:main:subagent:sub').uses_subscription, true);
+  assert.equal(find(t, `c1|${MAIN1}`).uses_subscription, false);
+});
+
 const cfg = (extra = {}) => ({ agent: 'all', showOnlyActive: false, showCron: true, period: '7d', ...extra });
 
 test('filters: agent, period, active only, no cron', () => {
@@ -195,10 +207,14 @@ test('old links: an agent name resolves from the session rows when /api/agents i
   assert.equal(P.resolveAgentFilter('ghost', [], []), 'all');
 });
 
-test('graph cost keeps its dollar sign', async () => {
-  const src = (await import('node:fs')).readFileSync(new URL('../app/components/SessionTopology.tsx', import.meta.url), 'utf8');
+test('graph cost keeps its dollar sign; a subscription session shows the word instead', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../app/components/SessionTopology.tsx', import.meta.url), 'utf8');
   assert.ok(src.includes('`$${Number(value).toFixed(4)}`'), 'formatCost shows $');
   assert.ok(src.includes("'not priced'"));
+  assert.ok(src.includes("'subscription'"), 'a subscription session shows the word, not a price');
+  const drawer = fs.readFileSync(new URL('../app/components/SessionDrawer.tsx', import.meta.url), 'utf8');
+  assert.ok(drawer.includes("'subscription'"), 'the drawer COST row and children list show the word too');
 });
 
 test('old links: ?agent=<display name> maps to the container, unknown falls back to all', () => {
