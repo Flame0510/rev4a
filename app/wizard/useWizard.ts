@@ -28,7 +28,7 @@ export function useWizard() {
   });
   const [hydrated, setHydrated] = useState(false);
 
-  // Hydrate: check cookie only. If done → show done step.
+  // Hydrate from the persistent completion status. If done → show done step.
   // If not done → always start from welcome (no localStorage resume).
   useEffect(() => {
     const hydrate = async () => {
@@ -43,7 +43,7 @@ export function useWizard() {
   const stepIndex = STEP_ORDER.indexOf(step);
 
   const markStep = useCallback((_stepKey: string) => {
-    // Step tracking is in-memory only; the cookie is the source of truth
+    // Step tracking is in-memory only; completion is persisted through the API.
   }, []);
 
   // Saving a key changes which models are offered; the shared list must follow.
@@ -87,9 +87,11 @@ export function useWizard() {
     if (key) setStep(key);
   }, []);
 
-  const completeAll = useCallback(async () => {
-    setComplete(true);
-    await markWizardComplete();
+  const completeAll = useCallback(async (signal?: AbortSignal): Promise<boolean> => {
+    const done = await markWizardComplete(signal);
+    if (signal?.aborted) return false;
+    if (done) setComplete(true);
+    return done;
   }, []);
 
   const restart = useCallback(async () => {

@@ -25,10 +25,10 @@ export async function isWizardComplete(): Promise<boolean> {
   }
 }
 
-/** Mark wizard as done — calls API which sets the cookie server-side. */
-export async function markWizardComplete(): Promise<boolean> {
+/** Persist completion and set the legacy wizard_done cookie (not the login session). */
+export async function markWizardComplete(signal?: AbortSignal): Promise<boolean> {
   try {
-    const res = await fetch('/api/wizard/complete', { method: 'POST', headers: setupCodeHeaders() });
+    const res = await fetch('/api/wizard/complete', { method: 'POST', headers: setupCodeHeaders(), signal });
     if (res.ok) {
       try { sessionStorage.removeItem(SETUP_CODE_KEY); } catch { /* storage disabled */ }
     }

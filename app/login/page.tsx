@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from 'react';
+import { useState, useCallback, useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { isWizardComplete } from '../wizard/storage';
 import { Button, Input } from '../components/ui';
 import { EyeIcon, EyeOffIcon } from '../components/Icons';
+import { checkSessionCookie } from '@/lib/session-cookie-check';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,6 +14,10 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
+  const submitAbortRef = useRef<AbortController | null>(null);
+  const statusAbortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
+  useEffect(() => () => submitAbortRef.current?.abort(), []);
   // Epoch ms until which the server refuses logins (429 Retry-After); 0 when not locked.
   const [lockedUntil, setLockedUntil] = useState(0);
   const [clock, setClock] = useState(0);
@@ -32,22 +37,27 @@ export default function LoginPage() {
 
   // Redirect to /setup if no password is configured
   useEffect(() => {
-    fetch('/api/auth/status')
+    statusAbortRef.current?.abort();
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
+    fetch('/api/auth/status', { signal: controller.signal })
       .then((r) => r.json())
       .then((d: { configured: boolean }) => {
+        if (controller.signal.aborted) return;
         if (!d.configured) {
           router.replace('/setup');
           return;
         }
         setChecking(false);
       })
-      .catch(() => setChecking(false));
+      .catch(() => { if (!controller.signal.aborted) setChecking(false); });
+    return () => controller.abort();
   }, [router]);
 
   // Enter key handler for the password input
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     // requestSubmit() ignores a disabled submit button: refuse Enter during a lock as well.
-    if (e.key === 'Enter' && password && !locked) {
+    if (e.key === 'Enter' && password && !locked && !submittingRef.current) {
       const form = (e.target as HTMLInputElement).closest('form');
       if (form) form.requestSubmit();
     }
@@ -55,6 +65,11 @@ export default function LoginPage() {
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (submittingRef.current || locked) return;
+    submittingRef.current = true;
+    submitAbortRef.current?.abort();
+    const controller = new AbortController();
+    submitAbortRef.current = controller;
     setLoading(true);
     setError('');
     try {
@@ -63,30 +78,41 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         cache: 'no-store',
+        signal: controller.signal,
         body: JSON.stringify({ password }),
       });
+      if (controller.signal.aborted) return;
       if (res.ok) {
+        const message = await checkSessionCookie(window.location.protocol, controller.signal);
+        if (controller.signal.aborted) return;
+        if (message) {
+          setError(message);
+          return;
+        }
         // Check wizard completion via API
         try {
           const done = await isWizardComplete();
+          if (controller.signal.aborted) return;
           if (!done) {
             router.replace('/wizard');
             return;
           }
         } catch { /* fallback to dashboard */ }
-        router.replace('/');
+        if (!controller.signal.aborted) router.replace('/');
       } else {
         if (res.status === 429) {
           const wait = Number(res.headers.get('Retry-After'));
           if (Number.isFinite(wait) && wait > 0) setLockedUntil(Date.now() + wait * 1000);
         }
         const data = (await res.json()) as { error?: string };
+        if (controller.signal.aborted) return;
         setError(data.error ?? 'Invalid password');
       }
-    } catch {
-      setError('Network error');
+    } catch (error) {
+      if (!controller.signal.aborted && (error as { name?: string })?.name !== 'AbortError') setError('Network error');
     } finally {
-      setLoading(false);
+      submittingRef.current = false;
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
 
@@ -159,7 +185,7 @@ export default function LoginPage() {
             </button>
           </div>
           {error && (
-            <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 12 }}>{error}</div>
+            <div role="alert" style={{ color: 'var(--red)', fontSize: 12, marginBottom: 12, overflowWrap: 'anywhere' }}>{error}</div>
           )}
           <Button
             type="submit"

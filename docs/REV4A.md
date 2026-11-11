@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-09
+> **Last updated:** 2026-11-11
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -51,7 +51,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_TIMEZONE` | No | Default dashboard time zone (IANA name), used only while none is saved in *Config > Time zone*; a saved zone wins, and with neither the server's own zone is used |
-| `REV4A_FORCE_INSECURE_COOKIE` | No | `1` allows a non-Secure session cookie — plain-HTTP deployments only (any other value, `true` included, does nothing) |
+| `REV4A_FORCE_INSECURE_COOKIE` | No | `1` allows a non-Secure session cookie — plain-HTTP deployments only (any other value, `true` included, does nothing). If the browser refuses the session after login, the page explains how to use HTTPS or set this in the data folder's `.env` and restart Rev4a |
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | No | How long `rev4a serve` waits for the Docker daemon at start-up (default `90`, capped at 600) |
 | `REV4A_LEGACY_BACKUP_VOLUME` | No | Name of the legacy Docker volume older releases kept agent backups in (default `rev4a-backups`). Set it only when a second Rev4a (a test instance) runs on the same Docker, so it never migrates the real volume; an invalid name disables the legacy side |
@@ -844,6 +844,12 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 ---
 
 ## Troubleshooting
+
+### Login loops on plain HTTP
+
+Production uses a Secure session cookie by default; browsers refuse it over plain HTTP (localhost can be an exception). After accepting the password, login now checks `/api/auth/check` before navigating. A `401` keeps the page open with instructions: use HTTPS through a reverse proxy, or set `REV4A_FORCE_INSECURE_COOKIE=1` in your Rev4a data folder's `.env` (`~/.config/rev4a/.env` by default) and restart Rev4a. On HTTPS the message asks you to allow cookies for the site. Wizard completion uses the same check before opening the dashboard; it writes the persistent completion marker and the legacy `wizard_done` cookie, not a login session. A failed completion stays in the wizard with a retry message. A network error or another error status from the session check shows a verification/retry message instead of blaming cookie settings.
+
+**INST-4 update note:** this is a client-only check after login or wizard completion. Existing sessions, cookie flags, defaults, databases, configuration, provider keys and agent volumes are unchanged. There is no migration or startup scan; older agents and rollback remain compatible. Installs already affected receive recovery instructions on their next login; Rev4a does not change their transport settings automatically.
 
 ### "Could not start the backup" and the message names the data folder
 Backups are written by a helper container that bind-mounts `<data>/backups` (`~/.config/rev4a/backups` by default). If Docker cannot mount that folder the backup fails and the message names the path. Typical causes: Docker installed as a snap (it cannot see hidden folders in $HOME), Docker Desktop without that path in its shared folders, SELinux (label denial on the bind mount) and Docker user-namespace remapping (the helper cannot write the folder). Fix: share the path with Docker, or set `REV4A_DATA_DIR` to a folder Docker can mount (move the existing `backups/` folder with it), then retry. A mount that works but cannot be written (SELinux, user-namespace remapping) fails the same way before anything is archived, with "the backups folder <path> is not writable from the container"; Rev4a does not add the `:z` label on its own.

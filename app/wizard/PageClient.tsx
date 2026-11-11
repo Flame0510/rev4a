@@ -1,8 +1,10 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Button } from '../components/ui';
+import { Button, Surface } from '../components/ui';
+import { checkSessionCookie } from '@/lib/session-cookie-check';
 import { useWizard, type ProviderKeys } from './useWizard';
 import {
   ArrowRightIcon, CheckCircleIcon, CheckIcon,
@@ -24,23 +26,68 @@ const STEPS = [
 export default function WizardPageClient() {
   const router = useRouter();
   const {
-    step, stepIndex, saving, complete, providerKeys,
+    step, stepIndex, saving, providerKeys,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart, hydrated,
   } = useWizard();
+  const [completionError, setCompletionError] = useState('');
+  const [action, setAction] = useState<'complete' | 'restart' | null>(null);
+  const actionRef = useRef(false);
+  const completionAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => completionAbortRef.current?.abort(), []);
 
   const handleComplete = async () => {
-    await completeAll();
-    router.push('/');
+    if (actionRef.current) return;
+    actionRef.current = true;
+    completionAbortRef.current?.abort();
+    const controller = new AbortController();
+    completionAbortRef.current = controller;
+    setAction('complete');
+    setCompletionError('');
+    try {
+      const done = await completeAll(controller.signal);
+      if (controller.signal.aborted) return;
+      if (!done) {
+        setCompletionError('Could not finish the wizard. Please try again. If your session expired, sign in again.');
+        return;
+      }
+      const message = await checkSessionCookie(window.location.protocol, controller.signal);
+      if (controller.signal.aborted) return;
+      if (message) {
+        setCompletionError(message);
+        return;
+      }
+      router.push('/');
+    } catch (error) {
+      if (!controller.signal.aborted && (error as { name?: string })?.name !== 'AbortError') {
+        setCompletionError('Could not finish the wizard. Please try again.');
+      }
+    } finally {
+      actionRef.current = false;
+      if (!controller.signal.aborted) setAction(null);
+    }
+  };
+
+  const handleRestart = async () => {
+    if (actionRef.current) return;
+    actionRef.current = true;
+    setAction('restart');
+    setCompletionError('');
+    try {
+      await restart();
+    } finally {
+      actionRef.current = false;
+      setAction(null);
+    }
   };
 
   if (!hydrated) return null;
 
   return (
-    <WizardFrame stepIndex={stepIndex} steps={STEPS} onStepClick={goToStep}>
+    <WizardFrame stepIndex={stepIndex} steps={STEPS} busy={action !== null} onStepClick={(index) => { if (!actionRef.current) goToStep(index); }}>
       {step === 'welcome'   && <WelcomeStep onNext={goNext} />}
       {step === 'providers' && <ProvidersStep keys={providerKeys} onChange={setProviderKeys} onNext={goNext} onSkip={skip} saving={saving} />}
       {step === 'agents'    && <AgentsStep onNext={goNext} onSkip={skip} />}
-      {step === 'done'      && <DoneStep onComplete={handleComplete} saving={saving} onRestart={restart} />}
+      {step === 'done'      && <DoneStep onComplete={handleComplete} action={action} error={completionError} onRestart={handleRestart} />}
     </WizardFrame>
   );
 }
@@ -145,7 +192,12 @@ function AgentsStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void
   );
 }
 
-function DoneStep({ onComplete, saving, onRestart }: { onComplete: () => void; saving: boolean; onRestart: () => void }) {
+function DoneStep({ onComplete, action, error, onRestart }: {
+  onComplete: () => void;
+  action: 'complete' | 'restart' | null;
+  error: string;
+  onRestart: () => void;
+}) {
   const routes = [
     { route: '/agents', desc: 'Create and manage agents' },
     { route: '/gateway', desc: 'Configure providers and sync agent models' },
@@ -172,13 +224,14 @@ function DoneStep({ onComplete, saving, onRestart }: { onComplete: () => void; s
           </div>
         ))}
       </div>
+      {error && <Surface variant="subtle" tone="danger"><div role="alert" style={{ overflowWrap: 'anywhere' }}>{error}</div></Surface>}
       <div className="wizard-actions" style={{ justifyContent: 'center', gap: 12 }}>
         <div className="wizard-done-actions">
-          <Button variant="secondary" size="md" onClick={onRestart}>
-            Restart Wizard
+          <Button type="button" variant="secondary" size="md" onClick={onRestart} loading={action === 'restart'} disabled={action !== null}>
+            {action === 'restart' ? 'Restarting…' : 'Restart Wizard'}
           </Button>
-          <Button variant="primary" size="md" onClick={onComplete} loading={saving}>
-            Start Using Rev4a <ArrowRightIcon />
+          <Button type="button" variant="primary" size="md" onClick={onComplete} loading={action === 'complete'} disabled={action !== null}>
+            {action === 'complete' ? 'Finishing…' : 'Start Using Rev4a'} <ArrowRightIcon />
           </Button>
         </div>
       </div>
@@ -203,9 +256,11 @@ function Feature({ icon, title, desc }: { icon: React.ReactNode; title: string; 
 // ─── Wizard shell ───────────────────────────────────────────────────────
 
 function WizardFrame({
-  stepIndex, steps, children, onStepClick,
+  stepIndex, steps, children, onStepClick, busy = false,
 }: {
   stepIndex: number;
+  /** A completion or restart is running: the steps are refused, so they look disabled. */
+  busy?: boolean;
   steps: { key: string; label: string; labelMobile: string }[];
   children: React.ReactNode;
   onStepClick: (index: number) => void;
@@ -222,7 +277,7 @@ function WizardFrame({
             {steps.map((s, i) => {
               const isPast = i < stepIndex;
               const isCurrent = i === stepIndex;
-              const clickable = isPast || isCurrent;
+              const clickable = (isPast || isCurrent) && !busy;
 
               return (
                 <div key={s.key} className="wizard-step">

@@ -1,6 +1,6 @@
 # Rev4a Frontend Architecture
 
-> **Last updated:** 2026-11-09
+> **Last updated:** 2026-11-11
 
 ## Layering
 
@@ -74,7 +74,7 @@ All shared UI primitives live in `app/components/ui/` and are exported from `app
 | `ModelDetailsModal` | `app/gateway/ModelDetailsModal.tsx` | Details for one model, opened by the `⋯` button on a Gateway model row (`aria-label="Details for <name>"`). Fetches `GET /api/models/details?id=` **when it opens** (AbortController, shared spinner, error text) instead of inlining descriptions in the polled list. Sections appear only when their source has data: identity (provider, modality through the shared `ModalityIcons`, enabled and deprecated chips, the id), price with its origin (the provider's display label, from `lib/provider-labels.ts`), specs (release date, context and the provider's own limit when it differs, max output, knowledge cutoff, tokenizer, instruct type, moderation, **Architecture** (a metric row — parameters, experts, layers, max context — over the facts from the model card: family, model type, hidden size, attention heads with KV heads, vocabulary, vision encoder, precision and the weight mix by dtype, task, languages, popularity, attributed to Hugging Face), the description truncated to four lines with a **Show more** toggle, reasoning (mode, default effort, efforts), capabilities as `Pill`s, benchmarks (Artificial Analysis indices as `Metric`s, the design-arena table, then the curated ones with source and date), status (deprecated + notes) and a footer with the generated part's date. Never shows "n/a": an absent field is an absent block. |
 | `ModelsProvider` / `useModels` | `app/lib/models-context.tsx` | The client's single model list, from `/api/models`. Whatever changes what is offered calls `refresh()`: the Gateway page after a toggle, a key save or removal, or a sync, and the first-run wizard after saving keys. Everything else only reads, PulseChat included. |
 | `WizardPageClient` + step components | `app/wizard/PageClient.tsx` | Multi-step first-run wizard plus its frame shell, with mobile-first CSS. |
-| `useWizard` | `app/wizard/useWizard.ts` | Shared hook: wizard state, step transitions, provider save, restart. Receives server-side initial state to avoid a loading flash. |
+| `useWizard` | `app/wizard/useWizard.ts` | Shared hook: wizard state, step transitions, provider save, restart. Hydrates completion through the status API; completion returns whether the marker was saved. |
 | Wizard icons | `app/wizard/icons.tsx` | Shared SVG icons (flyweight pattern): `ArrowRightIcon`, `CheckIcon`, `CheckCircleIcon`, `DockerIcon`, `GatewayIcon`, `AgentIcon`, `TemplateIcon`, `LinkIcon`, `ConfigIcon`, `InformationIcon`. |
 | `tokens` | `tokens.ts` | TypeScript types for `Tone` and related token values. |
 | `Badge` | `Badge.tsx` | Inline status tag with tone variants (success, danger, warning, neutral). Used for channel chips, pairing labels, error/success messages, and the agent card's `UPDATE AVAILABLE` / `NEW BUILD` chip (`newBuildAvailable`; the first wins). `NEW BUILD` has a note and a **Recreate Container** button in the panel's OPENCLAW VERSION section, which opens the RECREATE section's confirm (one flow; the button shows the section's loading state). |
@@ -254,6 +254,8 @@ success message, including the overwritten indication.
 ## Login page lock
 
 `/login` (`app/login/page.tsx`) handles the throttle of wrong passwords: from the 6th wrong password the address is locked for 30 s, doubling up to 15 minutes, and the login route answers `429` with a `Retry-After` header. The page keeps `lockedUntil` (epoch ms, from `Retry-After`) and a one-second `clock` that ticks only while a lock is active; while locked, the sign-in button (and Enter) is disabled until `lockedUntil`, and the page shows the server's fixed message ("Try again in N seconds."), not a live countdown. A restart of Rev4a clears the lock.
+
+After successful login or wizard completion, `lib/session-cookie-check.ts` calls `GET /api/auth/check` with same-origin credentials and no-store caching before navigation: `401` shows HTTP recovery instructions (`HTTPS` or `REV4A_FORCE_INSECURE_COOKIE=1` and restart) or HTTPS cookie-permission guidance based on `window.location.protocol`; network/other errors show a verification/retry message. Both pages stay open on failure, guard duplicate submissions with refs and abort the completion check on unmount; wizard completion/restart have separate loading keys and disable sibling actions.
 
 ### Subscriptions components
 
