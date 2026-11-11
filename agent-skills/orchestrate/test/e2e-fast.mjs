@@ -149,6 +149,23 @@ assert.ok(!/moved only in/.test(mv.out), 'no inert note'); n++;
 mv = moveCard('SB-15', 'app/fifteen.mjs', () => { const c = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); c.limits = { ...(c.limits ?? {}), checkTimeoutSec: 901 }; fs.writeFileSync(cfgFile, JSON.stringify(c)); });
 assert.equal(mv.reran, 1, 'a config change is a test input: harness repeated'); n++;
 
+// Quoted Git display names must still find unchanged card specs and match inert paths.
+const namedSpecs = ['tests/e2e/café é.spec.mjs', 'tests/e2e/say"hello.spec.mjs'];
+for (const f of namedSpecs) write(f, '// spec\n');
+write('backlog/tasks/sb-200 - Names.md', card('SB-200', 'Names', ['app/names.mjs', ...namedSpecs]));
+g('add', '-A'); g('commit', '-q', '-m', 'filename fixtures');
+o = runCard('SB-200', wt => write('app/names.mjs', '// changed\n', wt));
+assert.equal(lastArgs(), [...namedSpecs, 'tests/e2e/02-orders.spec.mjs'].join(' ')); n++;
+for (const f of namedSpecs) {
+  assert.ok(o.includes(`'${f}'`), `fast gate found ${f}`); n++;
+  assert.ok(fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-200/prompts/worker-r0.md'), 'utf8').includes(f), `worker found tracked spec ${f}`); n++;
+}
+for (const [i, name] of ['café é.md', 'say"hello.md'].entries()) {
+  mv = moveCard(`SB-${201 + i}`, `app/names-${i}.mjs`, () => write(`docs/notes/${name}`, '# inert\n'));
+  assert.equal(mv.reran, 0, `inert path uses real name ${name}`); n++;
+  has(mv.out, /moved only in \d+ file\(s\) under [^:]*docs\/notes\/\*\*/, 'real inert path noted');
+}
+
 // 6. Whole-suite reuse is opt-in, and closure cards give us full runs despite changing only documentation.
 const state = id => JSON.parse(fs.readFileSync(path.join(REPO, '.orchestrate/runs', id, 'state.json'), 'utf8'));
 const markerFile = path.join(REPO, '.orchestrate/runs/_suite-e2e.json');

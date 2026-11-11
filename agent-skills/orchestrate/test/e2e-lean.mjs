@@ -541,4 +541,36 @@ console.log('scope: scopeOnly is false for check/test-rule failures; an older pr
 // 9. Config values are checked.
 orch(['config', '--set', 'merge.recheck=sometimes'], 1);
 
+// Changed names select merge harnesses; inert names preserve the identical-to-gate decision.
+const namedFiles = ['docs/café é.md', 'docs/say"hello.md'];
+const namedCfg = { ...cfg, merge: { ...cfg.merge, inertPaths: namedFiles }, harnesses: [
+  ...cfg.harnesses,
+  ...namedFiles.map((f, i) => ({ name: `named-${i}`, command: `node scripts/count.mjs named-${i}`, paths: [f], when: 'merge' })),
+] };
+write('.orchestrate/config.json', JSON.stringify(namedCfg));
+for (const [i, f] of namedFiles.entries()) {
+  const id = `SB-${300 + i}`;
+  write(`backlog/tasks/${id.toLowerCase()} - Card.md`, card(id, f));
+  g('add', '-A'); g('commit', '-q', '-m', 'named merge fixture');
+  work(id, f, '# changed\n'); orch(['gate', id]); pass(id);
+  const checkCount = runs('check'); const mergeCount = runs(`named-${i}`);
+  has(orch(['finish', id]), /not repeated/, 'unchanged gated tree skips checks');
+  assert.equal(runs('check'), checkCount); n++;
+  assert.equal(runs(`named-${i}`), mergeCount + 1, `merge harness matches ${f}`); n++;
+  assert.equal(g('show', `develop:${f}`), '# changed'); n++;
+
+  const inertId = `SB-${310 + i}`;
+  const inputFile = `locales/named-${i}.json`;
+  write(`backlog/tasks/${inertId.toLowerCase()} - Card.md`, card(inertId, inputFile));
+  g('add', '-A'); g('commit', '-q', '-m', 'named inert fixture');
+  work(inertId, inputFile, '{}\n'); orch(['gate', inertId]); pass(inertId);
+  const inertCheckCount = runs('check'); const gateCount = runs('i18n');
+  write(f, '# inert base change\n'); g('add', f); g('commit', '-q', '-m', 'named inert base move');
+  has(orch(['finish', inertId]), /plus \d+ inert file\(s\).*not repeated/, `identicalToGate recognises ${f}`);
+  assert.equal(runs('check'), inertCheckCount); assert.equal(runs('i18n'), gateCount); n += 2;
+}
+console.log('filenames: real changed names select merge harnesses; accented and quoted inert names skip repeated checks');
+
+await import('./filename-pr.mjs');
+
 console.log(`e2e-lean: ${n} checks passed in ${REPO}`);

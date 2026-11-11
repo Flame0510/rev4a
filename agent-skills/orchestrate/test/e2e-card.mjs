@@ -269,4 +269,16 @@ write('.orchestrate/runs/SB-71/inbox/worker.md', 'done\n'); orch(['record', 'SB-
 has(orch(['gate', 'SB-71']), /GATE: PASS/, 'gate passes');
 has(read('.orchestrate/runs/SB-71/prompts/checker-r0-a.md'), /touches the external flow "image-generation" \(a paid or outside service\): never call the real service\. .*a test or change that would call the real service is a FAIL/, 'checker brief: external flow rule');
 
+// Existing names that Git normally quotes are recognised as tracked ownership during normalise.
+const namedOwned = ['docs/café é.md', 'docs/say"hello.md'];
+for (const f of namedOwned) write(f, '# guide\n');
+g('add', ...namedOwned); g('commit', '-q', '-m', 'filename fixtures');
+const namedCard = { ...c98, acceptance: ['Both existing guide files remain owned by this card.'], owned: namedOwned, kind: 'content', checks: ['node -e 0'] };
+o = orch(['card', 'normalise', 'SB-98', '--from', json('named-owned', namedCard)]);
+assert.doesNotMatch(o, /not in the repository yet/); n++;
+const namedShown = JSON.parse(orch(['card', 'normalise', 'SB-98']).split('\n}')[0] + '\n}');
+assert.deepEqual(namedShown.owned, namedOwned); n++;
+o = orch(['card', 'check', 'SB-98']);
+assert.doesNotMatch(o, /not in the repository yet/); n++;
+
 console.log(`e2e-card: ${n} checks passed in ${REPO}`);

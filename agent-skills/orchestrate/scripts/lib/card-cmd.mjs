@@ -17,7 +17,7 @@ function readInput(file) {
 
 export async function cmdCard(root, { pos, flags }, { cfg, tracker, out }) {
   const [sub, id] = pos;
-  const tracked = git(['ls-files'], root).split('\n').filter(Boolean);
+  const tracked = git(['ls-files', '-z'], root).split('\0').filter(Boolean);
   const tasks = tracker.list();
   const ctx = { cfg, tracked, tasks };
   const dry = flags['dry-run'] === true;

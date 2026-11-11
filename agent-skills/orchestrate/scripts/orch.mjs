@@ -35,7 +35,7 @@ import {
 } from './lib/config.mjs';
 import { withRunLock } from './lib/runlock.mjs';
 import { gateJob, liveGate, runGateCommand } from './lib/gate-job.mjs';
-import { matchesAny } from './lib/glob.mjs';
+import { grantedBy, matchesAny } from './lib/glob.mjs';
 import {
   cardSpecFiles, detectHarnesses, failedSpecFiles, harnessesCovering, harnessesFor, harnessInputKey, harnessPlan, OUTPUT_DIRS, riskyFiles,
   readSuiteMarker, reusablePass, reuseMaxAgeHours, runHarness, shq, testRule, updateSuiteMarker, withHarnessLock,
@@ -82,7 +82,7 @@ async function trackerFor(root, cfg) {
 }
 
 const tpl = name => fs.readFileSync(path.join(SKILL, 'templates', `${name}.md`), 'utf8');
-const trackedFiles = root => git(['ls-files'], root).split('\n').filter(Boolean);
+const trackedFiles = root => git(['ls-files', '-z'], root).split('\0').filter(Boolean);
 const block = list => (list.length ? list.join('\n') : '(none)');
 
 // Stage everything in the worktree (its own index; never committed here) and name the resulting tree.
@@ -703,8 +703,7 @@ async function cmdGateForeground(root, { pos }, emit = out) {
   const notOwned = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**'];
   // The names are exact (-z); the glob matcher trims patterns, so a name with whitespace at either end or a control
   // character would match an owned file it is not. Such a name is never owned.
-  const oddName = f => f !== f.trim() || /[\x00-\x1f\x7f]/.test(f);
-  const outside = files.filter(f => oddName(f) || !matchesAny(owned, f) || matchesAny(notOwned, f));
+  const outside = files.filter(f => !grantedBy(owned, f) || matchesAny(notOwned, f));
   if (!owned.length) bad('the task has no modified_files');
   else if (outside.length) bad(`scope: ${outside.length} file(s) outside the owned files: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ' …' : ''}`);
   else pass(`scope: all ${files.length} changed file(s) are owned`);
@@ -730,7 +729,7 @@ async function cmdGateForeground(root, { pos }, emit = out) {
   const closure = tracker.list().some(t => t.parent && t.parent.toUpperCase() === task.id.toUpperCase());
   const risky = riskyFiles(cfg, files);
   const harnesses = closure ? cfg.harnesses.filter(h => (h.when ?? 'gate') === 'gate') : harnessesFor(cfg, task, files, 'gate');
-  const worktreeFiles = harnesses.some(h => h.fast) ? git(['ls-files', '-co', '--exclude-standard'], wt).split('\n').filter(Boolean) : [];
+  const worktreeFiles = harnesses.some(h => h.fast) ? git(['ls-files', '-z', '-co', '--exclude-standard'], wt).split('\0').filter(Boolean) : [];
   // A harness the change does not reach is skipped, and said so (never silent). It is not in harnessRuns: an earlier
   // release's merge would read any entry there as a whole run.
   for (const h of cfg.harnesses.filter(h => (h.when ?? 'gate') === 'gate' && !harnesses.includes(h))) {
@@ -1110,7 +1109,7 @@ async function cmdFinish(root, { pos, flags }) {
   // "gate" ones too when the base branch moved since the start (the merged tree is then not the gated tree).
   const t0 = Date.now();
   const task = tracker.get(st.id);
-  const changed = git(['diff', '--no-renames', '--name-only', st.base, st.branch], root).split('\n').filter(Boolean);
+  const changed = git(['diff', '-z', '--no-renames', '--name-only', st.base, st.branch], root).split('\0').filter(Boolean);
   const head = git(['rev-parse', 'HEAD'], root);
   const inert = head !== st.base && baseChangeInert(root, cfg, st.base, head);
   const moved = head !== st.base && !inert;
@@ -1272,7 +1271,7 @@ async function finishPr(root, cfg, st, who, override) {
       delete st.baseMerge; saveState(root, st);
       throw new OrchError(`${st.baseBranch} moved and does not merge cleanly into ${st.branch}: ${(m.err || m.out).split('\n')[0]}. Nothing was merged: park the task, or start a small card that resolves it.${stuck}`, 2);
     }
-    const changed = git(['diff', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\n').filter(Boolean);
+    const changed = git(['diff', '-z', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\0').filter(Boolean);
     const inert = baseChangeInert(root, cfg, st.base, baseNow);
     const same = identicalToGate(root, cfg, st, task, wt);
     if (same.same) notes.push(`${st.baseBranch} moved only in inert files: checks and gate harnesses not repeated (merge.recheck if-changed)`);
@@ -1299,7 +1298,7 @@ async function finishPr(root, cfg, st, who, override) {
   }
   // "merge" harnesses run on what GitHub will merge even when the base did not move (the branch already contains it).
   if (!checkedMerged) {
-    const changed = git(['diff', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\n').filter(Boolean);
+    const changed = git(['diff', '-z', '--no-renames', '--name-only', st.base, 'HEAD'], wt).split('\0').filter(Boolean);
     for (const x of mergeRuns(root, cfg, st, task, changed, false, wt, { lean: true })) {
       const r = x.run();
       writeAtomic(path.join(runDir(root, st.id), 'logs', x.log), `${x.label}\nexit ${r.code}${r.timedOut ? ' (timeout)' : ''} in ${minutes(r.ms)}\n\n${r.out}`);
@@ -1369,11 +1368,11 @@ async function cmdResolve(root, { pos, flags }) {
 // merge repeats the gate's harnesses). Nothing is inert by assumption, not even documentation.
 function baseChangeInert(root, cfg, from, to) {
   const inertGlobs = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**', ...(cfg.merge.inertPaths ?? [])];
-  const r = git(['diff', '--no-renames', '--name-only', from, to], root, { allowFail: true });
+  const r = git(['diff', '-z', '--no-renames', '--name-only', from, to], root, { allowFail: true, raw: true });
   if (r.code !== 0) return '';
-  const files = r.out.split('\n').filter(Boolean);
+  const files = r.out.split('\0').filter(Boolean);
   // The orch config defines checks and harnesses: a change to it is a change to the tests, never inert.
-  if (!files.length || !files.every(f => matchesAny(inertGlobs, f) && f !== '.orchestrate/config.json')) return '';
+  if (!files.length || !files.every(f => grantedBy(inertGlobs, f) && f !== '.orchestrate/config.json')) return '';
   return `${files.length} file(s) under ${[...new Set(files.map(f => inertGlobs.find(g => matchesAny([g], f))))].join(', ')}`;
 }
 
@@ -1395,9 +1394,9 @@ function abortMerge(cwd) {
 function identicalToGate(root, cfg, st, task, cwd) {
   if (cfg.merge.recheck !== 'if-changed' || !st.gate?.tree || !st.gate.cfgHash || st.gate.cfgHash !== checksHash(cfg, task)) return { same: false, tree: git(['write-tree'], cwd) };
   const tree = git(['write-tree'], cwd);
-  const files = git(['diff', '--no-renames', '--name-only', st.gate.tree, tree], cwd).split('\n').filter(Boolean);
+  const files = git(['diff', '-z', '--no-renames', '--name-only', st.gate.tree, tree], cwd).split('\0').filter(Boolean);
   const inertGlobs = [...(cfg.tracker.dir ? [`${cfg.tracker.dir}/**`] : []), '.orchestrate/**', ...(cfg.merge.inertPaths ?? [])];
-  return { same: files.every(f => matchesAny(inertGlobs, f) && f !== '.orchestrate/config.json'), tree, files };
+  return { same: files.every(f => grantedBy(inertGlobs, f) && f !== '.orchestrate/config.json'), tree, files };
 }
 
 function mergeRuns(root, cfg, st, task, changed, moved, cwd, { lean = false } = {}) {
@@ -1554,9 +1553,9 @@ async function cmdPrompt(root, { pos, flags }) {
     const brief = fs.readFileSync(st.prompt, 'utf8');
     const capped = text => block(text.split('\n').filter(Boolean).slice(0, 60));
     const stat = git(['diff', '--stat', '--no-renames', '--no-ext-diff', '--no-textconv', st.base, '--'], st.worktree);
-    const untracked = git(['ls-files', '--others', '--exclude-standard'], st.worktree);
+    const untracked = git(['ls-files', '-z', '--others', '--exclude-standard'], st.worktree).split('\0').filter(Boolean);
     const file = path.join(runDir(root, st.id), 'prompts', `worker-r${st.round}-resume.md`);
-    writeAtomic(file, `${brief}\n\n${fill(tpl('resume'), { stat: capped(stat), untracked: capped(untracked) })}`);
+    writeAtomic(file, `${brief}\n\n${fill(tpl('resume'), { stat: capped(stat), untracked: block(untracked.slice(0, 60).map(f => /[\r\n]/.test(f) ? JSON.stringify(f) : f)) })}`);
     st.prompt = file;
     event(st, 'restart', { round: st.round, role: 'worker', model: cfg.roles.worker });
     saveState(root, st);

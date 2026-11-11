@@ -155,6 +155,8 @@ const original = fs.readFileSync(initial.prompt, 'utf8');
 const configBytes = fs.readFileSync(path.join(REPO, '.orchestrate/config.json'));
 write('src/d.mjs', 'export const d = 2;\n', WT('SB-4'));
 write('src/unfinished.mjs', '// partial work\n', WT('SB-4'));
+const untrackedNames = ['docs/café é.md', 'docs/say"hello.md', 'docs/back\\slash.md', 'docs/tab\tname.md', 'docs/line\nbreak.md'];
+for (const f of untrackedNames) write(f, '# unfinished\n', WT('SB-4'));
 orch(['campaign', 'start', '--session', 'resume-coordinator', '--scope', 'SB-4']);
 const sessions = rows => fs.writeFileSync(SESSIONS, JSON.stringify({ sessions: [{ key: 'resume-coordinator' }, ...rows] }));
 const worker = { key: 'worker', label: 'SB-4 worker r0', updatedAt: Date.now() };
@@ -179,6 +181,10 @@ assert.equal(resumeFile, fs.realpathSync(path.join(resumeDir, 'prompts/worker-r0
 assert.ok(resumeBrief.startsWith(`${original}\n\n`)); n++;
 has(resumeBrief, /## A worker before you stopped without a report[\s\S]*Do not start over[\s\S]*same report/);
 has(resumeBrief, /src\/d\.mjs\s+\|/); has(resumeBrief, /src\/unfinished\.mjs/);
+const untrackedBlock = [...resumeBrief.slice(original.length).matchAll(/```text\n([^]*?)\n```/g)][1][1];
+assert.equal(untrackedBlock, [...untrackedNames, 'src/unfinished.mjs'].sort()
+  .map(f => f.includes('\n') ? JSON.stringify(f) : f).join('\n'), 'resume lists actual names, with a newline name JSON-quoted on one line'); n++;
+assert.ok(!untrackedBlock.includes('\0'), 'resume contains no NUL bytes'); n++;
 assert.equal(resumed.prompt, resumeFile); assert.equal(resumed.round, initial.round); assert.equal(resumed.phase, 'working'); n += 3;
 assert.deepEqual(resumed.events.slice(0, -1), initial.events); n++;
 const { t: restartedAt, ...restart } = resumed.events.at(-1);
@@ -240,6 +246,7 @@ fs.writeFileSync(campaignPath, preparedCampaign);
 
 // A real checker rejection opens a correction round; its current fix brief, rather than the first brief, is preserved.
 fs.rmSync(path.join(WT('SB-4'), 'src/unfinished.mjs'));
+for (const f of untrackedNames) fs.unlinkSync(path.join(WT('SB-4'), f));
 orch(['gate', 'SB-4']);
 write(ckr('SB-4'), 'HIGH: unfinished change\nEXECUTED: fixture -> failed\nVERDICT: FAIL\n');
 orch(['record', 'SB-4', 'checker']);
@@ -257,8 +264,21 @@ for (let i = 0; i < 65; i++) write(`resume-fixtures/staged-${String(i).padStart(
 const staged = spawnSync('git', ['add', 'resume-fixtures'], { cwd: WT('SB-4'), encoding: 'utf8' });
 assert.equal(staged.status, 0, staged.stderr); n++;
 for (let i = 0; i < 65; i++) write(`resume-fixtures/untracked-${String(i).padStart(2, '0')}.txt`, 'unfinished\n', WT('SB-4'));
+// The ASCII-only fixture must keep the complete resume brief byte-identical to the former Git display list.
+const legacyEvidence = args => {
+  const r = spawnSync('git', args, { cwd: WT('SB-4'), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.split('\n').filter(Boolean).slice(0, 60).join('\n') || '(none)';
+};
+const legacyValues = {
+  stat: legacyEvidence(['diff', '--stat', '--no-renames', '--no-ext-diff', '--no-textconv', fix.base, '--']),
+  untracked: legacyEvidence(['ls-files', '--others', '--exclude-standard']),
+};
+const legacyResume = fs.readFileSync(new URL('../templates/resume.md', import.meta.url), 'utf8')
+  .replace(/\{\{(\w+)\}\}/g, (_, key) => legacyValues[key]);
 resumeOut = orch(['prompt', 'SB-4', 'worker', '--resume']);
 const nextBrief = fs.readFileSync(state('SB-4').prompt, 'utf8');
+assert.equal(nextBrief, `${fixBrief}\n\n${legacyResume}`, 'ASCII resume bytes match the base behaviour'); n++;
 assert.ok(nextBrief.startsWith(`${fixBrief}\n\n`)); n++;
 const section = nextBrief.slice(fixBrief.length);
 const blocks = [...section.matchAll(/```text\n([^]*?)\n```/g)].map(m => m[1].split('\n'));
@@ -458,9 +478,13 @@ try {
   ]) has(orch(args, 4), /sleeping test command/);
   assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/runs/SB-5/state.json')), before);
   assert.deepEqual(fs.readFileSync(path.join(REPO, '.orchestrate/activity')), activityBefore); n += 2;
+  // A command that waited on the held lock would take the full wait (30 s here) before exit 4; three process starts
+  // under parallel suites can take seconds, so the bound only has to separate "no wait" from "30 s each".
+  fixtureConfig({ limits: { runLockWaitSec: 30 } });
   const ro = Date.now();
   orch(['status', 'SB-5']); orch(['prompt', 'SB-5', 'worker']); orch(['next']);
-  assert.ok(Date.now() - ro < 5000, 'read-only commands do not wait on the held lock'); n++;
+  assert.ok(Date.now() - ro < 25_000, `read-only commands do not wait on the held lock (${Date.now() - ro} ms)`); n++;
+  fixtureConfig();
 } finally { holder.stdin.end('release'); await holderDone; }
 console.log('ok runlock: all mutating commands exit 4 before writes; read-only commands do not wait');
 fixtureConfig({ limits: { runLockWaitSec: 5 } });

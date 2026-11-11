@@ -81,7 +81,8 @@ function sshEnv(cwd) {
   return { GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=2' };
 }
 
-export function git(args, cwd, { allowFail = false } = {}) {
+// raw: stdout exactly as git wrote it (a -z name list must keep a leading space or tab of its first name).
+export function git(args, cwd, { allowFail = false, raw = false } = {}) {
   const net = NETWORK.has(args[0]);
   const r = spawnSync('git', args, {
     cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
@@ -92,7 +93,7 @@ export function git(args, cwd, { allowFail = false } = {}) {
     } } : {}),
   });
   if (net && (r.error?.code === 'ETIMEDOUT' || r.signal)) r.stderr = `timed out after ${networkTimeoutSec} s (network or credentials; limits.networkTimeoutSec)\n${r.stderr ?? ''}`;
-  if (allowFail) return { code: r.status ?? 1, out: (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim() };
+  if (allowFail) return { code: r.status ?? 1, out: raw ? (r.stdout ?? '') : (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim() };
   if (r.status !== 0) throw new OrchError(`git ${args.join(' ')}: ${((r.stderr || r.stdout) ?? '').trim()}`);
   return (r.stdout ?? '').replace(/\n$/, '');
 }

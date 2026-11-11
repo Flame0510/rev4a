@@ -1,6 +1,6 @@
 // Unit checks for the pure parts: globs, overlap, front matter, role proposal. node test/unit.mjs
 import assert from 'node:assert/strict';
-import { matches, patternsOverlap } from '../scripts/lib/glob.mjs';
+import { grantedBy, matches, matchesAny, patternsOverlap } from '../scripts/lib/glob.mjs';
 import { parseFrontMatter, yamlScalar } from '../scripts/lib/frontmatter.mjs';
 import { decide } from '../scripts/lib/keeper.mjs';
 import { focusedSpecs, proposeRoles } from '../scripts/orch.mjs';
@@ -161,5 +161,14 @@ eq(shq("a b'c"), "'a b'\\''c'", 'shell quoting');
   eq(decide({ ...ctx, runs: [run({ gate: { outside: 0 } })] }).action, 'escalate', 'other failure at the limit: the owner');
   eq(decide({ ...ctx, runs: [run({ gate: { outside: 0 }, scopeRounds: 1, round: 2 })] }).action, 'wake', 'a granted round raises the limit');
 }
+
+// A name that differs from an allowed one only by edge whitespace or a control character is never granted
+// ownership or inertness; plain matching (which only adds checks) keeps trimming.
+for (const odd of ['docs/safe.md\t', 'docs/safe.md\n', '\tdocs/safe.md', ' docs/safe.md', 'docs/safe.md ', 'docs/sa\x7ffe.md']) {
+  assert.equal(grantedBy(['docs/safe.md', 'docs/**'], odd), false, JSON.stringify(odd)); n++;
+}
+assert.equal(grantedBy(['docs/safe.md'], 'docs/safe.md'), true); n++;
+assert.equal(grantedBy(['docs/**'], 'docs/caf\u00e9 \u00e9.md'), true, 'non-ASCII and inner spaces are ordinary names'); n++;
+assert.equal(matchesAny(['docs/**'], 'docs/safe.md\t'), true, 'trigger matching unchanged'); n++;
 
 console.log(`unit: ${n} assertions passed`);

@@ -40,6 +40,12 @@ export function matches(pattern, file) {
 
 export const matchesAny = (patterns, file) => patterns.some(p => matches(p, file));
 
+// Patterns are trimmed, and so is the name before matching. Exact file names (git -z) can differ from an allowed
+// name only by edge whitespace or a control character ("docs/safe.md\t"): such a name must never be GRANTED
+// something by a match (owned by a card, inert at a merge). Where a match only adds checks, matchesAny stays.
+export const oddName = file => file !== file.trim() || /[\x00-\x1f\x7f]/.test(file);
+export const grantedBy = (patterns, file) => !oddName(file) && matchesAny(patterns, file);
+
 // Could some path match both patterns? Conservative: when unsure, yes.
 function overlapSegs(a, b) {
   if (!a.length && !b.length) return true;
