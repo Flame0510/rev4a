@@ -15,7 +15,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { isConfigured, requireAuthIfConfigured } from '@/lib/rev4a-auth';
-import { applyEnvEdits, assertEnvValue, hasEnvAssignment } from '@/lib/env-file';
+import { applyEnvEdits, assertEnvValue, readEnvValue } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -71,8 +71,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const edits: Array<[string, string]> = [['REV4A_PASSWORD', body.password]];
-    if (!hasEnvAssignment(content, 'REV4A_JWT_SECRET')) edits.push(['REV4A_JWT_SECRET', generateSecret(64)]);
-    if (!hasEnvAssignment(content, 'REV4A_TOKEN')) edits.push(['REV4A_TOKEN', generateSecret(32)]);
+    if (!readEnvValue(content, 'REV4A_JWT_SECRET')) edits.push(['REV4A_JWT_SECRET', generateSecret(64)]);
+    if (!readEnvValue(content, 'REV4A_TOKEN')) edits.push(['REV4A_TOKEN', generateSecret(32)]);
     try {
       // One physical line per assignment, values written so every reader gets them back intact.
       ({ content } = applyEnvEdits(content, edits));

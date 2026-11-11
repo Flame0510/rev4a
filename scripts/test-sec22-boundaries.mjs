@@ -353,10 +353,13 @@ try {
     const logs = [];
     const context = vm.createContext({ ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', CONFIG_DIR: tmp,
       readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync, mkdirSync: fs.mkdirSync,
+      realpathSync: fs.realpathSync, renameSync: fs.renameSync, rmSync: fs.rmSync,
+      openSync: fs.openSync, closeSync: fs.closeSync,
       statSync: fs.statSync, chmodSync: fs.chmodSync, existsSync: () => true,
       log: (_tag, text) => logs.push(text), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {}, randomString: () => 'fixture',
       require: (name) => { assert.equal(name, 'fs'); return { symlinkSync: () => {} }; },
       assertEnvValue: envFile.assertEnvValue,
+      parseEnvValues: envFile.parseEnvValues, applyEnvEdits: envFile.applyEnvEdits, process: { env: {}, pid: process.pid },
       disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
     });
     const run = () => vm.runInContext(`${ensure.getText(ast)}\nensureEnv();`, context);

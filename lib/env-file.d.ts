@@ -1,6 +1,10 @@
 export const RUNTIME_ONLY_ENV_KEYS: readonly string[];
 /** Physical lines, including their original CRLF, CR or LF separators. */
 export function splitEnvLines(content: string): string[];
+/** Dotenv syntax, last assignment wins; no process-env merge or $ expansion. */
+export function parseEnvValues(content: string): Record<string, string>;
+/** Undefined when absent; '' when explicitly empty. */
+export function readEnvValue(content: string, key: string): string | undefined;
 export interface EnvFileLine {
   text: string;
   continuation: boolean;

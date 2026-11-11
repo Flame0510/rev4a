@@ -69,6 +69,49 @@ function harness(initial, inherited = {}, readError = null) {
 
 const fixture = '# operator header\nGATEWAY_TOKEN=x\n\nPORT=1\n# provider\nPROVIDER_VENDOR.OPTION=y\nREV4A_TOKEN=t\n# footer\n';
 
+await test('BUG-15: inherited-only clears return 400 with recovery instructions before any batch write', async () => {
+  const error = 'This value comes from the service environment, not .env; change it there.';
+  for (const content of ['', fixture]) {
+    for (const key of ['REV4A_PASSWORD', 'PROVIDER_INHERITED']) {
+      for (const value of ['service-value', '0', ' ']) {
+        const inherited = { [key]: value };
+        const h = harness(content, inherited);
+        assert.equal((await h.get()).body.env[key], value);
+        const response = await h.put({ REV4A_NEW: 'edit', [key]: '' });
+        assert.equal(response.status, 400);
+        assert.equal(response.body.error, error);
+        assert.equal(h.content, content);
+        assert.equal(inherited[key], value);
+        assert.deepEqual(h.effects, []);
+        assert.equal((await h.put({ [key]: value })).status, 200);
+        assert.deepEqual(h.effects, []);
+        assert.equal((await h.put({ [key]: 'file-override' })).status, 200);
+        assert.equal((await h.put({ [key]: '' })).status, 200, 'a stored override can still be removed');
+      }
+    }
+  }
+  const empty = harness(fixture, { REV4A_EMPTY: '' });
+  assert.equal((await empty.put({ REV4A_EMPTY: '', REV4A_ABSENT: '' })).status, 200);
+  assert.deepEqual(empty.effects, []);
+});
+
+await test('BUG-15: GET uses shared inline-comment, quote and last-assignment semantics', async () => {
+  for (const newline of ['\n', '\r\n', '\r']) {
+    const content = ['REV4A_TOKEN=old', 'export REV4A_TOKEN = abc # note',
+      'PROVIDER_QUOTED="abc # literal" # note', 'REV4A_EMPTY=old', 'REV4A_EMPTY= # empty',
+      'REV4A_COLON: value # note', ''].join(newline);
+    const h = harness(content);
+    const { env } = (await h.get()).body;
+    assert.equal(env.REV4A_TOKEN, 'abc');
+    assert.equal(env.PROVIDER_QUOTED, 'abc # literal');
+    assert.equal(env.REV4A_EMPTY, '');
+    assert.equal(env.REV4A_COLON, 'value');
+    assert.equal((await h.put(env)).status, 200);
+    assert.equal(h.content, content);
+    assert.deepEqual(h.effects, []);
+  }
+});
+
 await test('PUT changes only the submitted assignment, preserving every other byte', async () => {
   for (const content of [fixture, fixture.replaceAll('\n', '\r\n'), fixture.trimEnd()]) {
     const h = harness(content);
@@ -267,18 +310,53 @@ await test('startup removes only exact runtime assignments, logs names, and is i
     + ' export REV4A_SERVER_PID = duplicate\r\nREV4A_STARTED_AT=last';
   const writes = [];
   const logs = [];
+  const temporaryFiles = new Map();
+  const descriptors = new Map();
+  let nextFd = 10;
+  let mode = 0o600;
   const context = vm.createContext({
     ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', existsSync: () => true,
     readFileSync: () => content,
-    writeFileSync: (_file, next) => { content = next; writes.push(next); },
-    statSync: () => ({ mode: 0o600 }),
-    chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
+    openSync: (file, flags, mode) => {
+      assert.equal(flags, 'wx');
+      assert.equal(mode, 0o600);
+      if (file === ENV_FILE || temporaryFiles.has(file)) throw Object.assign(new Error('Exists'), { code: 'EEXIST' });
+      temporaryFiles.set(file, { content: '', mode });
+      const fd = nextFd++;
+      descriptors.set(fd, file);
+      return fd;
+    },
+    closeSync: (fd) => { assert.ok(descriptors.delete(fd)); },
+    writeFileSync: (fd, next, encoding) => {
+      assert.equal(encoding, 'utf-8');
+      assert.ok(descriptors.has(fd));
+      temporaryFiles.get(descriptors.get(fd)).content = next;
+      writes.push(next);
+    },
+    realpathSync: (file) => { assert.equal(file, ENV_FILE); return file; },
+    renameSync: (from, to) => {
+      assert.equal(descriptors.size, 0);
+      assert.equal(to, ENV_FILE);
+      assert.ok(temporaryFiles.has(from));
+      ({ content, mode } = temporaryFiles.get(from));
+      temporaryFiles.delete(from);
+    },
+    rmSync: (file, options) => { assert.equal(options.force, true); temporaryFiles.delete(file); },
+    statSync: () => ({ mode }),
+    chmodSync: (file, nextMode) => {
+      if (file === ENV_FILE) mode = nextMode;
+      else { assert.ok(temporaryFiles.has(file)); temporaryFiles.get(file).mode = nextMode; }
+    },
     log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {},
+    parseEnvValues: envFile.parseEnvValues, applyEnvEdits: envFile.applyEnvEdits, process: { env: {}, pid: 42 },
     disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
   });
   const run = () => vm.runInContext(`${ensure.getText(ast)}\nensureEnv();`, context);
   run();
   assert.equal(content, keep);
+  assert.equal(mode, 0o600);
+  assert.equal(temporaryFiles.size, 0);
+  assert.equal(descriptors.size, 0);
   assert.equal(writes.length, 1);
   for (const key of envFile.RUNTIME_ONLY_ENV_KEYS) assert.ok(logs.some((line) => line.includes(key)));
   assert.ok(!logs.join('\n').includes('SENTINEL_PRIVATE_VALUE'));
@@ -291,6 +369,8 @@ await test('startup removes only exact runtime assignments, logs names, and is i
   assert.ok(content.startsWith(keep));
   assert.match(content, /# Disabled by Rev4a:/);
   assert.equal(content.match(/^REV4A_SERVER_PID=/gm), null);
+  assert.equal(mode, 0o600);
+  assert.equal(temporaryFiles.size, 0);
 });
 
 await test('runtime repair leaves a .env with a multi-line or unterminated value untouched and says so', () => {
@@ -426,6 +506,26 @@ await test('Config renders persistent 400/409 recovery messages beside Save, kee
     await flush();
     assert.ok(!h.render().some((node) => node.props.role === 'alert'));
   }
+});
+
+await test('BUG-15: Config displays inherited-only clear errors and preserves the edit without restarting', async () => {
+  const h = clientHarness();
+  h.render();
+  await flush();
+  h.change('');
+  const error = 'This value comes from the service environment, not .env; change it there.';
+  h.setOutcome({ status: 400, body: { error } });
+  h.confirm('restart')();
+  await flush();
+  assert.ok(h.render().some((node) => node.props.role === 'alert' && node.props.children === error));
+  assert.equal(h.hooks[0].REV4A_TOKEN, '');
+  assert.equal(h.hooks[5], null);
+  assert.equal(h.calls.filter((call) => call.url.endsWith('/restart')).length, 0);
+  h.confirm('save')();
+  await flush();
+  const puts = h.calls.filter((call) => call.options?.method === 'PUT');
+  assert.equal(puts.length, 2);
+  for (const call of puts) assert.deepEqual(JSON.parse(call.options.body), { env: { REV4A_TOKEN: '' } });
 });
 
 await test('FIX-133: a value that cannot be written faithfully is refused (400) and nothing is written; a quoted-looking one is single-quoted', async () => {

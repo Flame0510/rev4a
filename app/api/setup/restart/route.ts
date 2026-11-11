@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
+import { readEnvValue } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -33,8 +34,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const envContent = fs.readFileSync(ENV_FILE, 'utf-8');
-    const match = envContent.match(/^REV4A_PASSWORD=(.*)$/m);
-    if (!match || !match[1].trim()) {
+    if (!readEnvValue(envContent, 'REV4A_PASSWORD')) {
       return NextResponse.json(
         { error: 'REV4A_PASSWORD is empty or missing in .env' },
         { status: 400 },

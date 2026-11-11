@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-/** SEC-14 boundaries. In-memory files/processes only; never starts the server or launcher. */
+/** SEC-14 boundaries. Isolated files/process mocks; never starts the server or launcher. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -106,7 +107,7 @@ await test('shared .env boundary: abc and spaces accepted; CR, LF, NUL and non-s
 });
 
 await test('password HTTP boundaries: 7 rejected, 8 accepted; spaces retain previous acceptance', async () => {
-  for (const [password, status] of [['1234567', 400], ['12345678', 200], ['        ', 200]]) {
+  for (const [password, status] of [['1234567', 400], ['12345678', 200], ['123456789', 200], ['        ', 200]]) {
     const h = harness();
     const response = await h.load('app/api/setup/password/route.ts').POST(h.req({ password }));
     assert.equal(response.status, status);
@@ -403,23 +404,96 @@ function cliFunction(name) {
   return node.getText(cliAst);
 }
 
-function launcher(content, inherited = {}) {
+/** Model separate temp-file writes and rename, including a symlinked .env target. */
+function launcherFiles(content, target = ENV_FILE) {
+  const files = new Map([[target, content]]);
+  const modes = new Map([[target, 0o600]]);
+  const links = new Map(target === ENV_FILE ? [] : [[ENV_FILE, target]]);
+  const descriptors = new Map();
+  let nextFd = 10;
+  const writes = [];
+  const resolve = (file) => links.get(file) ?? file;
+  const missing = () => Object.assign(new Error('Missing'), { code: 'ENOENT' });
+  const storage = {
+    files, modes, links, descriptors, writes, beforeWrite: null,
+    get content() { return files.get(target); },
+    existsSync: (file) => file === '/mock/link' || files.has(resolve(file)),
+    realpathSync: (file) => {
+      if (!files.has(resolve(file))) throw missing();
+      return resolve(file);
+    },
+    readFileSync: (file) => {
+      if (!files.has(resolve(file))) throw missing();
+      return files.get(resolve(file));
+    },
+    openSync: (file, flags, mode) => {
+      assert.equal(flags, 'wx');
+      assert.equal(mode, 0o600);
+      // Exclusive creation refuses even a dangling symlink; it never follows it.
+      if (files.has(file) || links.has(file)) throw Object.assign(new Error('Exists'), { code: 'EEXIST' });
+      files.set(file, '');
+      modes.set(file, mode);
+      const fd = nextFd++;
+      descriptors.set(fd, file);
+      return fd;
+    },
+    closeSync: (fd) => { assert.ok(descriptors.delete(fd), 'close an open descriptor'); },
+    writeFileSync: (fd, next, encoding) => {
+      assert.equal(encoding, 'utf-8');
+      assert.ok(descriptors.has(fd), 'write through the exclusively opened descriptor');
+      const file = descriptors.get(fd);
+      writes.push(next);
+      storage.beforeWrite?.(file, next);
+      files.set(file, next);
+    },
+    statSync: (file) => {
+      if (!files.has(resolve(file))) throw missing();
+      return { mode: modes.get(resolve(file)) };
+    },
+    chmodSync: (file, mode) => {
+      assert.ok(files.has(resolve(file)));
+      modes.set(resolve(file), mode);
+    },
+    renameSync: (from, to) => {
+      assert.ok(files.has(from));
+      assert.ok(!descriptors.size, 'close the descriptor before renaming');
+      links.delete(to); // rename replaces a destination link rather than following it.
+      files.set(to, files.get(from));
+      modes.set(to, modes.get(from));
+      files.delete(from);
+      modes.delete(from);
+    },
+    rmSync: (file, options) => {
+      assert.equal(options.force, true);
+      links.delete(file); // unlink a link, never its target.
+      files.delete(file);
+      modes.delete(file);
+    },
+  };
+  return storage;
+}
+
+function launcher(content, inherited = {}, repair = false) {
   const logs = [];
   const children = [];
+  const storage = launcherFiles(content);
   const context = vm.createContext({
     ENV_SOURCE: ENV_FILE, ROOT: '/mock', ENV_LINK: '/mock/link', CONFIG_DIR: '/mock', DATA_DIR: '/mock/data', join: path.join,
-    existsSync: () => true, readFileSync: () => content, log: (tag, message) => logs.push({ tag, message }),
-    skippedEnvKeys: new Set(), process: { env: inherited, execPath: '/mock/node', on: () => {} }, crypto,
-    isLoaderEnvKey: validator.isLoaderEnvKey, RUNTIME_ONLY_ENV_KEYS: validator.RUNTIME_ONLY_ENV_KEYS,
-    preflight: () => {}, checkVersion: () => {}, setTimeout: () => {}, setInterval: () => ({ unref: () => {} }),
+    ...storage, log: (tag, message) => logs.push({ tag, message }),
+    randomString: (len) => crypto.randomBytes(len).toString('base64url').slice(0, len),
+    seedAgentToken: () => {}, refuseIfLoaderKeysLeft: () => {},
+    skippedEnvKeys: new Set(), process: { env: inherited, pid: 42, execPath: '/mock/node', on: () => {} }, crypto,
+    ...validator,
+    preflight: () => { if (repair) vm.runInContext('ensureEnv();', context); },
+    checkVersion: () => {}, setTimeout: () => {}, setInterval: () => ({ unref: () => {} }),
     spawn: (_exec, args, options) => {
       children.push({ args, env: options.env });
       return { pid: children.length, on: () => {} };
     },
     require: (name) => { assert.equal(name, 'crypto'); return crypto; },
   });
-  vm.runInContext(`${cliFunction('loadEnv')}\n${cliFunction('serve')}\nserve(3740);`, context);
-  return { logs, children, context };
+  vm.runInContext(`${cliFunction('ensureEnv')}\n${cliFunction('loadEnv')}\n${cliFunction('serve')}\nserve(3740);`, context);
+  return { logs, children, context, writes: storage.writes, get content() { return storage.content; } };
 }
 
 await test('launcher filters loader controls already present in old .env, warns once per key, preserves arbitrary other keys', () => {
@@ -596,6 +670,7 @@ await test('default .env generation preserves existing files and aborts on read 
       log: () => {}, seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => [], refuseIfLoaderKeysLeft: () => {}, writeFileSync: (...args) => writes.push(args),
       statSync: () => ({ mode: 0o600 }),
       chmodSync: (file, mode) => { assert.equal(file, ENV_FILE); assert.equal(mode, 0o600); },
+      parseEnvValues: envFile.parseEnvValues, applyEnvEdits: envFile.applyEnvEdits, process: { env: {} },
       disableLoaderEnvLines: envFile.disableLoaderEnvLines,
       removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
     });
@@ -669,8 +744,9 @@ await test('FIX-133: when Next would still load a loader key from .env, the laun
     ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', existsSync: () => true,
     readFileSync: () => 'REV4A_PASSWORD=x\nNODE_OPTIONS\n=--import=/x.mjs\n', writeFileSync: () => {}, chmodSync: () => {}, statSync: () => ({ mode: 0o100600 }),
     log: (_t, m) => logs.push(m), seedAgentToken: () => {}, loaderKeysNextWouldLoad: () => ['NODE_OPTIONS'], ROOT: '/mock/root',
+    parseEnvValues: envFile.parseEnvValues, applyEnvEdits: envFile.applyEnvEdits,
     disableLoaderEnvLines: envFile.disableLoaderEnvLines, removeRuntimeEnvLines: envFile.removeRuntimeEnvLines,
-    process: { exit: (c) => { exits.push(c); throw new Error('exit'); } },
+    process: { env: {}, exit: (c) => { exits.push(c); throw new Error('exit'); } },
   });
   assert.throws(() => vm.runInContext(cliFunction('refuseIfLoaderKeysLeft') + '\n' + cliFunction('ensureEnv') + '\nensureEnv();', context), /exit/);
   assert.deepEqual(exits, [1]);
@@ -687,6 +763,414 @@ await test('FIX-133: setup keeps existing secrets in every accepted line form (C
     const saved = h.files.get(ENV_FILE);
     assert.ok(saved.includes('keepjwt') && saved.includes('keeptok'), JSON.stringify(saved));
     assert.equal((saved.match(/REV4A_JWT_SECRET/g) || []).length, 1);
+  }
+});
+
+await test('BUG-15: setup replaces empty generated secrets, keeps non-empty secrets, and repairs only once', async () => {
+  for (const newline of ['\n', '\r\n', '\r']) {
+    for (const empty of ['', '   ', '""', "''", '``', ' # copied template']) {
+      const content = ['# operator settings', 'REV4A_PASSWORD=', 'REV4A_JWT_SECRET=old',
+        `export REV4A_JWT_SECRET = ${empty}`, `REV4A_TOKEN=${empty}`, 'PORT=3740', ''].join(newline);
+      const h = harness({ REV4A_SETUP_CODE: CODE }, content);
+      const route = h.load('app/api/setup/password/route.ts');
+      assert.equal((await route.POST(h.req({ password: 'abcdefgh' }))).status, 200); // secret-ok
+      const saved = h.files.get(ENV_FILE);
+      assert.match(validator.readEnvValue(saved, 'REV4A_JWT_SECRET'), /^[A-Za-z0-9_-]{64}$/);
+      assert.match(validator.readEnvValue(saved, 'REV4A_TOKEN'), /^[A-Za-z0-9_-]{32}$/);
+      assert.equal(h.auth.getJwtSecret(), validator.readEnvValue(saved, 'REV4A_JWT_SECRET'));
+      assert.equal((saved.match(/REV4A_JWT_SECRET/g) || []).length, 1);
+      assert.ok(saved.startsWith(`# operator settings${newline}`));
+      assert.ok(saved.endsWith(`PORT=3740${newline}`));
+      assert.equal((await route.POST(h.req({ password: 'abcdefgh' }))).status, 409); // secret-ok
+      assert.equal(h.files.get(ENV_FILE), saved);
+    }
+    const content = ['REV4A_JWT_SECRET=keep-jwt # note', 'REV4A_TOKEN=keep-token # note', ''].join(newline);
+    const h = harness({ REV4A_SETUP_CODE: CODE }, content);
+    assert.equal((await h.load('app/api/setup/password/route.ts').POST(h.req({ password: 'abcdefgh' }))).status, 200); // secret-ok
+    assert.ok(h.files.get(ENV_FILE).startsWith(content), 'non-empty secrets and their comments stay byte-for-byte intact');
+  }
+  for (const raw of ['0', '-1', 'NaN', "' '"]) {
+    const initial = `REV4A_JWT_SECRET=${raw}\nREV4A_TOKEN=${raw}\n`;
+    const h = harness({ REV4A_SETUP_CODE: CODE }, initial);
+    assert.equal((await h.load('app/api/setup/password/route.ts').POST(h.req({ password: 'abcdefgh' }))).status, 200); // secret-ok
+    assert.ok(h.files.get(ENV_FILE).startsWith(initial));
+  }
+});
+
+await test('BUG-15: launcher, auth fallback and terminal auth read the same file values, with inherited precedence retained', () => {
+  const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const ast = ts.createSourceFile('server.js', source, ts.ScriptTarget.Latest, true);
+  const reader = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name.text === 'authEnvValue');
+  for (const newline of ['\n', '\r\n', '\r']) {
+    for (const [raw, expected] of [['abc # note', 'abc'], ['abc#note', 'abc'], ['"abc # literal" # note', 'abc # literal'],
+      ["'abc # literal'", 'abc # literal'], ['`abc # literal`', 'abc # literal'], ['"line\\nnext"', 'line\nnext'],
+      ['', ''], ['""', ''], ["''", ''], [' # empty', '']]) {
+      const content = ['REV4A_PASSWORD=earlier', `export REV4A_PASSWORD = ${raw}`,
+        'REV4A_JWT_SECRET=earlier', `REV4A_JWT_SECRET: ${raw || ' '}`, ''].join(newline);
+      const h = harness({}, content);
+      assert.equal(h.auth.getPassword(), expected);
+      assert.equal(h.auth.getJwtSecret(), expected);
+      const launch = launcher(content);
+      const parsed = vm.runInContext('loadEnv()', launch.context);
+      assert.equal(parsed.REV4A_PASSWORD, expected);
+      assert.equal(parsed.REV4A_JWT_SECRET, expected);
+      const env = {};
+      const context = vm.createContext({ process: { env }, fs: { readFileSync: () => content },
+        path, DATA_DIR: '/mock', readEnvValue: validator.readEnvValue });
+      vm.runInContext(reader.getText(ast), context);
+      for (const key of ['REV4A_PASSWORD', 'REV4A_JWT_SECRET']) {
+        assert.equal(context.authEnvValue(key), expected);
+        env[key] = 'service-value';
+        assert.equal(context.authEnvValue(key), 'service-value');
+        h.process.env[key] = 'service-value';
+      }
+      assert.equal(h.auth.getPassword(), 'service-value');
+      assert.equal(h.auth.getJwtSecret(), 'service-value');
+    }
+  }
+});
+
+await test('BUG-15: setup/restart checks the parsed final password before scheduling a restart', async () => {
+  for (const newline of ['\n', '\r\n', '\r']) {
+    for (const [raw, status] of [['abcdefgh # note', 200], ['"abc # literal" # note', 200],
+      ["'abcdefgh'", 200], ["' '", 200], ['0', 200], ['-1', 200], ['NaN', 200],
+      [' # empty', 400], ['""', 400], ["''", 400], ['``', 400], ['', 400]]) {
+      const content = ['REV4A_PASSWORD=old', `export REV4A_PASSWORD = ${raw}`, ''].join(newline);
+      const h = harness({ REV4A_TOKEN: 'test-bearer', REV4A_SETUP_CODE: CODE }, content); // secret-ok
+      const req = h.req({}, CODE, { authorization: 'Bearer test-bearer' });
+      const response = await h.load('app/api/setup/restart/route.ts').POST(req);
+      assert.equal(response.status, status);
+      assert.equal(h.effects.some(([effect]) => effect === 'timer'), status === 200);
+      assert.equal(h.files.get(ENV_FILE), content);
+    }
+  }
+  for (const readError of ['EACCES', 'ENOENT']) {
+    const h = harness({ REV4A_TOKEN: 'test-bearer', REV4A_PASSWORD: 'abcdefgh' }, '', readError); // secret-ok
+    const response = await h.load('app/api/setup/restart/route.ts').POST(h.req({}, null,
+      { authorization: 'Bearer test-bearer' }));
+    assert.equal(response.status, 500);
+    assert.equal(h.effects.length, 0);
+  }
+});
+
+await test('BUG-15: repair, file loading and serve preserve inherited secrets in all three child environments', async () => {
+  const jose = await import('jose');
+  for (const assignment of ['', ' # note']) {
+    const initial = `REV4A_PASSWORD=abcdefgh # note\nREV4A_JWT_SECRET=${assignment}\nREV4A_TOKEN=${assignment}\n`;
+    for (const [label, inherited, expectedWrites] of [
+      ['neither', {}, 1],
+      ['both', { REV4A_JWT_SECRET: '# note', REV4A_TOKEN: '# note' }, 0],
+      ['JWT only', { REV4A_JWT_SECRET: '# note' }, 1],
+      ['token only', { REV4A_TOKEN: '# note' }, 1],
+    ]) {
+      const h = launcher(initial, inherited, true);
+      assert.equal(h.writes.length, expectedWrites);
+      assert.deepEqual(h.children.map((child) => child.args[0]), ['server.js', 'daemon.js', 'terminal-ws-server.js']);
+      const fileValues = validator.parseEnvValues(h.content);
+      for (const child of h.children) {
+        assert.equal(child.env.REV4A_PASSWORD, 'abcdefgh');
+        for (const [key, length] of [['REV4A_JWT_SECRET', 64], ['REV4A_TOKEN', 32]]) {
+          if (inherited[key]) {
+            assert.equal(child.env[key], inherited[key]);
+            assert.equal(fileValues[key], '', 'inherited secrets must not be written to the file');
+          } else {
+            assert.match(child.env[key], new RegExp(`^[A-Za-z0-9_-]{${length}}$`));
+            assert.equal(child.env[key], fileValues[key]);
+          }
+        }
+        const auth = harness(child.env, h.content);
+        assert.equal(auth.auth.isConfigured(), true);
+        assert.equal(auth.auth.getJwtSecret(), child.env.REV4A_JWT_SECRET);
+        assert.equal(await auth.auth.requireAuthJWT(auth.req({}, null,
+          { authorization: `Bearer ${child.env.REV4A_TOKEN}` })), null);
+        const login = load('app/api/auth/login/route.ts', {
+          'next/server': require('next/server'), jose, '@/lib/rev4a-auth': auth.auth,
+          '@/lib/login-throttle': require('../lib/login-throttle.js'),
+          '@/lib/client-address': require('../lib/client-address.js'),
+        }, { process: { env: child.env } });
+        const response = await login.POST(auth.req({ password: 'abcdefgh' })); // secret-ok: local fixture
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { ok: true });
+        const { payload } = await jose.jwtVerify(response.cookies.get('rev4a_token').value,
+          new TextEncoder().encode(child.env.REV4A_JWT_SECRET));
+        assert.equal(payload.pwf, fingerprint.passwordFingerprint('abcdefgh', child.env.REV4A_JWT_SECRET));
+        assert.equal(child.env.REV4A_SETUP_CODE, undefined);
+      }
+      const saved = h.content;
+      vm.runInContext('serve(3740);', h.context);
+      assert.equal(h.content, saved);
+      assert.equal(h.writes.length, expectedWrites);
+      assert.equal(h.logs.filter(({ message }) => message.startsWith('Filled empty .env secret(s):')).length, expectedWrites);
+      for (let i = 0; i < 3; i++) {
+        assert.equal(h.children[i + 3].env.REV4A_JWT_SECRET, h.children[i].env.REV4A_JWT_SECRET);
+        assert.equal(h.children[i + 3].env.REV4A_TOKEN, h.children[i].env.REV4A_TOKEN);
+      }
+      const child = h.children[0].env;
+      console.log(`     ${JSON.stringify({ file: assignment ? 'comment-only' : 'empty', inherited: label,
+        writes: h.writes.length, children: 3, jwtLength: child.REV4A_JWT_SECRET.length,
+        tokenLength: child.REV4A_TOKEN.length, auth: 'ok', loginStatus: 200, secondStart: 'unchanged' })}`);
+    }
+  }
+});
+
+await test('BUG-15: empty file values preserve every non-empty inherited value; non-empty file values still win', () => {
+  const content = 'CUSTOM_EMPTY=\nCUSTOM_COMMENT= # note\nCUSTOM_QUOTES=""\nCUSTOM_BACKTICKS=``\n'
+    + "CUSTOM_SINGLE=''\nCUSTOM_SPACE=' '\nCUSTOM_ZERO=0\nCUSTOM_FILE=file # note\nCUSTOM_UNSET=\n";
+  for (const value of ['service-value', '# note', '0', ' ']) {
+    const inherited = Object.fromEntries(['CUSTOM_EMPTY', 'CUSTOM_COMMENT', 'CUSTOM_QUOTES', 'CUSTOM_BACKTICKS',
+      'CUSTOM_SINGLE', 'CUSTOM_SPACE', 'CUSTOM_ZERO', 'CUSTOM_FILE'].map((key) => [key, value]));
+    const h = launcher(content, inherited);
+    for (const child of h.children) {
+      for (const key of ['CUSTOM_EMPTY', 'CUSTOM_COMMENT', 'CUSTOM_QUOTES', 'CUSTOM_BACKTICKS', 'CUSTOM_SINGLE']) {
+        assert.equal(child.env[key], value);
+      }
+      assert.equal(child.env.CUSTOM_SPACE, ' ');
+      assert.equal(child.env.CUSTOM_ZERO, '0');
+      assert.equal(child.env.CUSTOM_FILE, 'file');
+      assert.equal(child.env.CUSTOM_UNSET, '');
+    }
+  }
+  const h = launcher('REV4A_PASSWORD=file-password\nREV4A_JWT_SECRET=file-secret\nREV4A_TOKEN=file-token\n', {
+    REV4A_PASSWORD: 'service-password', REV4A_JWT_SECRET: 'service-secret', REV4A_TOKEN: 'service-token', // secret-ok: local fixtures
+  }, true);
+  assert.equal(h.writes.length, 0);
+  for (const child of h.children) {
+    assert.equal(child.env.REV4A_PASSWORD, 'file-password');
+    assert.equal(child.env.REV4A_JWT_SECRET, 'file-secret');
+    assert.equal(child.env.REV4A_TOKEN, 'file-token');
+  }
+});
+
+await test('BUG-15: startup repairs already-configured empty secrets once, logs names only, and preserves service secrets', () => {
+  const initial = '# keep\r\nREV4A_PASSWORD=abcdefgh # note\r\nREV4A_JWT_SECRET=""\r\nREV4A_TOKEN= # empty\r\nPORT=3740\r\n';
+  for (const inherited of [{}, { REV4A_JWT_SECRET: 'service-secret', REV4A_TOKEN: 'service-token' }]) { // secret-ok: local fixtures
+    const storage = launcherFiles(initial);
+    const logs = [];
+    const { writes } = storage;
+    const context = vm.createContext({
+      ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', ...storage, process: { env: inherited, pid: 42 },
+      log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, refuseIfLoaderKeysLeft: () => {},
+      ...validator, randomString: (len) => crypto.randomBytes(len).toString('base64url').slice(0, len),
+    });
+    const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
+    run();
+    const saved = storage.content;
+    if (inherited.REV4A_JWT_SECRET) {
+      assert.equal(saved, initial);
+      assert.equal(writes.length, 0);
+    } else {
+      assert.match(validator.readEnvValue(saved, 'REV4A_JWT_SECRET'), /^[A-Za-z0-9_-]{64}$/);
+      assert.match(validator.readEnvValue(saved, 'REV4A_TOKEN'), /^[A-Za-z0-9_-]{32}$/);
+      assert.ok(saved.startsWith('# keep\r\nREV4A_PASSWORD=abcdefgh # note\r\n'));
+      assert.ok(saved.endsWith('PORT=3740\r\n'));
+      assert.equal(writes.length, 1);
+      assert.equal(logs.filter((line) => line === 'Filled empty .env secret(s): REV4A_JWT_SECRET, REV4A_TOKEN').length, 1);
+      for (const key of ['REV4A_JWT_SECRET', 'REV4A_TOKEN']) assert.ok(!logs.join('\n').includes(validator.readEnvValue(saved, key)));
+    }
+    run();
+    assert.equal(storage.content, saved);
+    assert.equal(storage.modes.get(ENV_FILE), 0o600);
+    assert.deepEqual([...storage.files.keys()], [ENV_FILE], 'rename leaves only the final file');
+    assert.equal(writes.length, inherited.REV4A_JWT_SECRET ? 0 : 1);
+  }
+});
+
+await test('BUG-15: startup leaves unusual files intact and retries a failed empty-secret repair on the next start', () => {
+  for (const suffix of ['', 'NOTE="first\nlast"\n', 'NOTE="unterminated\n',
+    'NOTE="value" # comment\n', 'NOTE: value\n', 'NOTE=\n"next line"\n', 'NOTE="escaped\\"quote"\n']) {
+    const unusual = suffix !== '';
+    const initial = 'REV4A_PASSWORD=abcdefgh\nREV4A_JWT_SECRET=\nREV4A_TOKEN=kept\n'
+      + suffix;
+    const storage = launcherFiles(initial);
+    let failWrite = true;
+    let writeAttempts = 0;
+    const logs = [];
+    storage.beforeWrite = () => {
+      writeAttempts++;
+      if (failWrite) throw Object.assign(new Error('Denied'), { code: 'EACCES' });
+    };
+    const context = vm.createContext({
+      ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link', ...storage, process: { env: {}, pid: 42 },
+      log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, refuseIfLoaderKeysLeft: () => {},
+      ...validator, randomString: (len) => 'x'.repeat(len),
+    });
+    const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
+    run();
+    assert.equal(storage.content, initial);
+    assert.deepEqual([...storage.files.keys()], [ENV_FILE]);
+    assert.ok(logs.some((line) => line.startsWith('Warning:')));
+    assert.ok(!logs.some((line) => line.startsWith('Filled empty')));
+    failWrite = false;
+    run();
+    const content = storage.content;
+    assert.equal(storage.modes.get(ENV_FILE), 0o600);
+    assert.equal(validator.readEnvValue(content, 'REV4A_TOKEN'), 'kept');
+    assert.equal(validator.readEnvValue(content, 'REV4A_JWT_SECRET'), unusual ? '' : 'x'.repeat(64));
+    if (unusual) {
+      assert.equal(content, initial);
+      assert.equal(writeAttempts, 0, `Non-plain file must never be written: ${JSON.stringify(suffix)}`);
+      assert.equal(logs.filter((line) => line.startsWith('Warning: empty .env secrets were not repaired')).length, 2);
+    } else {
+      assert.equal(writeAttempts, 2, 'Failed writes are retried on the next start');
+    }
+  }
+});
+
+await test('BUG-15: mocked EIO, exclusive temp creation and partial ENOSPC preserve config and retry safely', () => {
+  for (const symlink of [false, true]) {
+    for (const failure of ['EIO', 'EEXIST link', 'EEXIST file', 'EEXIST dangling link', 'ENOSPC']) {
+      const target = symlink ? '/mock/target.env' : ENV_FILE;
+      const initial = '# keep\r\nREV4A_PASSWORD=abcdefgh # note\r\nREV4A_JWT_SECRET=\r\nREV4A_TOKEN= # note\r\nGATEWAY_TOKEN=preserved\r\nPORT=3740\r\n';
+      const storage = launcherFiles(initial, target);
+      const tmp = `${target}.tmp-42`;
+      const error = failure.split(' ')[0];
+      if (failure === 'EEXIST file') {
+        storage.files.set(tmp, 'pre-existing file');
+        storage.modes.set(tmp, 0o640);
+      } else if (error === 'EEXIST') {
+        storage.links.set(tmp, failure === 'EEXIST dangling link' ? '/mock/missing' : ENV_FILE);
+      }
+      const originalFiles = [...storage.files];
+      const originalLinks = [...storage.links];
+      const originalModes = [...storage.modes];
+      let fail = true;
+      let opens = 0;
+      let removals = 0;
+      const logs = [];
+      storage.beforeWrite = (file, next) => {
+        if (fail && error === 'ENOSPC') {
+          storage.files.set(file, next.slice(0, 29)); // Real progress after open, before failure.
+          throw Object.assign(new Error('Disk full'), { code: error });
+        }
+      };
+      const context = vm.createContext({
+        ...storage, ...validator, ENV_SOURCE: ENV_FILE, ENV_LINK: '/mock/link',
+        realpathSync: (file) => {
+          if (fail && error === 'EIO') throw Object.assign(new Error('I/O error'), { code: error });
+          return storage.realpathSync(file);
+        },
+        openSync: (...args) => { opens++; return storage.openSync(...args); },
+        rmSync: (...args) => { removals++; return storage.rmSync(...args); },
+        process: { env: {}, pid: 42 }, randomString: (length) => 'x'.repeat(length),
+        log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, refuseIfLoaderKeysLeft: () => {},
+      });
+      const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
+      for (let start = 1; start <= 2; start++) {
+        const logStart = logs.length;
+        run();
+        assert.equal(storage.content, initial, 'preserve every byte, including unrelated config');
+        assert.deepEqual([...storage.files], originalFiles);
+        assert.deepEqual([...storage.links], originalLinks, 'source and pre-existing temp links stay intact');
+        assert.deepEqual([...storage.modes], originalModes);
+        assert.equal(storage.descriptors.size, 0, 'close the fd even after a partial write');
+        assert.equal(opens, error === 'EIO' ? 0 : start);
+        assert.equal(storage.writes.length, error === 'ENOSPC' ? start : 0);
+        assert.equal(removals, error === 'ENOSPC' ? start : 0, 'remove only a temp file created by this attempt');
+        const warnings = logs.slice(logStart).filter((line) => line.startsWith('Warning:'));
+        assert.deepEqual(warnings, [`Warning: could not write the .env repair (${error})`]);
+        assert.ok(!logs.some((line) => line.startsWith('Filled empty')));
+        console.log(`     ${JSON.stringify({ fs: 'mock', file: symlink ? 'symlink' : 'plain', failure, start,
+          originalIntact: true, sourceLinkIntact: symlink, preExistingTempUntouched: error === 'EEXIST',
+          partialTempRemoved: error === 'ENOSPC', writes: storage.writes.length, warnings: warnings.length })}`);
+      }
+      fail = false;
+      // The operator clears the conflicting entry; the repair must not have removed it.
+      storage.files.delete(tmp);
+      storage.modes.delete(tmp);
+      storage.links.delete(tmp);
+      run();
+      const repaired = storage.content;
+      assert.equal(repaired, validator.applyEnvEdits(initial, [
+        ['REV4A_JWT_SECRET', 'x'.repeat(64)], ['REV4A_TOKEN', 'x'.repeat(32)],
+      ]).content);
+      assert.equal(storage.modes.get(target), 0o600);
+      assert.deepEqual([...storage.files.keys()], [target]);
+      assert.equal(storage.links.has(ENV_FILE), symlink);
+      assert.equal(storage.descriptors.size, 0);
+      const writes = storage.writes.length;
+      run();
+      assert.equal(storage.content, repaired);
+      assert.equal(storage.writes.length, writes);
+      assert.equal(logs.filter((line) => line.startsWith('Filled empty')).length, 1);
+    }
+  }
+});
+
+await test('BUG-15: real EIO, temp-symlink EEXIST and partial ENOSPC preserve the original, warn once and retry', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rev4a-bug15-repair-'));
+  try {
+    for (const symlink of [false, true]) {
+      for (const error of ['EIO', 'EEXIST', 'ENOSPC']) {
+        const target = path.join(dir, `${symlink ? 'linked-target' : 'plain.env'}-${error}`);
+        const source = symlink ? path.join(dir, `linked-${error}.env`) : target;
+        const initial = Buffer.from('# keep\r\nREV4A_PASSWORD=abcdefgh # note\r\nREV4A_JWT_SECRET=\r\nREV4A_TOKEN= # note\r\nGATEWAY_TOKEN=preserved\r\nPORT=3740\r\n');
+        fs.writeFileSync(target, initial, { mode: 0o600 });
+        if (symlink) fs.symlinkSync(target, source);
+        const tmp = `${fs.realpathSync(source)}.tmp-${process.pid}`;
+        if (error === 'EEXIST') fs.symlinkSync(source, tmp);
+        let failWrite = true;
+        let attempts = 0;
+        const logs = [];
+        const context = vm.createContext({
+          ENV_SOURCE: source, ENV_LINK: source, ...validator,
+          readFileSync: fs.readFileSync, existsSync: fs.existsSync, statSync: fs.statSync,
+          realpathSync: (file) => {
+            if (failWrite && error === 'EIO') throw Object.assign(new Error('I/O error'), { code: error });
+            return fs.realpathSync(file);
+          },
+          renameSync: fs.renameSync, rmSync: fs.rmSync, chmodSync: fs.chmodSync,
+          openSync: fs.openSync, closeSync: fs.closeSync,
+          writeFileSync: (file, next, options) => {
+            attempts++;
+            if (failWrite && error === 'ENOSPC') {
+              // The exclusively opened temp fd makes real progress before disk-full is injected.
+              fs.writeFileSync(file, next.slice(0, 29), options);
+              throw Object.assign(new Error('No space left on device'), { code: 'ENOSPC' });
+            }
+            fs.writeFileSync(file, next, options);
+          },
+          process: { env: {}, pid: process.pid }, randomString: (length) => 'x'.repeat(length),
+          log: (_tag, message) => logs.push(message), seedAgentToken: () => {}, refuseIfLoaderKeysLeft: () => {},
+        });
+        const run = () => vm.runInContext(`${cliFunction('ensureEnv')}\nensureEnv();`, context);
+        for (let start = 1; start <= 2; start++) {
+          const logStart = logs.length;
+          run();
+          assert.deepEqual(fs.readFileSync(source), initial, 'failed partial writes must preserve every original byte');
+          assert.equal(fs.existsSync(tmp), error === 'EEXIST');
+          if (error === 'EEXIST') assert.equal(fs.readlinkSync(tmp), source, 'never remove or follow a pre-existing temp symlink');
+          if (symlink) assert.equal(fs.readlinkSync(source), target);
+          assert.equal(fs.lstatSync(source).isSymbolicLink(), symlink);
+          assert.equal(fs.statSync(source).mode & 0o777, 0o600);
+          assert.equal(attempts, error === 'ENOSPC' ? start : 0);
+          const warnings = logs.slice(logStart).filter((line) => line.startsWith('Warning:'));
+          assert.deepEqual(warnings, [`Warning: could not write the .env repair (${error})`]);
+          assert.ok(!logs.some((line) => line.startsWith('Filled empty')));
+          console.log(`     ${JSON.stringify({ fs: 'real', file: symlink ? 'symlink' : 'plain', start, attempts,
+            originalIntact: true, gateway: 'preserved', tempLeft: error === 'EEXIST', warnings: warnings.length, error })}`);
+        }
+        failWrite = false;
+        if (error === 'EEXIST') fs.unlinkSync(tmp); // Remove only the test's pre-existing link to allow retry.
+        run();
+        const expectedAttempts = error === 'ENOSPC' ? 3 : 1;
+        assert.equal(attempts, expectedAttempts);
+        const repaired = fs.readFileSync(source, 'utf8');
+        assert.equal(repaired, validator.applyEnvEdits(initial.toString(), [
+          ['REV4A_JWT_SECRET', 'x'.repeat(64)], ['REV4A_TOKEN', 'x'.repeat(32)],
+        ]).content);
+        assert.equal(fs.existsSync(tmp), false);
+        assert.equal(fs.lstatSync(source).isSymbolicLink(), symlink);
+        assert.equal(fs.statSync(source).mode & 0o777, 0o600);
+        run();
+        assert.equal(attempts, expectedAttempts, 'successful repair is idempotent');
+        assert.equal(fs.readFileSync(source, 'utf8'), repaired);
+        assert.equal(logs.filter((line) => line.startsWith('Filled empty')).length, 1);
+        console.log(`     ${JSON.stringify({ fs: 'real', file: symlink ? 'symlink' : 'plain', error, recovered: true, attempts,
+          mode: '0600', repairLogs: 1, secondSuccessfulStart: 'unchanged' })}`);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

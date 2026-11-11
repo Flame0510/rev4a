@@ -172,6 +172,9 @@ Set the dashboard password during first-run setup.
 
 Password setup writes `.env` with mode `0600` and chmods it to `0600` after writing,
 including an existing file with broader permissions.
+It generates `REV4A_JWT_SECRET` and `REV4A_TOKEN` when their last parsed assignment is
+missing or empty (including `KEY=`, `KEY=""`, `KEY=''` and comment-only values).
+An empty assignment is replaced; non-empty secrets and unrelated lines are preserved.
 
 **Auth:** setup code, and only usable once — returns `409` if a password already exists
 
@@ -192,7 +195,8 @@ Restart the service so a freshly written `.env` takes effect.
 
 **Auth:** setup code before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
-**Errors:** `500` if the `.env` file is missing, or the restart could not be issued.
+**Errors:** `400` if the last parsed `REV4A_PASSWORD` in `.env` is empty or missing;
+`500` if the `.env` file is missing, or the restart could not be issued.
 
 ### `GET /api/setup/agent-image`
 Whether a supported OpenClaw version of the agent image is downloaded.
@@ -497,6 +501,14 @@ Per-process keys are never included, from either the file or runtime environment
 `RUNTIME_ONLY_ENV_KEYS` list in `lib/env-file.js`). Other allowed keys absent from
 the file are supplemented from `process.env` for display.
 
+File values use the shared `lib/env-file.js` reader, also used by the launcher,
+authentication fallbacks, password setup and setup/restart: dotenv-style inline
+comments are stripped from unquoted values, matching quotes are removed, quoted
+`#` stays literal, double-quoted `\n`/`\r` are decoded and the last assignment wins,
+including an empty one. CRLF, CR, LF, `export KEY=` and `KEY: value` are accepted.
+Reading does not rewrite the file. Next.js's `$` expansion is separate; new writes
+containing `$` remain refused.
+
 ### `PUT /api/config/env`
 Update environment variables on the VPS host.
 
@@ -524,6 +536,9 @@ Update environment variables on the VPS host.
   listed above are silently ignored, so older open tabs can still save
 - An absent key whose submitted value equals `process.env[key]` is ignored: it is
   an unchanged GET-injected value. A different non-empty value is a new setting
+- Clearing a key absent from the file but non-empty in `process.env` rejects the
+  entire request with `400`: `This value comes from the service environment, not .env; change it there.`
+  Nothing is written or reloaded. Config displays the message and does not restart
 - The Config client sends only values that differ from its last loaded/saved
   snapshot, including explicit clears
 - Submitted keys use the shared assignment validator, which permits legacy dotted
@@ -540,6 +555,7 @@ Update environment variables on the VPS host.
 
 **Errors (400):** `Keys not allowed: ...`, `Invalid environment key: <key>`, or
 `Invalid value for <key>: must be a string without CR, LF or NUL characters`.
+An inherited-only clear returns `This value comes from the service environment, not .env; change it there.`
 
 **Errors (500):** file read or write failure. Only ENOENT (a missing file) permits
 starting from an empty file; any other read error aborts before writing. Password

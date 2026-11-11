@@ -102,6 +102,9 @@ When environment variables are saved via the Config page (Save & Restart):
    `REV4A_SETUP_CODE`) are omitted from GET and silently ignored on PUT. An allowed
    key absent from the file is shown from the process environment, but is written
    only if the submitted value differs from that inherited value.
+   Clearing an inherited-only non-empty value returns `400` with
+   "This value comes from the service environment, not .env; change it there."
+   Config shows this error, keeps the edit and does not restart or save any part of the request.
 2. After a file change, `sudo systemctl daemon-reload` is attempted; it is harmless
    where there is no systemd. A no-op save neither writes nor reloads.
 3. **Save & Restart** runs `sudo systemctl restart rev4a.service`: the restart only works
@@ -123,6 +126,43 @@ runtime-only keys inherited from the shell or systemd's `EnvironmentFile` from
 the base child environment before setting fresh per-boot credentials. The repair
 creates no new configuration format, so previous releases
 can read the resulting file on rollback (their Config save bug would return).
+
+**BUG-15 update note:** hand-written `.env` values now use the same dotenv-style
+reader in Config, the launcher, authentication fallbacks, password setup and
+setup/restart. Unquoted `#` starts a comment; quotes protect literal `#`, outer
+quotes are removed, double-quoted `\n`/`\r` are decoded, and the last assignment
+wins even when empty. `export`, `KEY: value`, CRLF, CR and LF are accepted.
+If your file says `REV4A_PASSWORD=abcdefgh # note`, after updating and restarting
+the password is `abcdefgh`; do not type ` # note` when signing in. A session tied
+to the previously interpreted password may require signing in again. Quote a
+password containing a literal `#`. When `rev4a serve` builds the child environment,
+non-empty file values override inherited service values. Empty file values mean
+unset and preserve any non-empty inherited value, for every key. Authentication
+uses that resulting environment before falling back to the file. Change inherited
+values in the service environment.
+The file is not rewritten by reading it. First-run password setup now replaces
+empty `REV4A_JWT_SECRET` and `REV4A_TOKEN` assignments with generated secrets, keeping
+non-empty ones. For installs that already completed setup with an empty secret,
+`rev4a serve` fills explicit empty JWT/token assignments automatically at startup
+when the file is plain and no non-empty service secret overrides them. It preserves
+other settings, creates a sibling temporary file exclusively with mode `0600` and renames it over
+the real target (preserving a symlinked `.env`), logs key names only, and makes no
+further change on a second start. A partial or failed write leaves the original
+file intact, removes only a temporary file created by that attempt, and is retried
+on the next start. Failure to resolve the real path aborts the repair; a pre-existing
+temporary path is left untouched and produces a warning rather than being followed
+or overwritten.
+An unusual/uneditable file produces a warning with manual repair guidance; a write
+failure logs a warning and is retried on the next start. Existing non-empty secrets
+are never rotated.
+If the repair fills an empty JWT secret, everyone must log in again; existing
+browser sessions cannot be verified with the new secret. Filling an empty API
+token enables Bearer access with the generated token shown in Config.
+Clearing a service-only value in Config now shows the error above.
+Files written by Rev4a keep their existing meaning; `$` is still refused on write.
+No database, provider key file or agent volume is changed, no stored-data scan
+is added at startup, and older agents need no changes. Previous releases can read
+the files on rollback, but their parsing inconsistencies and save defects return.
 
 ### First-run ownership (SEC-14)
 

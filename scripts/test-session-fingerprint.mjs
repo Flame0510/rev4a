@@ -74,7 +74,7 @@ function harness(env = { REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwt
   const functions = ast.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text));
   assert.equal(functions.length, names.length, 'extract every terminal auth function');
   const context = {
-    ...globals, ...fingerprint, fs: mockFs, path, DATA_DIR: '/fixture', unquoteEnvValue: require('../lib/env-file.js').unquoteEnvValue,
+    ...globals, ...fingerprint, fs: mockFs, path, DATA_DIR: '/fixture', readEnvValue: require('../lib/env-file.js').readEnvValue,
     TextEncoder, jwtVerify: jose.jwtVerify,
   };
   vm.runInNewContext(functions.map((node) => node.getText(ast)).join('\n'), context, { filename: 'server-auth.js' });

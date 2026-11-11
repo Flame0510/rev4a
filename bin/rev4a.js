@@ -21,11 +21,11 @@
  */
 
 const { spawn, execSync, execFileSync, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, chmodSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, chmodSync, realpathSync, rmSync, openSync, closeSync } = require('fs');
 const { join, dirname } = require('path');
 const crypto = require('crypto');
 const os = require('os');
-const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines, removeRuntimeEnvLines, RUNTIME_ONLY_ENV_KEYS } = require('../lib/env-file.js');
+const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines, removeRuntimeEnvLines, RUNTIME_ONLY_ENV_KEYS, parseEnvValues, applyEnvEdits } = require('../lib/env-file.js');
 
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
@@ -396,11 +396,7 @@ function loadEnv() {
   const result = {};
   try {
     const content = readFileSync(envFile, 'utf-8');
-    for (const line of content.split(/\r\n|\r|\n/)) {
-      const trimmed = line.trim();
-      const assignment = trimmed.match(/^(?:export\s+)?([^\s=#][^\s=]*?)\s*(?:=\s*|:\s+)([^\r\n]*)$/);
-      if (!assignment) continue;
-      const key = assignment[1];
+    for (const [key, value] of Object.entries(parseEnvValues(content))) {
       if (key === 'REV4A_SETUP_CODE') continue;
       // Ignore loader controls even in an older .env already affected by injection.
       // Other operator-defined keys remain supported. Never log their values.
@@ -411,17 +407,7 @@ function loadEnv() {
         }
         continue;
       }
-      let val = assignment[2].trim();
-
-      // Strip surrounding quotes (single or double)
-      if (
-        (val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))
-      ) {
-        val = val.slice(1, -1);
-      }
-
-      if (key) result[key] = val;
+      result[key] = value;
     }
   } catch (err) {
     log('ENV', `Warning: failed to read ${envFile} — ${err.message}`);
@@ -488,10 +474,47 @@ function ensureEnv() {
     const current = readFileSync(ENV_SOURCE, 'utf-8');
     const repaired = disableLoaderEnvLines(current);
     const runtimeRepair = removeRuntimeEnvLines(repaired.content);
+    // Repair installs that completed setup before empty generated secrets counted as missing.
+    // Only explicit empties in an editable file are repaired; never rotate a service secret.
+    const values = parseEnvValues(runtimeRepair.content);
+    let repairedSecrets = [];
+    if (values.REV4A_PASSWORD || process.env.REV4A_PASSWORD) {
+      const emptySecrets = ['REV4A_JWT_SECRET', 'REV4A_TOKEN']
+        .filter((key) => values[key] === '' && !process.env[key]);
+      if (emptySecrets.length > 0) {
+        try {
+          const edits = emptySecrets.map((key) => [key, randomString(key === 'REV4A_JWT_SECRET' ? 64 : 32)]);
+          const result = applyEnvEdits(runtimeRepair.content, edits);
+          runtimeRepair.content = result.content;
+          repairedSecrets = result.updated;
+        } catch (err) {
+          log('ENV', `Warning: empty .env secrets were not repaired (${err.code || 'invalid file'}); edit the file by hand`);
+        }
+      }
+    }
     if (runtimeRepair.content !== current) {
       try {
-        writeFileSync(ENV_SOURCE, runtimeRepair.content, { encoding: 'utf-8', mode: 0o600 });
-        try { chmodSync(ENV_SOURCE, 0o600); } catch { /* owner differs: warned above */ }
+        // Write a sibling file, then rename: a failed or partial write (disk full) leaves the
+        // original .env intact. The rename targets the real path, so a symlinked .env stays a link.
+        // The file was just read, so its real path must resolve: if it does not, write nothing
+        // (renaming over a link would replace the link and leave its target unrepaired).
+        const target = realpathSync(ENV_SOURCE);
+        const tmp = `${target}.tmp-${process.pid}`;
+        // 'wx': create the temp file only if nothing is there (never follow or truncate an
+        // existing path), and remove it only when this attempt created it.
+        let created = false;
+        try {
+          const fd = openSync(tmp, 'wx', 0o600);
+          created = true; // from here a partial write (disk full) is cleaned up below
+          try { writeFileSync(fd, runtimeRepair.content, 'utf-8'); } finally { closeSync(fd); }
+          try { chmodSync(tmp, 0o600); } catch { /* owner differs: warned above */ }
+          renameSync(tmp, target);
+          created = false;
+        } catch (err) {
+          if (created) { try { rmSync(tmp, { force: true }); } catch { /* nothing left to clean */ } }
+          throw err;
+        }
+        if (repairedSecrets.length > 0) log('ENV', `Filled empty .env secret(s): ${repairedSecrets.join(', ')}`);
       } catch (err) {
         // A loader key that could not be commented out is caught by refuseIfLoaderKeysLeft below.
         log('ENV', `Warning: could not write the .env repair (${err.code || err.message})`);
@@ -670,12 +693,14 @@ function serve(port) {
   // at runtime. process.env may not have them if rev4a serve was started
   // without the vars already exported in the shell.
   const envVars = loadEnv();
-  const childEnv = {
-    ...process.env,
-    ...envVars,
-    PORT: String(port),
-    NODE_ENV: process.env.NODE_ENV || 'production',
-  };
+  const childEnv = { ...process.env };
+  for (const [key, value] of Object.entries(envVars)) {
+    // Empty file assignments mean unset: preserve any non-empty service value.
+    // Non-empty file values retain their precedence, including for secrets.
+    if (value !== '' || !childEnv[key]) childEnv[key] = value;
+  }
+  childEnv.PORT = String(port);
+  childEnv.NODE_ENV = process.env.NODE_ENV || 'production';
   // A service EnvironmentFile may have exported stale state before the file repair ran.
   // Clear it from both sources before supplying this boot's credentials to specific children.
   for (const key of RUNTIME_ONLY_ENV_KEYS) delete childEnv[key];

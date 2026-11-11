@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { applyEnvEdits, assertEnvKey, assertEnvValue, classifyEnvLines, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
+import { applyEnvEdits, assertEnvKey, assertEnvValue, parseEnvValues, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -25,13 +25,7 @@ function isAllowedKey(key: string): boolean {
 }
 
 function parseEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of classifyEnvLines(content)) {
-    if (line.key && isAllowedKey(line.key)) {
-      result[line.key] = line.value ?? '';
-    }
-  }
-  return result;
+  return Object.fromEntries(Object.entries(parseEnvValues(content)).filter(([key]) => isAllowedKey(key)));
 }
 
 export async function GET(request: NextRequest) {
@@ -95,6 +89,12 @@ export async function PUT(request: NextRequest) {
     }
 
     const current = parseEnvFile(content);
+    if (entries.some(([key, value]) => !(key in current) && value === '' && process.env[key])) {
+      return NextResponse.json(
+        { error: 'This value comes from the service environment, not .env; change it there.' },
+        { status: 400 },
+      );
+    }
     // Check stored values first: an old client's unchanged empty or multiline value
     // must not remove a line or fail the validation applied to new assignments.
     // A key absent from the file whose value equals the running one was injected by GET, not edited.
