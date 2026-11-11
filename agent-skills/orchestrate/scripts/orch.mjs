@@ -41,7 +41,7 @@ import {
   readSuiteMarker, reusablePass, reuseMaxAgeHours, runHarness, shq, testRule, updateSuiteMarker, withHarnessLock,
 } from './lib/harness.mjs';
 import { cardRules } from './lib/card.mjs';
-import { CAMPAIGN_DEFAULTS, decide, sameLabel, wakeMessage, workerRestartAt } from './lib/keeper.mjs';
+import { CAMPAIGN_DEFAULTS, decide, ended, sameLabel, wakeMessage, workerRestartAt } from './lib/keeper.mjs';
 import { cmdCard } from './lib/card-cmd.mjs';
 import { validatePolicy } from './lib/artifacts.mjs';
 import { applyGc, planGc, scopeBytes, sweepTemp } from './lib/artifact-gc.mjs';
@@ -126,6 +126,8 @@ function campaignSessions(root) {
 
 // The same bounded liveness check for reports, gates, fixes and advice. Callers supply one campaign session snapshot;
 // this helper never calls the runtime. A fix checks every round, including workers from before the phase opened.
+// Live means not ended, by the keeper's rule (lib/keeper.mjs): since OpenClaw 2026.10.10 a session that is working has
+// no status at all, and a run the runtime reports as running/queued is live by the same rule.
 function liveSubAgent(cfg, st, { role, tag = null, anyRound = false, sessions }) {
   const limitMs = (role === 'worker' ? cfg.limits.workerTimeoutSec : cfg.limits.checkerTimeoutSec) * 1000;
   const now = Date.now();
@@ -136,7 +138,7 @@ function liveSubAgent(cfg, st, { role, tag = null, anyRound = false, sessions })
     if (!Number.isFinite(s.updatedAt) || s.updatedAt > now + 60000 || Number.isNaN(new Date(s.updatedAt).getTime())) return false;
     const round = anyRound ? s.label.match(/\s+r(\d+)(?:\s|$)/i)?.[1] : st.round;
     return round !== undefined && sameLabel(s.label, `${st.id} ${role}${tag ? ` ${tag}` : ''} r${round}`)
-      && ['running', 'queued'].includes(s.status) && !s.endedAt
+      && !ended(s)
       && (anyRound || s.updatedAt >= opened)
       && now - s.updatedAt < limitMs;
   });

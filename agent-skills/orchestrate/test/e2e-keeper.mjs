@@ -369,6 +369,13 @@ d = keeper(nowMin() + 45);
 is(d, 'wake', /SB-5\.1: the session "SB-5\.1 worker r0" ended without leaving a report/, 'ended without report: wake');
 assert.match(d.next, /^read its last answer \(sessions_history\)/); n++;
 assert.match(d.next, /otherwise run orch prompt SB-5\.1 worker --resume, then start the worker from that file/); n++;
+// A run a gateway restart cut (`interrupted`, abortedLastRun true) is resumable, but it is not working: the keeper reads
+// it as ended without a report, the same rule the command guard uses.
+sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'interrupted', abortedLastRun: true, updatedAt: Date.now() }]);
+d = keeper(nowMin() + 66); // after the backoff of the wake above
+is(d, 'wake', /SB-5\.1: the session "SB-5\.1 worker r0" ended without leaving a report/, 'interrupted: ended without report');
+assert.match(d.next, /^read its last answer \(sessions_history\)/); n++;
+console.log('ok interrupted: a gateway-restart-interrupted session is ended, not live');
 // Restarted with the same label: OpenClaw lists the newest first; the running one counts, not the ended one.
 sessions([{ key: 'S', status: 'done', updatedAt: Date.now() }, { key: 'agent:main:subagent:w2', label: 'SB-5.1 worker r0 (retry)', status: 'running', updatedAt: Date.now() }, { key: 'agent:main:subagent:w', label: 'SB-5.1 worker r0', status: 'done', updatedAt: Date.now() - 1000 }]);
 is(keeper(nowMin() + 70), 'wait', /SB-5\.1: worker within its time limit/, 'restarted: the running session counts');
@@ -426,23 +433,37 @@ function testLiveWorkers() {
   const initial = JSON.parse(initialState);
   const coord = { key: campaign().session };
   const worker = { key: 'worker', label: 'SB-1 worker r0', status: 'running', updatedAt: Date.now() };
+  // OpenClaw 2026.10.10 gives a live session no `status` and no `endedAt`: the status is cleared when a run starts and
+  // set again only when it ends (done | timeout | killed | failed, or interrupted when a gateway restart cut the run).
+  const noStatus = (row, extra = {}) => {
+    const { status, endedAt, ...rest } = row;
+    const out = { ...rest, lastInteractionAt: Date.now(), abortedLastRun: false, spawnDepth: 1, kind: 'spawn-child', model: 'w', ...extra };
+    return { ...out, sessionStartedAt: out.updatedAt }; // a live row's updatedAt is its spawn time, never refreshed
+  };
+  const realRow = noStatus(worker); // label SB-1 worker r0, updatedAt = its spawn time
   const sessions = (rows, coordinator = true) => fs.writeFileSync(SESSIONS, JSON.stringify({ sessions: [...(coordinator ? [coord] : []), ...rows] }));
   const restore = () => { fs.writeFileSync(sf, initialState); fs.writeFileSync(cf, initialCampaign); fs.writeFileSync(tf, initialCard); };
   const note = label => console.log(`ok live-worker: ${label}`);
   const wait = /next: the worker "SB-1 worker r0(?: \(retry\))?" is running \(since [^)]+\): wait for its completion, do not start another; then orch record SB-1 worker/;
   const spawn = /next: delegate the worker[^\n]*label "SB-1 worker r0"/;
 
-  for (const status of ['running', 'queued']) {
-    sessions([{ ...worker, status }]);
-    has(orch(['gate', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion, then orch record SB-1 worker/, 'busy gate message');
-    assert.deepEqual(fs.readFileSync(sf), initialState, 'busy gate leaves state byte-identical'); n++;
-    assert.ok(!fs.readdirSync(dir).some(f => /^gate-r.*\.txt$/.test(f)), 'busy gate writes no gate file'); n++;
+  // Live is "not ended" (the keeper's rule): a runtime that reports no status at all (2026.10.10) is as live as one
+  // that reports running or queued.
+  const liveRows = [['running', { ...worker, status: 'running' }], ['queued', { ...worker, status: 'queued' }], ['2026.10.10 (no status)', realRow]];
+  for (const [name, row] of liveRows) {
+    sessions([row]);
+    has(orch(['gate', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion, then orch record SB-1 worker/, `${name}: busy gate message`);
+    assert.deepEqual(fs.readFileSync(sf), initialState, `${name}: busy gate leaves state byte-identical`); n++;
+    assert.ok(!fs.readdirSync(dir).some(f => /^gate-r.*\.txt$/.test(f)), `${name}: busy gate writes no gate file`); n++;
   }
-  note('gate running/queued -> exit 4; no gate file; state byte-identical');
-  for (const command of [['status', 'SB-1'], ['status', '--json'], ['next']]) {
-    const text = orch(command);
-    if (command.includes('--json')) has(JSON.parse(text).find(s => s.id === 'SB-1').next, /wait for its completion, do not start another/, 'JSON status waits');
-    else { has(text, wait, 'live worker advice waits'); assert.doesNotMatch(text, /next: delegate the worker/, 'no duplicate spawn advice'); n++; }
+  note('gate running/queued/2026.10.10 (no status) -> exit 4; no gate file; state byte-identical');
+  for (const [name, row] of liveRows) {
+    sessions([row]);
+    for (const command of [['status', 'SB-1'], ['status', '--json'], ['next']]) {
+      const text = orch(command);
+      if (command.includes('--json')) has(JSON.parse(text).find(s => s.id === 'SB-1').next, /wait for its completion, do not start another/, `${name}: JSON status waits`);
+      else { has(text, wait, `${name}: live worker advice waits`); assert.doesNotMatch(text, /next: delegate the worker/, `${name}: no duplicate spawn advice`); n++; }
+    }
   }
   sessions([{ ...worker, label: ' sb-1   WORKER r0 (retry)' }]);
   orch(['gate', 'SB-1'], { code: 4 });
@@ -468,12 +489,21 @@ function testLiveWorkers() {
   note('resume reads sessions once and refuses a live worker before consuming the allowance');
   fs.rmSync(path.join(REPO, '.orchestrate/runs/SB-2'), { recursive: true });
   note('status/status --json/next read sessions once for multiple runs');
+  sessions([realRow]);
+  has(orch(['prompt', 'SB-1', 'worker', '--resume'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion, then orch record SB-1 worker/, '2026.10.10 row: resume refuses a live worker');
+  assert.deepEqual(fs.readFileSync(sf), initialState); n++;
+  note('resume refuses a live 2026.10.10 worker (no status) without using the allowance');
 
   const opened = Date.parse(initial.events.at(-1).t);
   const allowed = [
     ['ended status', { ...worker, status: 'done' }],
     ['endedAt', { ...worker, endedAt: Date.now() }],
     ['past time limit', { ...worker, updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 }],
+    ['2026.10.10 (no status), past time limit', noStatus(worker, { updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 })],
+    ['interrupted (a gateway restart cut the run)', { ...worker, status: 'interrupted', abortedLastRun: true }],
+    ['status timeout', { ...worker, status: 'timeout' }],
+    ['status killed', { ...worker, status: 'killed' }],
+    ['status failed', { ...worker, status: 'failed' }],
     ['before phase', { ...worker, updatedAt: opened - 60001 }],
     ['round boundary', { ...worker, label: 'SB-1 worker r10' }],
     ['future time (skewed clock)', { ...worker, updatedAt: Date.now() + 10 * 60000 }],
@@ -486,7 +516,7 @@ function testLiveWorkers() {
   ];
   for (const [label, session] of allowed) {
     restore();
-    if (label === 'past time limit') fs.writeFileSync(sf, JSON.stringify({ ...initial, events: initial.events.map(e => ({ ...e, t: new Date(session.updatedAt - 1000).toISOString() })) }));
+    if (label.includes('past time limit')) fs.writeFileSync(sf, JSON.stringify({ ...initial, events: initial.events.map(e => ({ ...e, t: new Date(session.updatedAt - 1000).toISOString() })) }));
     sessions([session], label !== 'no coordinator');
     if (label === 'no campaign') fs.rmSync(cf);
     if (label === 'inactive campaign') fs.writeFileSync(cf, JSON.stringify({ ...campaign(), active: false }));
@@ -510,11 +540,11 @@ function testLiveWorkers() {
   assert.equal(failed.round, 1); n++;
   const beforeFix = fs.readdirSync(path.join(dir, 'prompts')).sort();
   const oldWorker = { ...worker, updatedAt: opened - 60001 }; // before the current phase, still within its time limit
-  for (const status of ['running', 'queued']) {
-    sessions([{ ...oldWorker, status }]);
-    has(orch(['fix', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion before orch fix SB-1/, 'old worker blocks fix');
-    assert.deepEqual(fs.readFileSync(sf), failedState, 'busy fix leaves state and round byte-identical'); n++;
-    assert.deepEqual(fs.readdirSync(path.join(dir, 'prompts')).sort(), beforeFix, 'busy fix writes no second brief'); n++;
+  for (const [name, session] of [['running', { ...oldWorker, status: 'running' }], ['queued', { ...oldWorker, status: 'queued' }], ['2026.10.10 (no status)', noStatus(oldWorker)]]) {
+    sessions([session]);
+    has(orch(['fix', 'SB-1'], { code: 4 }), /the worker "SB-1 worker r0" is still running: wait for its completion before orch fix SB-1/, `${name}: old worker blocks fix`);
+    assert.deepEqual(fs.readFileSync(sf), failedState, `${name}: busy fix leaves state and round byte-identical`); n++;
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'prompts')).sort(), beforeFix, `${name}: busy fix writes no second brief`); n++;
   }
   sessions([{ ...worker, label: 'SB-1 worker r10 (retry)' }]);
   orch(['fix', 'SB-1'], { code: 4 });
@@ -526,10 +556,10 @@ function testLiveWorkers() {
     assert.equal(JSON.parse(fs.readFileSync(sf)).round, 2); n++;
   }
   note('fix ignores SB-1.2/SB-10, other roles and malformed worker labels');
-  for (const session of [{ ...worker, status: 'done' }, { ...worker, endedAt: Date.now() }, { ...worker, updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 }]) {
+  for (const session of [{ ...worker, status: 'done' }, { ...worker, endedAt: Date.now() }, { ...worker, status: 'interrupted', abortedLastRun: true }, { ...worker, updatedAt: Date.now() - cfg.limits.workerTimeoutSec * 1000 - 1000 }]) {
     fs.writeFileSync(sf, failedState); sessions([session]); orch(['fix', 'SB-1']);
   }
-  note('fix allows ended and expired workers');
+  note('fix allows ended (done/endedAt/interrupted) and expired workers');
 
   // Only working gates are guarded: a recorded worker's gate keeps its existing behaviour.
   restore(); sessions([]);
@@ -538,6 +568,12 @@ function testLiveWorkers() {
   has(orch(['record', 'SB-1', 'worker'], { code: 1 }), /the sub-agent "SB-1 worker r0" is still running: wait for its completion, it writes its own report to .*Never record a report written in its place/, 'record message and exit unchanged');
   assert.deepEqual(fs.readFileSync(sf), initialState); n++;
   assert.ok(fs.existsSync(path.join(dir, 'inbox/worker.md'))); n++;
+  // A 2026.10.10 worker with no status is live too: the same refusal, the same exit code, the report still in the inbox.
+  sessions([realRow]);
+  has(orch(['record', 'SB-1', 'worker'], { code: 1 }), /the sub-agent "SB-1 worker r0" is still running: wait for its completion, it writes its own report to .*Never record a report written in its place/, '2026.10.10 row: record message and exit unchanged');
+  assert.deepEqual(fs.readFileSync(sf), initialState); n++;
+  assert.ok(fs.existsSync(path.join(dir, 'inbox/worker.md'))); n++;
+  note('record refuses a live 2026.10.10 worker (no status) as before');
   sessions([{ ...worker, status: 'done' }]); orch(['record', 'SB-1', 'worker']);
   sessions([worker]); orch(['gate', 'SB-1'], { code: 2 });
   note('record retains exit 1/message; gate outside working remains unchanged');
@@ -581,6 +617,12 @@ function testRestartDecisions() {
   const checker = run('A', { phase: 'checking' });
   const expected = { A: { opened: t, labels: [{ label: 'A checker a r0', who: 'checker', tag: 'a' }] } };
   snapshot('base: checker ended', { runs: [checker], expected, sessions: [{ label: 'A checker a r0', status: 'done', updatedAt: t }] }, {
+    action: 'wake', reason: 'A: the session "A checker a r0" ended without leaving a report',
+    next: 'read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise start it again: spawn fixture',
+    wakeCount: 1, overdue: 'A', escalations: [],
+  });
+  // `interrupted` (a run a gateway restart cut, abortedLastRun true) is resumable but no longer working: same decision.
+  snapshot('interrupted: checker ended', { runs: [checker], expected, sessions: [{ label: 'A checker a r0', status: 'interrupted', endedAt: null, updatedAt: t }] }, {
     action: 'wake', reason: 'A: the session "A checker a r0" ended without leaving a report',
     next: 'read its last answer (sessions_history); if it is the report, save it to the inbox and orch record it, otherwise start it again: spawn fixture',
     wakeCount: 1, overdue: 'A', escalations: [],

@@ -19,8 +19,10 @@ const min = ms => Math.round(ms / 60000);
 // Labels as the coordinator typed them: case and spacing may differ from orch's, and it may add a suffix ("(retry)").
 const norm = l => String(l ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 export const sameLabel = (actual, expected) => norm(actual) === norm(expected) || norm(actual).startsWith(`${norm(expected)} `);
-// Ended as OpenClaw counts it: a terminal status or an end time. Anything else (running, queued, yielded, none) is live.
-export const ended = s => ['done', 'failed', 'killed', 'timeout'].includes(s.status) || Boolean(s.endedAt);
+// Ended as OpenClaw counts it: a terminal status or an end time. Anything else is live, including no status at all: since
+// 2026.10.10 the runtime clears a session's status when a run starts and sets it again only when the run ends.
+// `interrupted` is a run a gateway restart cut: resumable, but no longer working, so not live.
+export const ended = s => ['done', 'failed', 'killed', 'timeout', 'interrupted'].includes(s.status) || Boolean(s.endedAt);
 
 // A prepared resume starts a new worker window in this round, even if the coordinator never spawned it.
 export const workerRestartAt = st => Date.parse([...(st.events ?? [])].reverse()
