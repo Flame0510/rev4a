@@ -3,7 +3,8 @@
  *
  * Requires the operator setup code. Sets the admin password on first run.
  * Refuses if a password is already configured.
- * Also generates a random JWT secret and API token if missing.
+ * Also generates a random JWT secret and API token if missing, unless the service
+ * environment already provides a non-empty value for that key.
  *
  * Body: { password: string }
  *
@@ -71,8 +72,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const edits: Array<[string, string]> = [['REV4A_PASSWORD', body.password]];
-    if (!readEnvValue(content, 'REV4A_JWT_SECRET')) edits.push(['REV4A_JWT_SECRET', generateSecret(64)]);
-    if (!readEnvValue(content, 'REV4A_TOKEN')) edits.push(['REV4A_TOKEN', generateSecret(32)]);
+    // Same rule as ensureEnv() in bin/rev4a.js: a secret the service environment already
+    // provides is never shadowed by a generated file value.
+    if (!readEnvValue(content, 'REV4A_JWT_SECRET') && !process.env.REV4A_JWT_SECRET) edits.push(['REV4A_JWT_SECRET', generateSecret(64)]);
+    if (!readEnvValue(content, 'REV4A_TOKEN') && !process.env.REV4A_TOKEN) edits.push(['REV4A_TOKEN', generateSecret(32)]);
     try {
       // One physical line per assignment, values written so every reader gets them back intact.
       ({ content } = applyEnvEdits(content, edits));

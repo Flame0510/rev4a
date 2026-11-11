@@ -797,6 +797,18 @@ await test('BUG-15: setup replaces empty generated secrets, keeps non-empty secr
   }
 });
 
+await test('BUG-15: setup does not shadow secrets the service environment already provides', async () => {
+  const content = 'REV4A_PASSWORD=\nREV4A_JWT_SECRET=\nREV4A_TOKEN=\nPORT=3740\n';
+  const h = harness({ REV4A_SETUP_CODE: CODE, REV4A_JWT_SECRET: 'service-jwt', REV4A_TOKEN: 'service-token' }, content); // secret-ok
+  const route = h.load('app/api/setup/password/route.ts');
+  assert.equal((await route.POST(h.req({ password: 'abcdefgh' }))).status, 200); // secret-ok
+  const saved = h.files.get(ENV_FILE);
+  assert.equal(validator.readEnvValue(saved, 'REV4A_PASSWORD'), 'abcdefgh');
+  assert.ok(saved.includes('REV4A_JWT_SECRET=\n') && saved.includes('REV4A_TOKEN=\n'), 'empty lines stay unchanged');
+  assert.equal(validator.readEnvValue(saved, 'REV4A_JWT_SECRET'), '');
+  assert.equal(validator.readEnvValue(saved, 'REV4A_TOKEN'), '');
+});
+
 await test('BUG-15: launcher, auth fallback and terminal auth read the same file values, with inherited precedence retained', () => {
   const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   const ast = ts.createSourceFile('server.js', source, ts.ScriptTarget.Latest, true);
