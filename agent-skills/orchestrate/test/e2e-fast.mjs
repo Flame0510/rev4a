@@ -22,7 +22,7 @@ let mockNodeVersion = null;
 let orchPrelude = null;
 const orch = (args, code = 0) => {
   const mock = mockNodeVersion ? ['--import', `data:text/javascript,${encodeURIComponent(`Object.defineProperty(process, 'version', { value: ${JSON.stringify(mockNodeVersion)} });`)}`] : [];
-  const r = spawnSync(process.execPath, [...mock, ...(orchPrelude ? ['--import', `data:text/javascript,${encodeURIComponent(orchPrelude)}`] : []), ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base } });
+  const r = spawnSync(process.execPath, [...mock, ...(orchPrelude ? ['--import', `data:text/javascript,${encodeURIComponent(orchPrelude)}`] : []), ORCH, ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, HOME: base, ...(mockNodeVersion || orchPrelude ? { ORCH_GATE_FOREGROUND: '1' } : {}) } });
   assert.equal(r.status, code, `orch ${args.join(' ')} exited ${r.status}:\n${r.stdout}${r.stderr}`); n++;
   return r.stdout + r.stderr;
 };
@@ -544,8 +544,8 @@ assert.equal(scheduledReceipt.key,harnessInputKey(reuseCfg.harnesses[0],schedule
 write('.env.local',inputA);
 expectRun('SB-71');
 assert.equal(fs.readFileSync(observed,'utf8'),inputA); n++;
-assert.ok(fs.readFileSync(lockEvents,'utf8').trim().split('\n').every(file=>file===harnessLock)); n++;
-console.log('reuse correction 2: lookup A -> lock wait -> suite sees B -> restore A at release; recorded B only; next A gate RUNs; only harness.lock created');
+assert.ok(fs.readFileSync(lockEvents,'utf8').trim().split('\n').every(file=>file===harnessLock || file===path.join(REPO,'.orchestrate/runs/SB-70/run.lock'))); n++;
+console.log('reuse correction 2: lookup A -> lock wait -> suite sees B -> restore A at release; recorded B only; next A gate RUNs; only harness.lock and the per-run lock created');
 
 // A suite that restores A inside its command after waiting for B has different execution endpoints.
 write('.env.local',inputB);

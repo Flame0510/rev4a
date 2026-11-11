@@ -42,7 +42,7 @@ export const DEFAULTS = {
   artifacts: ARTIFACT_DEFAULTS,
   // atRoundLimit: who decides a run that used all its correction rounds: 'owner' (the run waits for them) or
   // 'coordinator' (the owner's standing rule: it asks an advisor sub-agent, then splits or parks the card and goes on).
-  limits: { correctionRounds: 2, atRoundLimit: 'owner', checkers: 1, checkTimeoutSec: 900, maxOwnedShare: 0.5, workerTimeoutSec: 3600, checkerTimeoutSec: 1800, networkTimeoutSec: 120 },
+  limits: { correctionRounds: 2, atRoundLimit: 'owner', checkers: 1, checkTimeoutSec: 900, maxOwnedShare: 0.5, workerTimeoutSec: 3600, checkerTimeoutSec: 1800, networkTimeoutSec: 120, runLockWaitSec: 30, gateWaitSec: 900 },
 };
 
 function merge(base, over) {
@@ -75,6 +75,9 @@ export function loadConfig(root, { requireConfirmed = true } = {}) {
   if (!fs.existsSync(file)) throw new OrchError(`no ${path.relative(root, file)}: run "orch init" first`);
   const cfg = merge(DEFAULTS, readJson(file, {}));
   if (cfg.tracker.kind !== 'backlog-md') delete cfg.tracker.dir; // only an in-repo tracker has a folder
+  for (const key of ['runLockWaitSec', 'gateWaitSec']) {
+    if (!Number.isFinite(cfg.limits[key]) || cfg.limits[key] < 0) throw new OrchError(`limits.${key} must be a non-negative number`);
+  }
   setEnvPolicy(cfg.env);
   setNetworkTimeout(cfg.limits.networkTimeoutSec);
   validatePolicy(cfg.artifacts);

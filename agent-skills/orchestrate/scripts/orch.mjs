@@ -33,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 import {
   artifactsDir, configFile, DEFAULTS, event, loadConfig, loadState, orchDir, primaryRoot, runDir, saveConfig, saveState, setPath,
 } from './lib/config.mjs';
+import { withRunLock } from './lib/runlock.mjs';
+import { gateJob, liveGate, runGateCommand } from './lib/gate-job.mjs';
 import { matchesAny } from './lib/glob.mjs';
 import {
   cardSpecFiles, detectHarnesses, failedSpecFiles, harnessesCovering, harnessesFor, harnessInputKey, harnessPlan, OUTPUT_DIRS, riskyFiles,
@@ -48,7 +50,7 @@ import { evaluate } from './lib/select.mjs';
 import { excludeOnce, fill, git, lastLines, minutes, now, OrchError, readJson, redactSecrets, sh, writeAtomic, writeJson } from './lib/util.mjs';
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BOOL = new Set(['anyway', 'force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned', 'resume']);
+const BOOL = new Set(['anyway', 'force', 'confirm', 'json', 'all', 'owner-approval', 'dry-run', 'unowned', 'resume', 'job']);
 
 function parseArgs(argv) {
   const pos = []; const flags = { set: [] };
@@ -188,6 +190,7 @@ const selfDecides = cfg => cfg.limits.atRoundLimit === 'coordinator';
 
 function nextAction(st, cfg, sessions = null) {
   const id = st.id; const max = roundLimit(st, cfg);
+  if (st.runningGate) return `orch gate ${id} (attach; gate running since ${st.runningGate.at})`;
   if (st.setAside) return `orch card set-aside ${id} (a split set this run aside half-way: finish that; the card then waits for its split cards)`;
   const roundsLeft = st.round < max;
   const selfDecide = `round limit reached (${st.round}/${max}): you decide, by the owner's standing rule (limits.atRoundLimit "coordinator"). `
@@ -283,6 +286,7 @@ function statusLine(st, cfg, sessions = null) {
     `  elapsed ${m.elapsed} · gate runs ${m.gates} (${m.gateFails} failed)${m.tokens ? ` · tokens ${m.tokens}` : ''} · worktree ${st.worktree}`,
     ...(st.pr ? [`  PR #${st.pr.number} ${st.pr.url} · pushed ${st.sha?.slice(0, 9) ?? '-'}`] : []),
     ...(unresolvedUntested(st) ? [`  ATTENTION: the merged result ${st.merge?.slice(0, 9)} on ${st.baseBranch} is not the checked tree: run the checks on ${st.baseBranch}, then orch resolve ${st.id} --checked "<what passed>"`] : []),
+    ...(st.runningGate ? [`gate running (since ${st.runningGate.at})`] : []),
     `next: ${nextAction(st, cfg, sessions)}`,
   ].join('\n');
 }
@@ -381,6 +385,9 @@ function showConfig(cfg, models) {
 async function cmdConfig(root, { flags }) {
   const cfg = loadConfig(root, { requireConfirmed: false });
   for (const s of flags.set) setPath(cfg, s);
+  for (const key of ['runLockWaitSec', 'gateWaitSec']) {
+    if (!Number.isFinite(cfg.limits[key]) || cfg.limits[key] < 0) throw new OrchError(`limits.${key} must be a non-negative number`);
+  }
   if (!['owner', 'coordinator'].includes(cfg.limits.atRoundLimit)) throw new OrchError('limits.atRoundLimit must be "owner" or "coordinator"');
   if (!['always', 'if-changed'].includes(cfg.merge.recheck)) throw new OrchError('merge.recheck must be "always" or "if-changed"');
   for (const h of cfg.harnesses ?? []) if (h.kind !== undefined && !['check', 'suite'].includes(h.kind)) throw new OrchError(`harness ${h.name}: kind must be "check" or "suite"`);
@@ -404,7 +411,8 @@ async function cmdConfig(root, { flags }) {
 async function cmdNext(root, { flags }) {
   const cfg = loadConfig(root);
   const tracker = await trackerFor(root, cfg);
-  const res = evaluate(tracker.list(), cfg, trackedFiles(root));
+  const tasks = tracker.list();
+  const res = evaluate(tasks, cfg, trackedFiles(root));
   const untested = untestedRuns(root);
   if (untested.length) {
     process.exitCode = 2;
@@ -412,8 +420,24 @@ async function cmdNext(root, { flags }) {
     out(...untested.map(s => statusLine(s, cfg)), `(no new task starts before that: ${nextAction(untested[0], cfg)})`);
     return;
   }
+  const gates = fs.existsSync(path.join(orchDir(root), 'runs')) ? fs.readdirSync(path.join(orchDir(root), 'runs')).flatMap(id => {
+    const job = liveGate(gateJob(root, id));
+    return job ? [{ id, job }] : [];
+  }) : [];
   const ok = res.filter(r => !r.reasons.length);
-  if (flags.json) { console.log(JSON.stringify(res.map(r => ({ id: r.task.id, title: r.task.title, eligible: !r.reasons.length, reasons: r.reasons, advice: r.advice })), null, 2)); return; }
+  if (flags.json) {
+    const entries = res.map(r => {
+      const gate = gates.find(g => g.id === r.task.id);
+      return { id: r.task.id, title: r.task.title, eligible: !r.reasons.length, reasons: r.reasons, advice: r.advice,
+        ...(gate ? { gate: { running: true, since: gate.job.at }, next: `orch gate ${r.task.id}` } : {}) };
+    });
+    for (const { id, job } of gates) {
+      if (!entries.some(r => r.id === id)) entries.push({ id, title: tasks.find(t => t.id === id)?.title,
+        gate: { running: true, since: job.at }, next: `orch gate ${id}` });
+    }
+    console.log(JSON.stringify(entries, null, 2));
+    return;
+  }
   const sessions = campaignSessions(root);
   const runs = path.join(orchDir(root), 'runs');
   const working = sessions === null || !fs.existsSync(runs) ? [] : fs.readdirSync(runs)
@@ -421,13 +445,15 @@ async function cmdNext(root, { flags }) {
     .filter(st => st.phase === 'working' && !st.setAside);
   out(ok.length ? ok.map(r => [`${r.task.id}  ${r.task.title}`, ...r.advice.map(a => `  advice: ${a}`)].join('\n')).join('\n') : 'no eligible task',
     flags.all ? res.filter(r => r.reasons.length).map(r => [`  not ${r.task.id}: ${r.reasons.join('; ')}`, ...r.advice.map(a => `    advice: ${a}`)].join('\n')).join('\n') || null : `(${res.length - ok.length} not eligible: --all shows why)`,
-    ...working.map(st => `${st.id}  phase working\nnext: ${nextAction(st, cfg, sessions)}`),
-    `next: ${ok.length ? `orch start ${ok[0].task.id}` : 'split or unblock a task (orch next --all)'}`);
+    ...gates.map(({ id, job }) => `${id}  gate running (since ${job.at})\nnext: orch gate ${id}`),
+    ...working.filter(st => !gates.some(g => g.id === st.id)).map(st => `${st.id}  phase working\nnext: ${nextAction(st, cfg, sessions)}`),
+    `next: ${gates.length ? `orch gate ${gates[0].id}` : ok.length ? `orch start ${ok[0].task.id}` : 'split or unblock a task (orch next --all)'}`);
 }
 
 async function cmdStart(root, { pos, flags }) {
   const id = need(pos[0], 'task id');
   const cfg = loadConfig(root);
+  if (fs.existsSync(path.join(runDir(root, id), 'state.json'))) throw new OrchError(`${id} already has a run: orch status ${id}`);
   const untested = untestedRuns(root);
   if (untested.length) throw new OrchError(`${untested.map(s => `${s.id} (${unresolvedUnsafe(s) ? 'unsafe merge' : 'merged result never checked'})`).join(', ')}: settle it first (orch status), then orch resolve <id> --checked "<what passed or was decided>"`);
   const tracker = await trackerFor(root, cfg);
@@ -449,16 +475,10 @@ async function cmdStart(root, { pos, flags }) {
   }
 
   const dir = runDir(root, task.id);
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
-  try { fs.mkdirSync(dir); } catch (e) {
-    if (e.code === 'EEXIST') throw new OrchError(`${task.id} already has a run: orch status ${task.id}`);
-    throw e;
-  }
+  // The dispatcher created the run directory and holds its lock before any decision above.
   const branch = `${cfg.branchPrefix}${task.id}`;
   const worktree = path.resolve(root, cfg.worktreeRoot, `orch-${task.id}`);
-  try {
-    git(['worktree', 'add', '-q', '-b', branch, worktree, base], root);
-  } catch (e) { fs.rmSync(dir, { recursive: true }); throw e; }
+  git(['worktree', 'add', '-q', '-b', branch, worktree, base], root);
   const links = [];
   for (const l of cfg.links) {
     const src = path.join(root, l);
@@ -637,15 +657,25 @@ async function cmdRecord(root, { pos, flags }) {
   out(`checker ${tag}: ${verdict}${note}, ${executed} EXECUTED line(s)`, `next: ${nextAction(st, cfg)}`);
 }
 
-async function cmdGate(root, { pos }) {
-  const id = need(pos[0], 'task id');
-  const cfg = loadConfig(root);
+function validateGate(root, id, cfg) {
   const st = activeState(root, id);
   if (['merged', 'parked'].includes(st.phase)) throw new OrchError(`${st.id} is ${st.phase}`);
   if (st.phase === 'working') {
     const live = liveSubAgent(cfg, st, { role: 'worker', sessions: campaignSessions(root) });
     if (live) throw new OrchError(`the worker "${live.label}" is still running: wait for its completion, then orch record ${st.id} worker`, 4);
   }
+  return st;
+}
+
+async function cmdGate(root, args) {
+  return runGateCommand(root, args, { validate: validateGate, run: cmdGateForeground, out });
+}
+
+async function cmdGateForeground(root, { pos }, emit = out) {
+  const id = need(pos[0], 'task id');
+  const cfg = loadConfig(root);
+  const st = validateGate(root, id, cfg);
+  recordActivity(root, 'gate');
   process.env.ORCH_RUN = `${st.id} r${st.round}`; // the commands' artifact scopes belong to this run (their cleanup)
   const tracker = await trackerFor(root, cfg);
   const task = tracker.get(st.id);
@@ -806,6 +836,13 @@ async function cmdGate(root, { pos }) {
   const treeUnchanged = stageAndTree(wt) === tree;
   if (!treeUnchanged) bad('the checks or harnesses changed files in the worktree (a formatter, a generator, a report folder not ignored?): run them in the worker, not in the gate');
 
+  const current = loadState(root, st.id);
+  if (current.round !== st.round || current.phase !== st.phase) {
+    const text = 'INFRA  gate result discarded: the round or phase changed during the gate';
+    const next = `next: orch gate ${st.id}`;
+    emit(text, next); process.exitCode = 3;
+    return { text, next, exitCode: 3, discarded: true };
+  }
   if (infra) {
     // The machine ended a command (out of memory, killed): no verdict on the change, no correction round used.
     const text = [`gate ${st.id} round ${st.round}: ${files.length} file(s), +${added} -${removed}`, ...lines, '', 'GATE: INFRA (no verdict, not a correction round)'].join('\n');
@@ -813,9 +850,10 @@ async function cmdGate(root, { pos }) {
     st.phase = 'worked';
     event(st, 'gate-infra', { round: st.round, reason: infra, ms: Date.now() - t0 });
     saveState(root, st);
-    out(text, `next: inspect the infrastructure log (${infra}); retry orch gate ${st.id} only after recovery; if it repeats, stop and tell the owner`);
+    const next = `next: inspect the infrastructure log (${infra}); retry orch gate ${st.id} only after recovery; if it repeats, stop and tell the owner`;
+    emit(text, next);
     process.exitCode = 3;
-    return;
+    return { text, next, exitCode: 3 };
   }
   delete st.mergedTree; // a new gate is on the worker's tree, not on an earlier base merge
   st.gate = {
@@ -840,8 +878,10 @@ async function cmdGate(root, { pos }) {
   } else st.phase = 'gate-failed';
   saveState(root, st);
   tracker.comment(st.id, `gate round ${st.round}: ${fail ? 'FAIL' : 'PASS'}, ${files.length} files +${added} -${removed}, checks ${checksPassed}/${checks.length}`);
-  out(text, `next: ${nextAction(st, cfg)}`);
+  const next = `next: ${nextAction(st, cfg)}`;
+  emit(text, next);
   process.exitCode = fail ? 2 : 0;
+  return { text, next, exitCode: process.exitCode };
 }
 
 function writeCheckerPrompts(root, cfg, task, st, gateText) {
@@ -1492,9 +1532,9 @@ async function cmdStatus(root, { pos, flags }) {
   const cfg = loadConfig(root, { requireConfirmed: false });
   const runs = path.join(orchDir(root), 'runs');
   const ids = pos[0] ? [pos[0].toUpperCase()] : fs.existsSync(runs) ? fs.readdirSync(runs).filter(d => fs.existsSync(path.join(runs, d, 'state.json'))) : [];
-  const states = ids.map(i => loadState(root, i)).filter(s => pos[0] || flags.all || s.phase !== 'merged' || s.finishPending?.length || unresolvedUntested(s));
+  const states = ids.map(i => ({ ...loadState(root, i), runningGate: liveGate(gateJob(root, i)) })).filter(s => pos[0] || flags.all || s.phase !== 'merged' || s.finishPending?.length || unresolvedUntested(s));
   const sessions = states.some(s => s.phase === 'working') ? campaignSessions(root) : null;
-  if (flags.json) { console.log(JSON.stringify(states.map(s => ({ id: s.id, phase: s.phase, round: s.round, gate: s.gate, verdicts: s.verdicts, untestedMerge: unresolvedUntested(s) || undefined, unsafeMerge: unresolvedUnsafe(s) ? s.unsafeMerge : undefined, next: nextAction(s, cfg, sessions), metrics: metrics(s) })), null, 2)); return; }
+  if (flags.json) { console.log(JSON.stringify(states.map(s => ({ id: s.id, phase: s.phase, round: s.round, runningGate: s.runningGate ? { pid: s.runningGate.pid, since: s.runningGate.at } : undefined, gate: s.gate, verdicts: s.verdicts, untestedMerge: unresolvedUntested(s) || undefined, unsafeMerge: unresolvedUnsafe(s) ? s.unsafeMerge : undefined, next: nextAction(s, cfg, sessions), metrics: metrics(s) })), null, 2)); return; }
   const late = s => lateReports(root, s).map(l => `  LATE REPORT: checker ${l.tag} of round ${l.round}, never recorded (${l.verdict}): ${l.file}. ${l.round === s.round && s.phase === 'rejected' ? `Record it: orch record ${s.id} checker --tag ${l.tag}` : `${s.phase === 'working' ? 'Send its findings to the worker now (sessions_send); ' : ''}the next orch fix gives it to the worker`}`);
   out(states.length ? states.map(s => [statusLine(s, cfg, sessions), ...late(s)].join('\n')).join('\n\n') : `no open run${cfg.confirmed ? '' : ' (config not confirmed)'}\nnext: orch next`);
 }
@@ -1693,6 +1733,11 @@ async function cmdCampaign(root, { pos, flags }) {
 // What is running right now in this project: a live harness lock, or (Linux) an orch command, managed check or run-cmd
 // whose working directory is this project or one of its worktrees. The keeper's own commands do not count.
 function busyNow(root, cfg) {
+  const runs = path.join(orchDir(root), 'runs');
+  for (const id of fs.existsSync(runs) ? fs.readdirSync(runs) : []) {
+    const job = liveGate(gateJob(root, id));
+    if (job) return `a gate of ${id} (pid ${job.pid})`;
+  }
   const lock = path.join(orchDir(root), 'harness.lock', 'pid');
   if (fs.existsSync(lock)) {
     const pid = Number(fs.readFileSync(lock, 'utf8'));
@@ -1995,7 +2040,7 @@ async function cmdCardWithRuns(root, args) {
     if (!st) throw new OrchError(`${id} has no run to set aside`);
     if (st.phase === 'merged') throw new OrchError(`${st.id} is merged: nothing to set aside`);
     canSetAside(root, st);
-    return setAside(root, cfg, tracker, st);
+    return setAside(root, cfg, tracker, st, args.runLock);
   }
   const st = sub === 'split' && id && args.flags['dry-run'] !== true ? readJson(path.join(runDir(root, id), 'state.json'), null) : null;
   const open = st && st.phase !== 'merged';
@@ -2003,7 +2048,7 @@ async function cmdCardWithRuns(root, args) {
   if (open) canSetAside(root, st);
   await cmdCard(root, args, { cfg, tracker, out });
   if (!open || process.exitCode) return;
-  setAside(root, cfg, tracker, st);
+  setAside(root, cfg, tracker, st, args.runLock);
 }
 
 // A run may be set aside unless something is still happening to it: a sub-agent at work, an unsafe merge not settled,
@@ -2025,7 +2070,7 @@ function canSetAside(root, st) {
   if (st.events.filter(e => ['merging', 'merge-failed'].includes(e.kind)).at(-1)?.kind === 'merging') throw new OrchError(interrupted);
 }
 
-function setAside(root, cfg, tracker, st) {
+function setAside(root, cfg, tracker, st, lock) {
   if (!st.setAside) {
     st.setAside = { tag: `before-split-${now().replace(/[^0-9]/g, '').slice(0, 14)}`, at: now() };
     event(st, 'set-aside', { tag: st.setAside.tag }); saveState(root, st);
@@ -2054,6 +2099,7 @@ function setAside(root, cfg, tracker, st) {
   // Last: while the run is in runs/, orch card set-aside can finish the steps above.
   fs.mkdirSync(path.dirname(archive), { recursive: true });
   fs.renameSync(runDir(root, st.id), archive);
+  lock?.relocate(path.join(archive, 'run.lock'));
   out(`${st.id}: its run (${st.phase}, round ${st.round}) was set aside in ${path.relative(root, archive)}${notes.length ? `; ${notes.join('; ')}` : ''}`,
     `${st.id} is back in ${cfg.tracker.status.todo} and starts again only when its split cards are done`);
 }
@@ -2149,10 +2195,28 @@ export async function runCli() {
   try {
     const root = primaryRoot();
     const args = parseArgs(rest);
-    // The coordinator's activity, for the campaign keeper: any orch command but the keeper's own.
-    // A refused resume writes nothing; a successful one records activity after saving its brief and event.
-    if (!['keeper', 'campaign', 'fix'].includes(name) && !(name === 'prompt' && args.flags.resume)) recordActivity(root, name);
-    await fn(root, args);
+    const mutate = ['start', 'record', 'fix', 'recheck', 'restore', 'finish', 'push', 'park', 'resolve'].includes(name)
+      || (name === 'prompt' && args.flags.resume)
+      || (name === 'card' && ['set-aside', 'split', 'normalise'].includes(args.pos[0]));
+    const invoke = async lock => {
+      if (!['keeper', 'campaign', 'fix', 'gate'].includes(name) && !(name === 'prompt' && args.flags.resume)) recordActivity(root, name);
+      await fn(root, { ...args, runLock: lock });
+    };
+    if (mutate) {
+      const id = String(need(args.pos[name === 'card' ? 1 : 0], 'task id')).toUpperCase();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) throw new OrchError('invalid run id');
+      const cfg = loadConfig(root, { requireConfirmed: false });
+      // Card edits also serialize with a concurrent start, even before the first state exists.
+      if (name === 'start' || name === 'card') fs.mkdirSync(runDir(root, id), { recursive: true });
+      else if (!fs.existsSync(runDir(root, id))) loadState(root, id);
+      try {
+        await withRunLock(root, id, { cmd: name === 'card' ? `card ${args.pos[0]}` : name,
+          waitSec: cfg.limits.runLockWaitSec, createRunDirectory: name === 'start' || name === 'card' }, invoke);
+      } finally {
+        // Older releases treat any run directory as an existing run. Retain every file, but no empty placeholders.
+        try { fs.rmdirSync(runDir(root, id)); } catch { /* a run, another owner, or an already archived directory */ }
+      }
+    } else await invoke();
   } catch (e) {
     if (!(e instanceof OrchError)) throw e;
     console.error(`orch: ${e.message}`);

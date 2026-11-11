@@ -27,7 +27,18 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
    A protected branch (main, master, production) always needs the per-task ok, and accepting work without a
    checker PASS (`--override`) always needs it too.
 6. **One coordinator.** Do not start a second coordinator, a watchdog or a cron job. Sub-agents announce when
-   they finish: wait for that, do not poll.
+   they finish: wait for that, do not poll. Commands that change a run hold its `run.lock` while reading and writing.
+   They wait up to `limits.runLockWaitSec` (default 30 s), then exit 4 (busy), naming the command holding it;
+   wait and run the command again. Status, next, keeper and prompts without `--resume` do not wait for this lock.
+   Card normalise, split and set-aside take the lock even for a dry run. A stale lock from a crashed process
+   is recovered automatically. A live owner never expires: recovery needs a dead pid, a changed boot or pid start
+   time on Linux, or, without `/proc`, `ps` proving that the pid belongs to a program other than `orch.mjs`;
+   failed or unavailable `ps` counts as alive. If the owner is not an orch process, verify it has stopped using
+   the run, then remove that run's `run.lock` and `run.lock.reclaim` by hand. A directory without an owner record
+   is recovered only after 60 s, with no reclaim in progress. A separate reclaim lock serializes recovery;
+   abandoned dead reclaim owners are cleaned on the next acquisition, even if `run.lock` is already gone.
+   The remaining removal window needs a reclaimer that crashed inside reclamation and two others breaking its
+   reclaim lock at the same instant; one coordinator per project makes that practically unreachable.
 7. **Keep your context small.** Do not read diffs, logs or prompt files in full: the gate line tells you what
    failed; open a log tail only if you must explain it to the owner.
 8. **Do not change this skill.** It belongs to Rev4a and is replaced on update. A lesson goes to the owner as a
@@ -63,7 +74,8 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
 12. **Nobody changes a worktree after its gate.** When `record` or `finish` says the worktree changed after the gate,
    look at what changed (the message says): if nobody meant it (a sub-agent's "undo"), `$ORCH restore <id>` puts back
    what the gate passed, keeps a copy of what it replaced, and the recorded verdicts stay; then record again. Run
-   `$ORCH gate <id>` again only for a change that is wanted.
+   `$ORCH gate <id>` again only for a change that is wanted. A running gate holds the run lock too: record, fix,
+   restore and other changes wait, then refuse as busy (exit 4), naming the gate job.
 
 ## Setup (once per project)
 1. `$ORCH init` reads the tracker, the check command (`npm run check` if it exists), the base branch and the
@@ -124,6 +136,19 @@ mechanics and holds the state, a **worker** sub-agent writes the change, a **che
   that changes the merge commit in the main checkout makes it an untested merge (the queue waits for `orch resolve`).
 
 ## Tests and harnesses
+- **Detached gate:** `$ORCH gate <id>` starts a job that survives the coordinator's turn and attaches to it.
+  A second call attaches to the same job. It waits up to `limits.gateWaitSec` (default 900 s); if still running,
+  it exits 4 with an attach-again line. A completed result stays uncollected until an attach returns it;
+  run the same command later to collect that result without starting another gate, while its round and resulting
+  phase still match. Parked and merged runs always refuse a gate. Each attacher keeps its job's identity and
+  receives that job's result even if another caller collects it and starts another job; the last three job receipts
+  are kept. A foreground result supersedes earlier detached receipts too. After collection, another
+  call runs a new gate for a wanted change. Status and next show
+  `gate running (since …)` and the attach command. A job that died without a result is INFRA, never FAIL;
+  the next call starts it again in the same round. `ORCH_GATE_FOREGROUND=1` runs the gate in the foreground
+  as before, for tests or recovery. Both limits are optional; older configs need no migration.
+  Let existing foreground gates finish before updating, and detached jobs finish before rolling back:
+  older commands ignore the new locks and job files, so mixing versions can allow concurrent writes.
 - **Checks must see what the worker sees.** The worker never commits or stages: its new files are untracked until the
   gate stages them. A project check that lists files with git (`git ls-files`, a census or ownership test) must include
   untracked files (`git ls-files --cached --others --exclude-standard`), or it passes for the worker and fails at the
@@ -262,7 +287,7 @@ end a turn while work remains, nothing moves. Two rules and one helper:
   after it cleared, except model restart advice, which is reported once per role and model for the campaign.
   Restart counts include closed cards and runs archived by a split in scope, including split descendants, and only
   events at or after the active campaign's start. Starting another campaign does not count earlier restarts.
-  On a host without `/proc` only a running harness counts as busy. Install it once per project as an OpenClaw script job (no
+  On a host without `/proc`, a running harness or detached gate counts as busy. Install it once per project as an OpenClaw script job (no
   model turn unless it acts): `$ORCH campaign job-script > keeper.js`, then
   `openclaw cron add --agent <agent> --name orch-keeper --every 5m --script keeper.js --session main`. A wake arrives
   as an `[orch keeper]` inter-session message: treat it as the owner's standing mandate, run `$ORCH status` and act.
