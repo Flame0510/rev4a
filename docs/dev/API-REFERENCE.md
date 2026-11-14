@@ -3255,17 +3255,34 @@ valid session, has the secrets in the clear.
 
 ## Subscriptions
 
-ChatGPT (Codex) accounts per agent. The OAuth profile lives in the agent's volume; Rev4a stores nothing. All routes need auth; mutating routes answer **409** when the agent is busy (update, recreate, restore, edit, backup, a subscription login or a subscription disconnect running), stopped, or already doing a subscription change. A login that is starting or waiting keeps the agent busy for up to the 15-minute code lifetime: stop, start, restart, recreate, update, edit, model save and token rotation answer 409 (or skip the agent) until the login ends or is cancelled.
+ChatGPT (Codex) accounts and Claude (Pro/Max) plans per agent. Both live in the agent's own
+volume; Rev4a stores nothing. All routes need auth; mutating routes answer **409** when the agent
+is busy (update, recreate, restore, edit, backup, a subscription login of either provider or a
+subscription disconnect running), stopped, or already doing a subscription change. A login that
+is starting or waiting keeps the agent busy for up to the code lifetime: stop, start, restart,
+recreate, update, edit, model save and token rotation answer 409 (or skip the agent) until the
+login ends or is cancelled.
 
-The read routes `GET /api/subscriptions`, `GET /api/subscriptions/models` and `GET /api/subscriptions/usage` accept an optional `provider=<id>` query parameter, resolved by `providerFromParam` in `lib/subscription-providers.ts` (the one registry of subscription providers; today it has only `openai`, "ChatGPT (Codex)"). Missing or empty means the default provider, so every existing request gets the same answer as before. An unknown value answers **400** `{ "error": "Unknown subscription provider" }`.
+The read routes `GET /api/subscriptions`, `GET /api/subscriptions/models` and
+`GET /api/subscriptions/usage` accept an optional `provider=<id>` query parameter, resolved by
+`providerFromParam` in `lib/subscription-providers.ts` (the one registry of subscription
+providers: `openai`, "ChatGPT (Codex)", and `anthropic`, "Claude (via Claude Code)"). Missing or
+empty means the default provider (`openai`), so every existing request gets the same answer as
+before. An unknown value answers **400** `{ "error": "Unknown subscription provider" }`. The
+Claude routes and answers are documented under [Claude](#claude-claude-code) below; the list form
+of `GET /api/subscriptions` still announces only `openai`, because the page does not render the
+Claude accordion yet.
+
+Every status, model and login answer of the subscription routes carries `Cache-Control: no-store`:
+a status can change between two reads, and the login answers carry a link and an account email.
 
 Status is read with **one `docker exec <container> node -e <script>`** inside the agent (about 0.5 s): the script opens `~/.openclaw/state/openclaw.sqlite` read-only, reads the `authProfiles.store` row and `agents.defaults.model` from `openclaw.json`, and prints one JSON line with only `id, type, provider, email, expiresAt, plan` per profile and the model. `access`, `refresh` and `accountId` are never copied: the tokens do not leave the container. An agent whose state is not where a supported version keeps it (no `node:sqlite`, no state database, no profile table) gets one refusal, "This agent is not on a supported OpenClaw version (2026.9.x). Update it first." (the list of majors comes from `lib/agent-versions.json`), unless its image is a supported version: then the database simply does not exist yet (an agent just created or recreated) and the read fails with `the agent is still starting`; a read that fails gets "Could not read this agent's subscription status: <reason>". `<reason>` is one fixed phrase, never the agent's own text: `state database locked`, `state database unreadable`, `profile store unreadable`, `timed out`, `the read was cut off (timed out)`, `the container is not running`, `the agent answered in an unexpected format`, `the agent is still starting` or `the read failed`. There is no CLI fallback. A failed read is retried by the server up to twice (after 1 s, then 2 s), never an answer that was read; a timeout (12 s per read) is retried once at most and a stopped container not at all, so the worst case is about 27 s and a non-timeout failure costs at most 3 s. How each route answers: `GET /api/subscriptions?agentId=` is **200** with the message in `agent.error`; `POST /api/subscriptions/openai/login` answers **409** (unsupported) or **503** (failed read); a login that ended while the agent could not be read finishes as `failed` with "The login may have succeeded but the agent could not be read: <reason>. Reload to check."; `PUT /api/gateway/agent` with a subscription model answers **409** or **503**; the disconnect job (`POST /api/subscriptions/openai/logout`, then `GET`) ends `failed` with that message when its first read fails, and with "Could not read the subscription status from this agent." when a later check fails. The lookup of accounts behind the models and usage reads reads each agent once, without retries (a failing agent is skipped). The page shows a Retry button next to such a row error. The page therefore loads in steps: the agent list, then one status per row in parallel, then the models. The container list behind these routes is cached 5 s, and the email-to-agent lookup used by the models and usage reads 60 s (dropped by a connect or disconnect).
 
 ### `GET /api/subscriptions`
-The agent list, at once, from docker ps and inspect only (no exec into any agent). **Query:** optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`), and `agentId=<id>` for one agent. **Response:** `{ providers: [{ id: "openai", name: "ChatGPT (Codex)", agents: [{ agentId, name, container, running }] }] }`. One entry per registry provider that has a server implementation here (today only `openai`). `name` is the agent's display name (its `AGENT_NAME`); `container` is the container name.
+The agent list, at once, from docker ps and inspect only (no exec into any agent). **Query:** optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`), and `agentId=<id>` for one agent. **Response:** `{ providers: [{ id: "openai", name: "ChatGPT (Codex)", agents: [{ agentId, name, container, running }] }] }`. One entry per registry provider that has a server implementation announced here; today only `openai`, although Claude's routes exist, because the page does not render the Claude accordion yet. `name` is the agent's display name (its `AGENT_NAME`); `container` is the container name.
 
 ### `GET /api/subscriptions?agentId=<id>`
-One agent's status, read live. **Query:** `agentId` and the optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`). An unsupported or unreadable agent is a row with `error` set to the same messages (not an HTTP error). **Response:** `{ agent: { agentId, name, container, running, connected, email, plan, expiresAt, usesSubscription, primary, fallbacks, error }, action }`. `plan` is the ChatGPT plan, capitalised ("Plus", "Pro"), null when unknown. `action` is the agent's running or last disconnect job (or null), so a reloaded page resumes a running one. A stopped agent has `running: false` and unknown status.
+One agent's status, read live. **Query:** `agentId` and the optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`). An unsupported or unreadable agent is a row with `error` set to the same messages (not an HTTP error). **Response:** `{ agent: { agentId, name, container, running, connected, email, plan, expiresAt, usesSubscription, primary, fallbacks, error }, action }`. `plan` is the ChatGPT plan, capitalised ("Plus", "Pro"), null when unknown. `action` is the agent's running or last disconnect job (or null), so a reloaded page resumes a running one. A stopped agent has `running: false` and unknown status. With `provider=anthropic` the row additionally carries `claude: { state, installed, version }` and `action` is the Claude logout job only; see [Claude](#claude-claude-code).
 
 The additive `agent.profileReferences` array lists all relevant ChatGPT OAuth profiles as
 `{ id, email, plan, expiresAt }`. API-key and other-provider profiles are excluded; access/refresh
@@ -3274,7 +3291,7 @@ not an account selection or adoption result. Older clients may ignore it; newer 
 absence from older responses.
 
 ### `GET /api/subscriptions/models`
-**Query:** optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`). **Response:** `{ models: [{ key, name, contextWindow }], error, pending }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached status read only (an unsupported or unreadable agent cannot be a source). Right after Connect, OpenClaw installs the Codex plugin and hot-reloads its config (about a minute); until then the agent lists no model. Such an empty list is never cached, and the answer carries `pending: true` whenever any successfully read account is still empty, even alongside partial `models` or another account's `error`. Available models are retained and cached independently while pending accounts retry. With no available models the Subscriptions page shows "Loading ChatGPT models…" and the MODEL section keeps "Loading subscription models…", both asking again every 5 s for at most 3 minutes. Independent deadline timers abort fetch/body reads at that limit, keep partial models and publish a retry message. The response remains `{ models, error, pending }`.
+**Query:** optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`). **Response:** `{ models: [{ key, name, contextWindow }], error, pending }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached status read only (an unsupported or unreadable agent cannot be a source). Right after Connect, OpenClaw installs the Codex plugin and hot-reloads its config (about a minute); until then the agent lists no model. Such an empty list is never cached, and the answer carries `pending: true` whenever any successfully read account is still empty, even alongside partial `models` or another account's `error`. Available models are retained and cached independently while pending accounts retry. With no available models the Subscriptions page shows "Loading ChatGPT models…" and the MODEL section keeps "Loading subscription models…", both asking again every 5 s for at most 3 minutes. Independent deadline timers abort fetch/body reads at that limit, keep partial models and publish a retry message. The response remains `{ models, error, pending }`. With `provider=anthropic` the answer lists the models of the connected Claude plans that Claude Code can run (`available: true` only); see [Claude](#claude-claude-code).
 
 ### `GET /api/subscriptions/usage`
 **Query:** `email=<account>` for one account, `refresh=1` to bypass the cache, optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`; a known provider without usage limits → **400** `{ "error": "This subscription provider has no usage limits" }`). **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is OpenClaw's own label, seen as "5h" and "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json` under an in-container `timeout 120`; 11 to 50 s on a slow host) and cached 3 minutes per account, failures included, so the next refresh does not start another CLI. A connect or disconnect does not drop this cache; `refresh=1` is the only way to force a read. One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
@@ -3293,6 +3310,107 @@ Cancels the login, including the process inside the container. **Response:** `{ 
 
 ### `GET /api/subscriptions/openai/logout?agentId=<id>`
 **Response:** `{ job }`, `{ job: null }` when there is none: `{ agentId, kind: "logout", state, error }`, `state` `running` then `done` or `failed`. In memory, one per agent, kept 30 minutes after it ends; while it runs the agent counts as busy.
+
+### Claude (Claude Code)
+
+`provider=anthropic` is a Claude (Pro/Max) plan used through Claude Code inside the agent. Anthropic's
+terms decide the shape of the flow: the sign-in happens in Anthropic's own page, Claude Code exchanges
+the code and keeps the tokens in the agent's volume, and Rev4a never collects, stores or intermediates
+a Claude credential. The code the operator pastes is written **once** to the stdin of the running
+`claude auth login` process and dropped; it is never stored in a job, never logged, never echoed in an
+answer or an error (a refused code is a `400` with "Invalid code" and nothing else). No route reads
+`/root/.claude/.credentials.json` or `/root/.claude.json`, and there is no setup-token method.
+
+Status is read with one `docker exec <container> node -e <script>` inside the agent: it checks
+`/root/.local/bin/claude`, runs `claude --version` and `claude auth status --json` (each under a 15 s
+timeout) and reads `agents.defaults.models` and `agents.defaults.model` from `openclaw.json`, printing
+one JSON line with only `loggedIn`, `authMethod`, `email`, `orgName`, the plan (`subscriptionType` or
+`planTier`, capitalised) and `loginExpiresAt` — plus the installed version and the model runtime ids.
+`claude auth status --json` holds no token; only those keys are copied out regardless. An agent whose
+image is not on a supported OpenClaw line gets a row with `error` set to the same message as ChatGPT,
+"This agent is not on a supported OpenClaw version (2026.9.x). Update it first." (**200**, not an HTTP
+error: the read is `GET /api/subscriptions?agentId=<id>&provider=anthropic`); a failed read puts "Could not read this agent's
+subscription status: <reason>" in the row's `error` (same fixed reasons as ChatGPT). When
+`claude auth status` itself fails (a timeout, a non-JSON answer), the row's `error` is
+"Could not read Claude Code's sign-in state" instead of looking like a plain sign-out.
+
+The state is one of `not-installed` (Claude Code is missing), `signed-out`, `route-off` (signed in, but
+`anthropic/*` does not use Claude Code), `connected` (signed in with `authMethod` `claude.ai`, route on,
+not expired) or `needs-reconnect` (route on, signed out or expired). A sign-in with another method
+(a Console/API account) is not a Claude plan: with the `anthropic/*` rule on it is `needs-reconnect`
+(the operator must sign in again with a Claude plan), and with the rule off it is `signed-out`. In both
+cases the row's `error` says exactly "Claude Code is signed in with an API account, not a Claude plan."
+
+### `GET /api/subscriptions?agentId=<id>&provider=anthropic`
+**Response:** `{ agent, action }`, where `agent` is the usual row (`agentId`, `name`, `container`,
+`running`, `connected`, `email`, `plan`, `expiresAt`, `usesSubscription`, `primary`, `fallbacks`,
+`error`) plus `claude: { state, installed, version }`, and `action` is the agent's `claude-logout` job
+(running or last, or null) — never the ChatGPT one. `connected` is true exactly when `state` is
+`connected`; `usesSubscription` is true when the primary starts with `anthropic/` (a `rev4a/anthropic/…`
+proxy model does not count). `profileReferences` is empty. A stopped agent is `running: false` with
+`claude.state` `not-installed` and nothing read from it.
+
+### `GET /api/subscriptions/models?provider=anthropic`
+**Response:** `{ models: [{ key, name, contextWindow }], error, pending }`. Like the ChatGPT models, from
+connected agents only (one `openclaw models list --provider anthropic --json` per distinct account,
+cached 10 minutes and dropped by a connect or disconnect), keeping only the models whose list entry says
+`available: true`: those are the models Claude Code can run. An empty list is never cached and makes the
+answer `pending: true`, as for ChatGPT.
+
+### `POST /api/subscriptions/anthropic/login`
+**Body:** `{ "agentId": "atlas" }`. Starts Anthropic's own sign-in through Claude Code. When
+`/root/.local/bin/claude` is missing it first installs Claude Code with Anthropic's installer
+(`curl -fsSL https://claude.ai/install.sh | bash`, bounded by `timeout 300`), then runs
+`timeout 600 script -e -qfc "/root/.local/bin/claude auth login" /dev/null` with stdin piped. **Response:** `{ login }`
+with `{ agentId, state, url, email, plan, error }`, `state` one of `starting`, `installing`, `waiting`,
+`verifying`, `connecting`, `connected`, `failed`, `expired`, `cancelled`. `url` is Anthropic's link and
+is shown only when it starts with `https://claude.com/cai/oauth/authorize?` or
+`https://claude.ai/oauth/authorize?`, is at most 2048 characters and carries no whitespace or control
+character: any other link is dropped. When a login is already running for the agent, the same `{ login }`
+is returned with 200. 409 when the agent is stopped, busy, already connected, or not on a supported
+OpenClaw version; 503 when its status cannot be read. The job is in memory, one per agent; a dashboard
+restart loses it, and the in-container `timeout` bounds the orphaned process.
+
+### `GET /api/subscriptions/anthropic/login?agentId=<id>`
+**Response:** `{ login }`, `{ login: null }` when there is none. It carries no code and no token, only the
+link and the outcome. A job that has not finished 300 + 600 + 60 = 960 s after it started counts as
+expired (its agent stops being busy).
+
+### `DELETE /api/subscriptions/anthropic/login?agentId=<id>`
+Cancels the login, including the `claude auth login` process inside the container (found through
+`/proc`; the images have no `ps`). An installer already running keeps its own `timeout 300` and
+does not start a login afterwards. **Response:** `{ login }` with the job as it stands
+(`cancelled`, or its final state if it had already ended), `{ login: null }` when there is none.
+
+### `POST /api/subscriptions/anthropic/login/code`
+**Body:** `{ "agentId": "atlas", "code": "<the code Claude Code shows>" }`. Writes the code to the
+waiting process's stdin (the code followed by a carriage return) and answers `{ login }` with state
+`verifying`. The body is never logged. `400` `{ "error": "Invalid code" }` when the code is not a string
+of 8 to 512 characters from `A-Z a-z 0-9 . _ ~ # + / = -`, or when it contains any control character
+(a newline would feed the process a second line); surrounding spaces are dropped. `409` when no login of
+the agent is waiting for a code or one has already been submitted. On exit 0 the job reads
+`claude auth status --json`: when it says a Claude plan is signed in, the job writes
+`{"agents":{"defaults":{"models":{"anthropic/*":{"agentRuntime":{"id":"claude-cli"}}}}}}` with
+`openclaw config patch --stdin`, reads it back and reports `connected` (with the account email and plan);
+otherwise it reports `failed` with a clear message. A wrong code exits 1 and the job reports
+Anthropic's own sentence ("That code wasn't accepted. …"). `timeout` (124) or the job deadline reports
+`expired`.
+
+### `POST /api/subscriptions/anthropic/logout`
+**Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202**
+`{ job }` at once. The job reverts the `anthropic/` models in `agents.defaults.model` and in the `main`
+entry of `agents.list` (a stuck agent — a `anthropic/` primary with no model of its own — makes the job
+`failed` with the same sentence as ChatGPT), removes the Claude Code runtime rule with
+`openclaw config patch --stdin` (the `anthropic/*` key is sent as `null`; when it was the only key
+`models` itself is nulled, so no empty `models` object is left behind), runs
+`timeout 60 /root/.local/bin/claude auth logout` and reads the status back, which must say logged out.
+The binary stays: it is the runtime the agent uses again on the next connect. 409 when the agent is
+stopped, busy (a running login included) or already has a subscription change running.
+
+### `GET /api/subscriptions/anthropic/logout?agentId=<id>`
+**Response:** `{ job }`, `{ job: null }` when there is none: `{ agentId, kind: "claude-logout", state,
+error }`, `state` `running` then `done` or `failed`. In memory, one per agent across both providers,
+kept 30 minutes after it ends; while it runs the agent counts as busy.
 
 ### `PUT /api/gateway/agent` and subscription models
 A model id sent as `subscription:openai/<id>` is stored as the bare `openai/<id>` (a subscription model); without the prefix every id still gets `rev4a/`, so a Rev4a catalogue model named `openai/…` stays `rev4a/openai/…`. A marked id must match `subscription:openai/[A-Za-z0-9._-]+`, otherwise `400`. When the body carries any marked id the route reads the agent's ChatGPT sign-in first: `409` "This agent is not connected to a ChatGPT subscription." if there is none, `503` if the status cannot be read. When `fallbacks` is omitted the stored ones are kept as they are (a stored bare `openai/<id>` is not re-prefixed). A primary or fallback can therefore be a bare `openai/<id>` subscription model; the agent list shows it as "<id> · ChatGPT", with the `NO FALLBACK` warning when it has no fallback.

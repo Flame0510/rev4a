@@ -21,23 +21,37 @@ const OPENAI = {
   loginPath: '/api/subscriptions/openai/login',
   logoutPath: '/api/subscriptions/openai/logout',
   hasUsage: true,
+  experimental: false,
+};
+
+const ANTHROPIC = {
+  id: 'anthropic',
+  name: 'Claude (via Claude Code)',
+  shortName: 'Claude',
+  modelPrefix: 'anthropic/',
+  loginPath: '/api/subscriptions/anthropic/login',
+  logoutPath: '/api/subscriptions/anthropic/logout',
+  hasUsage: false,
+  experimental: true,
 };
 
 // ---- registry -------------------------------------------------------------------------
 
-test('registry: one entry today, the ChatGPT (Codex) provider', () => {
-  assert.equal(registry.SUBSCRIPTION_PROVIDERS.length, 1);
+test('registry: two entries, ChatGPT (Codex) and Claude (via Claude Code)', () => {
+  assert.equal(registry.SUBSCRIPTION_PROVIDERS.length, 2);
   assert.deepEqual({ ...registry.SUBSCRIPTION_PROVIDERS[0] }, OPENAI);
+  assert.deepEqual({ ...registry.SUBSCRIPTION_PROVIDERS[1] }, ANTHROPIC);
   assert.equal(registry.SUBSCRIPTION_PROVIDERS[0].id, 'openai');
 });
 
 test('registry: a known id gives its entry, the default one is the same object', () => {
   assert.equal(registry.getSubscriptionProvider('openai'), registry.SUBSCRIPTION_PROVIDERS[0]);
+  assert.equal(registry.getSubscriptionProvider('anthropic'), registry.SUBSCRIPTION_PROVIDERS[1]);
   assert.equal(registry.DEFAULT_SUBSCRIPTION_PROVIDER, registry.SUBSCRIPTION_PROVIDERS[0]);
 });
 
 test('registry: anything else is null, prototype keys included', () => {
-  for (const bad of ['nope', undefined, null, 42, {}, [], '__proto__', 'constructor', 'toString', 'OPENAI', '']) {
+  for (const bad of ['nope', undefined, null, 42, {}, [], '__proto__', 'constructor', 'toString', 'OPENAI', 'ANTHROPIC', '']) {
     assert.equal(registry.getSubscriptionProvider(bad), null, String(bad));
   }
 });
@@ -51,10 +65,11 @@ test('provider parameter: missing or empty is the default provider', () => {
 
 test('provider parameter: a known id gives its entry', () => {
   assert.equal(registry.providerFromParam('openai'), registry.SUBSCRIPTION_PROVIDERS[0]);
+  assert.equal(registry.providerFromParam('anthropic'), registry.SUBSCRIPTION_PROVIDERS[1]);
 });
 
 test('provider parameter: unknown values are null, case-sensitive', () => {
-  for (const bad of ['anthropic', 'OPENAI', '__proto__', 'constructor', 'openai ', ' openai']) {
+  for (const bad of ['claude', 'Anthropic', 'OPENAI', '__proto__', 'constructor', 'openai ', ' openai', 'anthropic/']) {
     assert.equal(registry.providerFromParam(bad), null, bad);
   }
 });
@@ -85,6 +100,19 @@ test('copy: the ChatGPT strings are exactly today\'s, character for character', 
     c.disconnectMessage('atlas', 'deepseek-flash'),
     'Disconnect atlas? It goes back to deepseek-flash and signs out of ChatGPT. Connecting again needs a new code.',
   );
+});
+
+test('copy: the Claude entry names Claude and Claude Code in plain English', () => {
+  const c = copy.getProviderCopy('anthropic');
+  assert.ok(c);
+  for (const key of ['modelsUnavailable', 'modelsLoading', 'modelsPending', 'usageShared', 'accountLabel', 'codeHint', 'waiting']) {
+    assert.equal(typeof c[key], 'string', key);
+    assert.ok(c[key].length > 0, key);
+  }
+  assert.equal(c.connectTitle('atlas'), 'Connect Claude to atlas');
+  assert.match(c.disconnectMessage('atlas', 'deepseek-flash'), /^Disconnect atlas\? /);
+  assert.match(c.disconnectMessage('atlas', 'deepseek-flash'), /Claude Code/);
+  assert.match(c.codeHint, /Anthropic/);
 });
 
 // ---- default provider binding ---------------------------------------------------------

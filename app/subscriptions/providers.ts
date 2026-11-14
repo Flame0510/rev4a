@@ -40,8 +40,21 @@ const CHATGPT: SubscriptionProviderCopy = {
   disconnectMessage: (agentName, backTo) => `Disconnect ${agentName}? It goes back to ${backTo} and signs out of ChatGPT. Connecting again needs a new code.`,
 };
 
+const CLAUDE: SubscriptionProviderCopy = {
+  modelsUnavailable: 'Claude models are still unavailable. Refresh to try again.',
+  modelsLoading: 'Loading Claude models…',
+  modelsPending: 'The agent is loading the Claude models after Connect; this can take a moment.',
+  usageShared: 'The plan is shared with your own use of Claude Code on the same account.',
+  accountLabel: 'Claude account',
+  connectTitle: (agentName) => `Connect Claude to ${agentName}`,
+  codeHint: 'Sign in on Anthropic with your Claude account, then paste here the code Claude Code shows.',
+  waiting: 'Waiting for you to finish on Anthropic…',
+  disconnectMessage: (agentName, backTo) => `Disconnect ${agentName}? It goes back to ${backTo} and signs out of Claude Code. Connecting again needs a new sign-in.`,
+};
+
 export const SUBSCRIPTION_PROVIDER_COPY: Readonly<Record<SubscriptionProviderId, SubscriptionProviderCopy>> = {
   openai: CHATGPT,
+  anthropic: CLAUDE,
 };
 
 /** The copy for a provider id, or null for anything this build does not know. */

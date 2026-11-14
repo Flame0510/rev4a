@@ -3,14 +3,17 @@
  * its components and the read routes.
  *
  * A provider entry says how Rev4a talks to one provider: the id the API uses, the name and
- * short name, the prefix of its model ids, its login and logout routes, and whether it has
- * usage limits to show. It carries no UI text (that lives in `app/subscriptions/providers.ts`)
- * and no Node or server imports, because the page imports this module too.
+ * short name, the prefix of its model ids, its login and logout routes, whether it has usage
+ * limits to show, and whether it is still experimental. It carries no UI text (that lives in
+ * `app/subscriptions/providers.ts`) and no Node or server imports, because the page imports
+ * this module too.
  *
- * The list has one entry today, ChatGPT (Codex). Claude (Claude Code) is added by FEAT-25b/c.
+ * Two entries: ChatGPT (Codex) and Claude (via Claude Code). `getProviderList()` still announces
+ * only the providers with a server implementation, so the page shows ChatGPT alone until the
+ * Claude UI ships (FEAT-25c).
  */
 
-export type SubscriptionProviderId = 'openai';
+export type SubscriptionProviderId = 'openai' | 'anthropic';
 
 export interface SubscriptionProvider {
   /** The id the API uses and the `provider` query parameter takes. */
@@ -27,6 +30,11 @@ export interface SubscriptionProvider {
   readonly logoutPath: string;
   /** Whether the provider has usage limits (the usage block and route). */
   readonly hasUsage: boolean;
+  /**
+   * Whether the provider is still experimental: its flow is verified but not offered everywhere
+   * yet. The page does not render an experimental provider on its own.
+   */
+  readonly experimental: boolean;
 }
 
 const OPENAI: SubscriptionProvider = Object.freeze({
@@ -37,10 +45,22 @@ const OPENAI: SubscriptionProvider = Object.freeze({
   loginPath: '/api/subscriptions/openai/login',
   logoutPath: '/api/subscriptions/openai/logout',
   hasUsage: true,
+  experimental: false,
+});
+
+const ANTHROPIC: SubscriptionProvider = Object.freeze({
+  id: 'anthropic',
+  name: 'Claude (via Claude Code)',
+  shortName: 'Claude',
+  modelPrefix: 'anthropic/',
+  loginPath: '/api/subscriptions/anthropic/login',
+  logoutPath: '/api/subscriptions/anthropic/logout',
+  hasUsage: false,
+  experimental: true,
 });
 
 /** Every provider this client and server know, in display order. */
-export const SUBSCRIPTION_PROVIDERS: readonly SubscriptionProvider[] = Object.freeze([OPENAI]);
+export const SUBSCRIPTION_PROVIDERS: readonly SubscriptionProvider[] = Object.freeze([OPENAI, ANTHROPIC]);
 
 /** The provider used when a request does not name one. */
 export const DEFAULT_SUBSCRIPTION_PROVIDER: SubscriptionProvider = OPENAI;

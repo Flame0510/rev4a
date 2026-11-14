@@ -1,6 +1,6 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-11-06
+> **Last updated:** 2026-11-14
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
 
@@ -70,6 +70,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How much of my ChatGPT quota is left?" — Open the Subscriptions page (`/subscriptions`): at the top of "ChatGPT (Codex)" each connected account shows its 5-hour and weekly usage with the reset times (Refresh re-reads it; it is cached for 3 minutes). The agent panel's MODEL section shows the same as "5h 86% left · week 98% left". The quota is the account's, shared by all agents signed in with it and your own Codex use.
 - "How do I manage agent model fallbacks?"
 - "How do I use my ChatGPT subscription in an agent?" — Open the Subscriptions page (`/subscriptions`), open "ChatGPT (Codex)", press Connect on the agent, open the link, enter the code with your ChatGPT account, then open the agent's panel on the Agents page and pick the subscription model in its MODEL section (primary or fallback, next to the Rev4a proxy models). If no fallback is set, the previous model is pre-filled as the first fallback and is used when the subscription reaches its usage limit. Disconnect on the Subscriptions page returns the agent to its own model and signs the account out.
+- "Can I use a Claude Pro or Max plan in an agent?" — Not from the page yet: the Subscriptions page shows ChatGPT only. Rev4a's subscription API already supports a Claude plan through Claude Code (install it in the agent, Anthropic's own sign-in with the code you paste, the `anthropic/*` models switched to the Claude Code runtime, status and disconnect), but until the Claude accordion ships the page does not offer it. The sign-in stays inside the agent and Rev4a stores neither the code nor a token.
 - "How do I connect an agent to Telegram?"
 - "How do I approve a pairing code?"
 

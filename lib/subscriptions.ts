@@ -238,8 +238,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
  * Whether the container's image is on a supported OpenClaw line (major.minor: any 2026.9.x build
  * is the 2026.9 line). 'unknown' when the version cannot be told, which includes a Docker that
  * does not answer in time: the slow `openclaw --version` exec fallback is not used here.
+ *
+ * Exported for the other provider modules (Claude), whose reads do not use the profile table and
+ * need this check to answer the same "not on a supported version" refusal.
  */
-async function runsSupportedVersion(container: string): Promise<'supported' | 'unsupported' | 'unknown'> {
+export async function runsSupportedVersion(container: string): Promise<'supported' | 'unsupported' | 'unknown'> {
   try {
     const info = await dockerRequestJson<{ Image?: string }>('GET', `/containers/${encodeURIComponent(container)}/json`, VERSION_CHECK_TIMEOUT_MS);
     if (!info?.Image) return 'unknown';
@@ -318,7 +321,11 @@ function sameModel(a: AgentModelRef, b: AgentModelRef): boolean {
   return x.primary === y.primary && x.fallbacks.join('\n') === y.fallbacks.join('\n');
 }
 
-async function writeDefaultModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
+/**
+ * Write `agents.defaults.model` and read it back. Exported for the other provider module (Claude),
+ * which reverts its own model prefix through the same checked write.
+ */
+export async function writeDefaultModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
   // A null primary is left out of the patch (the key stays as it is) rather than sent as null.
   const body = model.primary === null ? { fallbacks: model.fallbacks } : model;
   const patch = JSON.stringify({ agents: { defaults: { model: body } } });
@@ -539,7 +546,7 @@ async function requireRunning(agentId: unknown): Promise<AgentContainer> {
 }
 
 /** The `agents.list` of the agent's configuration, or null when it cannot be read or has none. */
-async function readAgentList(container: string): Promise<Record<string, unknown>[] | null> {
+export async function readAgentList(container: string): Promise<Record<string, unknown>[] | null> {
   const raw = await dockerExecNoFail(container, ['cat', CONFIG_PATH], { timeoutMs: 8000 });
   if (!raw.trim()) return null;
   try {
@@ -553,8 +560,9 @@ async function readAgentList(container: string): Promise<Record<string, unknown>
 /**
  * Put `model` on the `id: main` entry of `agents.list`. The patch carries the whole list (an
  * array is replaced as a whole), read just before, with only that entry's model changed.
+ * Exported for the other provider module (Claude), which reverts the same entry.
  */
-async function writeMainModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
+export async function writeMainModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
   // The list is read, changed and sent back whole: hold the agent's config lock across all three,
   // or a patch landing in between would be overwritten by the stale list.
   await withAgentConfigLock(container, async () => {

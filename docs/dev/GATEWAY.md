@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-11-10
+> **Last updated:** 2026-11-14
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -559,6 +559,32 @@ Restart the Rev4a server (via systemd).
    `gateway.controlUi` is hot-applied (`openclaw gateway restart` does nothing inside a
    container, so the route no longer runs it). The Gateway sync (`PUT /api/gateway/provider`)
    never touches model references — only `models.providers` is synced.
+
+---
+
+## Subscription runtimes (`anthropic/*` → Claude Code)
+
+A Claude (Pro/Max) plan is used through **Claude Code** installed inside the agent, not through an
+API key and not through the Rev4a proxy. OpenClaw only routes `anthropic/*` models to it when the
+agent's configuration says so, and that rule is the one runtime key the subscription writes next to
+the model refs:
+
+```json
+{ "agents": { "defaults": { "models": { "anthropic/*": { "agentRuntime": { "id": "claude-cli" } } } } } }
+```
+
+`POST /api/subscriptions/anthropic/login/code` writes it with `openclaw config patch --stdin` after
+Claude Code reports a `claude.ai` sign-in, and reads it back before reporting connected. Disconnect
+removes exactly that key: `{ "agents": { "defaults": { "models": { "anthropic/*": null } } } }`, or
+`{ "agents": { "defaults": { "models": null } } }` when `anthropic/*` is the only key, so no empty
+`"models": {}` is left behind. Other model keys are never touched. Rev4a does not use OpenClaw's
+`models auth login --provider anthropic`: that method is offline-only and refused while the Gateway
+runs.
+
+The rule matters only for the bare subscription references: a `rev4a/anthropic/<id>` model goes
+through the Rev4a proxy as before, exactly like `openai/<id>` vs `rev4a/openai/<id>`. Removing the
+rule and reverting the model refs is what Disconnect does; the Claude Code binary itself stays in
+`/root/.local/bin`, in the agent's data volume, so the next connect does not reinstall it.
 
 ---
 

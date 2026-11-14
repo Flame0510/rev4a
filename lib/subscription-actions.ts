@@ -1,11 +1,12 @@
 /**
  * Background job for the one slow subscription action of an agent: disconnecting it (it stops
- * using the subscription model, then signs out). Like the device-code login
- * (lib/subscription-login.ts) it is in-memory, one per agent: the route answers 202 at once,
- * the page polls the job and refreshes that one row when it ends. A dashboard restart loses the
- * job record, not the work in the agent: the page's next read of the row shows what the agent
- * now holds. Choosing the model is not a job: the agent panel's MODEL section does it through
- * PUT /api/gateway/agent.
+ * using the subscription model, then signs out). There are two kinds, one per provider: `logout`
+ * (ChatGPT, lib/subscriptions.ts) and `claude-logout` (Claude Code, lib/subscription-claude.ts).
+ * Like the logins (lib/subscription-login.ts, lib/subscription-claude.ts) the jobs are in-memory,
+ * one per agent across both providers: the route answers 202 at once, the page polls the job and
+ * refreshes that one row when it ends. A dashboard restart loses the job record, not the work in
+ * the agent: the page's next read of the row shows what the agent now holds. Choosing the model is
+ * not a job: the agent panel's MODEL section does it through PUT /api/gateway/agent.
  *
  * A running job makes the agent busy (lib/agent-busy.ts), so a recreate, update or edit
  * cannot start meanwhile. The work itself runs under the per-agent lock of
@@ -14,8 +15,9 @@
 import { isValidAgentId } from '@/lib/container';
 import { SubscriptionError, disconnectAgent } from '@/lib/subscriptions';
 import { waitForLoginExit } from '@/lib/subscription-login';
+import { disconnectClaudeAgent, waitForClaudeLoginExit } from '@/lib/subscription-claude';
 
-export type ActionKind = 'logout';
+export type ActionKind = 'logout' | 'claude-logout';
 export type ActionState = 'running' | 'done' | 'failed';
 
 export interface ActionView {
@@ -63,8 +65,12 @@ export function startAction(kind: ActionKind, agentId: unknown): ActionView {
   prune();
   const j: Job = { agentId, kind, state: 'running', error: null, finishedAt: null };
   jobs().set(agentId, j);
-  // A login that just connected may still be writing the config: let it finish first.
-  const work: Promise<unknown> = waitForLoginExit(agentId).then((): Promise<unknown> => disconnectAgent(agentId));
+  // A login that just connected may still be writing the config: let it finish first. A
+  // Claude login finishes its own route patch before it reports connected, so its tail is
+  // bounded by isClaudeLoginActive.
+  const work: Promise<unknown> = kind === 'claude-logout'
+    ? waitForClaudeLoginExit(agentId).then((): Promise<unknown> => disconnectClaudeAgent(agentId))
+    : waitForLoginExit(agentId).then((): Promise<unknown> => disconnectAgent(agentId));
   work.then(
     () => { j.state = 'done'; j.finishedAt = Date.now(); },
     (e: unknown) => {

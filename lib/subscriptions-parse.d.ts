@@ -62,7 +62,7 @@ export function readWithRetry<T extends { status: string; reason?: string }>(rea
 export function formatPlan(plan: unknown): string | null;
 export function parseStatusJson(input: unknown): StatusRead | null;
 export function parseModelList(input: unknown): SubscriptionModel[] | null;
-export function isSubscriptionModel(id: unknown): boolean;
+export function isSubscriptionModel(id: unknown, prefix?: string): boolean;
 export function normalizeModel(model: AgentModelRef): ModelPair;
 export function stopSubscriptionModel(model: AgentModelRef): AgentModelRef;
 export function mapStoreProfile(id: string, x: unknown): StatusProfile;
@@ -98,6 +98,7 @@ export function subscriptionChip(primary: string | null | undefined, fallbackCou
 export function revertSubscriptionModel(
   model: AgentModelRef,
   homePrimary?: string | null,
+  prefix?: string,
 ): { stuck: boolean; changed: boolean; primary: string | null; fallbacks: string[] };
 export function keepStoredRef(id: string): string;
 /** "2026.9.4" to "2026.9"; null when there are no two leading numbers. */

@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-10
+> **Last updated:** 2026-11-14
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -837,7 +837,7 @@ assignment (only `last_error`: a row already delivered keeps `synced_at`; nothin
 
 ---
 
-### Subscriptions (ChatGPT / Codex)
+### Subscriptions (ChatGPT / Codex, Claude / Claude Code)
 
 A ChatGPT Plus or Pro account is connected **per agent**, with OpenClaw's device-code login (`openclaw models auth login --provider openai --device-code`). The resulting OAuth profile lives in the **agent's volume** (`~/.openclaw/state/openclaw.sqlite`), so it survives restart and recreate; **Rev4a never stores or sees a token** (there is no table and no file for it). The access token lasts about 10 days and OpenClaw refreshes it itself.
 
@@ -846,6 +846,8 @@ The login runs as an in-memory job (`lib/subscription-login.ts`, one per agent):
 **Usage limits.** The Codex quota (a 5-hour and a weekly window) belongs to the ChatGPT account, not to an agent: every agent signed in with it and the owner's own Codex use draw from the same windows. So `lib/subscription-usage.ts` reads it once per account email, from one running connected agent (found with the fast status read, cached 60 s), with `openclaw status --usage --json` run as `timeout 120 sh -c 'OPENCLAW_GATEWAY_URL=ws://127.0.0.1:3000 openclaw status --usage --json'` (11 to 50 s on a slow host, about 360 MB; the host-side deadline is 130 s, and empty output is a failure). `lib/subscriptions-parse.js` (`parseUsageStatus`) keeps only the `openai` provider's email, plan, window label, percent and reset time. The result, and a failed read too, is cached per account for 3 minutes (a result read before a connect or disconnect is not stored, but the cache is not dropped by them: the quota belongs to the account; only `refresh=1` forces a read), concurrent requests share one call, and one account failing never fails the others.
 
 A subscription model is used as `agents.defaults.model.primary = openai/<id>` (or as a fallback), chosen in the agent panel next to the Rev4a proxy models; when it is chosen as primary on an agent with no fallbacks, the panel pre-fills the former primary as `fallbacks[0]` (the operator can remove it). So when the account's Codex usage limit is reached ("You've reached your Codex subscription usage limit"), OpenClaw falls back by itself to the `rev4a/<model>` through the Rev4a proxy. The quota is the account's, **shared with the owner's own Codex use**. Nothing in this feature writes `models.providers.*`.
+
+**Claude (Pro/Max), server side (FEAT-25b).** A second provider entry (`anthropic`, "Claude (via Claude Code)") is served by `lib/subscription-claude.ts` and `lib/subscription-claude-parse.ts`. Sign-in must complete in Anthropic's own flow: Rev4a installs Claude Code in the agent on the first connect (Anthropic's installer, `/root/.local/bin/claude`, in the agent's data volume), starts `timeout 600 script -e -qfc "claude auth login" /dev/null` with stdin piped, shows only the link it recognises (`https://claude.com/cai/oauth/authorize?` or `https://claude.ai/oauth/authorize?`), takes the code the operator pastes exactly once, writes it to that process's stdin and drops it — it is never stored in the job, logged, or returned in a view, an error or a response. Claude Code exchanges the code and keeps the tokens; no route reads a Claude credential file and there is no setup-token method. On exit 0 the job reads `claude auth status --json` and, when the account is a Claude plan (`authMethod` `claude.ai`), writes `agents.defaults.models['anthropic/*'].agentRuntime.id = 'claude-cli'` with `openclaw config patch --stdin`, reads it back and reports connected. Status is one `node -e` exec per row (binary, `--version`, `auth status --json`, and the two config keys), the state is `not-installed` / `signed-out` / `route-off` / `connected` / `needs-reconnect`, and disconnect reverts the `anthropic/` model refs, removes exactly that rule (nulling `models` when it was the only key) and runs Claude Code's own `auth logout`. The job is in memory, one per agent, bounded by a 960 s deadline while starting, installing or waiting (verifying and connecting are bounded by their own operation timeouts), and makes the agent busy like the ChatGPT login; disconnect is a `claude-logout` job in `lib/subscription-actions.ts`. The Subscriptions page does not render this provider yet (FEAT-25c): `getProviderList()` announces only `openai`.
 
 ## 5. Lifecycle Orchestration
 

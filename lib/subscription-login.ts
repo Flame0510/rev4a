@@ -263,7 +263,7 @@ export async function startLogin(agentId: unknown): Promise<LoginView> {
       // Lazy: lib/agent-busy.ts imports this module for isLoginActive.
       const { agentBusyReason } = await import('@/lib/agent-busy');
       // The placeholder itself is "a login running": look only at the other operations.
-      const busy = await agentBusyReason(a.agentId, { ignoreLogin: true });
+      const busy = await agentBusyReason(a.agentId, { ignoreLogin: 'openai' });
       if (busy) throw new SubscriptionError(409, busy);
 
       // A failed read is never "not connected"; an agent without the 2026.9.x profile table cannot connect.
@@ -300,11 +300,11 @@ export async function cancelLogin(agentId: string, as: 'cancelled' | 'expired' =
   const j = jobs().get(agentId);
   if (!j) return null;
   if (!ACTIVE.includes(j.state)) return view(j);
+  // finish() clears the child: take it first, or the host-side `docker exec` is never killed.
+  const child = j.child;
   j.cancelled = true;
   if (as === 'expired') finish(j, 'expired', 'The code expired before it was entered. Start again for a new one.');
   else finish(j, 'cancelled');
-  const child = j.child;
-  j.child = null;
   child?.kill('SIGTERM');
   // Killing the docker client leaves the process inside. The agent image has no pkill, so the
   // login (and its `timeout`/`script` wrappers) is found through /proc; the script is fixed
