@@ -375,7 +375,13 @@ test('stop codex script: valid sh, kills only the Codex runtime, never its own s
   execFileSync('sh', ['-n', '-c', STOP_CODEX_SCRIPT]);
   // The case pattern on real command lines seen in an agent (2026-10-09).
   const match = (cmd) => execFileSync('sh', ['-c', 'case "$1" in */openclaw-codex-*/node_modules/@openai/codex*) echo y;; *) echo n;; esac', 'x', cmd], { encoding: 'utf8' }).trim();
-  assert.ok(STOP_CODEX_SCRIPT.includes('*/openclaw-codex-*/node_modules/@openai/codex*'));
+  // The glob is written with a quote inside the word, so the script text never matches itself.
+  assert.ok(STOP_CODEX_SCRIPT.includes('*/openclaw-codex-*/node_modules/@openai/"codex"*'));
+  assert.equal(match(STOP_CODEX_SCRIPT), 'n', 'the script text does not match its own pattern (it is in the cmdline of its sh -c wrapper)');
+  const own = STOP_CODEX_SCRIPT.match(/case "\$c" in (.+?)\) kill/)[1];
+  const ownMatch = (cmd) => execFileSync('sh', ['-c', 'case "$1" in ' + own + ') echo y;; *) echo n;; esac', 'x', cmd], { encoding: 'utf8' }).trim();
+  assert.equal(ownMatch('node -r /proc/.reset /root/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openai/codex/bin/codex.js app-server'), 'y');
+  assert.equal(ownMatch(STOP_CODEX_SCRIPT), 'n');
   assert.equal(match('node --no-opt -r /proc/.reset /root/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openai/codex/bin/codex.js app-server'), 'y');
   assert.equal(match('/root/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex app-server'), 'y');
   assert.equal(match('node /usr/local/bin/openclaw gateway --bind lan --port 3000'), 'n');

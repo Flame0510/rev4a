@@ -184,7 +184,10 @@ test('subscription line: bound to the openai descriptor, never to the default pr
   assert.match(source, /const FOUND_PROVIDER = getSubscriptionProvider\('openai'\);/);
   assert.match(source, /if \(!FOUND_PROVIDER\) throw/);
   assert.equal(/DEFAULT_SUBSCRIPTION_PROVIDER/.test(source), false);
-  assert.match(source, /provider=anthropic/);
+  // The Claude row is read once, by ModelSection, and passed down: the line reads nothing of its own.
+  assert.match(source, /claudeStatus: ClaudeStatus \| null;/);
+  assert.equal(/useClaudeStatus/.test(source), false);
+  assert.equal(/api\/subscriptions\?agentId/.test(source), false);
 });
 
 test('page: the provider parameter takes only the id, and the full provider list is not imported', () => {

@@ -81,7 +81,7 @@ const config = () => ({
 });
 
 /** The route with a real in-memory openclaw.json; every read and write is visible. */
-function harness({ claudeState = 'connected', claudeThrows = false, claudeFailure = null, profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture' } = {}) {
+function harness({ claudeState = 'connected', claudeError = null, claudeThrows = false, claudeFailure = null, profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture' } = {}) {
   let stored = config();
   const calls = { openai: 0, claude: 0, writes: 0 };
   const execSync = (command, options = {}) => {
@@ -110,7 +110,7 @@ function harness({ claudeState = 'connected', claudeThrows = false, claudeFailur
         calls.claude++;
         if (claudeFailure) throw claudeFailure;
         if (claudeThrows) throw new Error('agent unreadable');
-        return { claude: { state: claudeState } };
+        return { claude: { state: claudeState }, error: claudeError };
       },
     },
   });
@@ -161,6 +161,23 @@ await test('anthropic mark: a SubscriptionError 503 read failure answers 503 wit
   assert.equal(res.status, 503);
   assert.equal(res.body.error, message);
   assert.equal(h.calls.writes, 0);
+});
+
+await test('anthropic mark: a row carrying an error is refused (409 unsupported line, 503 for any other error)', async () => {
+  const unsupported = 'This agent is not on a supported OpenClaw version (2026.9.x). Update it first.';
+  const h = harness({ claudeState: 'not-installed', claudeError: unsupported });
+  const res = await put(h.route, { containerName: 'agent_fixture', model: 'subscription:anthropic/claude-haiku-5-5' });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, unsupported);
+  assert.equal(h.calls.writes, 0);
+
+  for (const claudeState of ['connected', 'route-off']) {
+    const failed = harness({ claudeState, claudeError: 'Could not read the agent configuration.' });
+    const denied = await put(failed.route, { containerName: 'agent_fixture', model: 'subscription:anthropic/claude-haiku-5-5' });
+    assert.equal(denied.status, 503, claudeState);
+    assert.equal(denied.body.error, 'Could not read the agent configuration.');
+    assert.equal(failed.calls.writes, 0);
+  }
 });
 
 await test('bad ids: leading dots, path traversal, spaces, slashes and an empty id are refused before any read', async () => {

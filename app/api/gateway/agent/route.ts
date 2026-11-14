@@ -164,13 +164,19 @@ export async function PUT(request: NextRequest) {
       if (!agentId) return notConnected;
       try {
         const claude = await readClaudeAgent(agentId);
+        // `readClaudeAgent` reports a failed read as a row carrying `error`, not as an exception.
+        if (claude.error === UNSUPPORTED_AGENT_MESSAGE) {
+          return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
+        }
+        // Any other error (an unreadable status or configuration, an API account) is not "not connected".
+        if (claude.error) return NextResponse.json({ status: 'error', error: claude.error }, { status: 503 });
         if (claude.claude.state !== 'connected') return notConnected;
       } catch (e) {
-        // An unreadable status is not "not connected": answer with the read failure, as ChatGPT does.
+        // It still throws for an invalid or unknown agent (a SubscriptionError 503 is passed on).
         if (e instanceof SubscriptionError && e.status === 503) {
           return NextResponse.json({ status: 'error', error: e.message }, { status: 503 });
         }
-        // Invalid or unknown agent, or an unreadable status: no usable Claude sign-in to store a model for.
+        // No usable Claude sign-in to store a model for.
         return notConnected;
       }
     }

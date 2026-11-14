@@ -23,20 +23,22 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 150;
 
+const NO_STORE = { 'Cache-Control': 'no-store' };
+
 export async function GET(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied as any;
   try {
     const params = new URL(request.url).searchParams;
     const provider = providerFromParam(params.get('provider'));
-    if (!provider) return NextResponse.json({ error: 'Unknown subscription provider' }, { status: 400 });
-    if (!provider.hasUsage) return NextResponse.json({ error: 'This subscription provider has no usage limits' }, { status: 400 });
+    if (!provider) return NextResponse.json({ error: 'Unknown subscription provider' }, { status: 400, headers: NO_STORE });
+    if (!provider.hasUsage) return NextResponse.json({ error: 'This subscription provider has no usage limits' }, { status: 400, headers: NO_STORE });
     const email = params.get('email')?.trim() || null;
-    if (email && email.length > 200) return NextResponse.json({ error: 'Invalid email' }, { status: 400 });
+    if (email && email.length > 200) return NextResponse.json({ error: 'Invalid email' }, { status: 400, headers: NO_STORE });
     const opts = { email, refresh: params.get('refresh') === '1' };
-    return NextResponse.json(provider.id === 'anthropic' ? await getClaudeUsage(opts) : await getSubscriptionUsage(opts));
+    return NextResponse.json(provider.id === 'anthropic' ? await getClaudeUsage(opts) : await getSubscriptionUsage(opts), { headers: NO_STORE });
   } catch (e) {
-    if (e instanceof SubscriptionError) return NextResponse.json({ error: e.message }, { status: e.status });
-    return NextResponse.json({ error: 'Could not read the usage' }, { status: 500 });
+    if (e instanceof SubscriptionError) return NextResponse.json({ error: e.message }, { status: e.status, headers: NO_STORE });
+    return NextResponse.json({ error: 'Could not read the usage' }, { status: 500, headers: NO_STORE });
   }
 }

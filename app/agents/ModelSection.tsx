@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, RemoveButton, Select } from '../components/ui';
-import SubscriptionLine, { type SubscriptionStatus } from './SubscriptionLine';
+import SubscriptionLine, { isClaudeConnected, type ClaudeStatus, type SubscriptionStatus } from './SubscriptionLine';
 
 interface ModelOption {
   id: string;
@@ -116,7 +116,7 @@ export default function ModelSection({
   const [subModels, setSubModels] = useState<SubModel[] | null>(null);
   const [subModelsError, setSubModelsError] = useState<string | null>(null);
   /** The Claude connection of the same agent, read apart from the ChatGPT one. */
-  const [claudeSub, setClaudeSub] = useState<(SubscriptionStatus & { claude?: { state: string } }) | null>(null);
+  const [claudeSub, setClaudeSub] = useState<(SubscriptionStatus & ClaudeStatus) | null>(null);
   const [claudeModels, setClaudeModels] = useState<SubModel[] | null>(null);
   const [claudeModelsError, setClaudeModelsError] = useState<string | null>(null);
   const [subKey, setSubKey] = useState(0);
@@ -166,7 +166,7 @@ export default function ModelSection({
         );
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.agent) throw new Error('unavailable');
-        if (claudeAbortRef.current === controller) setClaudeSub(json.agent as SubscriptionStatus & { claude?: { state: string } });
+        if (claudeAbortRef.current === controller) setClaudeSub(json.agent as SubscriptionStatus & ClaudeStatus);
       } catch (e) {
         if ((e as Error)?.name === 'AbortError') return;
         if (claudeAbortRef.current === controller) setClaudeSub(null);
@@ -231,7 +231,7 @@ export default function ModelSection({
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, [agentId, subConnected]);
 
-  const claudeConnected = !!claudeSub && claudeSub.claude?.state === 'connected' && !claudeSub.error;
+  const claudeConnected = isClaudeConnected(claudeSub);
   useEffect(() => {
     setClaudeModels(null);
     setClaudeModelsError(null);
@@ -557,7 +557,7 @@ export default function ModelSection({
             )}
           </div>
 
-          <SubscriptionLine agentId={agentId} status={sub} loading={subLoading} modelsLoading={subConnected && subModels === null} claudeModelsLoading={claudeConnected && claudeModels === null} />
+          <SubscriptionLine status={sub} claudeStatus={claudeSub} loading={subLoading} modelsLoading={subConnected && subModels === null} claudeModelsLoading={claudeConnected && claudeModels === null} />
           {subModelsError && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{subModelsError}</div>}
           {claudeModelsError && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{claudeModelsError}</div>}
 

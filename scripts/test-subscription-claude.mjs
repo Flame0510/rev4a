@@ -580,6 +580,151 @@ test('server module: the code is written once and never stored, logged or return
   assert.equal(body.includes('j.' + 'code '), false, 'the code is never put on the job');
 });
 
+/** Evaluates a fixed `const NAME = '...' + '...';` script constant out of a TypeScript source. */
+function scriptConstant(file, name) {
+  const source = fsx.readFileSync(new URL(file, import.meta.url), 'utf8');
+  const start = source.indexOf(`const ${name} =`);
+  assert.notEqual(start, -1, `${name} in ${file}`);
+  const end = source.indexOf(";\n", start);
+  return vm.runInNewContext(source.slice(start + `const ${name} =`.length, end));
+}
+const globMatches = (script, cmd) => {
+  const pattern = script.match(/case "\$c" in (.+?)\) \[/)[1];
+  return execFileSync('sh', ['-c', 'case "$1" in ' + pattern + ') echo y;; *) echo n;; esac', 'x', cmd], { encoding: 'utf8' }).trim() === 'y';
+};
+
+test('kill scripts: the script text never matches its own pattern, and the pattern still covers the real command lines', () => {
+  const cases = [
+    ['../lib/subscription-claude.ts', 'KILL_CLAUDE_SCRIPT', 'claude auth login', [
+      'timeout 960 script -e -qfc /root/.local/bin/claude auth login /dev/null',
+      'script -e -qfc /root/.local/bin/claude auth login /dev/null',
+      'sh -c /root/.local/bin/claude auth login',
+    ]],
+    ['../lib/subscription-login.ts', 'KILL_LOGIN_SCRIPT', 'models auth login --provider openai --device-code', [
+      'timeout 960 script -e -qfc openclaw models auth login --provider openai --device-code /dev/null',
+      'openclaw models auth login --provider openai --device-code',
+    ]],
+  ];
+  for (const [file, name, phrase, commands] of cases) {
+    const script = scriptConstant(file, name);
+    execFileSync('sh', ['-n', '-c', script]);
+    assert.equal(script.includes(phrase), false, `${name}: the script text must not hold \"${phrase}\" contiguously`);
+    // The wrapper that runs it (`timeout -k 1 5 sh -c '<script>'`) has the script in its command line.
+    assert.equal(globMatches(script, `timeout -k 1 5 sh -c ${script}`), false, `${name}: does not match its own wrapper`);
+    for (const cmd of commands) assert.equal(globMatches(script, cmd), true, `${name}: covers ${cmd}`);
+    assert.equal(globMatches(script, 'openclaw models auth login --provider anthropic'), false);
+  }
+});
+
+test('cancel: once the code is submitted nothing changes, and a disconnect needs a readable configuration', () => {
+  const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
+  const cancel = source.slice(source.indexOf('export async function cancelClaudeLogin'));
+  const body = cancel.slice(0, cancel.indexOf('\n}'));
+  const guard = body.indexOf('if (j.codeSubmitted) return view(j);');
+  assert.notEqual(guard, -1, 'a submitted code returns the current view');
+  assert.ok(guard < body.indexOf('j.cancelled = true'), 'before anything is changed');
+  assert.ok(guard < body.indexOf('KILL_CLAUDE_SCRIPT'), 'and before the sign-in is killed');
+  const remove = source.slice(source.indexOf('async function removeClaudeRoute'));
+  assert.match(remove.slice(0, remove.indexOf('\n}')), /if \(before\.configError\) throw new SubscriptionError\(502, 'Could not read the agent configuration\.'\)/);
+  const patch = source.slice(source.indexOf('async function patchConfig'));
+  assert.match(patch.slice(0, patch.indexOf('\n}')), /if \(!after\.configError && applied\(after\.models\)\) return;/);
+});
+
+/** Loads lib/subscription-claude.ts with Docker and the agent lookups stubbed; the parse helpers run for real. */
+function loadClaudeModule({ reads, execs }) {
+  const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const module = { exports: {} };
+  const sandbox = { module, exports: module.exports, console, Date, JSON, Map, Promise, setTimeout, clearTimeout };
+  sandbox.globalThis = sandbox;
+  class SubscriptionError extends Error { constructor(status, message) { super(message); this.status = status; } }
+  let read = 0;
+  const dependencies = {
+    child_process: { spawn: () => { throw new Error('no spawn'); } },
+    '@/lib/docker-exec': {
+      dockerExec: async (_c, argv, opts) => {
+        if (argv[0] === 'node') return JSON.stringify(reads[Math.min(read++, reads.length - 1)]);
+        execs.push(argv);
+        return '';
+      },
+      dockerExecNoFail: async () => '',
+      dockerExecWithInput: async (_c, argv, input) => { execs.push([...argv, input]); return ''; },
+      mapWithConcurrency: async () => [],
+    },
+    '@/lib/container': { isValidAgentId: () => true },
+    '@/lib/agent-config-lock': { withAgentConfigLock: async (_c, fn) => fn() },
+    '@/lib/gateway-cli': { gatewayCliArgv: () => [] },
+    '@/lib/docker-socket': { resolveDockerSocket: () => '/sock' },
+    '@/lib/subscriptions': {
+      SubscriptionError,
+      UNSUPPORTED_AGENT_MESSAGE: 'unsupported',
+      findAgentContainer: async () => ({ agentId: 'a1', container: 'c1', running: true, displayName: 'A' }),
+      invalidateSubscriptions() {},
+      listAgentContainers: async () => [],
+      readAgentList: async () => [],
+      readDefaultModel: async () => ({ primary: 'rev4a/deepseek-flash', fallbacks: [] }),
+      runsSupportedVersion: async () => 'supported',
+      statusReadFailedMessage: (r) => r,
+      subscriptionGeneration: () => 0,
+      withAgentLock: async (_id, fn) => fn(),
+      writeDefaultModel: async () => undefined,
+      writeMainModel: async () => undefined,
+    },
+    '@/lib/credentials/native': { OPENCLAW_RELOAD_TIMEOUT_MS: 150000 },
+    '@/lib/subscription-claude-parse': claude,
+    '@/lib/subscriptions-parse': require('../lib/subscriptions-parse.js'),
+  };
+  vm.runInNewContext('(function(require,module,exports){' + code + '\n})', sandbox)(
+    (name) => {
+      if (!(name in dependencies)) throw new Error('Unexpected dependency: ' + name);
+      return dependencies[name];
+    },
+    module,
+    module.exports,
+  );
+  return { mod: module.exports, SubscriptionError };
+}
+
+await testAsync('disconnect: an unreadable configuration is a 502, never a false success', async () => {
+  const loggedIn = { loggedIn: true, authMethod: 'claude.ai', email: 'me@example.invalid', subscriptionType: 'pro' };
+  const execs = [];
+  const unreadable = { installed: true, version: '2.1.325', status: loggedIn, statusError: false, models: null, model: null, error: 'config' };
+  const { mod } = loadClaudeModule({ reads: [unreadable], execs });
+  await assert.rejects(() => mod.disconnectClaudeAgent('a1'), (e) => e.status === 502 && e.message === 'Could not read the agent configuration.');
+  assert.equal(execs.length, 0, 'nothing was patched and no sign-out ran');
+});
+
+await testAsync('disconnect: a read-back that could not read the configuration does not count as applied', async () => {
+  const loggedIn = { loggedIn: true, authMethod: 'claude.ai', email: 'me@example.invalid', subscriptionType: 'pro' };
+  const routeOn = { 'anthropic/*': { agentRuntime: { id: 'claude-cli' } } };
+  const base = { installed: true, version: '2.1.325', status: loggedIn, statusError: false, model: null };
+  const execs = [];
+  const { mod } = loadClaudeModule({
+    reads: [
+      { ...base, models: routeOn, error: null },
+      { ...base, models: routeOn, error: null },
+      { ...base, models: null, error: 'config' },
+    ],
+    execs,
+  });
+  await assert.rejects(() => mod.disconnectClaudeAgent('a1'), (e) => e.status === 502);
+  assert.ok(execs.some((argv) => argv.includes('patch')), 'the patch was attempted');
+  assert.equal(execs.some((argv) => argv.includes('logout')), false, 'the sign-out did not run after a failed removal');
+});
+
+test('api account: the facts carry a machine-readable flag, only for that case', () => {
+  const base = { installed: true, routeOn: false, statusError: false, now: Date.now() };
+  const api = claude.describeClaudeFacts({ ...base, status: { loggedIn: true, authMethod: 'api', email: null, plan: null, expiresAt: null } });
+  assert.equal(api.apiAccount, true);
+  assert.ok(api.error);
+  const plan = claude.describeClaudeFacts({ ...base, status: { loggedIn: true, authMethod: 'claude.ai', email: null, plan: 'Pro', expiresAt: null } });
+  assert.equal(plan.apiAccount, false);
+  assert.equal(claude.describeClaudeFacts({ ...base, status: null, statusError: true }).apiAccount, false);
+  assert.equal(claude.describeClaudeFacts({ ...base, status: null, configError: true }).apiAccount, false);
+});
+
 test('status script: runs as written, whitelists and reports the configuration', () => {
   const dir = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'rev4a-claude-'));
   try {

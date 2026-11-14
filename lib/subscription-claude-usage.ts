@@ -4,8 +4,7 @@
  *
  * OpenClaw does not report Anthropic usage for a Claude Code login and Claude Code keeps no
  * utilization on disk: it reports it only while answering. So each read is ONE tiny Claude Code
- * call inside a running connected agent (`CLAUDE_USAGE_PROBE`: a few dozen tokens, counted
- * against the plan), and only its `rate_limit_event` line is read. The quota belongs to the
+ * call inside a running connected agent (`CLAUDE_USAGE_PROBE`: about 1.5 s and a few hundred tokens of the plan (Haiku, no tools, no session), measured live 2026-11-14), and only its `rate_limit_event` line is read. The quota belongs to the
  * ACCOUNT, so one probe per account; the result AND a failure are cached per account for 3
  * minutes; `refresh` bypasses the cache; concurrent callers for one account share one probe. No
  * credential file is ever read. A failure for one account is an `errors` entry, never a failed

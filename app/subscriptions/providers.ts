@@ -188,7 +188,7 @@ export interface SubscriptionRowStatus {
   connected: boolean;
   error: string | null;
   expiresAt?: string | null;
-  claude?: { state: ClaudeRowState } | null;
+  claude?: { state: ClaudeRowState; apiAccount?: boolean } | null;
 }
 
 /** What one row shows and which actions it offers. */
@@ -219,7 +219,8 @@ export function claudeRowView(
     return { status: row.stopped, tone: 'neutral', action: 'connect', disconnect: false, account: false };
   }
   if (agent.error) {
-    return { status: row.error, tone: 'danger', action: 'connect', disconnect: false, account: false };
+    // An API (Console) account: the error is shown and Disconnect signs it out, so a Claude plan can be connected.
+    return { status: row.error, tone: 'danger', action: 'connect', disconnect: agent.claude?.apiAccount === true, account: false };
   }
   switch (agent.claude?.state) {
     case 'connected':

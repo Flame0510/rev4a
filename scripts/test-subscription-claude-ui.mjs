@@ -67,6 +67,13 @@ await test('row: the read error wins over the state, as on ChatGPT', () => {
   assert.deepEqual(view, { status: 'Error', tone: 'danger', action: 'connect', disconnect: false, account: false });
 });
 
+await test('row: an API account shows the error and offers Disconnect, other errors do not', () => {
+  const api = copy.claudeRowView({ running: true, connected: false, error: 'Claude Code is signed in with an API account, not a Claude plan.', claude: { state: 'signed-out', apiAccount: true } }, anthropic, formatDate);
+  assert.deepEqual(api, { status: 'Error', tone: 'danger', action: 'connect', disconnect: true, account: false });
+  const stopped = copy.claudeRowView({ running: false, connected: false, error: 'x', claude: { state: 'signed-out', apiAccount: true } }, anthropic, formatDate);
+  assert.equal(stopped.disconnect, false);
+});
+
 await test('row: an unknown or missing state is "Not connected", never invented', () => {
   for (const state of [undefined, null, 'something-new']) {
     const view = copy.claudeRowView({ running: true, connected: false, error: null, claude: state ? { state } : null }, anthropic, formatDate);
@@ -140,6 +147,19 @@ await test('dialog: the sign-in page opens in a new tab without a window handle'
 await test('dialog: closing while the job is active cancels it', () => {
   assert.match(modal, /if \(active \|\| starting\) void cancel\(\);/);
   assert.match(modal, /method: 'DELETE'/);
+});
+
+await test('dialog: after the code is submitted Cancel is hidden and Close only closes the dialog', () => {
+  assert.match(modal, /const finishing = step === 'verifying' \|\| step === 'connecting';/);
+  assert.match(modal, /if \(finishing\) \{ onClose\(\); return; \}/);
+  assert.match(modal, /\) : finishing \? null : \(/);
+});
+
+await test('dialog: an aborted start (the 20 s deadline) also deletes the job the server may have created', () => {
+  const abortBranch = modal.slice(modal.indexOf("if ((e as Error)?.name === 'AbortError') {"));
+  const branch = abortBranch.slice(0, abortBranch.indexOf('} else {'));
+  assert.match(branch, /setStartError\(text\.failed\);/);
+  assert.match(branch, /method: 'DELETE'/);
 });
 
 await test('dialog: while the code is being submitted, the Cancel and sign-in buttons are disabled', () => {

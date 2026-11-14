@@ -59,11 +59,12 @@ const LOGIN_CMD = `timeout ${LOGIN_TIMEOUT_S} script -e -qfc "openclaw models au
 /**
  * Kills every process whose command line holds this login (no pkill in the agent image). Only the
  * device-code login of the openai provider matches: an operator's own login for another provider
- * is spared.
+ * is spared. The search phrase is split by a quote so the script text, which sits in the command
+ * line of any wrapper that runs it, never matches itself.
  */
 const KILL_LOGIN_SCRIPT =
   'exec 2>/dev/null; for p in /proc/[0-9]*; do c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null); ' +
-  'case "$c" in *"models auth login --provider openai --device-code"*) [ "${p#/proc/}" != "$$" ] && kill "${p#/proc/}" 2>/dev/null;; esac; done; true';
+  'case "$c" in *"models auth login --provider openai --device-"code*) [ "${p#/proc/}" != "$$" ] && kill "${p#/proc/}" 2>/dev/null;; esac; done; true';
 
 const g = globalThis as unknown as { __rev4aSubLogins?: Map<string, Job> };
 const jobs = (): Map<string, Job> => (g.__rev4aSubLogins ??= new Map());

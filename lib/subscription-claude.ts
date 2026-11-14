@@ -118,11 +118,13 @@ const LOGIN_CMD = `timeout ${LOGIN_TIMEOUT_S} script -e -qfc "${CLAUDE_BIN} auth
  * Kills whatever a cancelled or lost login left running inside the container (the image has no
  * `ps`, so processes are found through /proc). Only the Claude Code sign-in is matched, so an
  * operator's own login for another provider is spared; the script skips its own shell. The
- * in-container `timeout` stays the backstop, and a running installer keeps its own `timeout 300`.
+ * search phrase is split by a quote ("claude auth "login) so that the script text, which is in the
+ * command line of the `timeout ... sh -c` wrapper that runs it, never matches itself (the script
+ * would kill its own parent and stop scanning). The in-container `timeout` stays the backstop, and a running installer keeps its own `timeout 300`.
  */
 const KILL_CLAUDE_SCRIPT =
   'exec 2>/dev/null; for p in /proc/[0-9]*; do c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null); ' +
-  'case "$c" in *"claude auth login"*) [ "${p#/proc/}" != "$$" ] && kill "${p#/proc/}" 2>/dev/null;; esac; done; true';
+  'case "$c" in *"claude auth "login*) [ "${p#/proc/}" != "$$" ] && kill "${p#/proc/}" 2>/dev/null;; esac; done; true';
 
 /**
  * The one in-container read, imported from the pure module so a test can execute it against
@@ -137,6 +139,8 @@ export interface ClaudeAgentSubscription extends AgentSubscription {
     state: ClaudeState;
     installed: boolean;
     version: string | null;
+    /** Signed in with an API (Console) account: the row shows the error and offers Disconnect. */
+    apiAccount?: true;
   };
 }
 
@@ -231,6 +235,7 @@ function describeClaude(a: AgentContainer, raw: ClaudeRaw): ClaudeAgentSubscript
     state: facts.state,
     installed: raw.installed,
     version: raw.version,
+    ...(facts.apiAccount ? { apiAccount: true as const } : {}),
   };
   out.connected = facts.state === 'connected';
   out.email = status?.email ?? null;
@@ -524,7 +529,7 @@ async function patchConfig(container: string, patch: object, applied: (models: C
     execFailed = true;
   }
   const after = await readClaudeRaw(container);
-  if (applied(after.models)) return;
+  if (!after.configError && applied(after.models)) return;
   throw new SubscriptionError(502, execFailed
     ? 'The agent is still applying the change or refused it. Check again in a minute.'
     : 'The model change did not apply as expected. Check the agent panel.');
@@ -753,6 +758,9 @@ export async function cancelClaudeLogin(
   const j = jobs().get(agentId);
   if (!j) return null;
   if (!ACTIVE.includes(j.state)) return view(j);
+  // Once the code is submitted the job finishes on its own (connected or failed): a cancel now
+  // would mark it cancelled while the configuration change keeps running and writes the rule.
+  if (j.codeSubmitted) return view(j);
   // finish() clears the child: take it first, or the host-side `docker exec` is never killed.
   const child = j.child;
   j.cancelled = true;
@@ -794,6 +802,7 @@ async function revertClaudeModels(container: string): Promise<void> {
 /** Remove the Claude Code rule, when it is there, and read it back. */
 async function removeClaudeRoute(container: string): Promise<void> {
   const before = await readClaudeRaw(container);
+  if (before.configError) throw new SubscriptionError(502, 'Could not read the agent configuration.');
   const patch = routeRemovalPatch({ agents: { defaults: { models: before.models } } });
   if (!patch) return;
   await patchConfig(container, patch, (models) => !routeOnFrom(models));

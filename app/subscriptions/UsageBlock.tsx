@@ -5,7 +5,7 @@
  * one block per account with a Meter for each window the provider reports (today the 5-hour and
  * the weekly window). The quota is the account's (shared by every agent signed in with it and by
  * the owner's own use). It loads apart from the agent rows (ChatGPT: an OpenClaw CLI call, 11 to 50 s
- * on a slow host; Claude: one tiny Claude Code call, a couple of seconds; both cached 3 minutes
+ * on a slow host; Claude: one tiny Claude Code call, about 1.5 s and a few hundred tokens of the plan (Haiku, no tools, no session); both cached 3 minutes
  * on the server). The provider picks the usage route's `provider` parameter.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';

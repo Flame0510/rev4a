@@ -99,7 +99,12 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') {
         // A timeout with this start still current: the operator sees a failure, not a stuck spinner.
-        if (startRef.current === controller) setStartError(text.failed);
+        if (startRef.current === controller) {
+          setStartError(text.failed);
+          // The server may have created the job after the deadline: delete it (a placeholder or a
+          // running job is cancelled; harmless when there is none).
+          void fetch(`${loginPath}?agentId=${encodeURIComponent(agentId)}`, { method: 'DELETE' }).catch(() => { /* best effort */ });
+        }
       } else {
         setStartError((e as Error).message);
       }
@@ -182,6 +187,9 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
 
   const close = () => {
     if (cancelling) return;
+    // The code is in: the job finishes on its own and a cancel would change nothing on the server.
+    // Closing only hides the dialog; the page refreshes the row.
+    if (finishing) { onClose(); return; }
     if (active || starting) void cancel();
     else onClose();
   };
@@ -212,6 +220,8 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
   };
 
   const step = startError || lost ? 'failed' : login ? linkCodeStep(login.state) : 'starting';
+  /** The code was submitted: the server finishes the job itself, so there is nothing left to cancel. */
+  const finishing = step === 'verifying' || step === 'connecting';
   const openSignIn = () => {
     if (!login?.url) return;
     window.open(login.url, '_blank', 'noopener,noreferrer');
@@ -313,7 +323,7 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
             <Button type="button" variant="secondary" size="sm" disabled={starting} onClick={onClose}>
               {text.close}
             </Button>
-          ) : (
+          ) : finishing ? null : (
             <Button
               type="button" variant="secondary" size="sm"
               loading={cancelling}

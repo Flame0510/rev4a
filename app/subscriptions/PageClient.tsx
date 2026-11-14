@@ -33,7 +33,7 @@ interface SubAgent extends ListAgent {
   fallbacks: string[];
   error: string | null;
   /** Present on a Claude row: the state the server derives from Claude Code and the model rule. */
-  claude?: { state: 'not-installed' | 'signed-out' | 'route-off' | 'connected' | 'needs-reconnect'; installed: boolean; version: string | null };
+  claude?: { state: 'not-installed' | 'signed-out' | 'route-off' | 'connected' | 'needs-reconnect'; installed: boolean; version: string | null; apiAccount?: true };
 }
 interface Job { agentId: string; kind: 'logout' | 'claude-logout'; state: 'running' | 'done' | 'failed'; error: string | null }
 interface Row {

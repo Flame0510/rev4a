@@ -36,22 +36,27 @@ export interface SubscriptionStatus {
   error: string | null;
 }
 
-/** The part of the Claude status line this component reads. */
-interface ClaudeStatus {
+/** The part of the Claude status line this component reads (the agent's `provider=anthropic` row). */
+export interface ClaudeStatus {
   connected: boolean;
-  plan: string | null;
+  plan?: string | null;
   email?: string | null;
   error: string | null;
   claude?: { state: string } | null;
 }
 
+/** The one definition of "Claude connected": Claude Code's state is connected and the read had no error. */
+export function isClaudeConnected(status: ClaudeStatus | null): boolean {
+  return !!status && status.claude?.state === 'connected' && !status.error;
+}
+
 /** "Loading Claude models…", from the copy map. */
 const CLAUDE_MODELS_LOADING = getProviderCopy('anthropic')?.modelsLoading ?? '';
 
-export default function SubscriptionLine({ agentId, status, loading, modelsLoading, claudeModelsLoading = false }: {
-  /** The agent whose Claude status the line reads separately. */
-  agentId: string;
+export default function SubscriptionLine({ status, claudeStatus, loading, modelsLoading, claudeModelsLoading = false }: {
   status: SubscriptionStatus | null;
+  /** The agent's Claude row, read once by ModelSection (null while loading or when it cannot be read). */
+  claudeStatus: ClaudeStatus | null;
   /** The agent's ChatGPT connection state is still being read. */
   loading: boolean;
   /** Connected, and the ChatGPT subscription models have not arrived yet. */
@@ -61,14 +66,13 @@ export default function SubscriptionLine({ agentId, status, loading, modelsLoadi
 }) {
   const email = status?.connected && !status.error ? (status.email ?? null) : null;
   const usage = useAccountUsage(email, 'openai');
-  const claude = useClaudeStatus(agentId);
-  const claudeEmail = claude.status?.connected && !claude.status.error ? (claude.status.email ?? null) : null;
+  const claudeConnected = isClaudeConnected(claudeStatus);
+  const claudeEmail = claudeConnected ? (claudeStatus?.email ?? null) : null;
   const claudeUsage = useAccountUsage(claudeEmail, 'anthropic');
 
   if (loading) return <div style={{ fontSize: 11, color: '#888' }}>Subscription: checking…</div>;
 
   const chatgptConnected = !!status?.connected && !status.error;
-  const claudeConnected = !!claude.status?.connected && !claude.status.error;
 
   // Neither provider is connected: today's ChatGPT line, exactly as before. The Claude read does
   // not hold this line back (it can take much longer than the ChatGPT one).
@@ -114,17 +118,17 @@ export default function SubscriptionLine({ agentId, status, loading, modelsLoadi
         // A ChatGPT read that failed stays visible next to a connected Claude plan.
         <div style={{ fontSize: 11, color: '#888' }}>Subscription: unknown</div>
       )}
-      {claudeConnected && claude.status && (
+      {claudeConnected && claudeStatus && (
         <div style={{ fontSize: 11, color: '#888' }}>
           {claudeUsage && !claudeReached ? (
             <>
-              {CLAUDE_PROVIDER.shortName}{claude.status.plan ? ` ${claude.status.plan}` : ''}
+              {CLAUDE_PROVIDER.shortName}{claudeStatus.plan ? ` ${claudeStatus.plan}` : ''}
               {claudeUsage.windows.map((w) => ` · ${windowShort(w.label)} ${Math.max(0, 100 - Math.round(w.usedPercent))}% left`).join('')}
             </>
           ) : claudeReached ? (
             <>{CLAUDE_PROVIDER.shortName}: limit reached{formatReset(claudeReached.resetAt) ? ` until ${formatReset(claudeReached.resetAt)}` : ''}</>
           ) : (
-            <>Subscription: {CLAUDE_PROVIDER.shortName}{claude.status.plan ? ` ${claude.status.plan}` : ''}, connected</>
+            <>Subscription: {CLAUDE_PROVIDER.shortName}{claudeStatus.plan ? ` ${claudeStatus.plan}` : ''}, connected</>
           )}
           {' · '}{EXPERIMENTAL_LABEL}
           {claudeModelsLoading && CLAUDE_MODELS_LOADING && <> · {CLAUDE_MODELS_LOADING}</>}
@@ -132,36 +136,6 @@ export default function SubscriptionLine({ agentId, status, loading, modelsLoadi
       )}
     </div>
   );
-}
-
-/** The agent's Claude connection, read apart; null while loading or when it cannot be read. */
-function useClaudeStatus(agentId: string): { status: ClaudeStatus | null; loading: boolean } {
-  const [status, setStatus] = useState<ClaudeStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const abortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/subscriptions?agentId=${encodeURIComponent(agentId)}&provider=anthropic`,
-          { signal: controller.signal },
-        );
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json.agent) throw new Error('unavailable');
-        if (abortRef.current === controller) setStatus(json.agent as ClaudeStatus);
-      } catch (e) {
-        if ((e as Error)?.name === 'AbortError') return;
-        if (abortRef.current === controller) setStatus(null);
-      }
-      if (abortRef.current === controller) setLoading(false);
-    })();
-    return () => controller.abort();
-  }, [agentId]);
-  return { status, loading };
 }
 
 /** The account's usage windows, loaded apart; null while loading or when it cannot be read. */

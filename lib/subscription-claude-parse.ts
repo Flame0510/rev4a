@@ -352,6 +352,11 @@ export interface ClaudeRowFactsInput extends ClaudeStateInput {
 export interface ClaudeRowFacts {
   state: ClaudeState;
   error: string | null;
+  /**
+   * Claude Code is signed in with an API (Console) account. Machine-readable, so the page never
+   * parses `error`: that row offers Disconnect, to sign out and connect a Claude plan.
+   */
+  apiAccount: boolean;
 }
 
 /**
@@ -362,15 +367,15 @@ export interface ClaudeRowFacts {
 export function describeClaudeFacts(input: ClaudeRowFactsInput): ClaudeRowFacts {
   const state = claudeState(input);
   if (input.installed && input.statusError) {
-    return { state, error: "Could not read Claude Code's sign-in state" };
+    return { state, error: "Could not read Claude Code's sign-in state", apiAccount: false };
   }
   if (input.installed && input.status?.loggedIn && input.status.authMethod !== 'claude.ai') {
-    return { state, error: 'Claude Code is signed in with an API account, not a Claude plan.' };
+    return { state, error: 'Claude Code is signed in with an API account, not a Claude plan.', apiAccount: true };
   }
   if (input.configError) {
-    return { state, error: 'Could not read the agent configuration.' };
+    return { state, error: 'Could not read the agent configuration.', apiAccount: false };
   }
-  return { state, error: null };
+  return { state, error: null, apiAccount: false };
 }
 
 // ---- the in-container read ----------------------------------------------------------------
@@ -434,8 +439,8 @@ export interface ClaudeUsageWindow {
 }
 
 /**
- * The fixed probe that makes Claude Code report the plan's usage: one tiny call (a few dozen
- * tokens, counted against the plan) whose stream carries a single `rate_limit_event`. It is a
+ * The fixed probe that makes Claude Code report the plan's usage: one tiny call (measured live
+ * 2026-11-14: about 1.5 s and a few hundred tokens of the plan; Haiku, no tools, no session) whose stream carries a single `rate_limit_event`. It is a
  * fixed string with no input in it; it reads no credential file and keeps no session. It ends in
  * `; true`: a call refused at the plan's limit exits non-zero but still prints the event that says
  * so, and the parsed event (not the exit code) decides; a timeout leaves no event and stays a failure.
