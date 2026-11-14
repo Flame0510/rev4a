@@ -13,8 +13,7 @@
  * `provider` is resolved by `providerFromParam` in lib/subscription-providers.ts. Missing or
  * empty means the default provider (ChatGPT), so every existing caller gets today's answer; an
  * unknown value is a 400; `anthropic` is Claude, read by lib/subscription-claude.ts and carrying
- * its own `claude` field on the agent. The list form still announces only ChatGPT: the Claude
- * accordion ships with FEAT-25c.
+ * its own `claude` field on the agent. The list form announces ChatGPT, then Claude.
  *
  * Every answer carries `Cache-Control: no-store`: a status can change between two reads.
  */

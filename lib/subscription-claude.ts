@@ -282,6 +282,8 @@ const g = globalThis as unknown as {
   __rev4aClaudeLogins?: Map<string, Job>;
   __rev4aClaudeSources?: SourcesCache;
   __rev4aClaudeSourcesInflight?: Promise<Map<string, string>>;
+  /** The plan label per account email, from the same discovery (for the usage block). */
+  __rev4aClaudePlans?: Map<string, string | null>;
   __rev4aSubModels?: Map<string, SharedModelsCache>;
 };
 
@@ -331,19 +333,22 @@ async function discoverClaudeSources(): Promise<Map<string, string>> {
       const raw = await readClaudeRaw(a.container);
       const state = claudeState({ installed: raw.installed, status: raw.status, routeOn: routeOnFrom(raw.models), now: Date.now() });
       if (state !== 'connected') return null;
-      return { email: raw.status?.email ?? '', container: a.container };
+      return { email: raw.status?.email ?? '', container: a.container, plan: raw.status?.plan ?? null };
     } catch {
       return null;
     }
   });
   const sources = new Map<string, string>();
   for (const row of found) if (row && !sources.has(row.email)) sources.set(row.email, row.container);
+  const plans = new Map<string, string | null>();
+  for (const row of found) if (row && !plans.has(row.email)) plans.set(row.email, row.plan);
+  g.__rev4aClaudePlans = plans;
   if (subscriptionGeneration() === gen) g.__rev4aClaudeSources = { at: Date.now(), gen, sources };
   return sources;
 }
 
 /** Cached 60 s; concurrent callers share one discovery; a connect or disconnect drops it. */
-async function findClaudeSources(): Promise<Map<string, string>> {
+export async function findClaudeSources(): Promise<Map<string, string>> {
   const hit = g.__rev4aClaudeSources;
   if (hit && hit.gen === subscriptionGeneration() && Date.now() - hit.at < SOURCES_TTL_MS) return hit.sources;
   const pending = g.__rev4aClaudeSourcesInflight;
@@ -835,4 +840,9 @@ export async function disconnectClaudeAgent(agentId: unknown): Promise<{ removed
     if (after.status?.loggedIn) throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');
     return { removed: wasLoggedIn ? 1 : 0 };
   });
+}
+
+/** The plan label of a connected Claude account, from the last discovery; null when unknown. */
+export function claudePlanFor(email: string): string | null {
+  return g.__rev4aClaudePlans?.get(email) ?? null;
 }

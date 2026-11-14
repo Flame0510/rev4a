@@ -54,12 +54,13 @@ interface AgentModel {
  * comparison with catalogue ids. A bare `openai/<id>` is a ChatGPT subscription model (see
  * lib/subscriptions.ts), not the Rev4a catalogue entry of the same name (stored as
  * `rev4a/openai/<id>`), so it carries the `subscription:` mark, which PUT /api/gateway/agent
- * understands and strips.
+ * understands and strips. A bare `anthropic/<id>` is a Claude subscription model and is marked
+ * the same way.
  */
 const SUB_MARK = 'subscription:';
 /** The character set PUT /api/gateway/agent accepts for a marked subscription reference. */
 const SUB_MODEL_ID = /^[A-Za-z0-9._-]+$/;
-/** How often, and for how long, to ask again while the ChatGPT catalogue is still loading after Connect. */
+/** How often, and for how long, to ask again while the subscription catalogue is still loading after Connect. */
 const SUB_MODELS_RETRY_MS = 5_000;
 const SUB_MODELS_WAIT_MS = 3 * 60_000;
 const bare = (id: string) =>
@@ -67,9 +68,14 @@ const bare = (id: string) =>
     ? id.slice('rev4a/'.length)
     : id.startsWith('openai/') && SUB_MODEL_ID.test(id.slice('openai/'.length))
       ? SUB_MARK + id
-      : id;
+      : id.startsWith('anthropic/') && SUB_MODEL_ID.test(id.slice('anthropic/'.length))
+        ? SUB_MARK + id
+        : id;
 const isSub = (id: string) => id.startsWith(SUB_MARK);
 const shown = (id: string) => (isSub(id) ? id.slice(SUB_MARK.length) : id);
+/** The provider a marked subscription model belongs to, for its picker label. */
+const subLabel = (id: string) =>
+  id.startsWith(`${SUB_MARK}anthropic/`) ? ' (Claude subscription)' : ' (ChatGPT subscription)';
 
 function priceLabel(m: ModelOption): string {
   if (m.input === null && m.output === null) return '';
@@ -109,13 +115,19 @@ export default function ModelSection({
   const [subLoading, setSubLoading] = useState(true);
   const [subModels, setSubModels] = useState<SubModel[] | null>(null);
   const [subModelsError, setSubModelsError] = useState<string | null>(null);
+  /** The Claude connection of the same agent, read apart from the ChatGPT one. */
+  const [claudeSub, setClaudeSub] = useState<(SubscriptionStatus & { claude?: { state: string } }) | null>(null);
+  const [claudeModels, setClaudeModels] = useState<SubModel[] | null>(null);
+  const [claudeModelsError, setClaudeModelsError] = useState<string | null>(null);
   const [subKey, setSubKey] = useState(0);
   /** The previous primary, pre-filled as the first fallback when a subscription model was just chosen. */
   const [autoFallback, setAutoFallback] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const subAbortRef = useRef<AbortController | null>(null);
+  const claudeAbortRef = useRef<AbortController | null>(null);
   const modelsAbortRef = useRef<AbortController | null>(null);
+  const claudeModelsAbortRef = useRef<AbortController | null>(null);
 
   // The agent's connection state (re-read after every save), then, only when it is connected,
   // the models its account offers. Both load apart from the catalogue: the pickers show the
@@ -136,6 +148,29 @@ export default function ModelSection({
         setSub(null);
       }
       if (subAbortRef.current === controller) setSubLoading(false);
+    })();
+    return () => controller.abort();
+  }, [agentId, subKey]);
+
+  // The Claude connection is a separate read: an agent can be connected to either plan, both or
+  // neither. It only decides whether the "Claude subscription" picker group is offered.
+  useEffect(() => {
+    claudeAbortRef.current?.abort();
+    const controller = new AbortController();
+    claudeAbortRef.current = controller;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/subscriptions?agentId=${encodeURIComponent(agentId)}&provider=anthropic`,
+          { signal: controller.signal },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.agent) throw new Error('unavailable');
+        if (claudeAbortRef.current === controller) setClaudeSub(json.agent as SubscriptionStatus & { claude?: { state: string } });
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        if (claudeAbortRef.current === controller) setClaudeSub(null);
+      }
     })();
     return () => controller.abort();
   }, [agentId, subKey]);
@@ -195,6 +230,59 @@ export default function ModelSection({
     void read();
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, [agentId, subConnected]);
+
+  const claudeConnected = !!claudeSub && claudeSub.claude?.state === 'connected' && !claudeSub.error;
+  useEffect(() => {
+    setClaudeModels(null);
+    setClaudeModelsError(null);
+    if (!claudeConnected) return;
+    claudeModelsAbortRef.current?.abort();
+    const controller = new AbortController();
+    claudeModelsAbortRef.current = controller;
+    // Right after Connect the agent needs a moment to load the Claude models: the server answers
+    // `pending` until then. Keep "Loading subscription models…" and ask again.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+    const expire = () => {
+      controller.abort();
+      setClaudeModels((models) => models ?? []);
+      setClaudeModelsError('Claude models are still unavailable. Reopen this agent to try again.');
+    };
+    const deadline = setTimeout(expire, SUB_MODELS_WAIT_MS);
+    controller.signal.addEventListener('abort', () => {
+      clearTimeout(deadline);
+      if (timer) clearTimeout(timer);
+    }, { once: true });
+    const read = async () => {
+      if (controller.signal.aborted) return;
+      if (Date.now() - startedAt >= SUB_MODELS_WAIT_MS) {
+        expire();
+        return;
+      }
+      try {
+        const res = await fetch('/api/subscriptions/models?provider=anthropic', { signal: controller.signal });
+        const json = await res.json().catch(() => ({}));
+        if (controller.signal.aborted) return;
+        if (Date.now() - startedAt >= SUB_MODELS_WAIT_MS) { expire(); return; }
+        if (!res.ok) throw new Error('unavailable');
+        const available = (json.models ?? []) as SubModel[];
+        if (available.length || !json.pending) setClaudeModels(available);
+        if (json.pending && Date.now() - startedAt < SUB_MODELS_WAIT_MS) {
+          timer = setTimeout(() => { void read(); }, Math.min(SUB_MODELS_RETRY_MS, SUB_MODELS_WAIT_MS - (Date.now() - startedAt)));
+          return;
+        }
+        if (json.pending) expire();
+        else clearTimeout(deadline);
+      } catch (e) {
+        if (controller.signal.aborted || (e as Error)?.name === 'AbortError') return;
+        clearTimeout(deadline);
+        setClaudeModels([]);
+        setClaudeModelsError('Could not read the Claude models. Reopen this agent to try again.');
+      }
+    };
+    void read();
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
+  }, [agentId, claudeConnected]);
 
   const load = useCallback(async () => {
     // Cancel any in-flight load: this fires on mount and after every save, and
@@ -305,19 +393,28 @@ export default function ModelSection({
   // Show the real value, disabled so it cannot be picked again. Guarded on a
   // loaded catalogue so a failed fetch does not flag every model.
   const primarySub = isSub(primary);
+  const primaryIsClaude = primary.startsWith(`${SUB_MARK}anthropic/`);
   const primaryUnavailable = !!primary && !primarySub && groups.length > 0 && !byId.has(primary);
+  const primaryOffered = primaryIsClaude
+    ? claudeConnected && claudeModels?.some((m) => SUB_MARK + m.key === primary)
+    : subConnected && subModels?.some((m) => SUB_MARK + m.key === primary);
   const options = [
     { value: '', label: '— select a model —' },
-    ...(primarySub && !(subConnected && subModels?.some((m) => SUB_MARK + m.key === primary)) ? [{ value: primary, label: `${shown(primary)} (ChatGPT subscription)`, disabled: true }] : []),
+    ...(primarySub && !primaryOffered ? [{ value: primary, label: `${shown(primary)}${subLabel(primary)}`, disabled: true }] : []),
     ...(primaryUnavailable ? [{ value: primary, label: `${primary} (${current?.primaryStatus === 'missing' ? 'no longer in catalogue' : 'not enabled'})`, disabled: true }] : []),
   ];
   const subOptions = (exclude: string[]) =>
     subConnected && subModels
       ? subModels.filter((m) => !exclude.includes(SUB_MARK + m.key)).map((m) => ({ value: SUB_MARK + m.key, label: m.name || m.key }))
       : [];
+  const claudeOptions = (exclude: string[]) =>
+    claudeConnected && claudeModels
+      ? claudeModels.filter((m) => !exclude.includes(SUB_MARK + m.key)).map((m) => ({ value: SUB_MARK + m.key, label: m.name || m.key }))
+      : [];
   const primaryGroups = [
     { label: 'Rev4a proxy', options: groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: `${g.provider} · ${optionLabel(m)}` }))) },
     { label: 'ChatGPT subscription', options: subOptions([]) },
+    ...(claudeConnected ? [{ label: 'Claude subscription', options: claudeOptions([]) }] : []),
   ];
   const fallbackGroups = [
     {
@@ -325,6 +422,7 @@ export default function ModelSection({
       options: allModels.filter((m) => m.id !== primary && !fallbacks.includes(m.id)).map((m) => ({ value: m.id, label: optionLabel(m) })),
     },
     { label: 'ChatGPT subscription', options: subOptions([primary, ...fallbacks]) },
+    ...(claudeConnected ? [{ label: 'Claude subscription', options: claudeOptions([primary, ...fallbacks]) }] : []),
   ];
 
   // Two different failures, two different remedies. The panel used to show one
@@ -338,7 +436,11 @@ export default function ModelSection({
   const status = primarySub ? null : current?.primaryStatus;
   const warnRemoved = status === 'missing';
   // A subscription primary on an agent that is not signed in fails on its next turn.
-  const warnSubNotConnected = primarySub && !!sub && !sub.connected && !sub.error;
+  const warnSubNotConnected = primarySub && (
+    primaryIsClaude
+      ? !!claudeSub && claudeSub.claude?.state !== 'connected' && !claudeSub.error
+      : !!sub && !sub.connected && !sub.error
+  );
   const warnNotEnabled = status === 'disabled' || (status == null && primaryUnavailable);
   const warnNotSynced = containerLacksIt && (status === 'offered' || (status == null && groups.length > 0 && !primaryUnavailable));
   const warnUnknown = containerLacksIt && status == null && groups.length === 0;
@@ -363,7 +465,7 @@ export default function ModelSection({
               {warnSubNotConnected && (
                 <>
                   <strong>This agent uses a subscription model but is not connected.</strong> It is set to{' '}
-                  <code>{shown(primary)}</code>, which needs a signed-in ChatGPT account. Connect it on the{' '}
+                  <code>{shown(primary)}</code>, which needs a signed-in {primaryIsClaude ? 'Claude' : 'ChatGPT'} account. Connect it on the{' '}
                   <a href="/subscriptions" style={{ color: 'inherit' }}>Subscriptions</a> page, or pick another model
                   below.
                 </>
@@ -427,7 +529,7 @@ export default function ModelSection({
                 <span style={{ fontSize: 10, color: '#666', minWidth: 12 }}>{i + 1}.</span>
                 <span style={{ fontSize: 11, flex: 1, wordBreak: 'break-all' }}>
                   {shown(f)}
-                  {isSub(f) && <span style={{ color: '#888' }}> (ChatGPT subscription)</span>}
+                  {isSub(f) && <span style={{ color: '#888' }}>{subLabel(f)}</span>}
                   {byId.get(f)?.deprecated && (
                     <span style={{ color: '#eab308' }}> (deprecated)</span>
                   )}
@@ -450,13 +552,14 @@ export default function ModelSection({
             />
             {autoFallback && fallbacks.includes(autoFallback) && (
               <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                Used when the ChatGPT subscription reaches its usage limit.
+                Used when the {primaryIsClaude ? 'Claude' : 'ChatGPT'} subscription reaches its usage limit.
               </div>
             )}
           </div>
 
-          <SubscriptionLine status={sub} loading={subLoading} modelsLoading={subConnected && subModels === null} />
+          <SubscriptionLine agentId={agentId} status={sub} loading={subLoading} modelsLoading={subConnected && subModels === null} claudeModelsLoading={claudeConnected && claudeModels === null} />
           {subModelsError && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{subModelsError}</div>}
+          {claudeModelsError && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{claudeModelsError}</div>}
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Button variant="primary" size="sm" loading={saving} disabled={!dirty || !primary || primaryUnavailable || !!agentBusy} onClick={save}>

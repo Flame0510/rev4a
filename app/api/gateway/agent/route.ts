@@ -7,16 +7,17 @@
  * Body:
  *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
  *
- * A reference marked `subscription:openai/<id>` is a ChatGPT subscription model, stored as the
- * bare `openai/<id>`; the route answers 409 when the agent has no ChatGPT sign-in.
+ * A reference marked `subscription:openai/<id>` is a ChatGPT subscription model and one marked
+ * `subscription:anthropic/<id>` is a Claude subscription model; both are stored as the bare
+ * `<provider>/<id>`. The route answers 409 when the agent has no sign-in for the provider named.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { execSync } from 'child_process';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { readFastStatus, statusReadFailedMessage, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
-import { keepStoredRef } from '@/lib/subscriptions-parse';
+import { readFastStatus, statusReadFailedMessage, SubscriptionError, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
+import { readClaudeAgent } from '@/lib/subscription-claude';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,14 +35,29 @@ function execInContainer(container: string, cmd: string, timeout = 15000): strin
 }
 
 /**
- * A ChatGPT subscription model is stored as a bare `openai/<id>` (lib/subscriptions.ts), while the
- * Rev4a catalogue also has ids that start with `openai/` and are stored as `rev4a/openai/<id>`. The
- * model panel marks a subscription reference with this prefix so the two cannot be confused.
+ * A subscription model is stored as a bare `<provider>/<id>` (lib/subscriptions.ts), while the
+ * Rev4a catalogue also has ids that start with `openai/` or `anthropic/` and are stored as
+ * `rev4a/<provider>/<id>`. The model panel marks a subscription reference with this prefix so
+ * the two cannot be confused.
  */
 const SUBSCRIPTION_MARK = 'subscription:';
 
-/** A marked subscription reference is accepted only in the exact shape of a ChatGPT model id. */
-const SUBSCRIPTION_REF = /^subscription:openai\/[A-Za-z0-9._-]+$/;
+/**
+ * A marked subscription reference is accepted only in the exact shape of a ChatGPT or Claude model
+ * id: it starts with a letter, digit, underscore or hyphen (so `.`, `..` and `.x` are refused) and
+ * then continues with those plus `.` and `-`.
+ */
+const SUBSCRIPTION_REF = /^subscription:(?:openai|anthropic)\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+/**
+ * Keep a stored reference as it is when it is already a bare subscription model or a Rev4a id;
+ * anything else belongs to the Rev4a catalogue and gets the prefix. This mirrors keepStoredRef
+ * in lib/subscriptions-parse.js and adds the bare `anthropic/<id>` case.
+ */
+function keepStoredSubscriptionRef(id: string): string {
+  if (id.startsWith('openai/') || id.startsWith('anthropic/') || id.startsWith('rev4a/')) return id;
+  return `rev4a/${id}`;
+}
 
 function ensureRev4aPrefix(id: string): string {
   if (id.startsWith(SUBSCRIPTION_MARK)) return id.slice(SUBSCRIPTION_MARK.length);
@@ -84,8 +100,9 @@ function readFileFromContainer(container: string, remotePath: string): string {
 function existingFallbacks(model: unknown): string[] {
   if (model && typeof model === 'object') {
     const f = (model as { fallbacks?: unknown }).fallbacks;
-    // Stored refs: a bare `openai/<id>` is a subscription model and must not gain the `rev4a/` prefix.
-    if (Array.isArray(f)) return f.filter((x): x is string => typeof x === 'string').map(keepStoredRef);
+    // Stored refs: a bare `openai/<id>` or `anthropic/<id>` is a subscription model and must not
+    // gain the `rev4a/` prefix.
+    if (Array.isArray(f)) return f.filter((x): x is string => typeof x === 'string').map(keepStoredSubscriptionRef);
   }
   return [];
 }
@@ -115,8 +132,9 @@ export async function PUT(request: NextRequest) {
 
     // Refuse while a long operation is running on this agent: the write would race the
     // recreate/migration that is replacing the container underneath it.
+    let agentId = '';
     try {
-      const agentId = execSync(
+      agentId = execSync(
         `docker inspect --format '{{index .Config.Labels "AGENT_ID"}}' ${safeContainer}`,
         { encoding: 'utf-8', timeout: 5000 },
       ).trim();
@@ -126,8 +144,8 @@ export async function PUT(request: NextRequest) {
       }
     } catch { /* no container or no label: the rest of the route reports it */ }
 
-    // A subscription model needs a ChatGPT sign-in on this agent: without one the next turn fails.
-    if (refs.some((r) => typeof r === 'string' && r.startsWith(SUBSCRIPTION_MARK))) {
+    // A ChatGPT subscription model needs a ChatGPT sign-in on this agent: without one the next turn fails.
+    if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:openai/'))) {
       const read = await readFastStatus(safeContainer);
       if (read.status === 'failed') {
         return NextResponse.json({ status: 'error', error: statusReadFailedMessage(read.reason) }, { status: 503 });
@@ -137,6 +155,23 @@ export async function PUT(request: NextRequest) {
       }
       if (read.state.profiles.length === 0) {
         return NextResponse.json({ status: 'error', error: 'This agent is not connected to a ChatGPT subscription.' }, { status: 409 });
+      }
+    }
+
+    // A Claude subscription model needs Claude Code signed in with a Claude plan on this agent.
+    if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:anthropic/'))) {
+      const notConnected = NextResponse.json({ status: 'error', error: 'This agent is not connected to a Claude subscription.' }, { status: 409 });
+      if (!agentId) return notConnected;
+      try {
+        const claude = await readClaudeAgent(agentId);
+        if (claude.claude.state !== 'connected') return notConnected;
+      } catch (e) {
+        // An unreadable status is not "not connected": answer with the read failure, as ChatGPT does.
+        if (e instanceof SubscriptionError && e.status === 503) {
+          return NextResponse.json({ status: 'error', error: e.message }, { status: 503 });
+        }
+        // Invalid or unknown agent, or an unreadable status: no usable Claude sign-in to store a model for.
+        return notConnected;
       }
     }
 

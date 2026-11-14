@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { SubscriptionError } from '@/lib/subscriptions';
 import { getSubscriptionUsage } from '@/lib/subscription-usage';
+import { getClaudeUsage } from '@/lib/subscription-claude-usage';
 import { providerFromParam } from '@/lib/subscription-providers';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (!provider.hasUsage) return NextResponse.json({ error: 'This subscription provider has no usage limits' }, { status: 400 });
     const email = params.get('email')?.trim() || null;
     if (email && email.length > 200) return NextResponse.json({ error: 'Invalid email' }, { status: 400 });
-    return NextResponse.json(await getSubscriptionUsage({ email, refresh: params.get('refresh') === '1' }));
+    const opts = { email, refresh: params.get('refresh') === '1' };
+    return NextResponse.json(provider.id === 'anthropic' ? await getClaudeUsage(opts) : await getSubscriptionUsage(opts));
   } catch (e) {
     if (e instanceof SubscriptionError) return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: 'Could not read the usage' }, { status: 500 });

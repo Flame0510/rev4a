@@ -4,8 +4,9 @@
  * The usage limits of the connected accounts of one provider, at the top of the accordion body:
  * one block per account with a Meter for each window the provider reports (today the 5-hour and
  * the weekly window). The quota is the account's (shared by every agent signed in with it and by
- * the owner's own use). It loads apart from the agent rows (an OpenClaw CLI call, 11 to 50 s on a
- * slow host, cached 3 minutes).
+ * the owner's own use). It loads apart from the agent rows (ChatGPT: an OpenClaw CLI call, 11 to 50 s
+ * on a slow host; Claude: one tiny Claude Code call, a couple of seconds; both cached 3 minutes
+ * on the server). The provider picks the usage route's `provider` parameter.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const AUTO_REFRESH_MS = 60_000;
 import { Button, Meter } from '@/app/components/ui';
 import { DEFAULT_SUBSCRIPTION_PROVIDER, type SubscriptionProvider } from '@/lib/subscription-providers';
+import { getProviderCopy } from './providers';
 import { Skeleton } from '@/app/components/Skeleton';
 import { agoText, formatReset, reachedWindow, usageTone, windowTitle, type UsageAccount, type UsageResponse } from './usage';
 
@@ -109,7 +111,7 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
         </div>
       )}
       {shown.map((a) => (
-        <AccountUsage key={a.email} account={a} fallbackName={fallbackName} refreshing={refreshingKey === a.email} disabled={refreshingKey !== null} onRefresh={() => { void load(a.email); }} />
+        <AccountUsage key={a.email} account={a} reachedText={getProviderCopy(provider.id)?.usageReached ?? ''} fallbackName={fallbackName} refreshing={refreshingKey === a.email} disabled={refreshingKey !== null} onRefresh={() => { void load(a.email); }} />
       ))}
       {errors.map((e) => (
         <div key={e.email ?? e.message} style={{ fontSize: 12, color: 'var(--red)' }}>
@@ -120,7 +122,9 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
   );
 }
 
-function AccountUsage({ account, fallbackName, refreshing, disabled, onRefresh }: {
+function AccountUsage({ account, reachedText, fallbackName, refreshing, disabled, onRefresh }: {
+  /** The provider's sentence for a full window (from the copy map). */
+  reachedText: string;
   account: UsageAccount;
   fallbackName: string | null;
   refreshing: boolean;
@@ -153,7 +157,7 @@ function AccountUsage({ account, fallbackName, refreshing, disabled, onRefresh }
       })}
       {reached && (
         <div style={{ fontSize: 12, color: 'var(--red)' }}>
-          Limit reached: connected agents use their fallback model{fallbackName ? ` (${fallbackName})` : ''}
+          {reachedText}{fallbackName ? ` (${fallbackName})` : ''}
           {formatReset(reached.resetAt) ? ` until ${formatReset(reached.resetAt)}` : ''}.
         </div>
       )}

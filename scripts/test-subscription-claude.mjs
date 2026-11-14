@@ -712,4 +712,75 @@ test('status script: runs as written, whitelists and reports the configuration',
   }
 });
 
+// ---- usage limits --------------------------------------------------------------------------
+
+const EVENT = '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794671400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"out_of_credits","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.16,"resetsAt":1794671400,"status":"allowed"},"seven_day":{"utilization":0.14,"resetsAt":1795190400,"status":"allowed"}}},"uuid":"u1","session_id":"s1"}';
+const stream = (event) => [
+  '{"type":"system","subtype":"init","session_id":"s1","secret":"nope"}',
+  event,
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"."}]}}',
+  '{"type":"result","subtype":"success","total_cost_usd":0.000125}',
+  '',
+].join('\n');
+const eventWith = (five, seven) => JSON.stringify({
+  type: 'rate_limit_event',
+  rate_limit_info: { unifiedWindows: {
+    ...(five === undefined ? {} : { five_hour: { utilization: five, resetsAt: 1794671400 } }),
+    ...(seven === undefined ? {} : { seven_day: { utilization: seven, resetsAt: 1795190400 } }),
+  } },
+});
+
+test('usage: the exact event among other stream-json lines gives both windows', () => {
+  assert.deepEqual(claude.parseClaudeUsageEvent(stream(EVENT)), [
+    { label: '5 hours', usedPercent: 16, resetAt: new Date(1794671400 * 1000).toISOString() },
+    { label: 'Week', usedPercent: 14, resetAt: new Date(1795190400 * 1000).toISOString() },
+  ]);
+});
+
+test('usage: 0, 1, 1.5 and -0.2 are clamped to 0..100', () => {
+  const p = (u) => claude.parseClaudeUsageEvent(stream(eventWith(u, 0.5)))[0].usedPercent;
+  assert.equal(p(0), 0);
+  assert.equal(p(1), 100);
+  assert.equal(p(1.5), 100);
+  assert.equal(p(-0.2), 0);
+});
+
+test('usage: a missing or non-finite utilization leaves the window out', () => {
+  assert.deepEqual(claude.parseClaudeUsageEvent(stream(eventWith(null, 0.2))).map((w) => w.label), ['Week']);
+  assert.deepEqual(claude.parseClaudeUsageEvent(stream(eventWith(0.2, undefined))).map((w) => w.label), ['5 hours']);
+  assert.deepEqual(claude.parseClaudeUsageEvent(stream(eventWith('0.2', 0.1))).map((w) => w.label), ['Week']);
+  assert.equal(claude.parseClaudeUsageEvent(stream(eventWith(null, null))), null);
+});
+
+test('usage: no event, garbage and non-strings give null; a window without a reset keeps null', () => {
+  assert.equal(claude.parseClaudeUsageEvent(stream('{"type":"other"}')), null);
+  assert.equal(claude.parseClaudeUsageEvent('not json at all'), null);
+  assert.equal(claude.parseClaudeUsageEvent('{"type":"rate_limit_event"'), null);
+  assert.equal(claude.parseClaudeUsageEvent(''), null);
+  assert.equal(claude.parseClaudeUsageEvent(undefined), null);
+  const noReset = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.5 } } } });
+  assert.equal(claude.parseClaudeUsageEvent(noReset)[0].resetAt, null);
+});
+
+test('usage: only the three known fields come back, nothing else from the stream', () => {
+  const out = claude.parseClaudeUsageEvent(stream(EVENT));
+  for (const w of out) assert.deepEqual(Object.keys(w).sort(), ['label', 'resetAt', 'usedPercent']);
+  assert.equal(JSON.stringify(out).includes('nope'), false);
+});
+
+test('usage: the probe is the fixed command, with no input in it and no credential read', () => {
+  assert.match(claude.CLAUDE_USAGE_PROBE, /^cd \/tmp && timeout 60 \/root\/\.local\/bin\/claude -p "\." --model haiku /);
+  assert.match(claude.CLAUDE_USAGE_PROBE, /--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose; true$/);
+  // A call refused at the limit exits 1 but prints the event: the shell must not turn it into a failed exec.
+  const refused = execFileSync('sh', ['-c', 'printf %s\\\\n ' + JSON.stringify(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1794671400, status: 'rejected' } } } })) + '; false; true'], { encoding: 'utf8' });
+  assert.deepEqual(claude.parseClaudeUsageEvent(refused).map((w) => w.usedPercent), [100]);
+  // A first event without windows does not hide a later good one; a reset time in milliseconds is dropped.
+  const twoEvents = [
+    JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } }),
+    JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { seven_day: { utilization: 0.14, resetsAt: 1795190400000 } } } }),
+  ].join('\n');
+  assert.deepEqual(claude.parseClaudeUsageEvent(twoEvents), [{ label: 'Week', usedPercent: 14, resetAt: null }]);
+  assert.equal(/credentials|\$\{|\$\(/.test(claude.CLAUDE_USAGE_PROBE), false);
+});
+
 console.log(`\n${n} tests passed`);

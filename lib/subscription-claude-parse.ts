@@ -421,3 +421,69 @@ export const CLAUDE_STATUS_SCRIPT_SRC = [
   "}catch(e){out.error='config';}",
   'console.log(JSON.stringify(out));',
 ].join('\n');
+
+// ---- usage limits --------------------------------------------------------------------------
+
+/** One usage window, in the shape the ChatGPT usage already has (labels `windowShort` understands). */
+export interface ClaudeUsageWindow {
+  label: string;
+  /** 0 to 100, rounded. */
+  usedPercent: number;
+  /** ISO time the window resets, or null when Claude Code gave none. */
+  resetAt: string | null;
+}
+
+/**
+ * The fixed probe that makes Claude Code report the plan's usage: one tiny call (a few dozen
+ * tokens, counted against the plan) whose stream carries a single `rate_limit_event`. It is a
+ * fixed string with no input in it; it reads no credential file and keeps no session. It ends in
+ * `; true`: a call refused at the plan's limit exits non-zero but still prints the event that says
+ * so, and the parsed event (not the exit code) decides; a timeout leaves no event and stays a failure.
+ */
+export const CLAUDE_USAGE_PROBE =
+  'cd /tmp && timeout 60 /root/.local/bin/claude -p "." --model haiku --system-prompt "Answer with one character." '
+  + '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose; true';
+
+/** The windows Claude Code reports, with the labels the ChatGPT usage uses for the same windows. */
+const CLAUDE_USAGE_WINDOWS: readonly (readonly [string, string])[] = [
+  ['five_hour', '5 hours'],
+  ['seven_day', 'Week'],
+];
+
+/**
+ * The usage windows from the stdout of the probe: only the `rate_limit_event` line is read (every
+ * other line, and every other field of that line, is ignored). `utilization` is a 0..1 fraction
+ * and `resetsAt` epoch seconds. A window with no finite utilization is left out; null when there
+ * is no event, nothing usable in it, or the text is not stream-json at all.
+ */
+export function parseClaudeUsageEvent(stdout: unknown): ClaudeUsageWindow[] | null {
+  if (typeof stdout !== 'string') return null;
+  for (const line of stdout.split('\n')) {
+    const text = line.trim();
+    if (!text.startsWith('{') || !text.includes('rate_limit_event')) continue;
+    let event: unknown;
+    try { event = JSON.parse(text); } catch { continue; }
+    if (!isUsageRecord(event) || event.type !== 'rate_limit_event') continue;
+    const info = event.rate_limit_info;
+    const windows = isUsageRecord(info) && isUsageRecord(info.unifiedWindows) ? info.unifiedWindows : null;
+    if (!windows) continue;
+    const out: ClaudeUsageWindow[] = [];
+    for (const [key, label] of CLAUDE_USAGE_WINDOWS) {
+      const w = Object.prototype.hasOwnProperty.call(windows, key) ? windows[key] : null;
+      if (!isUsageRecord(w) || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) continue;
+      // Epoch seconds; a value that only makes sense as milliseconds (or worse) is not a reset time.
+      const seconds = typeof w.resetsAt === 'number' && Number.isFinite(w.resetsAt) && w.resetsAt > 0 && w.resetsAt < 1e11 ? new Date(w.resetsAt * 1000) : null;
+      out.push({
+        label,
+        usedPercent: Math.max(0, Math.min(100, Math.round(w.utilization * 100))),
+        resetAt: seconds && !Number.isNaN(seconds.getTime()) ? seconds.toISOString() : null,
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+  return null;
+}
+
+function isUsageRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}

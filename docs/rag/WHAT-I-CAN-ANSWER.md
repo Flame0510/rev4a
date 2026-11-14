@@ -29,7 +29,8 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I open the file explorer?"
 - "Which page shows costs?" — The Costs page (`/costs`): what each agent spent, by day, agent, model and session.
 - "Where do I manage credentials (GitHub, Trello, etc.)?"
-- "Where do I connect a ChatGPT account to an agent?" — The Subscriptions page (`/subscriptions`).
+- "Where do I connect a ChatGPT account to an agent?" — The Subscriptions page (`/subscriptions`), in the "ChatGPT (Codex)" accordion.
+- "Where do I connect a Claude Pro or Max plan to an agent?" — The Subscriptions page (`/subscriptions`), in the "Claude (via Claude Code)" accordion, marked Experimental.
 - "How do I connect an agent to Telegram?"
 - "How do I approve a Telegram pairing?"
 - "What does the TG badge mean?"
@@ -66,11 +67,11 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I approve or revoke a browser for an agent?"
 - "How do I give someone else access to an agent's Control UI?"
 - "How do I update an agent to a newer OpenClaw version, and how do I go back?"
-- "How do I register a new provider via OAuth?" — Gateway provider OAuth is not supported; the unused endpoint was removed. Add providers by pasting an API key on the Gateway page (`/gateway`). To connect a ChatGPT Plus or Pro account to an agent, use the separate Subscriptions page (`/subscriptions`); that device-code login stays inside the agent.
+- "How do I register a new provider via OAuth?" — Gateway provider OAuth is not supported; the unused endpoint was removed. Add providers by pasting an API key on the Gateway page (`/gateway`). To connect a ChatGPT Plus or Pro account to an agent, use the separate Subscriptions page (`/subscriptions`); that device-code login stays inside the agent. The same page connects a Claude Pro/Max plan through Claude Code (Experimental), with a guided sign-in.
 - "How much of my ChatGPT quota is left?" — Open the Subscriptions page (`/subscriptions`): at the top of "ChatGPT (Codex)" each connected account shows its 5-hour and weekly usage with the reset times (Refresh re-reads it; it is cached for 3 minutes). The agent panel's MODEL section shows the same as "5h 86% left · week 98% left". The quota is the account's, shared by all agents signed in with it and your own Codex use.
 - "How do I manage agent model fallbacks?"
 - "How do I use my ChatGPT subscription in an agent?" — Open the Subscriptions page (`/subscriptions`), open "ChatGPT (Codex)", press Connect on the agent, open the link, enter the code with your ChatGPT account, then open the agent's panel on the Agents page and pick the subscription model in its MODEL section (primary or fallback, next to the Rev4a proxy models). If no fallback is set, the previous model is pre-filled as the first fallback and is used when the subscription reaches its usage limit. Disconnect on the Subscriptions page returns the agent to its own model and signs the account out.
-- "Can I use a Claude Pro or Max plan in an agent?" — Not from the page yet: the Subscriptions page shows ChatGPT only. Rev4a's subscription API already supports a Claude plan through Claude Code (install it in the agent, Anthropic's own sign-in with the code you paste, the `anthropic/*` models switched to the Claude Code runtime, status and disconnect), but until the Claude accordion ships the page does not offer it. The sign-in stays inside the agent and Rev4a stores neither the code nor a token.
+- "How do I use my Claude Pro or Max plan in an agent?" — Open the Subscriptions page (`/subscriptions`), open "Claude (via Claude Code)" (Experimental), press Connect on the agent, sign in on claude.com in the tab the dialog opens, paste the code Anthropic shows and press Continue. Rev4a installs Claude Code in the agent the first time, then switches the agent's `anthropic/*` models to Claude Code. Choose a Claude model in the agent's MODEL section ("Claude subscription" group). Usage counts against your own Claude plan; for round-the-clock automation an API key is the safer choice. Disconnect returns the agent to its own model and signs out; Claude Code stays installed. The sign-in stays inside the agent and Rev4a stores neither the code nor a token.
 - "How do I connect an agent to Telegram?"
 - "How do I approve a pairing code?"
 

@@ -20,6 +20,7 @@ const OPENAI = {
   modelPrefix: 'openai/',
   loginPath: '/api/subscriptions/openai/login',
   logoutPath: '/api/subscriptions/openai/logout',
+  loginKind: 'device-code',
   hasUsage: true,
   experimental: false,
 };
@@ -31,7 +32,8 @@ const ANTHROPIC = {
   modelPrefix: 'anthropic/',
   loginPath: '/api/subscriptions/anthropic/login',
   logoutPath: '/api/subscriptions/anthropic/logout',
-  hasUsage: false,
+  loginKind: 'link-code',
+  hasUsage: true,
   experimental: true,
 };
 
@@ -42,6 +44,11 @@ test('registry: two entries, ChatGPT (Codex) and Claude (via Claude Code)', () =
   assert.deepEqual({ ...registry.SUBSCRIPTION_PROVIDERS[0] }, OPENAI);
   assert.deepEqual({ ...registry.SUBSCRIPTION_PROVIDERS[1] }, ANTHROPIC);
   assert.equal(registry.SUBSCRIPTION_PROVIDERS[0].id, 'openai');
+});
+
+test('registry: the login kind is the dialog choice, never the provider id', () => {
+  assert.equal(registry.getSubscriptionProvider('openai').loginKind, 'device-code');
+  assert.equal(registry.getSubscriptionProvider('anthropic').loginKind, 'link-code');
 });
 
 test('registry: a known id gives its entry, the default one is the same object', () => {
@@ -110,9 +117,56 @@ test('copy: the Claude entry names Claude and Claude Code in plain English', () 
     assert.ok(c[key].length > 0, key);
   }
   assert.equal(c.connectTitle('atlas'), 'Connect Claude to atlas');
-  assert.match(c.disconnectMessage('atlas', 'deepseek-flash'), /^Disconnect atlas\? /);
-  assert.match(c.disconnectMessage('atlas', 'deepseek-flash'), /Claude Code/);
+  assert.equal(
+    c.disconnectMessage('atlas', 'deepseek-flash'),
+    'Disconnect atlas? It goes back to deepseek-flash and signs out of Claude. Claude Code stays installed in the agent.',
+  );
   assert.match(c.codeHint, /Anthropic/);
+  assert.equal(c.usageShared, "The limits are your Claude plan's, shared with your own use of Claude.");
+});
+
+test('copy: the page subtitle is provider-neutral', () => {
+  assert.equal(
+    copy.SUBSCRIPTIONS_PAGE_DESCRIPTION,
+    'Connect a subscription to your agents. You choose the model in the agent panel.',
+  );
+});
+
+test('skeleton: the loading subtitle is the page subtitle, not the old ChatGPT sentence', () => {
+  const skeleton = readFileSync(new URL('../app/subscriptions/SubscriptionsSkeleton.tsx', import.meta.url), 'utf8');
+  // One source of truth: the skeleton re-exports the copy map constant instead of its own literal.
+  assert.match(skeleton, /export \{ SUBSCRIPTIONS_PAGE_DESCRIPTION as SUBSCRIPTIONS_DESCRIPTION \} from '\.\/providers';/);
+  assert.equal(/Connect a ChatGPT subscription/.test(skeleton), false);
+  const loading = readFileSync(new URL('../app/subscriptions/loading.tsx', import.meta.url), 'utf8');
+  assert.match(loading, /SUBSCRIPTIONS_DESCRIPTION/);
+});
+
+test('copy: the Claude row wording and the guided-dialog steps are all in the copy map', () => {
+  const c = copy.getProviderCopy('anthropic');
+  assert.equal(c.row.notConnected, 'Not connected');
+  assert.equal(c.row.signedInNotInUse, 'Signed in, not in use');
+  assert.equal(c.row.needsReconnect, 'Needs a new sign-in');
+  assert.equal(c.row.connected, 'Connected');
+  assert.equal(c.row.connectedUntil('14 Nov 2026'), 'Connected until 14 Nov 2026');
+  assert.equal(c.row.connecting, 'Connecting…');
+  assert.equal(c.row.disconnecting, 'Disconnecting…');
+  const l = c.linkCode;
+  for (const key of Object.keys(l)) {
+    if (typeof l[key] === 'string') assert.ok(l[key].length > 0, key);
+  }
+  assert.equal(copy.EXPERIMENTAL_LABEL, 'Experimental');
+  assert.equal(
+    copy.CLAUDE_USAGE_NOTE,
+    "Usage counts against your own Claude plan. Anthropic's limits assume ordinary individual use; for round-the-clock automation an API key is the safer choice.",
+  );
+  assert.equal(copy.CLAUDE_USAGE_LINK.label, 'Anthropic: using your Claude plan');
+  assert.equal(
+    copy.CLAUDE_USAGE_LINK.href,
+    'https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan',
+  );
+  const chatgpt = copy.getProviderCopy('openai');
+  assert.equal(chatgpt.linkCode, undefined, 'the ChatGPT dialog stays the device-code one');
+  assert.equal(chatgpt.row, undefined, 'the ChatGPT row keeps its inline wording');
 });
 
 // ---- default provider binding ---------------------------------------------------------
@@ -121,7 +175,7 @@ test('default binding: the server default comes from the registry constant, not 
   const source = readFileSync(new URL('../lib/subscriptions.ts', import.meta.url), 'utf8');
   assert.match(source, /export const PROVIDER_ID = DEFAULT_SUBSCRIPTION_PROVIDER\.id;/);
   assert.match(source, /export const PROVIDER_NAME = DEFAULT_SUBSCRIPTION_PROVIDER\.name;/);
-  assert.match(source, /IMPLEMENTED_PROVIDERS[^=]*= \[DEFAULT_SUBSCRIPTION_PROVIDER\.id\];/);
+  assert.match(source, /IMPLEMENTED_PROVIDERS[^=]*= \[DEFAULT_SUBSCRIPTION_PROVIDER\.id, 'anthropic'\];/);
   assert.equal(/SUBSCRIPTION_PROVIDERS\[0\]/.test(source), false, 'no list-position default');
 });
 
@@ -130,11 +184,15 @@ test('subscription line: bound to the openai descriptor, never to the default pr
   assert.match(source, /const FOUND_PROVIDER = getSubscriptionProvider\('openai'\);/);
   assert.match(source, /if \(!FOUND_PROVIDER\) throw/);
   assert.equal(/DEFAULT_SUBSCRIPTION_PROVIDER/.test(source), false);
+  assert.match(source, /provider=anthropic/);
 });
 
 test('page: the provider parameter takes only the id, and the full provider list is not imported', () => {
   const source = readFileSync(new URL('../app/subscriptions/PageClient.tsx', import.meta.url), 'utf8');
   assert.match(source, /const providerParam = \(providerId: string\): string =>/);
+  assert.match(source, /const providerAnd = \(providerId: string\): string =>/);
+  assert.match(source, /description=\{SUBSCRIPTIONS_PAGE_DESCRIPTION\}/);
+  assert.equal(/SUBSCRIPTIONS_DESCRIPTION/.test(source), false);
   assert.equal(/SUBSCRIPTION_PROVIDERS/.test(source), false);
 });
 

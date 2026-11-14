@@ -23,12 +23,14 @@ import {
 } from '../components/Icons';
 
 /**
- * The model as the agent card shows it. A ChatGPT subscription model (bare `openai/<id>`) reads
- * "<id> · ChatGPT": some ids also exist as paid proxy models (`rev4a/openai/gpt-5.6-sol`), and the
- * two would otherwise look identical. A proxy model loses its `rev4a/` prefix, as before.
+ * The model as the agent card shows it. A subscription model reads "<id> · ChatGPT" for a bare
+ * `openai/<id>` and "<id> · Claude" for a bare `anthropic/<id>`: some ids also exist as paid
+ * proxy models (`rev4a/openai/gpt-5.6-sol`, `rev4a/anthropic/...`), and the two would otherwise
+ * look identical. A proxy model loses its `rev4a/` prefix, as before.
  */
 function modelLabel(ref: string): string {
   if (ref.startsWith('openai/')) return `${ref.slice('openai/'.length)} · ChatGPT`;
+  if (ref.startsWith('anthropic/')) return `${ref.slice('anthropic/'.length)} · Claude`;
   return ref.replace(/^rev4a\//, '');
 }
 
@@ -216,12 +218,13 @@ function AgentListItem({
   const row = modelSummary[agent.agentId];
   let model: React.ReactNode = null;
   if (row && row.primary) {
-    // A bare `openai/<id>` is a ChatGPT subscription model: it is not in the Rev4a catalogue on
-    // purpose, so the catalogue health the summary computes does not apply to it. Whether the
-    // agent is signed in is shown in its panel (Subscription line), so the card shows a neutral
-    // state, neither green nor red.
+    // A bare `openai/<id>` or `anthropic/<id>` is a subscription model: it is not in the Rev4a
+    // catalogue on purpose, so the catalogue health the summary computes does not apply to it.
+    // Whether the agent is signed in is shown in its panel (Subscription line), so the card
+    // shows a neutral state, neither green nor red.
     const primary: string = row.primary;
-    const m = { ...row, primary, health: primary.startsWith('openai/') ? 'subscription' : row.health };
+    const isSubscription = primary.startsWith('openai/') || primary.startsWith('anthropic/');
+    const m = { ...row, primary, health: isSubscription ? 'subscription' : row.health };
     // Tone follows what the operator has to do about it: red means the agent
     // will fail on its next turn, amber means it still works on a retired name.
     // The red states differ in remedy — pick another model for the first two,

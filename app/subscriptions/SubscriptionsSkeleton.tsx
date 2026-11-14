@@ -1,6 +1,11 @@
 import { Skeleton } from '../components/Skeleton';
 
-export const SUBSCRIPTIONS_DESCRIPTION = 'Connect a ChatGPT subscription to your agents. You choose the model in the agent panel.';
+/**
+ * The neutral page subtitle, re-exported from the copy map so the loading UI and the page read
+ * the same string. Keeping a second literal here is how the skeleton drifted back to the old
+ * ChatGPT-only sentence.
+ */
+export { SUBSCRIPTIONS_PAGE_DESCRIPTION as SUBSCRIPTIONS_DESCRIPTION } from './providers';
 
 /**
  * The accordion header of the real page: caret, the provider name, the "N of M agents

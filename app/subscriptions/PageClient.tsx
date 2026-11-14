@@ -9,11 +9,11 @@ import {
   getSubscriptionProvider,
   type SubscriptionProvider,
 } from '@/lib/subscription-providers';
-import { getProviderCopy, type SubscriptionProviderCopy } from './providers';
+import { getProviderCopy, type SubscriptionProviderCopy, SUBSCRIPTIONS_PAGE_DESCRIPTION, EXPERIMENTAL_LABEL, CLAUDE_USAGE_NOTE, CLAUDE_USAGE_LINK, claudeRowView } from './providers';
 import { Skeleton } from '@/app/components/Skeleton';
 import UsageBlock from './UsageBlock';
+import ClaudeConnectModal from './ClaudeConnectModal';
 import {
-  SUBSCRIPTIONS_DESCRIPTION,
   SubscriptionsBodySkeleton,
   SubscriptionsModelsSkeleton,
 } from './SubscriptionsSkeleton';
@@ -32,8 +32,10 @@ interface SubAgent extends ListAgent {
   primary: string | null;
   fallbacks: string[];
   error: string | null;
+  /** Present on a Claude row: the state the server derives from Claude Code and the model rule. */
+  claude?: { state: 'not-installed' | 'signed-out' | 'route-off' | 'connected' | 'needs-reconnect'; installed: boolean; version: string | null };
 }
-interface Job { agentId: string; kind: 'logout'; state: 'running' | 'done' | 'failed'; error: string | null }
+interface Job { agentId: string; kind: 'logout' | 'claude-logout'; state: 'running' | 'done' | 'failed'; error: string | null }
 interface Row {
   status: SubAgent | null;
   loading: boolean;
@@ -80,6 +82,13 @@ const EMPTY_MODELS: Models = { list: [], error: null, loading: true, pending: fa
  */
 const providerParam = (providerId: string): string =>
   providerId === DEFAULT_SUBSCRIPTION_PROVIDER.id ? '' : `?provider=${encodeURIComponent(providerId)}`;
+
+/**
+ * The same provider parameter as an `&` suffix, for a route URL that already has a query
+ * (`GET /api/subscriptions?agentId=`). The default provider's URL stays byte-for-byte as before.
+ */
+const providerAnd = (providerId: string): string =>
+  providerId === DEFAULT_SUBSCRIPTION_PROVIDER.id ? '' : `&provider=${encodeURIComponent(providerId)}`;
 
 /**
  * One key for every per-agent map: the same agent can appear under two provider accordions (one
@@ -226,9 +235,9 @@ export default function SubscriptionsPageClient() {
     rowAbort.current.set(key, controller);
     patchRow(providerId, agentId, { loading: true });
     try {
-      // The status route is addressed by agent id only, exactly as before.
+      // The status route is addressed by agent id, plus the provider when it is not the default.
       const json = await readJson<{ agent: SubAgent; action: Job | null }>(
-        await fetch(`/api/subscriptions?agentId=${encodeURIComponent(agentId)}`, { signal: controller.signal }),
+        await fetch(`/api/subscriptions?agentId=${encodeURIComponent(agentId)}${providerAnd(providerId)}`, { signal: controller.signal }),
       );
       if (!alive.current || controller.signal.aborted || rowAbort.current.get(key) !== controller) return;
       const running = json.action?.state === 'running' ? json.action : null;
@@ -365,7 +374,9 @@ export default function SubscriptionsPageClient() {
     const key = rowKey(provider.id, agent.agentId);
     if (starting.current.has(key)) return;
     starting.current.add(key);
-    patchRow(provider.id, agent.agentId, { job: { agentId: agent.agentId, kind: 'logout', state: 'running', error: null }, notice: null });
+    // The optimistic job carries the same kind the server reports for this provider.
+    const kind: Job['kind'] = provider.loginKind === 'link-code' ? 'claude-logout' : 'logout';
+    patchRow(provider.id, agent.agentId, { job: { agentId: agent.agentId, kind, state: 'running', error: null }, notice: null });
     try {
       await readJson<{ job: Job }>(await fetch(provider.logoutPath, {
         method: 'POST',
@@ -382,7 +393,7 @@ export default function SubscriptionsPageClient() {
   if (providers === null) {
     return (
       <Page maxWidth={1080}>
-        <PageHeader eyebrow="" title="Subscriptions" description={SUBSCRIPTIONS_DESCRIPTION} />
+        <PageHeader eyebrow="" title="Subscriptions" description={SUBSCRIPTIONS_PAGE_DESCRIPTION} />
         <SubscriptionsBodySkeleton />
       </Page>
     );
@@ -393,9 +404,19 @@ export default function SubscriptionsPageClient() {
   const connectName = connectTargetAgent?.name ?? connectAgent?.agentId ?? '';
   const disconnectProvider = confirmDisconnect ? getSubscriptionProvider(confirmDisconnect.providerId) : null;
 
+  /** Close the connect dialog, then read the row and the models again: the account may have changed. */
+  const closeConnect = () => {
+    const id = connectAgent;
+    setConnectAgent(null);
+    if (id) {
+      void api.current.loadRow(id.providerId, id.agentId);
+      void loadModels(id.providerId);
+    }
+  };
+
   return (
     <Page maxWidth={1080}>
-      <PageHeader eyebrow="" title="Subscriptions" description={SUBSCRIPTIONS_DESCRIPTION} />
+      <PageHeader eyebrow="" title="Subscriptions" description={SUBSCRIPTIONS_PAGE_DESCRIPTION} />
 
       {error && (
         <div style={{ padding: '10px 14px', background: 'var(--bg2)', border: '1px solid var(--red)', color: 'var(--red)', fontSize: 12, marginBottom: 16 }}>
@@ -421,7 +442,7 @@ export default function SubscriptionsPageClient() {
               id={`sub-${provider.id}`}
               open={!!open[provider.id]}
               onToggle={() => setOpen((o) => ({ ...o, [provider.id]: !o[provider.id] }))}
-              title={provider.name}
+              title={<>{provider.name}{provider.experimental ? <> <Pill>{EXPERIMENTAL_LABEL}</Pill></> : null}</>}
               summary={allLoaded ? `${connected.length} of ${agents.length} agents connected` : <Skeleton as="span" inline width={140} height={12} />}
               detail={accounts.length ? accounts.map(([email, plan]) => (plan ? `${email} (${plan})` : email)).join(', ') : undefined}
             >
@@ -477,6 +498,7 @@ export default function SubscriptionsPageClient() {
                       copy={copy}
                       agent={a}
                       row={providerRows[a.agentId] ?? EMPTY_ROW}
+                      connecting={!!connectAgent && connectAgent.providerId === provider.id && connectAgent.agentId === a.agentId}
                       onConnect={() => setConnectAgent({ providerId: provider.id, agentId: a.agentId })}
                       onRetry={() => { void api.current.loadRow(provider.id, a.agentId); }}
                       onDisconnect={(s) => setConfirmDisconnect({ providerId: provider.id, agent: s })}
@@ -485,9 +507,20 @@ export default function SubscriptionsPageClient() {
                 </div>
 
                 <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', lineHeight: 1.5 }}>
-                  When the subscription reaches its usage limit the agent falls back to its own model
-                  {fallbackModel ? ` (${bare(fallbackModel)})` : ''}.
-                  {' '}{copy.usageShared}
+                  {provider.loginKind === 'link-code' ? (
+                    <>
+                      {copy.usageShared}{' '}{CLAUDE_USAGE_NOTE}{' '}
+                      <a href={CLAUDE_USAGE_LINK.href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--violet)' }}>
+                        {CLAUDE_USAGE_LINK.label}
+                      </a>
+                    </>
+                  ) : (
+                    <>
+                      When the subscription reaches its usage limit the agent falls back to its own model
+                      {fallbackModel ? ` (${bare(fallbackModel)})` : ''}.
+                      {' '}{copy.usageShared}
+                    </>
+                  )}
                 </div>
               </div>
             </Accordion>
@@ -510,20 +543,31 @@ export default function SubscriptionsPageClient() {
         confirmLabel="Disconnect"
       />
 
-      {connectAgent && connectView && (
-        <ConnectModal
-          provider={connectView.provider}
-          copy={connectView.copy}
+      {connectAgent && connectView && connectView.provider.loginKind === 'link-code' && (
+        <ClaudeConnectModal
           agentId={connectAgent.agentId}
           agentName={connectName}
-          onClose={() => {
+          copy={connectView.copy}
+          loginPath={connectView.provider.loginPath}
+          onClose={closeConnect}
+          onConnected={(email) => {
             const id = connectAgent;
-            setConnectAgent(null);
+            showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success');
             if (id) {
               void api.current.loadRow(id.providerId, id.agentId);
               void loadModels(id.providerId);
             }
           }}
+        />
+      )}
+
+      {connectAgent && connectView && connectView.provider.loginKind === 'device-code' && (
+        <ConnectModal
+          provider={connectView.provider}
+          copy={connectView.copy}
+          agentId={connectAgent.agentId}
+          agentName={connectName}
+          onClose={closeConnect}
           onConnected={(email) => { showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success'); }}
         />
       )}
@@ -531,13 +575,15 @@ export default function SubscriptionsPageClient() {
   );
 }
 
-function AgentRow({ provider, copy, agent, row, onConnect, onRetry, onDisconnect }: {
+function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, onDisconnect }: {
   /** The provider whose model prefix the row uses: always passed by the page. */
   provider: SubscriptionProvider;
   /** The provider's UI copy: always passed by the page. */
   copy: SubscriptionProviderCopy;
   agent: ListAgent;
   row: Row;
+  /** The connect dialog is open (or its login is starting) for this row. */
+  connecting?: boolean;
   onConnect: () => void;
   onRetry: () => void;
   onDisconnect: (s: SubAgent) => void;
@@ -580,12 +626,21 @@ function AgentRow({ provider, copy, agent, row, onConnect, onRetry, onDisconnect
 
   let tone: 'success' | 'neutral' | 'warning' | 'danger' = 'neutral';
   let status = 'Not connected';
-  if (!a.running) { tone = 'neutral'; status = 'Stopped'; }
+  const claude = provider.loginKind === 'link-code' ? claudeRowView(a, copy, formatDate) : null;
+  if (claude) {
+    tone = claude.tone;
+    status = claude.status;
+  } else if (!a.running) { tone = 'neutral'; status = 'Stopped'; }
   else if (a.error) { tone = 'danger'; status = 'Error'; }
   else if (a.connected) { tone = 'success'; status = a.expiresAt ? `Connected until ${formatDate(a.expiresAt)}` : 'Connected'; }
 
-  const busy = !!running || row.loading;
+  // An open connect dialog (or a login starting) makes this row busy too: its other actions
+  // (Disconnect on a route-off or needs-reconnect row) must not race the sign-in.
+  const busy = !!running || row.loading || !!connecting;
   const disconnecting = !!running;
+  const rowCopy = copy.row;
+  const showAccount = claude ? claude.account : a.connected;
+  const showModel = a.connected;
 
   return (
     <div style={{ border: '1px solid var(--border)', padding: '10px 12px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -593,7 +648,7 @@ function AgentRow({ provider, copy, agent, row, onConnect, onRetry, onDisconnect
         {head}
         <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <Pill tone={tone}>{status}</Pill>
-          {a.connected && a.email && (
+          {showAccount && a.email && (
             <span style={{ fontSize: 11, color: 'var(--text-dim, #888)' }}>{a.email}{a.plan ? ` · ${a.plan}` : ''}</span>
           )}
         </div>
@@ -611,7 +666,7 @@ function AgentRow({ provider, copy, agent, row, onConnect, onRetry, onDisconnect
         )}
         {row.notice && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{row.notice}</div>}
         {!a.running && <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', marginTop: 4 }}>Stopped, status unknown. Start the agent to connect it.</div>}
-        {a.running && a.connected && a.primary && (
+        {a.running && showModel && a.primary && (
           <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>
               Model: {modelName(a.primary, modelPrefix)}
@@ -638,7 +693,30 @@ function AgentRow({ provider, copy, agent, row, onConnect, onRetry, onDisconnect
         )}
       </div>
       <div>
-        {a.connected ? (
+        {claude ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {rowCopy && claude.action !== 'none' && (
+              <Button
+                type="button" variant="primary" size="sm"
+                loading={!!connecting}
+                disabled={busy || !a.running || !!a.error}
+                onClick={onConnect}
+              >
+                {connecting ? rowCopy.connecting : claude.action === 'reconnect' ? rowCopy.reconnect : rowCopy.connect}
+              </Button>
+            )}
+            {rowCopy && claude.disconnect && (
+              <Button
+                type="button" variant="danger" size="sm"
+                loading={disconnecting}
+                disabled={busy || !a.running}
+                onClick={() => onDisconnect(a)}
+              >
+                {disconnecting ? rowCopy.disconnecting : rowCopy.disconnect}
+              </Button>
+            )}
+          </div>
+        ) : a.connected ? (
           <Button
             type="button" variant="danger" size="sm"
             loading={disconnecting}

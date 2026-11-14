@@ -157,6 +157,7 @@ function rowReader() {
   }).outputText;
   vm.runInNewContext(code, { module, rowAbort, alive, api, AbortController, encodeURIComponent,
     rowKey: (providerId, agentId) => `${providerId}:${agentId}`,
+    providerAnd: () => '',
     patchRow: (providerId, agentId, patch) => patches.push({ providerId, agentId, ...patch }),
     fetch: async (_url, options) => options,
     readJson: response => new Promise((resolve, reject) => pending.push({ resolve, reject, response })),

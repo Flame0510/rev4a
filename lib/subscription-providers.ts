@@ -8,12 +8,20 @@
  * `app/subscriptions/providers.ts`) and no Node or server imports, because the page imports
  * this module too.
  *
- * Two entries: ChatGPT (Codex) and Claude (via Claude Code). `getProviderList()` still announces
- * only the providers with a server implementation, so the page shows ChatGPT alone until the
- * Claude UI ships (FEAT-25c).
+ * Two entries: ChatGPT (Codex) and Claude (via Claude Code), both with a server implementation,
+ * so the Subscriptions page shows one accordion each. `loginKind` tells the page which dialog body
+ * to build (the ChatGPT device code or Anthropic's link plus pasted code); the page never picks a
+ * dialog from the provider id.
  */
 
 export type SubscriptionProviderId = 'openai' | 'anthropic';
+
+/**
+ * How the provider's sign-in dialog works. `device-code`: Rev4a shows a link and a code the
+ * operator enters on the provider's site. `link-code`: the operator signs in on the provider's
+ * own page and pastes back the code it shows.
+ */
+export type SubscriptionLoginKind = 'device-code' | 'link-code';
 
 export interface SubscriptionProvider {
   /** The id the API uses and the `provider` query parameter takes. */
@@ -28,11 +36,13 @@ export interface SubscriptionProvider {
   readonly loginPath: string;
   /** The route that starts and reads a disconnect job. */
   readonly logoutPath: string;
+  /** How the sign-in dialog works; the page chooses the dialog body by this, never by id. */
+  readonly loginKind: SubscriptionLoginKind;
   /** Whether the provider has usage limits (the usage block and route). */
   readonly hasUsage: boolean;
   /**
    * Whether the provider is still experimental: its flow is verified but not offered everywhere
-   * yet. The page does not render an experimental provider on its own.
+   * yet. The page still renders it, with an "Experimental" pill on its accordion.
    */
   readonly experimental: boolean;
 }
@@ -44,6 +54,7 @@ const OPENAI: SubscriptionProvider = Object.freeze({
   modelPrefix: 'openai/',
   loginPath: '/api/subscriptions/openai/login',
   logoutPath: '/api/subscriptions/openai/logout',
+  loginKind: 'device-code',
   hasUsage: true,
   experimental: false,
 });
@@ -55,7 +66,8 @@ const ANTHROPIC: SubscriptionProvider = Object.freeze({
   modelPrefix: 'anthropic/',
   loginPath: '/api/subscriptions/anthropic/login',
   logoutPath: '/api/subscriptions/anthropic/logout',
-  hasUsage: false,
+  loginKind: 'link-code',
+  hasUsage: true,
   experimental: true,
 });
 

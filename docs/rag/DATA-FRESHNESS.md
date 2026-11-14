@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-11-14
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -126,9 +126,9 @@ The agents list, Telegram accounts, and bindings are read directly from
 There is no page or route for this any more: per-agent settings are reached from
 the agent's detail panel on the Agents page.
 
-## Subscriptions (ChatGPT / Codex)
+## Subscriptions (ChatGPT / Codex and Claude)
 
-**Update frequency:** the status of each agent is read live (about 0.5 s, on every request; a read that fails is retried up to twice (1 s, then 2 s; a timeout only once, so at most about 27 s) and then shown as an error with a Retry button, never read through the slower CLI); the model list is cached 10 minutes; the usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s.
+**Update frequency:** the status of each agent is read live (about 0.5 s for ChatGPT, up to about 40 s for Claude Code, on every request; a read that fails is retried up to twice (1 s, then 2 s; a timeout only once, so at most about 27 s) and then shown as an error with a Retry button, never read through the slower CLI); the model list of either provider is cached 10 minutes; the ChatGPT usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s. Claude has no usage block, so there is nothing to refresh for it; its login dialog polls the in-memory job every 2 s while it runs.
 
 ## Agent base image
 

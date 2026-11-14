@@ -61,8 +61,8 @@ const execFileAsync = promisify(execFile);
 export const PROVIDER_ID = DEFAULT_SUBSCRIPTION_PROVIDER.id;
 export const PROVIDER_NAME = DEFAULT_SUBSCRIPTION_PROVIDER.name;
 
-/** The providers with a server implementation under `app/api/subscriptions/<id>/` (today only the default one). */
-const IMPLEMENTED_PROVIDERS: readonly SubscriptionProviderId[] = [DEFAULT_SUBSCRIPTION_PROVIDER.id];
+/** The providers with a server implementation under `app/api/subscriptions/<id>/`, in display order. */
+const IMPLEMENTED_PROVIDERS: readonly SubscriptionProviderId[] = [DEFAULT_SUBSCRIPTION_PROVIDER.id, 'anthropic'];
 
 const CONFIG_PATH = '/root/.openclaw/openclaw.json';
 const MODELS_TTL_MS = 10 * 60_000;
@@ -433,8 +433,8 @@ export async function getAgentStatus(agentId: unknown): Promise<AgentSubscriptio
 export async function getProviderList(): Promise<ProviderListView[]> {
   const containers = await listAgentContainers();
   const agents = containers.map((a) => ({ agentId: a.agentId, name: a.displayName || a.agentId, container: a.container, running: a.running }));
-  // One entry per registry provider that has a server implementation here: today the default one,
-  // so the answer is the same as before the registry existed.
+  // One entry per registry provider that has a server implementation here, in registry order:
+  // ChatGPT first, then Claude. The list is docker-only, so both accordions appear at once.
   return SUBSCRIPTION_PROVIDERS
     .filter((p) => IMPLEMENTED_PROVIDERS.includes(p.id))
     .map((p) => ({ id: p.id, name: p.name, agents }));
