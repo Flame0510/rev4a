@@ -1,22 +1,26 @@
 'use client';
 
 /**
- * The usage limits of the connected ChatGPT accounts, at the top of the accordion body: one
- * block per account with a Meter for the 5-hour and the weekly window. The quota is the
- * account's (shared by every agent signed in with it and by the owner's own Codex use). It
- * loads apart from the agent rows (an OpenClaw CLI call, 11 to 50 s on a slow host, cached 3 minutes).
+ * The usage limits of the connected accounts of one provider, at the top of the accordion body:
+ * one block per account with a Meter for each window the provider reports (today the 5-hour and
+ * the weekly window). The quota is the account's (shared by every agent signed in with it and by
+ * the owner's own use). It loads apart from the agent rows (an OpenClaw CLI call, 11 to 50 s on a
+ * slow host, cached 3 minutes).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** How often the usage refreshes by itself while the page is visible. */
 const AUTO_REFRESH_MS = 60_000;
 import { Button, Meter } from '@/app/components/ui';
+import { DEFAULT_SUBSCRIPTION_PROVIDER, type SubscriptionProvider } from '@/lib/subscription-providers';
 import { Skeleton } from '@/app/components/Skeleton';
 import { agoText, formatReset, reachedWindow, usageTone, windowTitle, type UsageAccount, type UsageResponse } from './usage';
 
 const DIM = 'var(--text-dim, #888)';
 
-export default function UsageBlock({ emails, fallbackName }: {
+export default function UsageBlock({ provider, emails, fallbackName }: {
+  /** The provider whose accounts these are (the page renders the block only when it has usage). */
+  provider: SubscriptionProvider;
   /** The emails of the connected accounts (sorted, unique); empty renders nothing. */
   emails: string[];
   /** The model the agents fall back to, when known. */
@@ -43,7 +47,11 @@ export default function UsageBlock({ emails, fallbackName }: {
       setFailed(false);
     }
     try {
-      const url = refreshEmail ? `/api/subscriptions/usage?refresh=1&email=${encodeURIComponent(refreshEmail)}` : '/api/subscriptions/usage';
+      const base = refreshEmail ? `/api/subscriptions/usage?refresh=1&email=${encodeURIComponent(refreshEmail)}` : '/api/subscriptions/usage';
+      // The default provider keeps exactly the URLs it used before the provider parameter existed.
+      const url = provider.id === DEFAULT_SUBSCRIPTION_PROVIDER.id
+        ? base
+        : `${base}${base.includes('?') ? '&' : '?'}provider=${encodeURIComponent(provider.id)}`;
       const res = await fetch(url, { signal: controller.signal });
       const json = (await res.json().catch(() => ({}))) as Partial<UsageResponse>;
       if (!res.ok) throw new Error('unavailable');
@@ -60,7 +68,7 @@ export default function UsageBlock({ emails, fallbackName }: {
       if (!background) setFailed(true);
     }
     if (abortRef.current === controller) { setLoading(false); refreshingRef.current = null; setRefreshingKey(null); }
-  }, []);
+  }, [provider.id]);
 
   useEffect(() => {
     if (!key) { setData(null); return; }

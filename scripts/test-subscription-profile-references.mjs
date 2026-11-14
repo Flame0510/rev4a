@@ -126,7 +126,9 @@ await test('actual connected row renders all references in shared read-only inpu
     if (Array.isArray(tree)) return tree.flatMap(inputs);
     return [...(tree.type === 'shared-input' ? [tree.props] : []), ...inputs(tree.children)];
   };
-  const row = value => AgentRow({ agent: { ...agent, name: 'Fixture agent' }, row: { status: value, job: null, loading: false }, onConnect() {}, onRetry() {}, onDisconnect() {} });
+  const provider = { modelPrefix: 'openai/' };
+  const copy = { accountLabel: 'ChatGPT account' };
+  const row = value => AgentRow({ provider, copy, agent: { ...agent, name: 'Fixture agent' }, row: { status: value, job: null, loading: false }, onConnect() {}, onRetry() {}, onDisconnect() {} });
   const rendered = inputs(row(status));
   assert.deepEqual(rendered.map(input => input.value), profiles.map(profile => profile.id));
   for (const input of rendered) { assert.equal(input.readOnly, true); assert.equal(input.onChange, undefined); }
@@ -148,13 +150,14 @@ function rowReader() {
   visit(parsed); assert.ok(callback, 'Actual row loader not found');
   const pending = []; const patches = []; const polls = [];
   const rowAbort = { current: new Map() }; const alive = { current: true };
-  const api = { current: { pollJob: id => polls.push(id) } };
+  const api = { current: { pollJob: (_providerId, agentId) => polls.push(agentId) } };
   const module = { exports: {} };
   const code = ts.transpileModule('module.exports = ' + callback.getText(parsed), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   vm.runInNewContext(code, { module, rowAbort, alive, api, AbortController, encodeURIComponent,
-    patchRow: (id, patch) => patches.push({ id, ...patch }),
+    rowKey: (providerId, agentId) => `${providerId}:${agentId}`,
+    patchRow: (providerId, agentId, patch) => patches.push({ providerId, agentId, ...patch }),
     fetch: async (_url, options) => options,
     readJson: response => new Promise((resolve, reject) => pending.push({ resolve, reject, response })),
   });
@@ -162,8 +165,8 @@ function rowReader() {
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 await test('a superseded delayed status body cannot restore an old account or restart polling', async () => {
-  const f = rowReader(); const first = f.load('agent_fixture'); await settle();
-  const second = f.load('agent_fixture'); await settle();
+  const f = rowReader(); const first = f.load('openai', 'agent_fixture'); await settle();
+  const second = f.load('openai', 'agent_fixture'); await settle();
   assert.equal(f.pending[0].response.signal.aborted, true);
   f.pending[1].resolve({ agent: { profileReferences: [{ id: 'openai:current' }] }, action: null }); await second;
   const before = f.patches.length;
@@ -172,14 +175,14 @@ await test('a superseded delayed status body cannot restore an old account or re
   assert.equal(f.patches.at(-1).status.profileReferences[0].id, 'openai:current');
 });
 await test('a superseded body failure cannot replace a current status with an old error', async () => {
-  const f = rowReader(); const first = f.load('agent_fixture'); await settle();
-  const second = f.load('agent_fixture'); await settle();
+  const f = rowReader(); const first = f.load('openai', 'agent_fixture'); await settle();
+  const second = f.load('openai', 'agent_fixture'); await settle();
   f.pending[1].resolve({ agent: { profileReferences: [] }, action: null }); await second;
   const before = f.patches.length; f.pending[0].reject(new Error('Old body failure')); await first;
   assert.equal(f.patches.length, before); assert.equal(f.patches.at(-1).error, null);
 });
 await test('an unmounted row loader does not publish references or start polling', async () => {
-  const f = rowReader(); const request = f.load('agent_fixture'); await settle();
+  const f = rowReader(); const request = f.load('openai', 'agent_fixture'); await settle();
   f.alive.current = false; const before = f.patches.length;
   f.pending[0].resolve({ agent: { profileReferences: [{ id: 'openai:old' }] }, action: { state: 'running' } }); await request;
   assert.equal(f.patches.length, before); assert.deepEqual(f.polls, []);

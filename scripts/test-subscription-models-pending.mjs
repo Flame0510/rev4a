@@ -74,20 +74,40 @@ function ui(kind, response = () => ({ models: [], error: null, pending: true }))
   const constants = tree.statements.filter(n => ts.isVariableStatement(n) && /(?:SUB_)?MODELS_(?:RETRY|WAIT)_MS/.test(n.getText(tree))).map(n => n.getText(tree)).join('\n');
   let declaration;
   if (kind === 'agent') declaration = component.body.statements.find(n => ts.isExpressionStatement(n) && n.expression.expression?.getText(tree) === 'useEffect' && n.getText(tree).includes('/api/subscriptions/models')).getText(tree);
-  else declaration = component.body.statements.find(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText(tree) === 'loadModels')).getText(tree) + '\nmodule.exports = { start: loadModels };';
+  else declaration = component.body.statements.find(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText(tree) === 'loadModels')).getText(tree) + '\nmodule.exports = { start: () => loadModels("openai") };';
   let clock = 0, sequence = 0, calls = 0, cleanup;
-  const timers = new Map(), states = [], errors = [], signals = [], modelsAbort = { current: null }, modelsTimer = { current: null }, alive = { current: true };
-  let state = kind === 'agent' ? null : { list: [], error: null, loading: true, pending: false };
+  const timers = new Map(), states = [], errors = [], signals = [], alive = { current: true };
+  // The agent half owns one controller/timer; the page half owns one per provider.
+  const modelsAbort = { current: kind === 'agent' ? null : new Map() };
+  const modelsTimer = { current: kind === 'agent' ? null : new Map() };
+  let state = kind === 'agent' ? null : { openai: { list: [], error: null, loading: true, pending: false } };
   const setState = value => { state = typeof value === 'function' ? value(state) : value; states.push(plain(state)); };
+  const provider = {
+    id: 'openai', name: 'ChatGPT (Codex)', shortName: 'ChatGPT', modelPrefix: 'openai/',
+    loginPath: '/api/subscriptions/openai/login', logoutPath: '/api/subscriptions/openai/logout', hasUsage: true,
+  };
+  const providerCopy = {
+    modelsUnavailable: 'ChatGPT models are still unavailable. Refresh to try again.',
+    modelsLoading: 'Loading ChatGPT models…',
+    modelsPending: 'The agent is loading the ChatGPT catalogue after Connect; this takes about a minute.',
+    usageShared: 'The limit is shared with your own use of Codex on the same account.',
+    accountLabel: 'ChatGPT account',
+    connectTitle: name => `Connect ChatGPT to ${name}`,
+    codeHint: '', waiting: '', disconnectMessage: () => '',
+  };
   const deps = {
     Date: { now: () => clock }, AbortController, subConnected: true, agentId: 'agent_fixture', alive, modelsAbort, modelsTimer, modelsAbortRef: modelsAbort,
     useEffect: fn => { cleanup = fn(); }, useCallback: fn => fn,
     setSubModels: setState, setSubModelsError: value => errors.push(value), setModels: setState,
+    getSubscriptionProvider: id => id === provider.id ? provider : null,
+    getProviderCopy: id => id === provider.id ? providerCopy : null,
+    providerParam: () => '',
+    EMPTY_MODELS: { list: [], error: null, loading: true, pending: false },
     setTimeout: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, at: clock + delay }); return id; }, clearTimeout: id => timers.delete(id),
     fetch: async (_url, opts) => { calls++; signals.push(opts.signal); const json = await response(calls); return json?.response ?? { ok: true, json: async () => json }; }, readJson: async res => res.json(),
   };
   const api = run(constants + '\n' + declaration, deps);
-  if (kind === 'page') { void api.start(); cleanup = () => { alive.current = false; modelsAbort.current?.abort(); if (modelsTimer.current) deps.clearTimeout(modelsTimer.current); }; }
+  if (kind === 'page') { void api.start(); cleanup = () => { alive.current = false; modelsAbort.current.forEach(c => c.abort()); modelsTimer.current.forEach(t => deps.clearTimeout(t)); }; }
   return { states, errors, timers, signals, calls: () => calls, cleanup, restart: api.start,
     advance: async ms => {
       const end = clock + ms;
@@ -106,7 +126,7 @@ for (const kind of ['agent', 'page']) {
     await u.advance(179999); const before = u.calls(); assert.ok(before > 1); assert.equal(u.timers.size, 2);
     await u.advance(1); assert.equal(u.calls(), before, 'no request starts at the deadline'); assert.equal(u.timers.size, 0);
     if (kind === 'agent') { assert.deepEqual(u.states.at(-1), []); assert.match(u.errors.at(-1), /still unavailable/); }
-    else { assert.equal(u.states.at(-1).pending, false); assert.equal(u.states.at(-1).loading, false); assert.match(u.states.at(-1).error, /still unavailable/); }
+    else { assert.equal(u.states.at(-1).openai.pending, false); assert.equal(u.states.at(-1).openai.loading, false); assert.match(u.states.at(-1).openai.error, /still unavailable/); }
     await u.advance(600000); assert.equal(u.calls(), before);
   });
   for (const phase of ['fetch', 'body']) await test(`${kind}: deadline aborts a hanging ${phase} read and ignores its late result`, async () => {
@@ -116,7 +136,7 @@ for (const kind of ['agent', 'page']) {
     await flush(); await u.advance(5000); assert.equal(u.calls(), 2); assert.equal(u.signals.at(-1).aborted, false);
     await u.advance(175000); assert.equal(u.signals.at(-1).aborted, true); assert.equal(u.timers.size, 0);
     if (kind === 'agent') { assert.deepEqual(u.states.at(-1), []); assert.match(u.errors.at(-1), /still unavailable/); }
-    else { assert.equal(u.states.at(-1).pending, false); assert.equal(u.states.at(-1).loading, false); assert.match(u.states.at(-1).error, /still unavailable/); }
+    else { assert.equal(u.states.at(-1).openai.pending, false); assert.equal(u.states.at(-1).openai.loading, false); assert.match(u.states.at(-1).openai.error, /still unavailable/); }
     const before = JSON.stringify([u.states, u.errors]); release({ models: [{ key: 'openai/late' }], pending: false }); await flush();
     assert.equal(JSON.stringify([u.states, u.errors]), before);
     await u.advance(600000); assert.equal(u.calls(), 2);
@@ -124,9 +144,9 @@ for (const kind of ['agent', 'page']) {
   await test(`${kind}: partial models stay available while another account retries and after its deadline`, async () => {
     const available = [{ key: 'openai/ready' }];
     const u = ui(kind, () => ({ models: available, pending: true, error: null })); await flush();
-    assert.deepEqual(kind === 'agent' ? u.states.at(-1) : u.states.at(-1).list, available);
+    assert.deepEqual(kind === 'agent' ? u.states.at(-1) : u.states.at(-1).openai.list, available);
     await u.advance(180000); assert.ok(u.calls() > 1); assert.equal(u.timers.size, 0);
-    assert.deepEqual(kind === 'agent' ? u.states.at(-1) : u.states.at(-1).list, available);
+    assert.deepEqual(kind === 'agent' ? u.states.at(-1) : u.states.at(-1).openai.list, available);
   });
   await test(`${kind}: a successful retry ends polling immediately`, async () => {
     const u = ui(kind, calls => ({ models: calls === 1 ? [] : [{ key: 'openai/fixture-model' }], error: null, pending: calls === 1 }));

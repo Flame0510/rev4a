@@ -28,6 +28,11 @@ import { SUPPORTED_VERSIONS, parseOpenClawVersion } from '@/lib/agent-versions';
 import { listLocalAgentImages } from '@/lib/agent-images';
 import { dockerRequestJson } from '@/lib/docker-socket-path';
 import {
+  DEFAULT_SUBSCRIPTION_PROVIDER,
+  SUBSCRIPTION_PROVIDERS,
+  type SubscriptionProviderId,
+} from '@/lib/subscription-providers';
+import {
   parseModelList,
   parseStatusJson,
   subscriptionProfileReferences,
@@ -47,8 +52,17 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const PROVIDER_ID = 'openai';
-export const PROVIDER_NAME = 'ChatGPT (Codex)';
+/**
+ * The default subscription provider (ChatGPT (Codex)), taken from the registry constant rather
+ * than the first list entry: adding a provider before it must change nothing here. These two
+ * stay exported because other modules import them; `getProviderList` lists every registry
+ * provider that has a server implementation here.
+ */
+export const PROVIDER_ID = DEFAULT_SUBSCRIPTION_PROVIDER.id;
+export const PROVIDER_NAME = DEFAULT_SUBSCRIPTION_PROVIDER.name;
+
+/** The providers with a server implementation under `app/api/subscriptions/<id>/` (today only the default one). */
+const IMPLEMENTED_PROVIDERS: readonly SubscriptionProviderId[] = [DEFAULT_SUBSCRIPTION_PROVIDER.id];
 
 const CONFIG_PATH = '/root/.openclaw/openclaw.json';
 const MODELS_TTL_MS = 10 * 60_000;
@@ -411,11 +425,12 @@ export async function getAgentStatus(agentId: unknown): Promise<AgentSubscriptio
 /** The agent list the page renders at once: docker ps and inspect only, no exec into any agent. */
 export async function getProviderList(): Promise<ProviderListView[]> {
   const containers = await listAgentContainers();
-  return [{
-    id: PROVIDER_ID,
-    name: PROVIDER_NAME,
-    agents: containers.map((a) => ({ agentId: a.agentId, name: a.displayName || a.agentId, container: a.container, running: a.running })),
-  }];
+  const agents = containers.map((a) => ({ agentId: a.agentId, name: a.displayName || a.agentId, container: a.container, running: a.running }));
+  // One entry per registry provider that has a server implementation here: today the default one,
+  // so the answer is the same as before the registry existed.
+  return SUBSCRIPTION_PROVIDERS
+    .filter((p) => IMPLEMENTED_PROVIDERS.includes(p.id))
+    .map((p) => ({ id: p.id, name: p.name, agents }));
 }
 
 /** The models one signed-in account offers, read from one of its agents, cached per account email. */

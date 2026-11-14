@@ -8,7 +8,16 @@
  */
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { getSubscriptionProvider } from '@/lib/subscription-providers';
 import { formatReset, reachedWindow, windowShort, type UsageAccount } from '@/app/subscriptions/usage';
+
+/**
+ * The provider of the subscription line: the ChatGPT (Codex) sign-in itself, bound explicitly so
+ * a change of default provider cannot repoint the line at another account.
+ */
+const FOUND_PROVIDER = getSubscriptionProvider('openai');
+if (!FOUND_PROVIDER) throw new Error('The openai subscription provider is missing from the registry.');
+const PROVIDER = FOUND_PROVIDER;
 
 export interface SubscriptionStatus {
   connected: boolean;
@@ -45,12 +54,12 @@ export default function SubscriptionLine({ status, loading, modelsLoading }: {
     );
   }
   const reached = usage ? reachedWindow(usage) : null;
-  const fallback = (status.fallbacks ?? []).find((f) => !f.startsWith('openai/'));
+  const fallback = (status.fallbacks ?? []).find((f) => !f.startsWith(PROVIDER.modelPrefix));
   return (
     <div style={{ fontSize: 11, color: '#888' }}>
       {usage && !reached ? (
         <>
-          ChatGPT{status.plan ? ` ${status.plan}` : ''}
+          {PROVIDER.shortName}{status.plan ? ` ${status.plan}` : ''}
           {usage.windows.map((w) => ` · ${windowShort(w.label)} ${Math.max(0, 100 - Math.round(w.usedPercent))}% left`).join('')}
         </>
       ) : reached ? (
@@ -59,7 +68,7 @@ export default function SubscriptionLine({ status, loading, modelsLoading }: {
           {fallback ? `: using ${fallback.replace(/^rev4a\//, '')}` : ''}
         </>
       ) : (
-        <>Subscription: ChatGPT{status.plan ? ` ${status.plan}` : ''}, connected</>
+        <>Subscription: {PROVIDER.shortName}{status.plan ? ` ${status.plan}` : ''}, connected</>
       )}
       {modelsLoading && <> · Loading subscription models…</>}
     </div>

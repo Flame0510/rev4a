@@ -10,10 +10,15 @@
  *   it uses), read live in about 0.5 s with one exec inside the container, and `action`, its
  *   running or last disconnect job (or null). The agent panel's Subscription line
  *   uses this too.
+ *
+ * Both forms take an optional `provider=<id>` query parameter (resolved by
+ * `providerFromParam` in lib/subscription-providers.ts). Missing or empty means the default
+ * provider, so every existing caller gets today's answer; an unknown value is a 400.
  */
 import { NextResponse } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { getAgentStatus, getProviderList, SubscriptionError } from '@/lib/subscriptions';
+import { providerFromParam } from '@/lib/subscription-providers';
 import { getAction } from '@/lib/subscription-actions';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +29,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied as any;
   try {
-    const one = new URL(request.url).searchParams.get('agentId');
+    const params = new URL(request.url).searchParams;
+    const provider = providerFromParam(params.get('provider'));
+    if (!provider) return NextResponse.json({ error: 'Unknown subscription provider' }, { status: 400 });
+    const one = params.get('agentId');
     if (one) {
       const agent = await getAgentStatus(one);
       return NextResponse.json({ agent, action: getAction(agent.agentId) });
