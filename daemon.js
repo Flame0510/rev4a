@@ -25,6 +25,7 @@ const { createContainerAnomalyDetector } = require('./lib/container-anomalies.js
 const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, failureMessage: packagesFailureMessage, splitFailed: splitPackagesFailed } = require('./lib/agent-packages.js');
 const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
 const agentSessions = require('./lib/agent-sessions.js');
+const claudeCli = require('./lib/claude-cli-label.js');
 const spendAlerts = require('./lib/spend-alerts.js');
 const { telegramConfig, sendTelegramMessage } = require('./lib/alerts-send.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
@@ -779,8 +780,19 @@ CREATE TABLE IF NOT EXISTS agent_cost_sources (
     // process) is the writer, and creates the table itself too if it gets there first; the daemon
     // only guarantees it exists and prunes it. See lib/proxy-usage.js.
     cdb.exec(PROXY_USAGE_TABLE_SQL);
+    // The days an agent's Claude Code rule was on (lib/claude-cli-label.js). Additive: a new table.
+    cdb.exec(claudeCli.CREATE_TABLE_SQL);
+    // A table of an earlier build lacks last_on_date: add it once, guarded.
+    if (!cdb.prepare('PRAGMA table_info(agent_cost_claude_cli)').all().some((c) => c.name === 'last_on_date')) {
+      cdb.exec(claudeCli.ADD_LAST_ON_COLUMN_SQL);
+    }
     return {
       db: cdb,
+      claudeIntervals: cdb.prepare('SELECT since_date, until_date, last_on_date FROM agent_cost_claude_cli WHERE container = ? ORDER BY since_date'),
+      openClaudeInterval: cdb.prepare('INSERT OR IGNORE INTO agent_cost_claude_cli (container, since_date, until_date, last_on_date) VALUES (?, ?, NULL, ?)'),
+      reopenClaudeInterval: cdb.prepare('UPDATE agent_cost_claude_cli SET until_date = NULL, last_on_date = ? WHERE container = ? AND since_date = ?'),
+      touchClaudeInterval: cdb.prepare('UPDATE agent_cost_claude_cli SET last_on_date = ? WHERE container = ? AND since_date = ?'),
+      closeClaudeInterval: cdb.prepare('UPDATE agent_cost_claude_cli SET until_date = ? WHERE container = ? AND since_date = ?'),
       clearDaily: cdb.prepare('DELETE FROM agent_cost_daily WHERE container = ? AND date >= ?'),
       clearModelDaily: cdb.prepare('DELETE FROM agent_cost_model_daily WHERE container = ? AND date >= ?'),
       insertDaily: cdb.prepare(`
@@ -995,6 +1007,32 @@ function wellFormed(cost, usage) {
     && usage?.aggregates !== null && typeof usage?.aggregates === 'object';
 }
 
+/** The last activity of a sessions.usage entry, as stored in agent_cost_sessions.last_activity. */
+const sessionActivity = (s, u) => Number(u.lastActivity ?? s.updatedAt);
+
+/**
+ * Whether the agent's own configuration routes `anthropic/*` through Claude Code: one fixed `cat` in
+ * the container, bounded. true / false, or null when it could not be read (unknown: the stored days
+ * are left as they are).
+ */
+async function readClaudeRule(container) {
+  try {
+    const out = await containerExec(container, ['cat', '/root/.openclaw/openclaw.json'], 8000, 2 * 1024 * 1024);
+    return claudeCli.claudeRuleFromConfigText(out);
+  } catch {
+    return null;
+  }
+}
+
+/** The stored Claude Code days of a container; empty when costs.db is off or cannot be read. */
+function claudeIntervalsOf(container) {
+  try {
+    return costs ? costs.claudeIntervals.all(container) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function collectAgentCosts(agent) {
   const endDate = utcDate(Date.now());
   const startDate = utcDate(Date.now() - (COSTS_WINDOW_DAYS - 1) * 86_400_000);
@@ -1016,7 +1054,17 @@ async function collectAgentCosts(agent) {
   if (!wellFormed(cost, usage)) throw new Error('unexpected answer from OpenClaw; the previous figures are kept');
 
   const container = agent.container;
+  // Read before the transaction (it waits on Docker). A failed read leaves the stored days as they are.
+  const claudeRule = await readClaudeRule(container);
   costs.db.transaction(() => {
+    const today = utcDate(Date.now());
+    const change = claudeCli.planIntervalChange(costs.claudeIntervals.all(container), claudeRule, today);
+    if (change.open) costs.openClaudeInterval.run(container, change.open, today);
+    if (change.reopen) costs.reopenClaudeInterval.run(today, container, change.reopen);
+    if (change.touch) costs.touchClaudeInterval.run(today, container, change.touch);
+    // Closed at the last date the rule was read as on, not today: nothing after it is hidden.
+    if (change.close) costs.closeClaudeInterval.run(change.closeAt, container, change.close);
+    const claudeDays = costs.claudeIntervals.all(container);
     costs.clearDaily.run(container, startDate);
     for (const d of Array.isArray(cost.daily) ? cost.daily : []) {
       if (!num(d.totalTokens) && !num(d.missingCostEntries) && !num(d.totalCost)) continue;
@@ -1029,19 +1077,25 @@ async function collectAgentCosts(agent) {
       });
     }
     costs.clearModelDaily.run(container, startDate);
-    for (const m of Array.isArray(usage.aggregates?.modelDaily) ? usage.aggregates.modelDaily : []) {
-      costs.insertModelDaily.run({
-        container, date: String(m.date), provider: String(m.provider ?? 'unknown'), model: String(m.model ?? 'unknown'),
-        tokens: num(m.tokens), cost: num(m.cost), calls: num(m.count),
-      });
-    }
+    const modelRows = (Array.isArray(usage.aggregates?.modelDaily) ? usage.aggregates.modelDaily : []).map((m) => ({
+      date: String(m.date), provider: String(m.provider ?? 'unknown'), model: String(m.model ?? 'unknown'),
+      tokens: num(m.tokens), cost: num(m.cost), calls: num(m.count),
+    }));
+    // Relabelled rows that collide with a native one are summed (the table is keyed on the provider).
+    for (const m of claudeCli.labelModelDaily(modelRows, claudeDays)) costs.insertModelDaily.run({ container, ...m });
     for (const s of Array.isArray(usage.sessions) ? usage.sessions : []) {
       const u = s.usage || {};
       const id = s.sessionId || u.sessionId || s.key;
       if (!id) continue;
       costs.upsertSession.run({
         container, session_id: String(id), session_key: s.key ?? null, label: s.label ?? null,
-        agent_id: s.agentId ?? null, provider: s.modelProvider ?? null, model: s.model ?? null,
+        agent_id: s.agentId ?? null,
+        provider: claudeCli.labelProvider(s.modelProvider ?? null,
+          // No cost guard for sessions: OpenClaw's session usage can estimate a price for a Claude Code turn
+          // (seen live 2026-11-14: $0.04 on a claude-cli Sonnet session whose own costUsd is null), and this
+          // table never feeds Spent (that is agent_cost_model_daily, which keeps the guard).
+          Number.isFinite(sessionActivity(s, u)) ? utcDate(sessionActivity(s, u)) : null, claudeDays),
+        model: s.model ?? null,
         tokens: num(u.totalTokens), cost: num(u.totalCost), missing: num(u.missingCostEntries),
         first_activity: u.firstActivity ?? null, last_activity: u.lastActivity ?? s.updatedAt ?? null,
       });
@@ -1272,6 +1326,10 @@ async function collectAgentSessions(agent, state) {
   const { rows, complete } = await agentSessions.readAllSessions(
     (params) => gatewayCall(agent.container, 'sessions.list', params), ctx);
   const now = Date.now();
+  // A turn run through Claude Code on the operator's plan is stored as provider `anthropic`:
+  // label it from the days that agent's Claude Code rule was on (read by the costs pass).
+  const claudeDays = claudeIntervalsOf(agent.container);
+  claudeCli.relabelSessionRows(rows, claudeDays);
   const diff = agentSessions.diffSessions(storedSessions(agent.container), rows, now, { complete });
   writeSessionDiff(agent.container, diff, now);
   state.anyRunning = rows.some((r) => r.status === 'running');
@@ -1287,6 +1345,7 @@ async function collectAgentSessions(agent, state) {
       try {
         const runRows = await readCronRuns(agent.container, agent.name, job.jobId);
         const t = Date.now();
+        claudeCli.relabelSessionRows(runRows, claudeDays); // cron runs too
         const runDiff = agentSessions.diffSessions(storedSessions(agent.container), runRows, t, { complete: false });
         writeSessionDiff(agent.container, runDiff, t);
         state.cronReadAt.set(job.jobId, job.marker);

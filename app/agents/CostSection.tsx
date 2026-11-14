@@ -21,8 +21,10 @@ interface AgentCosts {
   tokensMonth?: number;
   topModel?: { model: string; cost: number } | null;
   unpricedMonth?: number;
-  /** ChatGPT subscription usage over 30 days, covered by the plan (not in the figures above). */
+  /** Subscription usage over 30 days (all plans), covered by the plan (not in the figures above). */
   subscription?: { tokens: number; calls: number; apiValue: number; unpricedCalls: number } | null;
+  /** The same per plan ("ChatGPT subscription", "Claude subscription"). */
+  subscriptions?: { id: string; label: string; tokens: number; calls: number; apiValue: number; unpricedCalls: number }[];
   collectedAt?: number | null;
   error?: string | null;
 }
@@ -86,11 +88,10 @@ export default function CostSection({ container }: { container: string }) {
     ['Top model (30 days)', data.topModel ? `${data.topModel.model} · ${formatCost(data.topModel.cost)}` : '-'],
   );
   if (data.unpricedMonth) rows.push(['Calls without a price (30 days)', String(data.unpricedMonth)]);
-  const sub = data.subscription;
-  if (sub) {
+  for (const sub of data.subscriptions ?? []) {
     const value = sub.unpricedCalls > 0 && sub.apiValue <= 0 ? 'no price'
       : `${sub.unpricedCalls ? 'at least ' : ''}${formatCost(sub.apiValue)}`;
-    rows.push(['ChatGPT subscription', `${formatTokens(sub.tokens)} tokens · API value ${value} (covered by the plan)`]);
+    rows.push([sub.label, `${formatTokens(sub.tokens)} tokens · API value ${value} (covered by the plan)`]);
   }
   rows.push(['Last read', data.collectedAt ? formatAge(Date.now() - data.collectedAt) : 'never']);
 

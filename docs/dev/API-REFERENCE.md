@@ -615,8 +615,8 @@ cap). Until the daemon has written the table the answer is empty, never an error
 `parent_uid` is set only when the parent row exists in the same container (`parent_kind` is `spawn` for a
 real sub-agent link, `cron` for a cron run, `nav` for a navigation parent). `cost_usd` is `null` when
 OpenClaw did not price the session, never 0. `uses_subscription` is `true` when the session runs on a
-ChatGPT subscription (`openai` or `openai-codex`, the `isSubscriptionProvider` rule in
-`lib/agent-costs.ts`); when the session's `provider` is `null`, the `provider` of the matching
+ChatGPT subscription (`openai` or `openai-codex`) or on a Claude plan (`claude-cli`), the
+`isSubscriptionProvider` rule in `lib/agent-costs.ts`; when the session's `provider` is `null`, the `provider` of the matching
 `costs.db` `agent_cost_sessions` row for the same `(container, session_id)` decides. The Lineage shows
 `subscription` instead of a dollar amount for such a session; `cost_usd` still carries OpenClaw's
 figure and is not changed. The field is on every session object of `GET /api/sessions`,
@@ -667,7 +667,7 @@ and `GET /api/stats-since` were removed with the lineage rework; spend is only i
 What the agents spent in a range of UTC days, today included (default `7d`), read from
 `costs.db` (written by the daemon every 5 minutes, see `docs/dev/DATABASE.md`). Rev4a
 computes no cost: every figure is the one OpenClaw recorded with the prices Rev4a syncs.
-Calls made with a ChatGPT subscription (provider `openai` or `openai-codex`) are left out of the spend in `totals`,
+Calls made with a ChatGPT subscription (provider `openai` or `openai-codex`) or on a Claude plan (provider `claude-cli`, an `anthropic` row of a day the agent's Claude Code rule was on) are left out of the spend in `totals`,
 `daily`, `byAgent`, `byModel` and `proxy` (they are covered by the plan) and reported in `subscription`.
 `sessions` keeps a session whose current provider is a subscription, with `usesSubscription: 1`. The
 unpriced counts (`missing`, `unpriced`) stay as OpenClaw recorded them, subscription models included:
@@ -712,7 +712,7 @@ taking them out could hide an unpriced paid model.
 }
 ```
 
-- `subscription` (additive): the calls made with a ChatGPT subscription over the range, kept out of every
+- `subscription` (additive): the calls made with a subscription (ChatGPT, Claude plan) over the range, all plans together, with `plans`: the same figures per plan (`id` `chatgpt` or `claude`, `label` "ChatGPT subscription" or "Claude subscription", `totals`, `byAgent`, `byModel`, `unpriced`), only the plans that have calls, kept out of every
   figure above. `apiValue` is what the calls would have cost at OpenAI API prices (OpenClaw's price
   catalog, refreshed every 6 hours): the saving the plan gives, not a spend. A model OpenClaw has no price
   for records tokens with cost 0: its calls are counted in `unpricedCalls` / `unpriced` (the page shows
@@ -806,7 +806,7 @@ One agent's spend for its panel, from `costs.db`.
 "cost": 0.022 }, "unpricedMonth": 81, "subscription": null, "collectedAt": 1790529516737, "error": null }` —
 UTC days (today, last 7, last 30); `pricing` is the band billed right now, the same object
 the Costs page header shows (`null` when no scheduled model is on offer); `collectedAt`/`error`
-`subscription` is `{ tokens, calls, apiValue, unpricedCalls }` over the 30 days when the agent made calls with a ChatGPT subscription (covered by the plan, not in the figures above), `null` otherwise;
+`subscription` is `{ tokens, calls, apiValue, unpricedCalls }` over the 30 days when the agent made calls with a subscription (ChatGPT or Claude plan; covered by the plan, not in the figures above), `null` otherwise; `subscriptions` (additive) is the same per plan: `[{ id, label, tokens, calls, apiValue, unpricedCalls }]`, empty when there are none;
 from the agent's last read. Before `costs.db` exists, the response is
 `{ "available": false, "intervalS": 300, "pricing": null }` (or the current pricing
 object when a scheduled model is on offer).
@@ -3415,6 +3415,8 @@ kept 30 minutes after it ends; while it runs the agent counts as busy.
 
 ### `PUT /api/gateway/agent` and subscription models
 A model id sent as `subscription:openai/<id>` is stored as the bare `openai/<id>` (a ChatGPT subscription model) and one sent as `subscription:anthropic/<id>` as the bare `anthropic/<id>` (a Claude subscription model). Without the prefix every id still gets `rev4a/`, so a Rev4a catalogue model named `openai/…` or `anthropic/…` stays `rev4a/<provider>/…`. A marked id must match `subscription:(openai|anthropic)/[A-Za-z0-9._-]+`, otherwise `400` (a slash, a space, a `..` path segment or an empty id is refused). When the body carries a `subscription:openai/…` id the route reads the agent's ChatGPT sign-in first: `409` "This agent is not connected to a ChatGPT subscription." if there is none, `503` if the status cannot be read. For `subscription:anthropic/…` it reads the Claude state: `409` "This agent is not connected to a Claude subscription." unless `claude.state` is `connected`. When `fallbacks` is omitted the stored ones are kept as they are (a stored bare `openai/<id>` or `anthropic/<id>` is not re-prefixed). A primary or fallback can therefore be a bare subscription model; the agent list shows it as "<id> · ChatGPT" or "<id> · Claude", with the `NO FALLBACK` warning when it has no fallback.
+
+The model write behind it (`openclaw config patch`, for `agents.defaults.model` and the `main` entry of `agents.list`; also used by Disconnect) waits up to 150 s (`OPENCLAW_RELOAD_TIMEOUT_MS`), because a patch can outlast a short deadline while the Gateway reloads, and is judged by reading the model back, not by the exit of the patch: a patch that failed or timed out but whose read-back shows the intended model is a success; otherwise `502` "The agent is still applying the change or refused it. Check again in a minute." (the read-back showed another model after a failed patch) or "The model change did not apply as expected. Check the agent panel." (the patch reported success).
 
 There is no route that chooses a subscription model: the agent's model (primary and fallbacks) is chosen in one place, the MODEL section of the agent panel, which sends `PUT /api/gateway/agent` with `{ containerName, model, fallbacks }`. Each of `model` and the entries of `fallbacks` is either a Rev4a catalogue id (stored as `rev4a/<id>`) or a `subscription:<provider>/<id>` mark (stored as the bare `<provider>/<id>`), in any combination. The MODEL section reads the agent's connections from `GET /api/subscriptions?agentId=` (ChatGPT) and `GET /api/subscriptions?agentId=<id>&provider=anthropic` (Claude) and the models from `GET /api/subscriptions/models` and `GET /api/subscriptions/models?provider=anthropic`, offering the "ChatGPT subscription" and "Claude subscription" groups only when the matching plan is connected.
 

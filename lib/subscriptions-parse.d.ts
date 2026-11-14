@@ -105,3 +105,6 @@ export function keepStoredRef(id: string): string;
 export function majorMinor(version: unknown): string | null;
 /** Same major.minor line as one of the supported versions. */
 export function isSupportedLine(version: unknown, supported: readonly string[]): boolean;
+
+/** Run a config write, then decide by the read-back: 'ok' when the value is there, else 'exec-failed' or 'mismatch'. */
+export function writeThenVerify(write: () => Promise<unknown>, readBack: () => Promise<boolean>): Promise<'ok' | 'exec-failed' | 'mismatch'>;

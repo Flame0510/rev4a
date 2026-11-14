@@ -253,6 +253,18 @@ test('an older costs.db without a provider column: no throw, costs filled as bef
   assert.equal(s.uses_subscription, false);
 });
 
+test('subscription: claude-cli marks the session (Lineage shows "subscription"); plain anthropic does not', () => {
+  const d = new Database(':memory:');
+  seed(d);
+  d.prepare("UPDATE agent_sessions SET provider = 'claude-cli', cost_usd = 0.9 WHERE container = 'a2' AND session_key = 'agent:main:main'").run();
+  d.prepare("UPDATE agent_sessions SET provider = 'anthropic', cost_usd = 0.4 WHERE container = 'a1' AND session_key = 'agent:main:subagent:x'").run();
+  const r = m.listSessions(d, { now: NOW });
+  const by = (container, key) => r.sessions.find((s) => s.container === container && s.session_key === key);
+  assert.equal(by('a2', 'agent:main:main').uses_subscription, true);
+  assert.equal(by('a1', 'agent:main:subagent:x').uses_subscription, false);
+  assert.equal(m.getSession(d, { container: 'a2', key: 'agent:main:main' }).session.uses_subscription, true);
+});
+
 test('cron runs do not crowd out main and sub-agent sessions (per-job trimming, real total)', () => {
   const d = new Database(':memory:');
   d.exec(DDL);

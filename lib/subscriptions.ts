@@ -24,6 +24,7 @@ import { dockerExec, dockerExecNoFail, dockerExecWithInput, mapWithConcurrency }
 import { isValidAgentId } from '@/lib/container';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { gatewayCliArgv } from '@/lib/gateway-cli';
+import { OPENCLAW_RELOAD_TIMEOUT_MS } from '@/lib/credentials/native';
 import { SUPPORTED_VERSIONS, parseOpenClawVersion } from '@/lib/agent-versions';
 import { listLocalAgentImages } from '@/lib/agent-images';
 import { dockerRequestJson } from '@/lib/docker-socket-path';
@@ -42,6 +43,7 @@ import {
   STATUS_SCRIPT_SRC,
   STOP_CODEX_SCRIPT,
   revertSubscriptionModel,
+  writeThenVerify,
   isSubscriptionModel,
   normalizeModel,
   type AuthProfile,
@@ -321,6 +323,13 @@ function sameModel(a: AgentModelRef, b: AgentModelRef): boolean {
   return x.primary === y.primary && x.fallbacks.join('\n') === y.fallbacks.join('\n');
 }
 
+/** The error for a model write whose read-back did not show the intended model. */
+function modelWriteError(result: 'exec-failed' | 'mismatch'): SubscriptionError {
+  return new SubscriptionError(502, result === 'exec-failed'
+    ? 'The agent is still applying the change or refused it. Check again in a minute.'
+    : 'The model change did not apply as expected. Check the agent panel.');
+}
+
 /**
  * Write `agents.defaults.model` and read it back. Exported for the other provider module (Claude),
  * which reverts its own model prefix through the same checked write.
@@ -329,14 +338,13 @@ export async function writeDefaultModel(container: string, model: { primary: str
   // A null primary is left out of the patch (the key stays as it is) rather than sent as null.
   const body = model.primary === null ? { fallbacks: model.fallbacks } : model;
   const patch = JSON.stringify({ agents: { defaults: { model: body } } });
-  try {
-    await withAgentConfigLock(container, () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], patch, { timeoutMs: 30_000 }));
-  } catch {
-    throw new SubscriptionError(502, 'The agent refused the model change.');
-  }
-  // Read it back: a patch that merged instead of replacing the fallbacks must not pass as done.
-  const after = await readDefaultModel(container);
-  if (!sameModel(after, model)) throw new SubscriptionError(502, 'The model change did not apply as expected. Check the agent panel.');
+  // A patch can outlast any short deadline while the Gateway reloads: the read-back decides, not the exec.
+  // It also catches a patch that merged instead of replacing the fallbacks.
+  const result = await writeThenVerify(
+    () => withAgentConfigLock(container, () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], patch, { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS })),
+    async () => sameModel(await readDefaultModel(container), model),
+  );
+  if (result !== 'ok') throw modelWriteError(result);
 }
 
 // ---- per-agent status and models --------------------------------------------------------
@@ -573,16 +581,16 @@ export async function writeMainModel(container: string, model: { primary: string
     // shape) instead of being written as an explicit null.
     const entryModel = model.primary === null ? { fallbacks: model.fallbacks } : { primary: model.primary, fallbacks: model.fallbacks };
     const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
-    try {
-      await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: 30_000 });
-    } catch {
-      throw new SubscriptionError(502, 'The agent refused the model change.');
-    }
+    // The lock is held across read, patch and read-back; the read-back decides, not the exec.
+    const result = await writeThenVerify(
+      () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS }),
+      async () => {
+        const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
+        return !!after && sameModel(after.model as AgentModelRef, model);
+      },
+    );
+    if (result !== 'ok') throw modelWriteError(result);
   });
-  const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
-  if (!after || !sameModel(after.model as AgentModelRef, model)) {
-    throw new SubscriptionError(502, 'The model change did not apply as expected. Check the agent panel.');
-  }
 }
 
 /**

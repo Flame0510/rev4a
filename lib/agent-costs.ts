@@ -38,11 +38,12 @@ export interface SessionCostRow {
   container: string; agentName: string | null; sessionId: string; sessionKey: string | null; label: string | null;
   agentId: string | null; model: string | null; cost: number; tokens: number; missing: number; lastActivity: number | null;
   /**
-   * The session's current provider is a ChatGPT subscription. Its cost is OpenClaw's total for the
+   * The session's current provider is a subscription (ChatGPT, or `claude-cli` for the Claude plan). Its cost is OpenClaw's total for the
    * whole session, so it can include subscription calls at list price as well as paid proxy calls:
    * the session is kept in the list and labelled, not dropped.
    */
   usesSubscription: number;
+  provider: string | null;
 }
 export interface CostSummary {
   totals: CostTotals;
@@ -65,13 +66,19 @@ export const EMPTY_TOTALS: CostTotals = {
 };
 
 /**
- * Providers whose calls a ChatGPT (Codex) subscription covers: OpenClaw's native ChatGPT route
- * (`openai`) and the legacy `openai-codex`. Rev4a never gives an agent an OpenAI API key, so every
- * `openai` row is taken for a subscription call; an operator who adds their own OpenAI key by hand
- * would see those calls here too. THE one place that rule lives: every figure of "Spent" leaves
- * these calls out, and the Costs page shows them apart (their API value, not a spend).
+ * Providers whose calls a subscription covers.
+ *  - ChatGPT (Codex): OpenClaw's native ChatGPT route (`openai`) and the legacy `openai-codex`. Rev4a
+ *    never gives an agent an OpenAI API key, so every `openai` row is taken for a subscription call; an
+ *    operator who adds their own OpenAI key by hand would see those calls here too.
+ *  - Claude plan: `claude-cli`, the label the daemon gives an `anthropic` row of a day on which the
+ *    agent's Claude Code rule was on (lib/claude-cli-label.js). OpenClaw itself stores those turns as
+ *    `anthropic` with no cost; a plain `anthropic` row stays a paid API call.
+ * THE one place that rule lives: every figure of "Spent" leaves these calls out, and the Costs page
+ * shows them apart (their API value, not a spend).
  */
-export const SUBSCRIPTION_PROVIDERS = ['openai', 'openai-codex'] as const;
+export const CHATGPT_PROVIDERS = ['openai', 'openai-codex'] as const;
+export const CLAUDE_PLAN_PROVIDERS = ['claude-cli'] as const;
+export const SUBSCRIPTION_PROVIDERS = [...CHATGPT_PROVIDERS, ...CLAUDE_PLAN_PROVIDERS] as const;
 export const isSubscriptionProvider = (provider: string | null | undefined): boolean =>
   !!provider && (SUBSCRIPTION_PROVIDERS as readonly string[]).includes(provider);
 
@@ -156,16 +163,29 @@ export interface SubscriptionModelRow {
 export interface SubscriptionAgentRow {
   container: string; name: string | null; tokens: number; calls: number; apiValue: number; unpricedCalls: number;
 }
+export type SubscriptionPlanId = 'chatgpt' | 'claude';
+/** The plan a subscription provider belongs to. */
+export const subscriptionPlanOf = (provider: string): SubscriptionPlanId =>
+  (CLAUDE_PLAN_PROVIDERS as readonly string[]).includes(provider) ? 'claude' : 'chatgpt';
+export const SUBSCRIPTION_PLAN_LABEL: Record<SubscriptionPlanId, string> = {
+  chatgpt: 'ChatGPT subscription',
+  claude: 'Claude subscription',
+};
 export interface SubscriptionUsage {
   totals: { tokens: number; calls: number; apiValue: number; unpricedCalls: number };
   byAgent: SubscriptionAgentRow[];
   byModel: SubscriptionModelRow[];
   /** Models with calls and no price, over the range. */
   unpriced: { model: string; calls: number }[];
+  /**
+   * The same figures per plan (ChatGPT first, then Claude), only the plans with calls. The top-level
+   * figures are all plans together; with ChatGPT usage alone they equal the one entry here.
+   */
+  plans: (Omit<SubscriptionUsage, 'plans'> & { id: SubscriptionPlanId; label: string })[];
 }
 
 export const EMPTY_SUBSCRIPTION: SubscriptionUsage = {
-  totals: { tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 }, byAgent: [], byModel: [], unpriced: [],
+  totals: { tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 }, byAgent: [], byModel: [], unpriced: [], plans: [],
 };
 
 /**
@@ -187,6 +207,20 @@ export function readSubscriptionUsage(
 
   const names = new Map((db.prepare('SELECT container, name FROM agent_cost_sources').all() as
     { container: string; name: string | null }[]).map((r) => [r.container, r.name]));
+  const all = aggregateSubscription(rows, names);
+  const plans = (['chatgpt', 'claude'] as const)
+    .map((id) => ({ id, rows: rows.filter((r) => subscriptionPlanOf(r.provider) === id) }))
+    .filter((p) => p.rows.length > 0)
+    .map((p) => {
+      const { plans: _unused, ...figures } = aggregateSubscription(p.rows, names);
+      return { id: p.id, label: SUBSCRIPTION_PLAN_LABEL[p.id], ...figures };
+    });
+  return { ...all, plans };
+}
+
+type SubscriptionRow = { container: string; provider: string; model: string; tokens: number; cost: number; calls: number; unpricedCalls: number };
+
+function aggregateSubscription(rows: SubscriptionRow[], names: Map<string, string | null>): SubscriptionUsage {
   const agents = new Map<string, SubscriptionAgentRow>();
   const models = new Map<string, SubscriptionModelRow>();
   const totals = { tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
@@ -195,7 +229,7 @@ export function readSubscriptionUsage(
     const a = agents.get(r.container) ?? { container: r.container, name: names.get(r.container) ?? null, tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
     a.tokens += r.tokens; a.calls += r.calls; a.apiValue += r.cost; a.unpricedCalls += r.unpricedCalls;
     agents.set(r.container, a);
-    // One model reached through both subscription providers is one line.
+    // One model reached through two subscription providers of one plan is one line.
     const m = models.get(r.model) ?? { provider: r.provider, model: r.model, tokens: 0, calls: 0, apiValue: 0, unpricedCalls: 0 };
     m.tokens += r.tokens; m.calls += r.calls; m.apiValue += r.cost; m.unpricedCalls += r.unpricedCalls;
     models.set(r.model, m);
@@ -207,6 +241,7 @@ export function readSubscriptionUsage(
     byAgent: [...agents.values()].sort(byValue),
     byModel,
     unpriced: byModel.filter((m) => m.unpricedCalls > 0).map((m) => ({ model: m.model, calls: m.unpricedCalls })),
+    plans: [],
   };
 }
 
@@ -265,7 +300,7 @@ export function readCostSummary(
   const since = Date.parse(`${startDate}T00:00:00Z`);
   const sessions = (db.prepare(`
     SELECT container, session_id AS sessionId, session_key AS sessionKey, label, agent_id AS agentId, model,
-      cost, tokens, missing, last_activity AS lastActivity,
+      cost, tokens, missing, last_activity AS lastActivity, provider,
       CASE WHEN COALESCE(provider, '') IN (${SUB_LIST_SQL}) THEN 1 ELSE 0 END AS usesSubscription
     FROM agent_cost_sessions WHERE last_activity >= @since${opts.container ? ' AND container = @container' : ''}
     ORDER BY cost DESC, tokens DESC LIMIT @limit`).all({ since, container: opts.container ?? null, limit: opts.topSessions ?? 20 }) as

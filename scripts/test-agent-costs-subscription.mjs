@@ -205,6 +205,63 @@ test('subscription: empty when there is none (the page hides the section)', () =
   assert.deepEqual(u.byAgent, []);
 });
 
+test('rule: claude-cli is a subscription provider; plain anthropic is a paid API call', () => {
+  assert.equal(isSubscriptionProvider('claude-cli'), true);
+  assert.equal(isSubscriptionProvider('anthropic'), false);
+});
+
+/** makeDb plus Claude plan usage: atlas day 1 claude-cli (haiku, 4000 tokens, API value 0.8, 3 calls), argus day 2 claude-cli + a paid anthropic row. */
+function makeClaudeDb() {
+  const db = makeDb();
+  db.prepare('INSERT INTO agent_cost_model_daily VALUES (?,?,?,?,?,?,?)').run('atlas', d1, 'claude-cli', 'claude-haiku-5-5', 4000, 0.8, 3);
+  db.prepare('INSERT INTO agent_cost_model_daily VALUES (?,?,?,?,?,?,?)').run('argus', d2, 'claude-cli', 'claude-haiku-5-5', 1000, 0.2, 1);
+  db.prepare('INSERT INTO agent_cost_model_daily VALUES (?,?,?,?,?,?,?)').run('argus', d2, 'anthropic', 'claude-haiku-5-5', 100, 0.05, 1);
+  db.prepare('UPDATE agent_cost_daily SET total_tokens = total_tokens + 4000, cost = cost + 0.8 WHERE container = ? AND date = ?').run('atlas', d1);
+  db.prepare('UPDATE agent_cost_daily SET total_tokens = total_tokens + 1100, cost = cost + 0.25 WHERE container = ? AND date = ?').run('argus', d2);
+  db.prepare('INSERT INTO agent_cost_sessions (container, session_id, provider, model, tokens, cost, last_activity) VALUES (?,?,?,?,?,?,?)')
+    .run('atlas', 's-claude', 'claude-cli', 'claude-haiku-5-5', 4000, 0.8, Date.now());
+  return db;
+}
+
+test('claude plan: its calls are not in Spent, a paid anthropic row is', () => {
+  const s = readCostSummary(makeClaudeDb(), days);
+  // as makeDb (2.25) plus the paid anthropic 0.05; the claude-cli 0.8 and 0.2 are left out
+  near(s.totals.cost, 2.25 + 0.05, 'cost');
+  assert.ok(!s.byModel.some((m) => m.provider === 'claude-cli'), 'no claude-cli model row in Spent');
+  assert.ok(s.byModel.some((m) => m.provider === 'anthropic'), 'the paid anthropic row stays');
+});
+
+test('claude plan: one subscription section per plan, ChatGPT text and figures unchanged', () => {
+  const u = readSubscriptionUsage(makeClaudeDb(), days);
+  assert.deepEqual(u.plans.map((p) => [p.id, p.label]), [['chatgpt', 'ChatGPT subscription'], ['claude', 'Claude subscription']]);
+  const gpt = readSubscriptionUsage(makeDb(), days);
+  assert.deepEqual(gpt.plans.length, 1);
+  assert.equal(gpt.plans[0].label, 'ChatGPT subscription');
+  assert.deepEqual(u.plans[0].totals, gpt.totals, 'the ChatGPT plan is what it was without Claude usage');
+  assert.deepEqual(u.plans[0].byModel, gpt.byModel);
+  const claude = u.plans[1];
+  assert.equal(claude.totals.tokens, 5000);
+  assert.equal(claude.totals.calls, 4);
+  near(claude.totals.apiValue, 1.0, 'claude api value');
+  assert.deepEqual(claude.byAgent.map((a) => a.container), ['atlas', 'argus']);
+  assert.deepEqual(claude.byModel.map((m) => [m.model, m.provider]), [['claude-haiku-5-5', 'claude-cli']]);
+  assert.equal(u.totals.tokens, gpt.totals.tokens + 5000, 'the top-level figures are all plans together');
+});
+
+test('claude plan: an agent narrowed to Claude only has one plan; no usage means no plans', () => {
+  const only = readSubscriptionUsage(makeClaudeDb(), days, { container: 'argus' });
+  assert.deepEqual(only.plans.map((p) => p.id), ['chatgpt', 'claude']);
+  const none = readSubscriptionUsage(makeDb(), [d0]);
+  assert.deepEqual(none.plans, []);
+});
+
+test('claude plan: the session is flagged and carries its provider', () => {
+  const s = readCostSummary(makeClaudeDb(), days);
+  const c = s.sessions.find((x) => x.sessionId === 's-claude');
+  assert.equal(c.usesSubscription, 1);
+  assert.equal(c.provider, 'claude-cli');
+});
+
 test('proxy comparison: the recorded side excludes subscription calls', () => {
   const db = makeDb();
   const s = readCostSummary(db, days);

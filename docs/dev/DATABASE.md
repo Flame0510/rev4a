@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-11-10
+> **Last updated:** 2026-11-14
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (events and the agents' sessions, below), `metrics.db` (machine and container metrics, see
@@ -524,8 +524,11 @@ CREATE TABLE agent_cost_daily (
   PRIMARY KEY (container, date)
 );
 -- Per model per day: sessions.usage aggregates.modelDaily. Rows with provider `openai` (or the
--- legacy `openai-codex`) are ChatGPT subscription calls: no schema change for them, the readers subtract
--- them from agent_cost_daily (which has no provider) and show them apart, see lib/agent-costs.ts.
+-- legacy `openai-codex`) are ChatGPT subscription calls, rows with provider `claude-cli` are Claude plan
+-- calls (see agent_cost_claude_cli below): no schema change for them, the readers subtract them from
+-- agent_cost_daily (which has no provider) and show them apart, see lib/agent-costs.ts. This table is
+-- rewritten over the whole 30-day window on every pass, so the `claude-cli` label is a function of
+-- (container, UTC date) and can never count a call twice.
 CREATE TABLE agent_cost_model_daily (
   container TEXT NOT NULL, date TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
   tokens INTEGER, cost REAL, calls INTEGER,
@@ -533,7 +536,9 @@ CREATE TABLE agent_cost_model_daily (
 );
 -- One row per session seen; its figures are the session's total over the 30-day window.
 -- `provider` is the session's current provider: when agent_sessions.provider is NULL it decides
--- `uses_subscription` for the Lineage (openai/openai-codex = ChatGPT subscription, no spend shown).
+-- `uses_subscription` for the Lineage (openai/openai-codex = ChatGPT subscription, claude-cli = Claude plan, no spend shown).
+-- OpenClaw itself stores a Claude Code turn as provider `anthropic` with cost 0; the daemon stores it as
+-- `claude-cli` when the session's last activity falls on a day the agent's Claude Code rule was on.
 CREATE TABLE agent_cost_sessions (
   container TEXT NOT NULL, session_id TEXT NOT NULL,
   session_key TEXT, label TEXT, agent_id TEXT, provider TEXT, model TEXT,
@@ -542,6 +547,22 @@ CREATE TABLE agent_cost_sessions (
   PRIMARY KEY (container, session_id)
 );
 CREATE INDEX idx_cost_sessions_last ON agent_cost_sessions(last_activity);
+-- The UTC days an agent's Claude Code rule was on (`agents.defaults.models["anthropic/*"].agentRuntime.id`
+-- is `claude-cli` in its openclaw.json, written by Connect). The daemon reads that file once per agent per
+-- cost pass (fixed `cat`, 8 s deadline), opens an interval from today when the rule is read on and moves
+-- `last_on_date` to today on every later "on" read; an "off" read closes it at `last_on_date` (the last
+-- date the rule was SEEN on, not today), and a failed read changes nothing. An open interval covers days
+-- up to `last_on_date` only, so days after the last good read are never claimed. A row of provider
+-- `anthropic` on a covered day is stored as `claude-cli` (lib/claude-cli-label.js) UNLESS its cost is above
+-- 0: Claude Code turns are stored with cost 0 or none, and a priced row is paid API spend (OpenClaw merges
+-- the paid calls and plan turns of one model and day into one row; a mixed row stays paid, which is the
+-- correct money). Remaining approximation: a zero-cost `anthropic` row on a boundary day (the day of
+-- Connect or Disconnect) is counted as plan usage even if it was a free paid call. Older rows are never
+-- rewritten. Created with IF NOT EXISTS; `last_on_date` is added with a guarded ADD COLUMN when missing.
+CREATE TABLE agent_cost_claude_cli (
+  container TEXT NOT NULL, since_date TEXT NOT NULL, until_date TEXT, last_on_date TEXT,   -- 'YYYY-MM-DD'; until NULL = still on
+  PRIMARY KEY (container, since_date)
+);
 -- The check against the bill: at most once an hour, after a pass, each vendor's own figure
 -- and, read at the same moment, the agents' cumulative priced total for that vendor's
 -- models (agent_cost_model_daily rows whose model starts with '<vendor>/'). Kept 400 days.

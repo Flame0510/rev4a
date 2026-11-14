@@ -95,7 +95,7 @@ The dashboard's "Spent today" card and "Spent by model" list, and the COSTS sect
 agent's panel, show the agents' own figures for today (UTC day): up to 5 minutes behind the
 agents. The Costs page's Spent can be higher: it counts, per agent, the larger of the agent's
 figure and what the Rev4a proxy metered, and the proxy's figure is written as each call ends,
-not every 5 minutes. Calls made with a ChatGPT subscription are in none of these figures; the Costs page's *ChatGPT subscription* section shows them from the same 5-minute readings. The vendor readings behind *Against the bill* on the Costs page are taken
+not every 5 minutes. Calls made with a ChatGPT subscription are in none of these figures; the Costs page's *ChatGPT subscription* and *Claude subscription* sections show them from the same 5-minute readings. The vendor readings behind *Against the bill* on the Costs page are taken
 once an hour.
 
 ## Update screen

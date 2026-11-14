@@ -25,7 +25,7 @@ export type Session = {
   total_tokens: number | null;
   cost_usd: number | null;
   /**
-   * OpenClaw priced this session under a ChatGPT subscription route (`openai` / `openai-codex`):
+   * OpenClaw priced this session under a subscription route (`openai` / `openai-codex`, or `claude-cli` for the Claude plan, the label the daemon gives a Claude Code turn):
    * the UI shows "subscription" instead of a dollar amount. `cost_usd` keeps its value.
    */
   uses_subscription: boolean;

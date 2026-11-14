@@ -30,8 +30,10 @@ interface ModelRow { provider: string; model: string; cost: number; tokens: numb
 interface SessionRow {
   container: string; sessionId: string; sessionKey: string | null; label: string | null; agentName: string | null;
   model: string | null; cost: number; tokens: number; missing: number; lastActivity: number | null;
-  /** 1 when the session's current provider is a ChatGPT subscription (its cost can include plan calls). */
+  /** 1 when the session's current provider is a ChatGPT or Claude subscription (its cost can include plan calls). */
   usesSubscription?: number;
+  /** The session's current provider (`claude-cli` is a Claude plan session). */
+  provider?: string | null;
 }
 interface CostsPayload {
   available: boolean;
@@ -50,12 +52,16 @@ interface CostsPayload {
   proxy: ProxyUsage;
   subscription?: SubscriptionUsage;
 }
-/** Calls made with a ChatGPT subscription: covered by the plan, so not in any figure above. */
-interface SubscriptionUsage {
+/** What one subscription plan's calls recorded: covered by the plan, so not in any figure above. */
+interface SubscriptionPlanUsage {
   totals: { tokens: number; calls: number; apiValue: number; unpricedCalls: number };
   byAgent: { container: string; name: string | null; tokens: number; calls: number; apiValue: number; unpricedCalls: number }[];
   byModel: { provider: string; model: string; tokens: number; calls: number; apiValue: number; unpricedCalls: number }[];
   unpriced: { model: string; calls: number }[];
+}
+/** Calls made with a ChatGPT or Claude subscription: all plans together, and one entry per plan. */
+interface SubscriptionUsage extends SubscriptionPlanUsage {
+  plans: (SubscriptionPlanUsage & { id: 'chatgpt' | 'claude'; label: string })[];
 }
 interface ProxyAgentRow {
   agent: string; calls: number; promptTokens: number; completionTokens: number; cachedTokens: number;
@@ -184,8 +190,7 @@ export default function CostsPageClient() {
   // OpenClaw names an unpriced model `provider/model`, like the rows below.
   const unpricedModels = new Set((data?.unpriced ?? []).map((u) => u.model));
 
-  const sub = data?.subscription;
-  const hasSub = !!sub && (sub.totals.calls > 0 || sub.totals.tokens > 0);
+  const subPlans = (data?.subscription?.plans ?? []).filter((p) => p.totals.calls > 0 || p.totals.tokens > 0);
 
   const band = data?.pricing;
   const bandPill = band?.band ? (
@@ -339,15 +344,16 @@ export default function CostsPageClient() {
             </Surface>
           </div>
 
-          {sub && hasSub && (
-            <Surface as="section">
-              <div className="ui-kicker">ChatGPT subscription</div>
+          {subPlans.map((sub) => (
+            <Surface as="section" key={sub.id}>
+              <div className="ui-kicker">{sub.label}</div>
               <div className="ui-metric-value" style={{ marginTop: 8 }}>
                 API value {apiValueText(sub.totals.apiValue, sub.totals.unpricedCalls, sub.totals.calls)}
               </div>
               <p className="ui-muted" style={{ fontSize: 12, marginTop: 4 }}>
-                What these calls would have cost at OpenAI API prices (OpenClaw&apos;s price catalog, refreshed every 6 hours). Covered by your ChatGPT plan.
-                They are not in Spent.
+                {sub.id === 'claude'
+                  ? <>What these calls would have cost at Anthropic API prices (OpenClaw&apos;s price catalog, refreshed every 6 hours). Covered by your Claude plan. They are not in Spent.</>
+                  : <>What these calls would have cost at OpenAI API prices (OpenClaw&apos;s price catalog, refreshed every 6 hours). Covered by your ChatGPT plan. They are not in Spent.</>}
               </p>
               <div className="ui-key-values" style={{ marginTop: 12 }}>
                 <div className="ui-key-value"><span className="ui-muted">Tokens</span><span>{formatTokens(sub.totals.tokens)}</span></div>
@@ -391,7 +397,7 @@ export default function CostsPageClient() {
                 The plan&apos;s own limits (5 hours and weekly) are on the <Link href="/subscriptions" className="ui-link">Subscriptions page</Link>.
               </p>
             </Surface>
-          )}
+          ))}
 
           {proxyLines.length > 0 && (
             <Surface as="section">
@@ -499,7 +505,7 @@ export default function CostsPageClient() {
                   s.model,
                   `${formatTokens(s.tokens)} tokens`,
                   s.missing ? `${s.missing} unpriced` : null,
-                  s.usesSubscription ? 'includes ChatGPT subscription calls at API value' : null,
+                  s.usesSubscription ? `includes ${s.provider === 'claude-cli' ? 'Claude' : 'ChatGPT'} subscription calls at API value` : null,
                   s.lastActivity ? `last active ${sessionTime.format(new Date(s.lastActivity))}` : null,
                 ].filter(Boolean).join(' · ')}
               />

@@ -34,7 +34,7 @@ export interface Session {
   total_tokens: number | null;
   /** null when OpenClaw has no price for the model: shown as "not priced", never as $0. */
   cost_usd: number | null;
-  /** A ChatGPT subscription session: the UI shows "subscription" instead of a dollar amount. */
+  /** A ChatGPT or Claude plan subscription session: the UI shows "subscription" instead of a dollar amount. */
   uses_subscription: boolean;
   cron_job_id: string | null;
   started_at: number | null;
@@ -118,7 +118,7 @@ export interface TreeNode {
   container?: string;
   model?: string | null;
   cost_usd?: number | null;
-  /** A ChatGPT subscription session: the graph shows "subscription" instead of a price. */
+  /** A ChatGPT or Claude plan subscription session: the graph shows "subscription" instead of a price. */
   uses_subscription?: boolean;
   stopped?: boolean;
   /** A short note about where the session really came from, e.g. 'from a cron run' when cron is hidden. */
