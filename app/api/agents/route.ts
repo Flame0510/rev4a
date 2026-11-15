@@ -37,6 +37,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         let created: string | null = null;
         let env: string[] = [];
         let controlPort: string | null = null;
+        let controlUiHostIp: string | null = null;
         let portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> | null = null;
 
         try {
@@ -64,6 +65,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           // Read from portBindings (works on a stopped container) with a fallback
           // to c.Ports, which is only populated while running.
           const port3000Binding = portBindings?.['3000/tcp'];
+          // The address the port is published on (REV4A_AGENT_PORTS_LISTEN): never a token.
+          controlUiHostIp = port3000Binding?.[0]?.HostIp || null;
           controlPort = port3000Binding?.[0]?.HostPort
             || (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000)?.PublicPort?.toString()
             || null;
@@ -126,6 +129,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           created,
           env,
           controlPort,
+          controlUiHostIp,
           openclawVersion,
           // A newer supported OpenClaw version is downloaded. Recreate keeps the agent's
           // version; moving to the newer one is a separate, backed-up update.

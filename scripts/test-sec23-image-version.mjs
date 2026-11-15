@@ -131,8 +131,8 @@ function recreateWith(h, inspected) {
       events.push(['run', args.at(-1)]);
       current = { ...inspected, Id: 'new-container', Name: '/agent_victim', Image: args.at(-1) };
     } },
-    '@/lib/agent-ports': { hostPortsFromArgs: () => [] },
-    '@/lib/agent-ports-server': {},
+    '@/lib/agent-ports': { hostPortsFromArgs: () => [], portArgsFromBindings: () => [] },
+    '@/lib/agent-ports-server': { agentPortsHostIp: () => null, assertPortArgsHostIps: () => {} },
     '@/lib/agent-setup': { getMountFlags: () => [] },
     '@/lib/container': {}, '@/lib/backups-volume': {}, '@/lib/cold-backup': {},
     '@/lib/agent-readiness': {}, '@/app/api/gateway/sync': {},

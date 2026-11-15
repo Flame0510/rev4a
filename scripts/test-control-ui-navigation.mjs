@@ -135,6 +135,33 @@ await test('actual route adds only a fixed native destination to both one-time a
     assert.equal(f.calls.filter((call) => call === 'native-link').length, 1);
   }
 });
+await test('SEC-9B: a loopback-only agent port answers a plain 409 with the tunnel, never a dead redirect (any caller of the route)', async () => {
+  const cases = [
+    // [HostIp, request host, expected 409?]
+    ['127.0.0.1', 'srv.example.com', true], ['::1', '203.0.113.7', true], ['10.0.0.5', '10.0.0.5:3740', false], ['10.0.0.5', '203.0.113.7', true], ['', 'srv.example.com', false],
+    ['0.0.0.0', 'srv.example.com', false], ['127.0.0.1', 'localhost:3740', false],
+  ];
+  for (const [hostIp, host, blocked] of cases) {
+    const calls = [];
+    const f = load('app/api/agents/[id]/open-control-ui/route.ts', {
+      'next/server': { NextResponse: Reply }, '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
+      '@/lib/agent-readiness': { probeGateway: async () => 'ready' }, '@/lib/gateway-state': { gatewayState: () => 'ready', blocksOpen: () => false },
+      '@/lib/docker-socket': { dockerFetch: async () => ({ HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: hostIp, HostPort: '4550' }] } } }) },
+      '@/lib/agent-devices': {
+        hostnameFromHostHeader: (h) => String(h).replace(/:\d+$/, ''),
+        findAgentContainer: async () => ({ name: 'c', running: true, controlPort: '4550' }),
+        resolveControlUiUrl: async () => { calls.push('native-link'); return { url: oneTime, kind: 'one-time' }; },
+      }, '@/lib/cron-ids': ids, '@/lib/control-ui-navigation': navigation,
+    });
+    const res = await f.GET({ url: 'http://x/api/agents/a/open-control-ui', headers: { get: () => host } }, { params: Promise.resolve({ id: 'a' }) });
+    assert.equal(res.status === 409, blocked, `${hostIp} / ${host}`);
+    if (blocked) {
+      assert.match(String(res.body), /This agent's port is open only on the server itself\. Use an SSH tunnel: ssh -L /);
+      assert.match(String(res.body), /\(then open http:\/\/localhost:4550\)/);
+      assert.deepEqual(calls, [], 'no link issued');
+    } else assert.equal(res.status, 302);
+  }
+});
 await test('actual route does not issue links for missing or stopped agents', async () => {
   for (const [agent, status] of [[null, 404], [{ running: false }, 409]]) {
     const f = routeFixture(oneTime, { agent });
@@ -154,7 +181,7 @@ await test('shared Open button navigates synchronously and respects job/disabled
   const loopback = { protocol: 'http:', hostname: '127.0.0.1' };
   const context = { exports: {}, Button: () => {}, ControlUiExposureModal: () => {}, window: { open: (...args) => opened.push(args), location: loopback },
     useState: (value) => [value, () => {}], useEffect: () => {},
-    controlUiOpenPath: navigation.controlUiOpenPath, controlUiExposesSession: navigation.controlUiExposesSession, isValidCronJobId: ids.isValidCronJobId,
+    controlUiOpenPath: navigation.controlUiOpenPath, controlUiExposesSession: navigation.controlUiExposesSession, controlUiPortLocalOnly: navigation.controlUiPortLocalOnly, isValidCronJobId: ids.isValidCronJobId,
     require: () => ({ jsx: (_type, props) => props, jsxs: (_type, props) => props, Fragment: 'fragment' }), };
   vm.runInNewContext(script, context);
   const buttonProps = context.exports.ButtonUnderTest({ agentId: 'agent_123', jobId: job }).children[0];

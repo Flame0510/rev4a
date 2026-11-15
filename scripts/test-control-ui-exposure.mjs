@@ -74,4 +74,45 @@ test('the Open button asks only through controlUiExposesSession and the modal is
   assert.ok(!/localStorage|sessionStorage/.test(modal), 'nothing remembered');
 });
 
+// SEC-9B: Open when the agent's port is not reachable from this browser.
+test('controlUiPortLocalOnly decision table', () => {
+  const rows = [
+    // [hostIp, dashboard host, local only?]
+    [null, '203.0.113.20', false], [undefined, 'rev4a.lan', false], ['', 'rev4a.lan', false],
+    ['0.0.0.0', '203.0.113.20', false], ['::', '203.0.113.20', false],
+    ['127.0.0.1', '203.0.113.20', true], ['127.0.0.1', 'rev4a.example.com', true], ['::1', '203.0.113.20', true],
+    ['127.0.0.1', '2001:db8::1', true], ['127.0.0.1', '[2001:db8::1]', true],
+    ['127.0.0.1', 'localhost', false], ['127.0.0.1', '127.0.0.1', false], ['::1', '[::1]', false], ['127.0.0.1', '::1', false],
+    ['10.0.0.5', '10.0.0.5', false], ['10.0.0.5', '203.0.113.20', true], ['10.0.0.5', 'rev4a.lan', false],
+    ['2001:DB8::5', '[2001:db8::5]', false], ['2001:db8::5', '10.0.0.5', true], ['10.0.0.5', 'localhost', false],
+  ];
+  for (const [ip, host, expected] of rows) assert.equal(navigation.controlUiPortLocalOnly(ip, host), expected, `${ip} / ${host}`);
+});
+
+test('the tunnel command targets the port\'s own address only when it is a specific non-loopback IP', () => {
+  const t = navigation.controlUiTunnelCommand;
+  assert.equal(t('4550', 'srv.example.com'), 'ssh -L 4550:127.0.0.1:4550 user@srv.example.com');
+  for (const ip of [null, undefined, '', '127.0.0.1', '0.0.0.0', '::']) assert.equal(t('4550', 'srv.example.com', ip), 'ssh -L 4550:127.0.0.1:4550 user@srv.example.com', String(ip));
+  // An exact loopback address is the target as it is; ::1 is bracketed.
+  assert.equal(t('4550', 'srv.example.com', '127.0.0.2'), 'ssh -L 4550:127.0.0.2:4550 user@srv.example.com');
+  assert.equal(t('4550', 'srv.example.com', '::1'), "ssh -L '4550:[::1]:4550' user@srv.example.com");
+  assert.equal(t('4550', 'srv.example.com', '[::1]'), "ssh -L '4550:[::1]:4550' user@srv.example.com");
+  assert.equal(t('4550', 'srv.example.com', '10.0.0.5'), 'ssh -L 4550:10.0.0.5:4550 user@srv.example.com');
+  assert.equal(t('4550', 'srv.example.com', '2001:db8::5'), "ssh -L '4550:[2001:db8::5]:4550' user@srv.example.com");
+});
+
+test('the local-only variant: https included, no "Open anyway", the agent list carries the HostIp and never a token', () => {
+  const button = fs.readFileSync(path.join(root, 'app/agents/BrowserAccessSection.tsx'), 'utf8');
+  assert.match(button, /controlUiPortLocalOnly\(hostIp, window\.location\.hostname\)\s*\|\|\s*controlUiExposesSession/);
+  const modal = fs.readFileSync(path.join(root, 'app/agents/ControlUiExposureModal.tsx'), 'utf8');
+  assert.ok(modal.includes("This agent&apos;s port is open only on the server itself. Use an SSH tunnel:"));
+  assert.match(modal, /\{!localOnly && <Button variant="danger"[^>]*>Open anyway<\/Button>\}/);
+  assert.ok(modal.includes('Copy tunnel link') && modal.includes('Remote access guide ↗'));
+  const list = fs.readFileSync(path.join(root, 'app/api/agents/route.ts'), 'utf8');
+  assert.match(list, /controlUiHostIp = port3000Binding\?\.\[0\]\?\.HostIp \|\| null/);
+  assert.ok(!/token/i.test(list.slice(list.indexOf('controlUiHostIp'), list.indexOf('controlUiHostIp') + 120)));
+  const page = fs.readFileSync(path.join(root, 'app/agents/PageClient.tsx'), 'utf8');
+  assert.equal((page.match(/hostIp=\{agent\.controlUiHostIp\}/g) || []).length, 2, 'both Open buttons get the HostIp');
+});
+
 console.log(`\n${passed} passed`);

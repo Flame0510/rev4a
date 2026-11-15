@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, Button, ConfirmModal, Input, RemoveButton } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
-import { controlUiExposesSession, controlUiOpenPath } from '@/lib/control-ui-navigation';
+import { controlUiExposesSession, controlUiOpenPath, controlUiPortLocalOnly } from '@/lib/control-ui-navigation';
 import { ControlUiExposureModal } from './ControlUiExposureModal';
 import { isValidCronJobId } from '@/lib/cron-ids';
 
@@ -163,8 +163,11 @@ export function OpenControlUiButton({
   blocksOpen = false,
   jobId,
   disabled = false,
+  hostIp,
 }: {
   agentId: string;
+  /** The address the agent's Control UI port is published on (`controlUiHostIp` of the agent list). */
+  hostIp?: string | null;
   label?: string;
   variant?: 'primary' | 'secondary';
   /** For buttons inside a clickable row. */
@@ -182,13 +185,19 @@ export function OpenControlUiButton({
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
     if (!validJob || disabled) return;
-    // Plain HTTP on a non-loopback host: the agent's port would receive the Rev4a session too.
-    if (controlUiExposesSession(window.location.protocol, window.location.hostname)) { setWarning(true); return; }
+    // The port is open only on the server: the plain link cannot work (https included); or plain HTTP on
+    // a non-loopback host: the agent's port would receive the Rev4a session too.
+    if (controlUiPortLocalOnly(hostIp, window.location.hostname)
+      || controlUiExposesSession(window.location.protocol, window.location.hostname)) { setWarning(true); return; }
     openTab();
   };
   // Decided after mount so the server-rendered title and the first client render agree.
   const [exposes, setExposes] = useState(false);
-  useEffect(() => { setExposes(controlUiExposesSession(window.location.protocol, window.location.hostname)); }, []);
+  const [localOnly, setLocalOnly] = useState(false);
+  useEffect(() => {
+    setExposes(controlUiExposesSession(window.location.protocol, window.location.hostname));
+    setLocalOnly(controlUiPortLocalOnly(hostIp, window.location.hostname));
+  }, [hostIp]);
 
   const starting = gateway === 'starting' && blocksOpen === true;
   return (
@@ -201,6 +210,7 @@ export function OpenControlUiButton({
       title={!validJob ? 'Invalid automation job id' : starting ? "The agent's Gateway is still starting"
         : gateway === 'starting' ? 'The Gateway may still be starting — the Control UI might not answer yet'
         : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
+        : localOnly ? 'The agent port is open only on the server: opens the SSH tunnel steps'
         : exposes ? 'Plain HTTP: opens with a warning'
         : 'Open the agent Control UI'}
     >
@@ -212,6 +222,8 @@ export function OpenControlUiButton({
         open={warning}
         agentId={agentId}
         jobId={jobId}
+        hostIp={hostIp}
+        localOnly={localOnly}
         onClose={() => setWarning(false)}
         onOpenAnyway={() => { setWarning(false); openTab(); }}
       />

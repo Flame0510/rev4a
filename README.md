@@ -134,8 +134,28 @@ already filled in — you normally never set these by hand. See
 | `REV4A_SKIP_POSTINSTALL_BUILD` | — | No | `1` in CI so `npm ci` skips the post-install `next build`; the workflows build as a separate step. Outside CI, a failed post-install build fails the installation. Any non-empty value skips it, `0` included |
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_TRUSTED_PROXIES` | — | No | Comma-separated IPs or CIDRs (e.g. `192.0.2.10`; `127.0.0.1,::1` for a proxy on the same host) of the reverse proxies whose `X-Forwarded-For` names the client for the login lock. Unset: no `X-Forwarded-For` is trusted. List the proxy's own address, pinned and not on `rev4a-network` with the agents |
+| `REV4A_LISTEN` | `all` | No | Where the panel listens: `all` (every interface), `local` (127.0.0.1 and ::1, plus the Docker host-gateway address on Linux so agents reach their model; if Docker is down at start-up only loopback, with a warning) or one IP address of this host (that address plus the `local` ones). An address this host lacks, or any other value, falls back to `local` with a log line. Read at start-up: restart Rev4a |
+| `REV4A_AGENT_PORTS_LISTEN` | `all` | No | Where agents' published ports listen: `all` (`0.0.0.0`), `local` (`127.0.0.1`) or one IP address. Applies when an agent is created or recreated, and wins over the address the agent had (left empty, a Recreate keeps that address; write `all` to move an agent back to every interface); running agents change at their next Recreate. Unset keeps every agent as it is |
 | `REV4A_TIMEZONE` | server's own zone | No | Default dashboard time zone (IANA name, e.g. `Europe/Rome`), used only while none is saved in *Config > Time zone*; an invalid name is ignored |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
+
+**Behind a reverse proxy or Tailscale (1.28.0):** by default the panel (port 3740) listens on every network
+interface and every agent publishes its ports (3710-3779) on `0.0.0.0`; Docker bypasses `ufw`, so on a VPS both are
+reachable from the internet. Set `REV4A_LISTEN=local`, `REV4A_AGENT_PORTS_LISTEN=local` and
+`REV4A_TRUSTED_PROXIES=127.0.0.1,::1` (Config page or `.env`; the last so the login lock sees the real client behind
+your proxy), restart Rev4a, and Recreate each agent (Recreate, Update and Edit all apply the agent setting): the panel then answers only on this host (plus the Docker gateway on Linux,
+which agents use to reach their model: that address is reachable by containers on this host, not from the internet)
+and the agents' ports only on 127.0.0.1. A reverse proxy on the host targets
+`127.0.0.1:3740`; Traefik or nginx in Docker target `host.docker.internal:3740` with
+`extra_hosts: host.docker.internal:host-gateway`; Tailscale: `tailscale serve --bg 3740`. From another computer the
+agents' **Open** button then shows the SSH tunnel steps instead of a link that cannot work. See
+If the proxy runs in a container and `ufw` is on, allow the Docker bridge to reach port 3740 (for example
+`ufw allow from 172.17.0.0/16 to any port 3740`).
+
+**Rolling back to 1.27.x** ignores `REV4A_LISTEN` and opens port 3740 on every interface again; agents recreated with
+`local` keep their 127.0.0.1 ports until recreated.
+
+[Remote access](https://rev4a.app/en/docs/remote-access).
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
 
@@ -197,9 +217,9 @@ and order. Values shown from the process environment are not saved unless edited
 Unchanged values (also empty ones) stay byte-for-byte intact, and an unchanged
 GET-to-PUT round trip does not write the file. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment such as `REV4A_TOKEN="t" # comment`), or a backslash immediately before a same-kind quote (including the closing quote) is ambiguous across tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
 `REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
-`REV4A_TERMINAL_SECRET` and `REV4A_SETUP_CODE` are never returned by Config and are
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE` and `REV4A_DOTENV_KEYS` are never returned by Config and are
 silently ignored on save, including from older open tabs. At startup, `rev4a serve`
-automatically removes existing assignments of those five runtime-only keys from
+automatically removes existing assignments of those runtime-only keys from
 `.env`, logging names only; a second pass makes no further changes. Inherited
 copies of these keys (including from systemd's `EnvironmentFile`) are
 also cleared from the base child environment before fresh per-boot values are set.

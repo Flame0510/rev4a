@@ -32,7 +32,7 @@ import { gatewayState, blocksOpen } from '@/lib/gateway-state';
 import { dockerFetch } from '@/lib/docker-socket';
 import { findAgentContainer, hostnameFromHostHeader, resolveControlUiUrl, resolveTunnelControlUiUrl } from '@/lib/agent-devices';
 import { isValidCronJobId } from '@/lib/cron-ids';
-import { controlUiAutomationUrl } from '@/lib/control-ui-navigation';
+import { controlUiAutomationUrl, controlUiPortLocalOnly, controlUiTunnelCommand } from '@/lib/control-ui-navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +75,21 @@ export async function GET(
   if (!agent) return fail(404, `No agent '${id}'.`);
   if (!agent.running || !agent.controlPort) return fail(409, 'The agent is not running or publishes no Control UI port.');
   if (tunnelMode === 'port') return json({ port: agent.controlPort }, 200);
+
+  // A port published only on the server (REV4A_AGENT_PORTS_LISTEN) cannot be reached from another computer:
+  // say so, with the tunnel, instead of redirecting to a dead link. Any caller of this route gets it
+  // (the agents, create and automations pages alike). Not knowing the address never blocks.
+  if (!tunnel && host) {
+    try {
+      const inspect: any = await dockerFetch('GET', `/containers/${encodeURIComponent(agent.name)}/json`);
+      const hostIp: string | undefined = inspect?.HostConfig?.PortBindings?.['3000/tcp']?.[0]?.HostIp;
+      if (controlUiPortLocalOnly(hostIp, host)) {
+        return page(409, `This agent's port is open only on the server itself. Use an SSH tunnel: ${controlUiTunnelCommand(agent.controlPort, host, hostIp)} (then open http://localhost:${agent.controlPort}).`);
+      }
+    } catch {
+      // Could not find out: open as before.
+    }
+  }
 
   // Only a Gateway that answers 503 inside its 10-minute budget gets the 503 page. Every other
   // outcome, a policy-restarted container and any failure to find out open the Control UI.

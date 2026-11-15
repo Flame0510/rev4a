@@ -42,8 +42,8 @@ function harness({ stopFails = false, exitCode = 0, failedRuns = 0, conflict = f
     '@/lib/agent-stop': stop,
     '@/lib/agent-setup': { getMountFlags: () => [] },
     '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
-    '@/lib/agent-ports': { hostPortsFromArgs: () => conflict ? [3000] : [] },
-    '@/lib/agent-ports-server': { getHostPortHolders: async () => new Map([[3000, {}]]), describeHolder: () => 'other agent' },
+    '@/lib/agent-ports': { hostPortsFromArgs: () => conflict ? [3000] : [], portArgsFromBindings: () => [] },
+    '@/lib/agent-ports-server': { agentPortsHostIp: () => null, assertPortArgsHostIps: () => {}, getHostPortHolders: async () => new Map([[3000, {}]]), describeHolder: () => 'other agent' },
   });
   return { events, warnings, deadlines, inspections, stop, recreate, onWarning: message => warnings.push(message) };
 }
@@ -199,7 +199,8 @@ for (const outcome of ['clean', 'exit137', 'kill', 'unconfirmed']) {
       const rebuild = load('lib/agent-recreate.ts', {
         '@/lib/agent-images': { runDocker }, '@/lib/agent-stop': stop,
         '@/lib/agent-setup': { getMountFlags: () => [] }, '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
-        '@/lib/agent-ports': { hostPortsFromArgs: () => [] },
+        '@/lib/agent-ports': { hostPortsFromArgs: () => [], portArgsFromBindings: () => [] },
+        '@/lib/agent-ports-server': { agentPortsHostIp: () => null, assertPortArgsHostIps: () => {} },
       });
       const backup = load('lib/cold-backup.ts', {
         isValidAgentId: () => true, inspectHelper: async () => null, agentContainerName: async () => 'fixture',

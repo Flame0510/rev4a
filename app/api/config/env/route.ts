@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { parseSetting } from '@/lib/listen-addresses';
 import { applyEnvEdits, assertEnvKey, assertEnvValue, parseEnvValues, RUNTIME_ONLY_ENV_KEYS } from '@/lib/env-file';
 
 export const dynamic = 'force-dynamic';
@@ -24,8 +25,21 @@ function isAllowedKey(key: string): boolean {
   return !RUNTIME_ONLY_ENV_KEYS.includes(key) && ALLOWED_PREFIXES.some((p) => key.startsWith(p));
 }
 
+/** REV4A_LISTEN and REV4A_AGENT_PORTS_LISTEN take empty, all, local or one IP: garbage must not silently become `local`. */
+function assertListenSetting(key: string, value: string): void {
+  if (key !== 'REV4A_LISTEN' && key !== 'REV4A_AGENT_PORTS_LISTEN') return;
+  if (parseSetting(value).kind === 'invalid') {
+    throw new TypeError(`${key} must be empty, "all", "local" or one IP address (not 0.0.0.0 or ::). Got ${JSON.stringify(value)}.`);
+  }
+}
+
 function parseEnvFile(content: string): Record<string, string> {
   return Object.fromEntries(Object.entries(parseEnvValues(content)).filter(([key]) => isAllowedKey(key)));
+}
+
+/** Names of the keys the launcher loaded from .env (names only, never values). */
+function dotenvKeys(): Set<string> {
+  return new Set((process.env.REV4A_DOTENV_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean));
 }
 
 export async function GET(request: NextRequest) {
@@ -40,7 +54,10 @@ export async function GET(request: NextRequest) {
     }
     const vars = parseEnvFile(content);
     // Include inherited settings, but never per-process state or credentials.
-    for (const key of Object.keys(process.env).filter((k) => isAllowedKey(k) && !(k in vars))) {
+    // A key the launcher copied from .env (REV4A_DOTENV_KEYS) is not a service value: once it is
+    // cleared from .env it is gone, even though this process still has the old copy.
+    const fromDotenv = dotenvKeys();
+    for (const key of Object.keys(process.env).filter((k) => isAllowedKey(k) && !(k in vars) && !fromDotenv.has(k))) {
       vars[key] = process.env[key] || '';
     }
     return NextResponse.json({ env: vars });
@@ -89,7 +106,8 @@ export async function PUT(request: NextRequest) {
     }
 
     const current = parseEnvFile(content);
-    if (entries.some(([key, value]) => !(key in current) && value === '' && process.env[key])) {
+    const fromDotenv = dotenvKeys();
+    if (entries.some(([key, value]) => !(key in current) && value === '' && process.env[key] && !fromDotenv.has(key))) {
       return NextResponse.json(
         { error: 'This value comes from the service environment, not .env; change it there.' },
         { status: 400 },
@@ -104,7 +122,10 @@ export async function PUT(request: NextRequest) {
     let next = content;
     let updated: string[] = [];
     try {
-      for (const [key, value] of changes) assertEnvValue(key, value);
+      for (const [key, value] of changes) {
+        assertEnvValue(key, value);
+        assertListenSetting(key, value);
+      }
       if (changes.length > 0) ({ content: next, updated } = applyEnvEdits(content, changes as Array<[string, string]>));
     } catch (e) {
       const err = e as Error & { code?: string };

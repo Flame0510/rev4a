@@ -893,6 +893,7 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "created": "2026-07-01T16:58:42.876829416Z",
     "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
     "controlPort": "3033",
+    "controlUiHostIp": null,
     "openclawVersion": "2026.9.3",
     "updateAvailable": false,
     "newBuildAvailable": false
@@ -917,6 +918,9 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
   legacy version never produces this prompt because recreate retains that image id.
 - `controlPort` is the host port published for the Control UI. No link or token is
   returned: the Open buttons go through `GET /api/agents/[id]/open-control-ui`
+- `controlUiHostIp` is the host address the Control UI port is published on (`HostConfig.PortBindings`), or `null`
+  (empty or wildcard: every interface). Set by `REV4A_AGENT_PORTS_LISTEN`; the Open button uses it to offer the SSH
+  tunnel when the port is not reachable from the browser. Never a token.
 - Containers are discovered via Docker API with label filter `AGENT_ID`
 - Template is inferred from the container image name + agent ID directory match in `agent-templates/`
 
@@ -2368,6 +2372,22 @@ samples in a row; `container_memory`: 90 % of Docker's memory on five; `containe
 ```
 Every alert carries `container`, `scope`, `agent`, `resolved` and `snoozedUntil` (`null`, or `false` for `resolved`, when not set).
 `ts` is in **milliseconds** (the `events` table's unit); `metric` is `cpu`, `ram`, `disk`, `container_pids`, `container_memory`, `container_oom`, `packages_failed`, `spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted` or `null`. Each alert also carries two fields added at read time (stored rows are never rewritten, so older rows get them too): `agentName`, the agent's display name (`AGENT_NAME`) when the alert's `container`, or the one container named in the message, is known, else `null`; and `displayMessage`, `message` with each known `agent_<8 hex>` container name rewritten to `Name (container)`. The page shows `displayMessage`. Spend alarms (`spend.session`, `spend.loop`, `spend.unusual`, `spend.unaccounted`; see REV4A.md, Spend and loop alarms) also carry `agent` (the agent id the proxy saw, or the container for a session), `scope` (`vendor:<name>` for the balance alarm), `resolved` (`true` for the "back to normal" note; `spend.unaccounted` has none) and `snoozedUntil` (ms, from the server, `null` when not snoozed). Optional `agent=<id>` joins `container=` (either name keeps an event); the `container` filter also matches a spend alarm whose `agent` is that name. `container` is the container name for `container_oom` events and `null` for the others; for `container_oom`, `values` is `[limit in MB]` (empty when the agent has no limit or it could not be read).
+
+---
+
+## Remote access
+
+### `GET /api/system/listen`
+Where Rev4a listens (SEC-9B, 1.28.0). No secrets.
+
+**Auth:** browser cookie or bearer token
+
+**Response 200:**
+```json
+{ "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "agents": { "mode": "local" } }
+```
+`panel.mode` is `all` | `local` | `address` as resolved at start-up from `REV4A_LISTEN` (`addresses` is empty for `all`);
+`agents.mode` is `REV4A_AGENT_PORTS_LISTEN` read now (an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate applies the setting), or `null` when Docker cannot be read. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or an IP.
 
 ---
 

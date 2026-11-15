@@ -12,7 +12,7 @@ import { listLocalAgentImages, runDocker, newestLocalSupportedVersion } from '@/
 import { localImageRef } from '@/lib/agent-versions';
 import { isModelOffered } from '@/lib/model-catalogue';
 import { findAvailablePortBlock, portMappingArgs, validatePortInput, DEFAULT_BLOCK_SIZE } from '@/lib/agent-ports';
-import { getUsedHostPorts } from '@/lib/agent-ports-server';
+import { agentPortsHostIp, getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
 import { redactSecret, redactedMessage } from '@/lib/redact-secret';
@@ -268,7 +268,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       memoryBytes: memoryLimitMb === null ? null : mbToBytes(memoryLimitMb),
       labels,
       envVars,
-      portArgs: portMappingArgs(portStart, portEnd),
+      portArgs: portMappingArgs(portStart, portEnd, agentPortsHostIp()),
       image,
     });
     const volumeName = agentVolumeName(containerName);

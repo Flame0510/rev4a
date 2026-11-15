@@ -52,13 +52,36 @@ export function controlUiExposesSession(protocol: string, hostname: string): boo
 }
 
 /**
+ * True when the agent's Control UI port is published on an address this browser cannot use, so
+ * the plain link cannot work (REV4A_AGENT_PORTS_LISTEN): bound to loopback while the dashboard
+ * is reached on another host, or bound to one IP that is not the dashboard's own (compared only
+ * when the dashboard host is an IP; a name cannot be compared, so the link is tried). A loopback
+ * dashboard is the same machine as the port: always reachable. Every protocol, https included.
+ */
+export function controlUiPortLocalOnly(hostIp: string | null | undefined, dashboardHost: string): boolean {
+  const ip = String(hostIp ?? '').trim().replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (!ip || ip === '0.0.0.0' || ip === '::') return false;
+  if (isLoopbackHost(dashboardHost)) return false;
+  if (isLoopbackHost(ip)) return true;
+  const host = dashboardHost.trim().replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  const isIpLiteral = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':');
+  return isIpLiteral && host !== ip;
+}
+
+/**
  * The SSH command that forwards the agent's port to this computer. In `user@host` OpenSSH wants an
  * IPv6 address without brackets (with them it looks the bracketed text up as a name), and an
- * unbracketed command also survives zsh, where `[` starts a glob.
+ * unbracketed command also survives zsh, where `[` starts a glob. `targetIp` is the address the
+ * port is published on, when it is not loopback (REV4A_AGENT_PORTS_LISTEN=<IP>).
  */
-export function controlUiTunnelCommand(port: string, hostname: string): string {
+export function controlUiTunnelCommand(port: string, hostname: string, targetIp?: string | null): string {
   const host = hostname.replace(/^\[(.*)\]$/, '$1');
-  return `ssh -L ${port}:127.0.0.1:${port} user@${host}`;
+  const target = String(targetIp ?? '').trim().replace(/^\[(.*)\]$/, '$1');
+  // Loopback targets are used as they are (::1, 127.0.0.2): the port is published on exactly that address.
+  const to = !target || target === '0.0.0.0' || target === '::' ? '127.0.0.1' : (target.includes(':') ? `[${target}]` : target);
+  const forward = `${port}:${to}:${port}`;
+  // Brackets would be a glob in zsh: quote the argument that has them.
+  return `ssh -L ${forward.includes('[') ? `'${forward}'` : forward} user@${host}`;
 }
 
 /**

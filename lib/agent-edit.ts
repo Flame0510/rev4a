@@ -11,7 +11,7 @@
  */
 import { isValidAgentId } from '@/lib/container';
 import { hostPortsFromBindings, portMappingArgs, validatePortInput } from '@/lib/agent-ports';
-import { getUsedHostPorts } from '@/lib/agent-ports-server';
+import { agentPortsHostIp, getUsedHostPorts } from '@/lib/agent-ports-server';
 import { resolveRecreateImage } from '@/lib/agent-images';
 import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
 import { agentBusyReason } from '@/lib/agent-busy';
@@ -36,7 +36,7 @@ async function parsePortArgs(portRange: string, ownPorts: number[]): Promise<str
   for (const p of ownPorts) used.delete(p);
   const result = validatePortInput(portRange, used);
   if (!result.valid) throw new EditRefusedError(result.error);
-  return portMappingArgs(result.start, result.end);
+  return portMappingArgs(result.start, result.end, agentPortsHostIp());
 }
 
 /** Edit jobs running in this process, so a second start for the same agent is refused. */

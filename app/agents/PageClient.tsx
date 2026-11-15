@@ -65,6 +65,8 @@ interface Agent {
   created: string | null;
   env: string[];
   controlPort: string | null;
+  /** Host address the Control UI port is published on; null/0.0.0.0 = every interface. Never a token. */
+  controlUiHostIp?: string | null;
   /** OpenClaw version the agent runs; null when it cannot be read (stopped agent on an unlabelled image). */
   openclawVersion?: string | null;
   /** A newer supported OpenClaw version is downloaded. */
@@ -303,7 +305,7 @@ function AgentListItem({
       toggling={loading}
       toggleDisabled={agent.state === 'unknown' || !!busy}
       onToggle={() => { void onLifecycle(); }}
-      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
+      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
       meta={[
         imageLabel(agent),
         compactPorts(agent.ports),
@@ -1312,7 +1314,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
         <div style={{ padding: '12px 14px' }}>
           {agent.state === 'running' && agent.controlPort && (
             <div style={{ marginBottom: 8 }}>
-              <OpenControlUiButton agentId={agent.agentId} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
+              <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
               {gateway?.state === 'starting' && (
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway starting… <Elapsed startedAtMs={gateway.startedAtMs} /></div>
               )}

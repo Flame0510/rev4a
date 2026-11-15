@@ -62,9 +62,55 @@ export function validatePortInput(input: string, usedPorts: ReadonlySet<number> 
   return { valid: true, isBlock: false, start: port, end: port };
 }
 
-/** `docker run` port arguments for a validated range, mapping onto the container 3000. */
-export function portMappingArgs(start: number, end: number): string[] {
-  return ['-p', end === start ? `${start}:3000` : `${start}-${end}:3000-${3000 + (end - start)}`];
+/** `-p` host prefix: `127.0.0.1:`, `[::1]:`, or nothing (every interface). */
+export function hostIpPrefix(hostIp?: string | null): string {
+  const ip = (hostIp ?? '').trim();
+  if (!ip || ip === '0.0.0.0' || ip === '::') return '';
+  return ip.includes(':') ? `[${ip.replace(/^\[(.*)\]$/, '$1')}]:` : `${ip}:`;
+}
+
+/**
+ * `docker run` port arguments for a validated range, mapping onto the container 3000.
+ * `hostIp` (REV4A_AGENT_PORTS_LISTEN) limits the publish to one host address; null/undefined
+ * publishes on every interface, as before.
+ */
+export function portMappingArgs(start: number, end: number, hostIp?: string | null): string[] {
+  const prefix = hostIpPrefix(hostIp);
+  return ['-p', end === start ? `${prefix}${start}:3000` : `${prefix}${start}-${end}:3000-${3000 + (end - start)}`];
+}
+
+type PortBindings = Record<string, { HostIp?: string; HostPort?: string }[] | null> | null | undefined;
+
+/**
+ * `-p` arguments that recreate a container's current publishes (`HostConfig.PortBindings`).
+ * Each binding keeps its own HostIp, unless `overrideHostIp` is given: then every binding
+ * moves to that address (the REV4A_AGENT_PORTS_LISTEN setting wins over the old one).
+ */
+export function portArgsFromBindings(bindings: PortBindings, overrideHostIp?: string | null): string[] {
+  return Object.entries(bindings ?? {}).flatMap(([containerPort, list]) => {
+    const proto = containerPort.includes('/udp') ? '/udp' : '';
+    // Docker can report both wildcard families for one publish; retain it only once.
+    const mappings = new Set<string>();
+    for (const binding of list ?? []) {
+      if (!binding.HostPort) continue;
+      const prefix = hostIpPrefix(overrideHostIp ?? binding.HostIp);
+      mappings.add(`${prefix}${binding.HostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`);
+    }
+    return [...mappings].flatMap((mapping) => ['-p', mapping]);
+  });
+}
+
+/**
+ * True when a container publishes on an address that is wider than the setting says: with
+ * `hostIp` null (`all`) nothing is wider; otherwise every binding must be on exactly `hostIp`.
+ */
+export function publishesWiderThan(bindings: PortBindings, hostIp: string | null): boolean {
+  if (!hostIp) return false;
+  const want = hostIp.trim().replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  return Object.values(bindings ?? {}).some((list) => (list ?? []).some((b) => {
+    if (!b?.HostPort) return false;
+    return (b.HostIp ?? '').trim().replace(/^\[(.*)\]$/, '$1').toLowerCase() !== want;
+  }));
 }
 
 /** The host ports a container publishes, from its inspect (`HostConfig.PortBindings`). */

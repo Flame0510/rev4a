@@ -59,6 +59,7 @@ function harness(initial, inherited = {}, readError = null) {
     '@/lib/rev4a-paths': { ENV_FILE },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => authenticated ? null : denied },
     '@/lib/env-file': envFile,
+    '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
   }, { process: { env: inherited }, console: { warn: () => {} } });
   return { get content() { return content; }, get mode() { return mode; }, effects,
     put: (env) => route.PUT({ json: async () => ({ env }) }),
@@ -550,6 +551,45 @@ await test('FIX-133: U+2028 / U+2029 inside a value keep the file plain and edit
   assert.equal((await h.put({ REV4A_TOKEN: 'new' })).status, 200);
   assert.ok(h.content.split('\n').includes(note));
   assert.ok(h.content.split('\n').includes('GATEWAY_TOKEN=g'));
+});
+
+await test('SEC-9B: REV4A_LISTEN and REV4A_AGENT_PORTS_LISTEN accept only empty, all, local or one IP; garbage is a 400 naming the key', async () => {
+  for (const key of ['REV4A_LISTEN', 'REV4A_AGENT_PORTS_LISTEN']) {
+    for (const value of ['', 'all', 'ALL', 'local', '10.0.0.5', '::1', '2001:db8::5', '[::1]']) {
+      const h = harness(fixture);
+      assert.equal((await h.put({ [key]: value })).status, 200, `${key}=${value}`);
+    }
+    for (const value of ['lokal', 'everything', '0.0.0.0', '::', 'localhost', '10.0.0.5:3740', '999.1.1.1', 'local,all']) {
+      const h = harness(fixture);
+      const r = await h.put({ [key]: value });
+      assert.equal(r.status, 400, `${key}=${value}`);
+      assert.match(r.body.error, new RegExp(key));
+      assert.equal(h.content, fixture, 'nothing written');
+    }
+  }
+  // Other keys are not touched by the rule.
+  assert.equal((await harness(fixture).put({ REV4A_OTHER: 'lokal' })).status, 200);
+});
+
+await test('SEC-9B: REV4A_LISTEN_STATE and REV4A_DOTENV_KEYS are runtime-only: never shown, never accepted', async () => {
+  assert.ok(envFile.RUNTIME_ONLY_ENV_KEYS.includes('REV4A_LISTEN_STATE') && envFile.RUNTIME_ONLY_ENV_KEYS.includes('REV4A_DOTENV_KEYS'));
+  const h = harness(fixture, { REV4A_LISTEN_STATE: '{"mode":"local"}', REV4A_DOTENV_KEYS: 'PORT', REV4A_LISTEN: 'local' });
+  const env = (await h.get()).body.env;
+  assert.ok(!('REV4A_LISTEN_STATE' in env) && !('REV4A_DOTENV_KEYS' in env));
+  assert.equal(env.REV4A_LISTEN, 'local');
+  const r = await h.put({ REV4A_LISTEN_STATE: 'x', REV4A_DOTENV_KEYS: 'y' });
+  assert.equal(r.status, 200);
+  assert.ok(!h.content.includes('REV4A_LISTEN_STATE') && !h.content.includes('REV4A_DOTENV_KEYS'));
+});
+
+await test('SEC-9B: a key the launcher copied from .env and the user then cleared is gone: GET hides the stale copy, clearing again is not refused', async () => {
+  const h = harness(fixture, { REV4A_AGENT_PORTS_LISTEN: 'local', REV4A_DOTENV_KEYS: 'PORT,REV4A_AGENT_PORTS_LISTEN' });
+  assert.ok(!('REV4A_AGENT_PORTS_LISTEN' in (await h.get()).body.env));
+  assert.equal((await h.put({ REV4A_AGENT_PORTS_LISTEN: '' })).status, 200);
+  // A real service value (not in REV4A_DOTENV_KEYS) is still shown and still protected.
+  const svc = harness(fixture, { REV4A_AGENT_PORTS_LISTEN: 'local', REV4A_DOTENV_KEYS: 'PORT' });
+  assert.equal((await svc.get()).body.env.REV4A_AGENT_PORTS_LISTEN, 'local');
+  assert.equal((await svc.put({ REV4A_AGENT_PORTS_LISTEN: '' })).status, 400);
 });
 
 console.log(`\n${passed} config environment save checks passed`);

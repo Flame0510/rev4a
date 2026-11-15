@@ -71,7 +71,7 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
     'next/server': { NextResponse }, fs: mockFs, 'node:fs': mockFs,
     path, 'node:path': path, crypto, 'node:os': { homedir: () => '/mock' },
     '@/lib/rev4a-paths': { ENV_FILE, REV4A_DATA: '/mock' },
-    '@/lib/env-file': validator, './env-file.js': validator,
+    '@/lib/env-file': validator, './env-file.js': validator, '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
     './session-fingerprint.js': fingerprint,
     jose: { jwtVerify: async (token) => {
       if (token !== 'valid-cookie') throw new Error('Invalid JWT');
@@ -566,6 +566,12 @@ await test('launcher strips inherited runtime-only state before supplying per-bo
           assert.match(value, /^[a-f0-9]{64}$/);
         } else if (key === 'REV4A_SETUP_CODE' && entry === 'server.js' && !configured) {
           assert.match(value, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/);
+        } else if (key === 'REV4A_DOTENV_KEYS') {
+          // Names of the keys that came from .env (SEC-9B); never a runtime-only key and never a value.
+          assert.equal(typeof value, 'string');
+          for (const runtime of validator.RUNTIME_ONLY_ENV_KEYS) assert.ok(!value.split(',').includes(runtime), runtime);
+          assert.ok(!value.includes('stale-file'));
+          if (configured) assert.ok(value.split(',').includes('REV4A_PASSWORD'), 'names the keys that came from .env');
         } else assert.equal(value, undefined, `${entry}: ${key}`);
       }
       assert.equal(child.env.CUSTOM_OPERATOR_KEY, 'preserved');
@@ -606,6 +612,8 @@ await test('server snapshots before requiring Next and strips only newly loaded 
       require: (name) => { assert.equal(name, './lib/env-file.js'); return validator; },
       process: { env, on: () => {} }, console: { warn: (message) => logs.push(message) },
       parseTrustedProxies: () => ({ invalid: [], wide: [] }), __dirname: '/mock', PORT: 3740,
+      // Listener start-up (REV4A_LISTEN) is covered by test-listen-addresses.mjs; here it only records that it ran.
+      startListeners: async (server) => { listening = true; return [server]; },
       next: () => {
         // Model env loading both during Next construction and during prepare().
         if (!('NODE_OPTIONS' in env)) env.NODE_OPTIONS = 'SENTINEL_PRIVATE_VALUE';
@@ -619,7 +627,7 @@ await test('server snapshots before requiring Next and strips only newly loaded 
       },
       http: { createServer: () => {
         assertEnv();
-        return { on: () => {}, listen: () => { listening = true; }, close: () => {} };
+        return { on: () => {}, close: () => {} };
       } },
     });
     const snapshot = source.slice(source.indexOf("'use strict';"), source.indexOf("const http = require('http');"));

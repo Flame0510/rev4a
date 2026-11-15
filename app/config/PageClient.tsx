@@ -39,6 +39,16 @@ const ENV_METADATA: Record<
     placeholder: 'At least 32 characters',
     sensitive: true,
   },
+  REV4A_LISTEN: {
+    label: 'Panel listens on',
+    description: 'Where the Rev4a panel listens: all (every network interface, the default), local (this host only, plus the Docker gateway on Linux so agents reach their model), or one IP address. Use local behind a reverse proxy or Tailscale. Needs a Rev4a restart. The Config page refuses any other value.',
+    placeholder: 'all',
+  },
+  REV4A_AGENT_PORTS_LISTEN: {
+    label: 'Agent ports listen on',
+    description: "Where agents' published ports listen: all (every network interface, the default), local (127.0.0.1) or one IP address. Applies when an agent is created, recreated, updated or edited (Recreate, Update and Edit all apply it); running agents change at their next one of these. Left empty, each agent keeps the address it already has; write all to move agents back to every interface. The Config page refuses any other value. Open then needs an SSH tunnel for a port that is not reachable.",
+    placeholder: 'all',
+  },
 };
 
 type SaveStatus = 'idle' | 'saving' | 'ok' | 'error';

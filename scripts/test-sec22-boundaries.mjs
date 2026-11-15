@@ -242,7 +242,7 @@ function recreateHarness(held = new Map()) {
     '@/lib/docker-socket': {},
     '@/lib/agent-images': { runDocker: async (args) => calls.push(args) },
     '@/lib/agent-ports': ports,
-    '@/lib/agent-ports-server': { getHostPortHolders: async () => held, describeHolder: (h) => h.name },
+    '@/lib/agent-ports-server': { agentPortsHostIp: () => null, assertPortArgsHostIps: () => {}, getHostPortHolders: async () => held, describeHolder: (h) => h.name },
     '@/lib/agent-setup': { getMountFlags: () => [] },
     '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
   };
@@ -306,7 +306,7 @@ try {
       'next/server': next, fs,
       child_process: { execSync: () => {} },
       '@/lib/rev4a-paths': { ENV_FILE }, '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
-      '@/lib/env-file': envFile,
+      '@/lib/env-file': envFile, '@/lib/listen-addresses': (await import('node:module')).createRequire(import.meta.url)('../lib/listen-addresses.js'),
     }, { process: { env: {} } });
     resets();
     assert.equal((await route.PUT(request({ env: { REV4A_TEST: 'new' } }))).status, 200);

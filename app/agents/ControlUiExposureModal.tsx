@@ -38,12 +38,18 @@ export function ControlUiExposureModal({
   open,
   agentId,
   jobId,
+  hostIp,
+  localOnly = false,
   onClose,
   onOpenAnyway,
 }: {
   open: boolean;
   agentId: string;
   jobId?: string;
+  /** The address the agent's port is published on; the tunnel command targets it when it is not loopback. */
+  hostIp?: string | null;
+  /** The port is open only on the server: the plain link cannot work, so there is no "Open anyway". */
+  localOnly?: boolean;
   onClose: () => void;
   onOpenAnyway: () => void;
 }) {
@@ -84,7 +90,7 @@ export function ControlUiExposureModal({
     return () => { portAbortRef.current?.abort(); abortRef.current?.abort(); };
   }, [open, fetchTunnel]);
 
-  const command = port ? controlUiTunnelCommand(port, hostname) : null;
+  const command = port ? controlUiTunnelCommand(port, hostname, hostIp) : null;
 
   const copyCommand = async () => {
     if (!command) return;
@@ -113,12 +119,18 @@ export function ControlUiExposureModal({
 
   return (
     <Modal open={open} onClose={onClose} title="Open the Control UI" tone="warning" maxWidth={560}>
-      <p style={{ fontSize: 12, margin: '0 0 12px' }}>
-        Rev4a is on plain HTTP. Opening the agent from here also sends your Rev4a session to the agent&apos;s port: a
-        compromised agent could use it to sign in to Rev4a with all your keys.
-      </p>
+      {localOnly ? (
+        <p style={{ fontSize: 12, margin: '0 0 12px' }}>
+          This agent&apos;s port is open only on the server itself. Use an SSH tunnel:
+        </p>
+      ) : (
+        <p style={{ fontSize: 12, margin: '0 0 12px' }}>
+          Rev4a is on plain HTTP. Opening the agent from here also sends your Rev4a session to the agent&apos;s port: a
+          compromised agent could use it to sign in to Rev4a with all your keys.
+        </p>
+      )}
 
-      <div className="ui-kicker">Safe way: an SSH tunnel</div>
+      <div className="ui-kicker">{localOnly ? 'SSH tunnel' : 'Safe way: an SSH tunnel'}</div>
       <p className="ui-muted" style={{ fontSize: 12, margin: '6px 0' }}>Run this on your computer:</p>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200 }}>
@@ -139,20 +151,20 @@ export function ControlUiExposureModal({
         </div>
       )}
 
-      <div className="ui-kicker" style={{ marginTop: 12 }}>For good: serve Rev4a over HTTPS</div>
+      <div className="ui-kicker" style={{ marginTop: 12 }}>{localOnly ? 'More ways in' : 'For good: serve Rev4a over HTTPS'}</div>
       <p className="ui-muted" style={{ fontSize: 12, margin: '6px 0' }}>
         <a className="ui-link" href={GUIDE_URL} target="_blank" rel="noopener noreferrer">Remote access guide ↗</a>
       </p>
-      <p className="ui-muted" style={{ fontSize: 11, margin: '10px 0 0' }}>
+      {!localOnly && <p className="ui-muted" style={{ fontSize: 11, margin: '10px 0 0' }}>
         Any page that opens this agent&apos;s port on this address sends the session too, not only this button.
-      </p>
+      </p>}
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: 16 }}>
         <Button variant="ghost" size="sm" disabled={busy !== null} onClick={onClose}>Cancel</Button>
         <Button variant="secondary" size="sm" loading={busy === 'link'} disabled={busy !== null} onClick={() => { void copyLink(); }}>
           {busy === 'link' ? 'Copying…' : copied === 'link' ? 'Copied' : 'Copy tunnel link'}
         </Button>
-        <Button variant="danger" size="sm" disabled={busy !== null} onClick={onOpenAnyway}>Open anyway</Button>
+        {!localOnly && <Button variant="danger" size="sm" disabled={busy !== null} onClick={onOpenAnyway}>Open anyway</Button>}
       </div>
     </Modal>
   );

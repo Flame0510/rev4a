@@ -299,6 +299,18 @@ The central container, running the Next.js dashboard + orchestration API.
   No lease file is deleted: an existing stale lease must expire, because clearing an
   unproven owner could permit concurrent volume writers.
   `agentBusyReason()` (`lib/agent-busy.ts`) covers it for every route that changes an agent.
+- **Where Rev4a listens (SEC-9B, 1.28.0).** `REV4A_LISTEN` (panel) and `REV4A_AGENT_PORTS_LISTEN` (agents) are resolved by
+  the pure `lib/listen-addresses.js` (`listenAddresses()`, `agentPortsListen()`). `all` (the default) is the old
+  behaviour: one `server.listen(PORT)`, agents on `0.0.0.0`. `local` / `<IP>`: `server.js` builds one `http.Server` per
+  address, all with the same request and `upgrade` handlers, so the terminal WebSocket works on each; the addresses are
+  127.0.0.1, ::1 (when the host has it), the requested IP, and on Linux the Docker default-bridge gateway (`GET /networks/bridge`
+  → `IPAM.Config[0].Gateway`, what `host.docker.internal:host-gateway` resolves to) because agents reach the model at
+  `host.docker.internal:3740`. Docker Desktop reaches the host's loopback, so no gateway there. Docker unreachable: loopback
+  only and one warning. An address the host lacks, or an invalid value, falls back to `local`; loopback v4 is always bound.
+  The effective result is published in `REV4A_LISTEN_STATE` for `GET /api/system/listen`. The terminal server stays on
+  127.0.0.1:3741. Agent ports: `portMappingArgs(start, end, hostIp)` adds `<ip>:` (IPv6 in brackets) to `-p`; create, the range
+  edit and recreate read the setting through `agentPortsHostIp()` (`.env` first, so a Config change counts at the next
+  Recreate; a copy the launcher took from `.env` is ignored via `REV4A_DOTENV_KEYS`, so clearing the entry applies at once). An IP the host lacks reads as `local`; recreate refuses, before removing the old container, any `-p` on a missing address. On recreate a set value overrides each binding's old HostIp; unset keeps it (SEC-22 LC-01). `REV4A_LISTEN_STATE` and `REV4A_DOTENV_KEYS` are runtime-only keys.
 - **Host ports** have one source of truth: `lib/agent-ports.ts` holds the pure rules
   (`validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`,
   `hostPortsFromBindings`, `hostPortsFromArgs`) and `lib/agent-ports-server.ts` answers

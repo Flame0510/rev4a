@@ -699,11 +699,15 @@ function serve(port) {
     // Non-empty file values retain their precedence, including for secrets.
     if (value !== '' || !childEnv[key]) childEnv[key] = value;
   }
+  // Names (never values) of the keys whose value came from .env: a setting read per create/Recreate
+  // (REV4A_AGENT_PORTS_LISTEN) must not fall back to a stale copy once its .env entry is cleared.
+  const dotenvKeys = Object.entries(envVars).filter(([key, value]) => value !== '' && !RUNTIME_ONLY_ENV_KEYS.includes(key)).map(([key]) => key);
   childEnv.PORT = String(port);
   childEnv.NODE_ENV = process.env.NODE_ENV || 'production';
   // A service EnvironmentFile may have exported stale state before the file repair ran.
   // Clear it from both sources before supplying this boot's credentials to specific children.
   for (const key of RUNTIME_ONLY_ENV_KEYS) delete childEnv[key];
+  childEnv.REV4A_DOTENV_KEYS = dotenvKeys.join(',');
   let setupCode;
   if (!childEnv.REV4A_PASSWORD) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

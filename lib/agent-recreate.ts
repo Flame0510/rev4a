@@ -12,8 +12,8 @@
  */
 import { dockerFetch } from '@/lib/docker-socket';
 import { runDocker, resolveRecreateImage } from '@/lib/agent-images';
-import { hostPortsFromArgs } from '@/lib/agent-ports';
-import { getHostPortHolders, describeHolder, type HostPortHolder } from '@/lib/agent-ports-server';
+import { hostPortsFromArgs, portArgsFromBindings } from '@/lib/agent-ports';
+import { getHostPortHolders, describeHolder, agentPortsHostIp, assertPortArgsHostIps, type HostPortHolder } from '@/lib/agent-ports-server';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { isValidAgentId } from '@/lib/container';
 import { pruneBackups } from '@/lib/backups-volume';
@@ -124,19 +124,11 @@ export async function recreateAgentContainer(
     .filter(([k]) => KEEP_LABEL_PREFIXES.some((p) => k === p || k.startsWith(p)))
     .flatMap(([k, v]) => ['-l', `${k}=${v}`]);
 
-  const portArgs = opts.portArgs ?? Object.entries(container.HostConfig?.PortBindings ?? {}).flatMap(([containerPort, bindings]) => {
-    const proto = containerPort.includes('/udp') ? '/udp' : '';
-    // Docker can report both wildcard families for one publish; retain it only once.
-    const mappings = new Set<string>();
-    for (const binding of bindings ?? []) {
-      if (!binding.HostPort) continue;
-      const ip = binding.HostIp;
-      const address = ip && ip !== '0.0.0.0' && ip !== '::'
-        ? `${ip.includes(':') ? `[${ip}]` : ip}:` : '';
-      mappings.add(`${address}${binding.HostPort}:${containerPort.replace(/\/.*$/, '')}${proto}`);
-    }
-    return [...mappings].flatMap((mapping) => ['-p', mapping]);
-  });
+  // REV4A_AGENT_PORTS_LISTEN, when set, wins over each binding's old HostIp; unset keeps them (SEC-22 LC-01).
+  const portArgs = opts.portArgs ?? portArgsFromBindings(container.HostConfig?.PortBindings, agentPortsHostIp());
+
+  // An address the host no longer has would fail `docker run` after the old container is gone.
+  assertPortArgsHostIps(portArgs);
 
   // Refuse on a port clash before anything is removed: the old container is the
   // fallback the caller restarts, so a recreate refused here leaves the agent up. A

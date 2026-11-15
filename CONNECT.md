@@ -63,6 +63,27 @@ HTTPS through a reverse proxy is recommended. Plain HTTP by IP works with no ext
 session cookie follows the scheme your browser uses. On plain HTTP, the **Open** buttons on agents warn
 first, because the agent's port receives your Rev4a session too; use an SSH tunnel or HTTPS.
 
+### Behind a reverse proxy or Tailscale
+
+By default the panel (3740) and every agent's ports (3710-3779) listen on all interfaces, and Docker
+bypasses `ufw`, so on a VPS they are reachable from the internet. To close them, add to
+`/root/.config/rev4a/.env`:
+
+```
+REV4A_LISTEN=local
+REV4A_AGENT_PORTS_LISTEN=local
+REV4A_TRUSTED_PROXIES=127.0.0.1,::1
+```
+
+then `sudo systemctl restart rev4a` and Recreate each agent in the dashboard (Recreate, Update and Edit all
+apply the agent setting; running agents keep their old ports until then). The panel keeps answering on 127.0.0.1, ::1 and the Docker gateway address (agents
+reach their model there: that address is reachable by containers on this host, not from the internet). A reverse proxy on the host targets `127.0.0.1:3740`; Traefik or nginx in
+Docker target `host.docker.internal:3740` with `extra_hosts: host.docker.internal:host-gateway`; Tailscale:
+`tailscale serve --bg 3740`. The agents' **Open** buttons then show the SSH tunnel steps when the
+dashboard is not on the server itself. With `ufw` on and the proxy in a container, allow the Docker bridge to
+reach 3740 (`ufw allow from 172.17.0.0/16 to any port 3740`). Rolling back to 1.27.x ignores `REV4A_LISTEN` and
+opens 3740 on every interface again.
+
 ### Open the dashboard and complete setup
 
 Open `http://<server>:3740` in your browser, replacing `<server>` with your VPS IP,
@@ -150,6 +171,8 @@ Rev4a reads environment variables from `~/.config/rev4a/.env`
 | `REV4A_TOKEN` | — | Auth token for API access (required) |
 | `REV4A_PASSWORD` | — | Password for dashboard login |
 | `REV4A_JWT_SECRET` | — | JWT signing secret (auto-generated) |
+| `REV4A_LISTEN` | `all` | Where the panel listens: `all`, `local` or one IP (restart Rev4a) |
+| `REV4A_AGENT_PORTS_LISTEN` | `all` | Where agents' ports listen: `all`, `local` or one IP (applies at create/Recreate; empty keeps each agent's address, `all` moves agents back to every interface) |
 
 Set them inline or via `.env`:
 
