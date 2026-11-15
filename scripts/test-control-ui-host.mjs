@@ -33,7 +33,6 @@ const port = '4550';
 const gateway = 'ws://127.0.0.1:3000/socket?mode=control&encoded=%2B';
 const fragment = new URLSearchParams({ bootstrapToken: bootstrap, token, gatewayUrl: gateway, theme: 'dark mode' });
 const browserUrl = `http://127.0.0.1:3000/prefix/control?lang=en&encoded=%2B#${fragment}`;
-const warning = '[control-ui] dashboard on plain HTTP: the session cookie is visible to agent ports; use HTTPS';
 
 function devicesFixture(mode = 'one-time') {
   const calls = [];
@@ -134,12 +133,15 @@ class Reply {
     this.status = options.status ?? 200;
     this.headers = options.headers ?? {};
   }
+  static json(body, options = {}) {
+    return new Reply(JSON.stringify(body), { status: options.status, headers: options.headers });
+  }
 }
+const job = '8d10c9bf-231a-41af-a01f-bdbb2ff6a3f1';
 const ids = load('lib/cron-ids.ts', {});
 const navigation = load('lib/control-ui-navigation.ts', { './cron-ids': ids });
 function routeFixture(options = {}) {
   const { mode = 'one-time', denied = null } = options;
-  const insecure = Object.hasOwn(options, 'insecure') ? options.insecure : '1';
   const warnings = [];
   const { devices, calls } = devicesFixture(mode);
   const route = load('app/api/agents/[id]/open-control-ui/route.ts', {
@@ -151,9 +153,9 @@ function routeFixture(options = {}) {
     '@/lib/agent-devices': devices,
     '@/lib/cron-ids': ids,
     '@/lib/control-ui-navigation': navigation,
-  }, { process: { env: { REV4A_FORCE_INSECURE_COOKIE: insecure } }, console: { warn: (...args) => warnings.push(args) } });
-  const open = (host = 'rev4a.example.com', protocol = 'http:', extraHeaders = {}) => route.GET({
-    url: `${protocol}//${urlHost(host)}:3740/api/agents/fixture-agent/open-control-ui`,
+  }, { process: { env: { REV4A_FORCE_INSECURE_COOKIE: '1' } }, console: { warn: (...args) => warnings.push(args) } });
+  const open = (host = 'rev4a.example.com', protocol = 'http:', extraHeaders = {}, query = '') => route.GET({
+    url: `${protocol}//${urlHost(host)}:3740/api/agents/fixture-agent/open-control-ui${query}`,
     headers: new Headers({ host: `${urlHost(host)}:3740`, ...extraHeaders }),
   }, { params: Promise.resolve({ id: 'fixture-agent' }) });
   return { open, warnings, calls };
@@ -174,35 +176,58 @@ await test('actual route uses both isolated link kinds without warning or redire
   }
 });
 
-await test('nonisolated HTTP logs the exact warning once across hosts, including concurrent opens', async () => {
+await test('the retired REV4A_FORCE_INSECURE_COOKIE flag never makes the route log or change anything', async () => {
   for (const mode of ['one-time', 'old-agent']) {
     const f = routeFixture({ mode });
-    const hosts = ['192.168.1.10', '203.0.113.5', 'rev4a.example.com', 'localhost.example.com'];
-    const results = await Promise.all(hosts.map((host) => f.open(host)));
-    for (const [i, result] of results.entries()) {
-      assert.equal(result.status, 302);
-      const expected = await devicesFixture(mode).devices.resolveControlUiUrl('fixture-agent', hosts[i], port);
-      assert.equal(result.headers.Location, expected.url);
+    for (const host of ['192.168.1.10', 'rev4a.example.com']) {
+      for (const protocol of ['http:', 'https:']) {
+        const result = await f.open(host, protocol, { 'x-forwarded-proto': 'https' });
+        assert.equal(result.status, 302);
+        const expected = await devicesFixture(mode).devices.resolveControlUiUrl('fixture-agent', host, port);
+        assert.equal(result.headers.Location, expected.url);
+      }
     }
-    assert.equal(f.warnings.length, 1);
-    assert.deepEqual([...f.warnings[0]], [warning]);
-  }
-});
-
-await test('HTTPS and every opt-out value stay quiet without consuming the warning', async () => {
-  for (const insecure of ['1', undefined, '', '0', 'true']) {
-    const f = routeFixture({ insecure });
-    assert.equal((await f.open('rev4a.example.com', 'https:')).status, 302);
     assert.deepEqual(f.warnings, []);
-    assert.equal((await f.open()).status, 302);
-    assert.equal(f.warnings.length, insecure === '1' ? 1 : 0);
   }
 });
 
-await test('the route reads the protocol from the request URL (Next.js may derive it from X-Forwarded-Proto)', async () => {
+await test('?tunnel=1 answers JSON built for localhost, for both link kinds, never a host from the query or Host', async () => {
+  for (const mode of ['one-time', 'old-agent']) {
+    const f = routeFixture({ mode });
+    for (const host of ['192.168.1.10', 'rev4a.example.com', 'localhost', '[::1]']) {
+      const result = await f.open(host, 'http:', {}, '?tunnel=1&host=evil.example&url=http://evil.example');
+      assert.equal(result.status, 200);
+      assert.equal(result.headers['Cache-Control'], 'no-store');
+      assert.equal(result.headers['Referrer-Policy'], 'no-referrer');
+      const body = JSON.parse(result.body);
+      assert.equal(body.port, port);
+      const link = new URL(body.url);
+      assert.equal(link.hostname, 'localhost');
+      assert.equal(link.port, port);
+      if (mode === 'one-time') assert.equal(new URLSearchParams(link.hash.slice(1)).get('gatewayUrl').startsWith('ws://localhost:'), true);
+      else assert.equal(body.url, `http://localhost:${port}/#token=${encodeURIComponent(token)}`);
+    }
+    assert.deepEqual(f.warnings, []);
+  }
+});
+
+await test('?tunnel=1 keeps the job destination and answers errors as JSON', async () => {
   const f = routeFixture();
-  assert.equal((await f.open('rev4a.example.com', 'http:', { 'x-forwarded-proto': 'https' })).status, 302);
-  assert.deepEqual([...f.warnings[0]], [warning]);
+  const result = await f.open('192.168.1.10', 'http:', {}, `?tunnel=1&job=${job}`);
+  const body = JSON.parse(result.body);
+  assert.equal(new URL(body.url).pathname, '/prefix/control/automations');
+  assert.equal(new URL(body.url).searchParams.get('job'), job);
+  const bad = await f.open('192.168.1.10', 'http:', {}, '?tunnel=1&job=../x');
+  assert.equal(bad.status, 400);
+  assert.match(JSON.parse(bad.body).error, /Invalid automation job id/);
+});
+
+await test('?tunnel=port answers only the port and issues no link', async () => {
+  const f = routeFixture();
+  const result = await f.open('192.168.1.10', 'http:', {}, '?tunnel=port');
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['Cache-Control'], 'no-store');
+  assert.deepEqual(JSON.parse(result.body), { port });
 });
 
 await test('authentication still precedes link issuance and warnings', async () => {

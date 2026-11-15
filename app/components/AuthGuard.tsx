@@ -12,6 +12,17 @@ function isCacheValid(): boolean {
   return authCache.checked && authCache.valid && (Date.now() - authCache.ts) < AUTH_CACHE_TTL;
 }
 
+/** Once per tab on HTTPS: upgrade a session cookie made over plain HTTP to Secure + Strict. Silent on failure. */
+function refreshSessionCookie(): void {
+  try {
+    if (location.protocol !== 'https:' || sessionStorage.getItem('rev4a_cookie_refreshed')) return;
+    sessionStorage.setItem('rev4a_cookie_refreshed', '1');
+  } catch {
+    return;
+  }
+  fetch('/api/auth/refresh-cookie', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+}
+
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -76,6 +87,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         authCache.checked = true;
         authCache.ts = Date.now();
         setVerifiedPath(pathname);
+        refreshSessionCookie();
 
         if (pathname === '/wizard') return;
 

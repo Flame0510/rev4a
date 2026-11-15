@@ -54,15 +54,9 @@ The npm install compiles native modules and builds the dashboard. On first start
 when run as root, creates `rev4a-network`, pulls the agent image, and starts all services.
 Wait for the dashboard to listen on port 3740 and the `[SETUP]` code to appear.
 
-**Plain HTTP or HTTPS:** HTTPS through a reverse proxy is recommended. If you use plain
-HTTP by IP, stop the foreground server with **Ctrl+C**, set
-`REV4A_FORCE_INSECURE_COOKIE=1` in `~/.config/rev4a/.env` (root's file in this guide),
-and restart before opening the dashboard; otherwise login loops after the wizard:
-
-```bash
-printf '\nREV4A_FORCE_INSECURE_COOKIE=1\n' | sudo tee -a /root/.config/rev4a/.env
-sudo rev4a serve
-```
+**Plain HTTP or HTTPS:** HTTPS through a reverse proxy is recommended. Plain HTTP by IP works
+with no extra setting (the session cookie follows the scheme your browser uses); the agents'
+**Open** buttons then warn first and offer an SSH tunnel.
 
 Open `http://<server>:3740` (replace `<server>` with your VPS IP), or your HTTPS
 dashboard address. Enter the **Setup code** printed by the current `rev4a serve`,
@@ -129,7 +123,6 @@ already filled in — you normally never set these by hand. See
 | `PORT` | `3740` | No | Dashboard HTTP port |
 | `TERMINAL_WS_PORT` | `3741` | No | Loopback port of the container terminal server (the browser uses the dashboard's port) |
 | `REV4A_PASSWORD` | — | Yes | Dashboard login password (set via the setup wizard) |
-| `REV4A_FORCE_INSECURE_COOKIE` | — | No | Set to `1` for plain HTTP by IP to avoid login loops; restart after changing it. Prefer HTTPS through a reverse proxy |
 | `REV4A_TOKEN` | auto-generated | Yes | Bearer token for API routes and agent calls |
 | `REV4A_JWT_SECRET` | auto-generated | Yes | Secret for auth cookies |
 | `REV4A_API_KEY` | auto-generated | No | API key for the Gateway provider endpoint |

@@ -333,16 +333,36 @@ export async function resolveControlUiUrl(
   port: string,
 ): Promise<{ url: string; kind: 'one-time' | 'token'; isolated: boolean }> {
   const { host, isolated } = controlUiHostFor(hostname);
+  return { ...(await linkForHost(container, host, port)), isolated };
+}
+
+/**
+ * The same link built for `localhost`, for someone who reaches the agent through an SSH
+ * tunnel (`ssh -L port:127.0.0.1:port`): the browser then sees the agent on its own
+ * machine, away from the dashboard's cookies. The host is fixed here, never an input.
+ */
+export async function resolveTunnelControlUiUrl(
+  container: string,
+  port: string,
+): Promise<{ url: string; kind: 'one-time' | 'token' }> {
+  return linkForHost(container, 'localhost', port);
+}
+
+async function linkForHost(
+  container: string,
+  host: string,
+  port: string,
+): Promise<{ url: string; kind: 'one-time' | 'token' }> {
   if (await answersStartupzWithVersion(container)) {
     try {
-      return { url: (await issueControlUiLink(container, host, port)).url, kind: 'one-time', isolated };
+      return { url: (await issueControlUiLink(container, host, port)).url, kind: 'one-time' };
     } catch {
       // Fall back to the plain link below.
     }
   }
   const token = await readGatewayToken(container);
   if (!token) throw new Error('no one-time link could be issued and no gateway token is available');
-  return { url: plainLink(host, port, token), kind: 'token', isolated };
+  return { url: plainLink(host, port, token), kind: 'token' };
 }
 
 /**

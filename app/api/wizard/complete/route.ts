@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
 import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
+import { sessionCookieOptions } from '@/lib/session-cookie';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,15 +26,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const response = NextResponse.json({ done: true });
   // Also set cookie for backwards compat / existing clients
-  const isProduction = process.env.NODE_ENV === 'production';
-  const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
-
-  response.cookies.set('wizard_done', '1', {
-    httpOnly: true,
-    sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
-    secure: isProduction && !forceInsecure,
-    maxAge: 60 * 60 * 24 * 365,
-    path: '/',
-  });
+  response.cookies.set('wizard_done', '1', sessionCookieOptions(request, { maxAge: 60 * 60 * 24 * 365 }));
   return response;
 }

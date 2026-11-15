@@ -36,11 +36,8 @@ const { sessionCookieMessage } = helper(() => assert.fail('Pure decision must no
 const httpMessage = sessionCookieMessage(401, 'http:');
 const httpsMessage = sessionCookieMessage(401, 'https:');
 
-assert.match(httpMessage, /not served over HTTPS/);
-assert.match(httpMessage, /HTTPS \(a reverse proxy\)/);
-assert.match(httpMessage, /REV4A_FORCE_INSECURE_COOKIE=1/);
-assert.match(httpMessage, /~\/\.config\/rev4a\/\.env/);
-assert.match(httpMessage, /restart Rev4a/);
+assert.equal(httpMessage, 'Signed in, but your browser refused the session cookie. Check that cookies are allowed for this site, or serve Rev4a over HTTPS.');
+assert.doesNotMatch(httpMessage, /REV4A_FORCE_INSECURE_COOKIE/);
 assert.match(httpsMessage, /cookies are allowed for this site/);
 assert.doesNotMatch(httpsMessage, /REV4A_FORCE_INSECURE_COOKIE/);
 for (const protocol of ['http:', 'https:']) {

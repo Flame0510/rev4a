@@ -5,7 +5,7 @@ export function sessionCookieMessage(status: number, protocol: string): string |
   if (status >= 200 && status < 300) return null;
   if (status !== 401) return CHECK_FAILED;
   return protocol === 'http:'
-    ? 'Signed in, but your browser refused the session cookie because this page is not served over HTTPS. Use HTTPS (a reverse proxy), or set REV4A_FORCE_INSECURE_COOKIE=1 in the .env file of your Rev4a data folder (~/.config/rev4a/.env) and restart Rev4a.'
+    ? 'Signed in, but your browser refused the session cookie. Check that cookies are allowed for this site, or serve Rev4a over HTTPS.'
     : 'Signed in, but your browser did not keep the session cookie. Check that cookies are allowed for this site.';
 }
 

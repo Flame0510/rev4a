@@ -9,6 +9,7 @@ import { AgentsSection } from './AgentsSection';
 import { BackupsMigrationNotice } from './BackupsMigrationNotice';
 import { MemoryLimitWarning } from './MemoryLimitWarning';
 import { OrphanVolumes } from './OrphanVolumes';
+import { PlainHttpNotice } from './PlainHttpNotice';
 import { RecentAlerts } from './RecentAlerts';
 import { SystemCardsSkeleton, SystemChartsSkeleton, SystemDescription } from './SystemSkeleton';
 
@@ -137,6 +138,8 @@ export default function SystemPageClient() {
         title="System"
         description={<SystemDescription host={host ? `${host.hostname} · ${host.cores} cores · up ${formatUptime(host.uptime_s)}` : null} />}
       />
+
+      <PlainHttpNotice />
 
       {error && <Surface tone="danger"><span style={{ color: 'var(--red)', fontSize: 12 }}>{error}</span></Surface>}
 

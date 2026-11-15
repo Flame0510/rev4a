@@ -3,6 +3,7 @@ import { SignJWT } from 'jose';
 import { getPassword, getJwtSecret, secretEquals, passwordFingerprint } from '@/lib/rev4a-auth';
 import { createLoginThrottle } from '@/lib/login-throttle';
 import { CLIENT_IP_HEADER } from '@/lib/client-address';
+import { sessionCookieOptions } from '@/lib/session-cookie';
 
 // One throttle per server process: 5 free failures per hour, then growing locks (30 s up to 15 min).
 const throttle = createLoginThrottle();
@@ -76,20 +77,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .setExpirationTime('7d')
       .sign(secretKey);
 
-    // Use secure cookies only when running behind HTTPS.
-    // On plain HTTP the Secure flag prevents the browser from sending
-    // the cookie, causing an immediate redirect loop after login.
-    const isProduction = process.env.NODE_ENV === 'production';
-    const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
-
+    // Secure + Strict unless the browser itself is on plain HTTP (its Origin says so): on plain
+    // HTTP the Secure flag would keep the browser from sending the cookie and login would loop.
     const response = NextResponse.json({ ok: true });
-    response.cookies.set('rev4a_token', token, {
-      httpOnly: true,
-      secure: isProduction && !forceInsecure,
-      sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
-      maxAge: 60 * 60 * 24 * 7,
-      path: '/',
-    });
+    response.cookies.set('rev4a_token', token, sessionCookieOptions(request, { maxAge: 60 * 60 * 24 * 7 }));
     return response;
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });

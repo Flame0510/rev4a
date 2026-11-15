@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-15
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -544,7 +544,9 @@ the same environment-first, `.env`-fallback rule, with the same trimming of file
 values and data directory. An empty password cannot authenticate a cookie session.
 A Config password change applies after restart; until then the inherited environment
 still holds the effective password. `Authorization: Bearer <REV4A_TOKEN>` remains an
-independent API path. Cookie flags, HS256 and the 7-day lifetime are unchanged.
+independent API path. HS256 and the 7-day lifetime are unchanged. Cookie flags follow the scheme the
+browser shows in `Origin` (`lib/session-cookie.ts`): Secure + Strict on HTTPS or when unknown, non-Secure
+Lax on plain HTTP; `POST /api/auth/refresh-cookie` upgrades an HTTP-made session once on HTTPS.
 
 **Upgrade:** every browser logs in once after updating; older cookies lack `pwf`.
 This stateless check automatically refuses the previously issued cookies without a

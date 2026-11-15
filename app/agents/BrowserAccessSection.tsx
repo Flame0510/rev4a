@@ -18,7 +18,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, Button, ConfirmModal, Input, RemoveButton } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
-import { controlUiOpenPath } from '@/lib/control-ui-navigation';
+import { controlUiExposesSession, controlUiOpenPath } from '@/lib/control-ui-navigation';
+import { ControlUiExposureModal } from './ControlUiExposureModal';
 import { isValidCronJobId } from '@/lib/cron-ids';
 
 interface PendingBrowser {
@@ -176,14 +177,22 @@ export function OpenControlUiButton({
   disabled?: boolean;
 }) {
   const validJob = jobId === undefined || isValidCronJobId(jobId);
+  const [warning, setWarning] = useState(false);
+  const openTab = () => { window.open(controlUiOpenPath(agentId, jobId), '_blank', 'noopener'); };
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
     if (!validJob || disabled) return;
-    window.open(controlUiOpenPath(agentId, jobId), '_blank', 'noopener');
+    // Plain HTTP on a non-loopback host: the agent's port would receive the Rev4a session too.
+    if (controlUiExposesSession(window.location.protocol, window.location.hostname)) { setWarning(true); return; }
+    openTab();
   };
+  // Decided after mount so the server-rendered title and the first client render agree.
+  const [exposes, setExposes] = useState(false);
+  useEffect(() => { setExposes(controlUiExposesSession(window.location.protocol, window.location.hostname)); }, []);
 
   const starting = gateway === 'starting' && blocksOpen === true;
   return (
+    <>
     <Button
       variant={variant}
       size="sm"
@@ -192,10 +201,22 @@ export function OpenControlUiButton({
       title={!validJob ? 'Invalid automation job id' : starting ? "The agent's Gateway is still starting"
         : gateway === 'starting' ? 'The Gateway may still be starting — the Control UI might not answer yet'
         : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
+        : exposes ? 'Plain HTTP: opens with a warning'
         : 'Open the agent Control UI'}
     >
       {starting ? 'Starting…' : label}
     </Button>
+    {/* Rendered in the click's own subtree: a click inside the modal must not reach a clickable row. */}
+    <span onClick={(e) => e.stopPropagation()} style={{ display: 'contents' }}>
+      <ControlUiExposureModal
+        open={warning}
+        agentId={agentId}
+        jobId={jobId}
+        onClose={() => setWarning(false)}
+        onOpenAnyway={() => { setWarning(false); openTab(); }}
+      />
+    </span>
+    </>
   );
 }
 

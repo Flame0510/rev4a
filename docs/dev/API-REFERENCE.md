@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-15
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -83,7 +83,12 @@ Login — exchange the static password for a signed JWT cookie.
 { "ok": true }
 ```
 Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; Secure; SameSite=Strict` in production.
-Development or `REV4A_FORCE_INSECURE_COOKIE=1` uses a non-Secure cookie with `SameSite=Lax`.
+The flags follow the scheme of the request's `Origin` header (`lib/session-cookie.ts`): `http:` (and development) gives a non-Secure cookie with `SameSite=Lax`; `https:`, no `Origin`, `null` or an unusable one gives Secure + Strict. `X-Forwarded-Proto` is never read. `REV4A_FORCE_INSECURE_COOKIE` is no longer read (1.28.0). `wizard_done` (wizard complete/reset) uses the same rule.
+
+### `POST /api/auth/refresh-cookie`
+Re-sets `rev4a_token` with the same JWT as Secure + Strict, for a session made over plain HTTP and now used over HTTPS. Once per browser tab, from `AuthGuard`.
+
+**Auth:** session (`401` otherwise). **Response:** `204` with `Cache-Control: no-store`. Only an `https:` Origin sets a cookie; any other Origin changes nothing. `Max-Age` is the time left until the token's `exp`; a token with no time left is left alone. No new token, no fingerprint change.
 
 **Error:** `401` if the password is wrong or the server is not configured; `500` for an unreadable body.
 
@@ -1875,13 +1880,9 @@ LAN/public IPs, domains and `localhost.example.com`, stay unchanged. Both link k
 use this mapping, including the one-time link's `gatewayUrl` fragment. Paths, query
 parameters and authentication fragment values are preserved.
 
-When the host cannot be isolated, the request URL uses `http:` and
-`REV4A_FORCE_INSECURE_COOKIE=1`, the route logs once per process:
-`[control-ui] dashboard on plain HTTP: the session cookie is visible to agent ports; use HTTPS`.
-It adds nothing to the redirect. The client-address helper has no trusted proxy
-protocol support, so the request URL's protocol is used. Next.js derives it from
-`X-Forwarded-Proto` when present, so a client can suppress this warning; it is only a log
-hint, the isolation above does not depend on it.
+**`?tunnel=1`:** instead of redirecting, answers `200` JSON `{ "url": "...", "port": "4550" }` with the link built for the host `localhost` (for an SSH tunnel `ssh -L <port>:127.0.0.1:<port> user@<host>`); the host is fixed by the server, never taken from the query or the `Host` header. `job` is kept. Errors are JSON `{ "error": "..." }` with the same statuses (400, 404, 409, 502, 503). `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. Used by the Open dialog shown on plain HTTP, only when the person presses Copy tunnel link.
+
+**`?tunnel=port`:** answers `200` JSON `{ "port": "4550" }` only, after the same auth and running checks, and issues no link (no readiness probe, no `docker exec`). The Open dialog reads the port for the SSH command this way when it opens. The command writes an IPv6 host without brackets (`user@2001:db8::1`), which is what OpenSSH expects in `user@host`.
 
 - Runs `openclaw dashboard --json` in the container and redirects to its `browserUrl`,
   with the host, the port and the `gatewayUrl` fragment parameter rewritten to that host

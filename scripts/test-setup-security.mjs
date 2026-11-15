@@ -88,6 +88,7 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
   };
   const auth = load('lib/rev4a-auth.js', dependencies, globals);
   dependencies['@/lib/rev4a-auth'] = auth;
+  dependencies['@/lib/session-cookie'] = load('lib/session-cookie.ts', dependencies, globals);
   return { files, modes, effects, logs, process, auth,
     load: (file) => load(file, dependencies, globals),
     req: (body, code = CODE, extra = {}) => ({
@@ -899,6 +900,7 @@ await test('BUG-15: repair, file loading and serve preserve inherited secrets in
           'next/server': require('next/server'), jose, '@/lib/rev4a-auth': auth.auth,
           '@/lib/login-throttle': require('../lib/login-throttle.js'),
           '@/lib/client-address': require('../lib/client-address.js'),
+          '@/lib/session-cookie': load('lib/session-cookie.ts', {}, { process: { env: child.env } }),
         }, { process: { env: child.env } });
         const response = await login.POST(auth.req({ password: 'abcdefgh' })); // secret-ok: local fixture
         assert.equal(response.status, 200);

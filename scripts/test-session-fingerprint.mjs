@@ -63,6 +63,7 @@ function harness(env = { REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwt
   };
   const auth = load('lib/rev4a-auth.js', dependencies, globals);
   dependencies['@/lib/rev4a-auth'] = auth;
+  dependencies['@/lib/session-cookie'] = load('lib/session-cookie.ts', {}, globals);
   const { POST } = load('app/api/auth/login/route.ts', dependencies, globals);
   const { GET: check } = load('app/api/auth/check/route.ts', dependencies, globals);
   const { proxy } = load('proxy.ts', dependencies, globals);
@@ -84,9 +85,10 @@ function harness(env = { REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwt
   });
   return {
     env, files, auth, authorised: context.authorised,
-    async login(password) {
+    async login(password, origin) {
       const response = await POST(new next.NextRequest('https://rev4a.example/api/auth/login', {
-        method: 'POST', body: JSON.stringify({ password }), headers: { 'content-type': 'application/json' },
+        method: 'POST', body: JSON.stringify({ password }),
+        headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) },
       }));
       return { response, token: response.cookies.get('rev4a_token')?.value };
     },
@@ -131,13 +133,17 @@ await test('fingerprint has a stable labelled HMAC vector, 22 base64url characte
 });
 
 await test('current login is accepted by API, auth/check, pages and terminal; lifetime and cookie flags stay unchanged', async () => {
-  for (const [env, secure] of [
-    [{ NODE_ENV: 'production' }, true],
-    [{ NODE_ENV: 'production', REV4A_FORCE_INSECURE_COOKIE: '1' }, false],
-    [{ NODE_ENV: 'development' }, false],
+  for (const [env, origin, secure] of [
+    [{ NODE_ENV: 'production' }, undefined, true],
+    [{ NODE_ENV: 'production' }, 'https://rev4a.example', true],
+    [{ NODE_ENV: 'production' }, 'http://203.0.113.5:3740', false],
+    // The retired flag changes nothing: the scheme the browser shows decides.
+    [{ NODE_ENV: 'production', REV4A_FORCE_INSECURE_COOKIE: '1' }, 'https://rev4a.example', true],
+    [{ NODE_ENV: 'production', REV4A_FORCE_INSECURE_COOKIE: '1' }, undefined, true],
+    [{ NODE_ENV: 'development' }, undefined, false],
   ]) {
     const h = harness({ ...env, REV4A_PASSWORD: originalPassword, REV4A_JWT_SECRET: jwtSecret });
-    const { response, token } = await h.login(originalPassword);
+    const { response, token } = await h.login(originalPassword, origin);
     assert.equal(response.status, 200);
     const { payload, protectedHeader } = await jose.jwtVerify(token, new TextEncoder().encode(jwtSecret));
     assert.equal(protectedHeader.alg, 'HS256');

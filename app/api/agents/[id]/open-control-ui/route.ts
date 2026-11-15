@@ -7,6 +7,10 @@
  * Optional `job` selects the fixed native Automations destination after validating
  * the job id. It changes no account or job setting and never chooses a redirect host.
  *
+ * With `?tunnel=1` the answer is JSON `{ url, port }` (errors `{ error }`) and the link is built for
+ * `localhost`, for an SSH tunnel; the dashboard's own host is not used. `?tunnel=port` answers only
+ * `{ port }`: the dialog reads the port without issuing a one-time link.
+ *
  * The target host comes from the `Host` header, using a different loopback hostname
  * to isolate dashboard cookies, with the agent's published port. It is never a
  * parameter: a page elsewhere that gets a signed-in browser to open this URL can
@@ -26,13 +30,11 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { probeGateway } from '@/lib/agent-readiness';
 import { gatewayState, blocksOpen } from '@/lib/gateway-state';
 import { dockerFetch } from '@/lib/docker-socket';
-import { findAgentContainer, hostnameFromHostHeader, resolveControlUiUrl } from '@/lib/agent-devices';
+import { findAgentContainer, hostnameFromHostHeader, resolveControlUiUrl, resolveTunnelControlUiUrl } from '@/lib/agent-devices';
 import { isValidCronJobId } from '@/lib/cron-ids';
 import { controlUiAutomationUrl } from '@/lib/control-ui-navigation';
 
 export const dynamic = 'force-dynamic';
-
-let warnedInsecureCookieHost = false;
 
 /** A plain-text page: this route is opened in a browser tab, not read by code. */
 function page(status: number, text: string): NextResponse {
@@ -42,26 +44,37 @@ function page(status: number, text: string): NextResponse {
   });
 }
 
+/** The JSON answer of `?tunnel=1`; the link carries a credential, so nothing may cache it or leak it in a Referer. */
+function json(body: unknown, status: number): NextResponse {
+  return NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const denied = await requireAuthJWT(request); if (denied) return denied as NextResponse;
-  const jobs = new URL(request.url).searchParams.getAll('job');
-  if (jobs.length > 1 || jobs.length === 1 && !isValidCronJobId(jobs[0])) return page(400, 'Invalid automation job id.');
+  const query = new URL(request.url).searchParams;
+  // `?tunnel=1` answers JSON for the Open dialog on plain HTTP instead of redirecting.
+  const tunnelMode = query.get('tunnel');
+  const tunnel = tunnelMode === '1' || tunnelMode === 'port';
+  const fail = (status: number, text: string): NextResponse => tunnel ? json({ error: text }, status) : page(status, text);
+  const jobs = query.getAll('job');
+  if (jobs.length > 1 || jobs.length === 1 && !isValidCronJobId(jobs[0])) return fail(400, 'Invalid automation job id.');
   const jobId = jobs[0];
   const { id } = await params;
   const host = hostnameFromHostHeader(request.headers.get('host'));
-  if (!host) return page(400, 'Could not tell which address Rev4a is being reached on.');
+  if (!host && !tunnel) return fail(400, 'Could not tell which address Rev4a is being reached on.');
 
   let agent;
   try {
     agent = await findAgentContainer(id);
   } catch (e) {
-    return page(503, `Docker is unreachable: ${(e as Error).message}`);
+    return fail(503, `Docker is unreachable: ${(e as Error).message}`);
   }
-  if (!agent) return page(404, `No agent '${id}'.`);
-  if (!agent.running || !agent.controlPort) return page(409, 'The agent is not running or publishes no Control UI port.');
+  if (!agent) return fail(404, `No agent '${id}'.`);
+  if (!agent.running || !agent.controlPort) return fail(409, 'The agent is not running or publishes no Control UI port.');
+  if (tunnelMode === 'port') return json({ port: agent.controlPort }, 200);
 
   // Only a Gateway that answers 503 inside its 10-minute budget gets the 503 page. Every other
   // outcome, a policy-restarted container and any failure to find out open the Control UI.
@@ -73,7 +86,7 @@ export async function GET(
       const probe = await probeGateway(agent.name, 3_000);
       const state = gatewayState({ running: true, startedAtMs, probe, nowMs: Date.now() });
       if (blocksOpen(probe, state)) {
-        return page(503, "The agent's Gateway is still starting. Try again in a moment.");
+        return fail(503, "The agent's Gateway is still starting. Try again in a moment.");
       }
     }
   } catch {
@@ -81,19 +94,17 @@ export async function GET(
   }
 
   try {
-    const { url, isolated } = await resolveControlUiUrl(agent.name, host, agent.controlPort);
-    // client-address.js has no trusted forwarded-proto helper. Use the request URL,
-    // never an unverified X-Forwarded-Proto header, to decide whether to warn.
-    if (isolated === false && new URL(request.url).protocol === 'http:'
-      && process.env.REV4A_FORCE_INSECURE_COOKIE === '1' && !warnedInsecureCookieHost) {
-      warnedInsecureCookieHost = true;
-      console.warn('[control-ui] dashboard on plain HTTP: the session cookie is visible to agent ports; use HTTPS');
+    if (tunnel) {
+      // Always built for localhost, never for a host taken from the request.
+      const { url } = await resolveTunnelControlUiUrl(agent.name, agent.controlPort);
+      return json({ url: controlUiAutomationUrl(url, jobId), port: agent.controlPort }, 200);
     }
+    const { url } = await resolveControlUiUrl(agent.name, host as string, agent.controlPort);
     return new NextResponse(null, {
       status: 302,
       headers: { Location: controlUiAutomationUrl(url, jobId), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
     });
   } catch (e) {
-    return page(502, `Could not open the Control UI: ${(e as Error).message}.`);
+    return fail(502, `Could not open the Control UI: ${(e as Error).message}.`);
   }
 }

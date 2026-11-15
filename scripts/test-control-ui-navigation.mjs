@@ -151,15 +151,17 @@ await test('shared Open button navigates synchronously and respects job/disabled
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const opened = [];
-  const context = { exports: {}, Button: () => {}, window: { open: (...args) => opened.push(args) },
-    controlUiOpenPath: navigation.controlUiOpenPath, isValidCronJobId: ids.isValidCronJobId,
-    require: () => ({ jsx: (_type, props) => props }), };
+  const loopback = { protocol: 'http:', hostname: '127.0.0.1' };
+  const context = { exports: {}, Button: () => {}, ControlUiExposureModal: () => {}, window: { open: (...args) => opened.push(args), location: loopback },
+    useState: (value) => [value, () => {}], useEffect: () => {},
+    controlUiOpenPath: navigation.controlUiOpenPath, controlUiExposesSession: navigation.controlUiExposesSession, isValidCronJobId: ids.isValidCronJobId,
+    require: () => ({ jsx: (_type, props) => props, jsxs: (_type, props) => props, Fragment: 'fragment' }), };
   vm.runInNewContext(script, context);
-  const buttonProps = context.exports.ButtonUnderTest({ agentId: 'agent_123', jobId: job });
+  const buttonProps = context.exports.ButtonUnderTest({ agentId: 'agent_123', jobId: job }).children[0];
   buttonProps.onClick({ stopPropagation() {} });
   assert.deepEqual([...opened[0]], [`/api/agents/agent_123/open-control-ui?job=${job}`, '_blank', 'noopener']);
   for (const props of [{ agentId: 'agent_123', jobId: '--help' }, { agentId: 'agent_123', jobId: job, disabled: true }]) {
-    const blocked = context.exports.ButtonUnderTest(props);
+    const blocked = context.exports.ButtonUnderTest(props).children[0];
     assert.equal(blocked.disabled, true); blocked.onClick({ stopPropagation() {} });
   }
   assert.equal(opened.length, 1);

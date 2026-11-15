@@ -59,15 +59,9 @@ open while completing setup.
 
 ### Plain HTTP or HTTPS
 
-HTTPS through a reverse proxy is recommended. For plain HTTP by IP, set
-`REV4A_FORCE_INSECURE_COOKIE=1` in `~/.config/rev4a/.env` and restart; otherwise the
-Secure session cookie causes login to loop after the wizard. For this root install,
-press **Ctrl+C** in the terminal running Rev4a, then run:
-
-```bash
-printf '\nREV4A_FORCE_INSECURE_COOKIE=1\n' | sudo tee -a /root/.config/rev4a/.env
-sudo rev4a serve
-```
+HTTPS through a reverse proxy is recommended. Plain HTTP by IP works with no extra setting: the
+session cookie follows the scheme your browser uses. On plain HTTP, the **Open** buttons on agents warn
+first, because the agent's port receives your Rev4a session too; use an SSH tunnel or HTTPS.
 
 ### Open the dashboard and complete setup
 
@@ -156,7 +150,6 @@ Rev4a reads environment variables from `~/.config/rev4a/.env`
 | `REV4A_TOKEN` | — | Auth token for API access (required) |
 | `REV4A_PASSWORD` | — | Password for dashboard login |
 | `REV4A_JWT_SECRET` | — | JWT signing secret (auto-generated) |
-| `REV4A_FORCE_INSECURE_COOKIE` | — | Set to `1` for plain HTTP by IP; prefer HTTPS through a reverse proxy |
 
 Set them inline or via `.env`:
 
@@ -215,4 +208,3 @@ register by hand (the old `lineage.js` utility and `POST /api/lineage` are gone)
 | Blank dashboard | Daemon stopped | Restart `rev4a serve` |
 | Auth 401 | Wrong token | Check `REV4A_TOKEN` |
 | `gyp ERR! stack Error: not found: make` / node-gyp build failure | Missing build tools for `better-sqlite3` or `node-pty` | Run `sudo apt-get install -y build-essential`, then retry `sudo npm i -g @flame0510/project-aether` |
-| Login loops after the wizard on plain HTTP by IP | Secure session cookie | Set `REV4A_FORCE_INSECURE_COOKIE=1` in `/root/.config/rev4a/.env` and restart Rev4a; prefer HTTPS through a reverse proxy |

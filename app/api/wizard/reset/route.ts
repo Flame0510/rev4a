@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { REV4A_DATA } from '@/lib/rev4a-paths';
 import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
+import { sessionCookieOptions } from '@/lib/session-cookie';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,15 +23,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try { fs.unlinkSync(WIZARD_FILE); } catch { /* ignore */ }
 
   const response = NextResponse.json({ done: false });
-  const isProduction = process.env.NODE_ENV === 'production';
-  const forceInsecure = process.env.REV4A_FORCE_INSECURE_COOKIE === '1';
-
-  response.cookies.set('wizard_done', '', {
-    httpOnly: true,
-    secure: isProduction && !forceInsecure,
-    sameSite: isProduction && !forceInsecure ? 'strict' : 'lax',
-    maxAge: 0,
-    path: '/',
-  });
+  response.cookies.set('wizard_done', '', sessionCookieOptions(request, { maxAge: 0 }));
   return response;
 }
