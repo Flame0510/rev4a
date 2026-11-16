@@ -586,6 +586,24 @@ through the Rev4a proxy as before, exactly like `openai/<id>` vs `rev4a/openai/<
 rule and reverting the model refs is what Disconnect does; the Claude Code binary itself stays in
 `/root/.local/bin`, in the agent's data volume, so the next connect does not reinstall it.
 
+**Manual compaction (BUG-22).** OpenClaw runs a manual compaction ("Compact" in the Control UI,
+`openclaw sessions compact <key>`) of a Claude Code session as a one-shot Claude Code run with
+bypassPermissions, and Claude Code refuses that as root unless `IS_SANDBOX=1` is in its environment
+(agents run as root in their container; normal turns use a live session and are not affected).
+OpenClaw starts Claude Code with `--setting-sources user`, so Rev4a puts the variable in the agent's
+`/root/.claude/settings.json` (data volume), whose `env` object Claude Code applies at every start:
+`{ "env": { "IS_SANDBOX": "1" } }`. `lib/claude-sandbox-env.js` owns it: `ensureSandboxEnv` merges the
+key into the file and never overwrites it (other keys and other `env` variables are kept; a file that is
+not a JSON object, or whose `env` is not an object, is left alone), and one fixed `node -e` script
+writes it atomically, keeping the file's mode (a new file is 0600). Connect runs it right after the
+route is written and a failure only logs a warning (the agent is still connected; only manual
+compaction would fail). Agents connected before that get the same step from the daemon: one pass, 45 s
+after start and then every 10 min, reads each running agent's `openclaw.json` and, where `anthropic/*`
+routes through Claude Code, runs the script once per container per daemon process (a failed exec is
+retried on the next pass; it logs `[claude] IS_SANDBOX=1 set in <container>'s Claude Code settings`
+when it writes, and once per container when it keeps failing). It does not depend on `costs.db`. Disconnect leaves the key in place: it is harmless
+without the route. No restart is needed.
+
 ---
 
 ## Maintaining the model catalogue

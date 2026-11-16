@@ -52,6 +52,7 @@ import {
   type AgentSubscription,
 } from '@/lib/subscriptions';
 import { OPENCLAW_RELOAD_TIMEOUT_MS } from '@/lib/credentials/native';
+import { ENSURE_SANDBOX_ENV_SCRIPT, parseEnsureSandboxResult } from '@/lib/claude-sandbox-env';
 import {
   CLAUDE_STATUS_SCRIPT_SRC,
   ROUTE_ON_PATCH,
@@ -540,6 +541,25 @@ async function writeRouteOn(container: string): Promise<void> {
   await patchConfig(container, ROUTE_ON_PATCH, (models) => routeOnFrom(models));
 }
 
+/**
+ * BUG-22: manual compaction runs Claude Code as root with bypassPermissions, which it refuses unless
+ * IS_SANDBOX=1 is set; the agent's own Claude Code settings carry it (lib/claude-sandbox-env.js).
+ * Not fatal: the connection works without it (only manual compaction does not), and the daemon
+ * repeats the step for every connected agent.
+ */
+async function ensureSandboxEnvInAgent(container: string): Promise<void> {
+  let result: ReturnType<typeof parseEnsureSandboxResult> = null;
+  try {
+    const out = await dockerExec(container, ['node', '-e', ENSURE_SANDBOX_ENV_SCRIPT], { timeoutMs: 15_000 });
+    result = parseEnsureSandboxResult(out);
+  } catch {
+    // reported below
+  }
+  if (result !== 'ok' && result !== 'set') {
+    console.warn(`[claude] could not set IS_SANDBOX=1 in ${container}'s Claude Code settings: ${result ?? 'exec failed'}`);
+  }
+}
+
 async function run(j: Job): Promise<void> {
   if (!resolveDockerSocket()) {
     finish(j, 'failed', 'Docker is not available');
@@ -630,6 +650,7 @@ async function verifyAndConnect(j: Job): Promise<void> {
     finish(j, 'failed', e instanceof SubscriptionError ? e.message : 'The model change did not apply.');
     return;
   }
+  await ensureSandboxEnvInAgent(j.container);
   if (j.cancelled) { finish(j, 'cancelled'); return; }
   dropClaudeCaches();
   finish(j, 'connected');

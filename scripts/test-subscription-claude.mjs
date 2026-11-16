@@ -18,6 +18,7 @@ import ts from 'typescript';
 const claude = await import('../lib/subscription-claude-parse.ts');
 const require = createRequire(import.meta.url);
 const { revertSubscriptionModel, isSubscriptionModel } = require('../lib/subscriptions-parse.js');
+const sandboxEnv = require('../lib/claude-sandbox-env.js');
 
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log(`ok  ${name}`); };
@@ -542,6 +543,20 @@ test('server module: never touches a Claude credential file or a setup-token met
   assert.equal(source.includes("'auth', 'logout'"), true, 'the sign-out is Claude Code\'s own');
 });
 
+test('connect: IS_SANDBOX=1 is set after the route is on, and a failure never fails the connection (BUG-22)', () => {
+  const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('async function verifyAndConnect'));
+  const fn = body.slice(0, body.indexOf('\n}'));
+  assert.ok(fn.indexOf('await writeRouteOn') < fn.indexOf('await ensureSandboxEnvInAgent'), 'after the route is written');
+  assert.ok(fn.indexOf('await ensureSandboxEnvInAgent') < fn.indexOf("finish(j, 'connected')"), 'before connected is reported');
+  const helper = source.slice(source.indexOf('async function ensureSandboxEnvInAgent'));
+  const hbody = helper.slice(0, helper.indexOf('\n}'));
+  assert.match(hbody, /catch \{/, 'an exec failure is caught');
+  assert.match(hbody, /console\.warn/, 'and logged');
+  assert.equal(/throw|finish\(/.test(hbody), false, 'never fatal');
+  assert.match(hbody, /timeoutMs: 15_000/, 'bounded');
+});
+
 test('status read: an unsupported OpenClaw line is refused like the ChatGPT read', () => {
   const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
   const read = source.slice(source.indexOf('export async function readClaudeAgent'));
@@ -631,7 +646,7 @@ test('cancel: once the code is submitted nothing changes, and a disconnect needs
 });
 
 /** Loads lib/subscription-claude.ts with Docker and the agent lookups stubbed; the parse helpers run for real. */
-function loadClaudeModule({ reads, execs }) {
+function loadClaudeModule({ reads, execs, sandboxEnvAnswer = '{"result":"set"}\n' }) {
   const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
   const code = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -645,6 +660,10 @@ function loadClaudeModule({ reads, execs }) {
     child_process: { spawn: () => { throw new Error('no spawn'); } },
     '@/lib/docker-exec': {
       dockerExec: async (_c, argv, opts) => {
+        if (argv[0] === 'node' && argv[2] === sandboxEnv.ENSURE_SANDBOX_ENV_SCRIPT) {
+          execs.push(['sandbox-env']);
+          return sandboxEnvAnswer;
+        }
         if (argv[0] === 'node') return JSON.stringify(reads[Math.min(read++, reads.length - 1)]);
         execs.push(argv);
         return '';
@@ -675,6 +694,7 @@ function loadClaudeModule({ reads, execs }) {
     '@/lib/credentials/native': { OPENCLAW_RELOAD_TIMEOUT_MS: 150000 },
     '@/lib/subscription-claude-parse': claude,
     '@/lib/subscriptions-parse': require('../lib/subscriptions-parse.js'),
+    '@/lib/claude-sandbox-env': sandboxEnv,
   };
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', sandbox)(
     (name) => {

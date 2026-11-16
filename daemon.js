@@ -26,6 +26,7 @@ const { parseStatus: parsePackagesStatus, statusAlertKey: packagesAlertKey, fail
 const { oomEventsToAnomalies, createLineSplitter, createOomTracker, bytesToMb } = require('./lib/agent-memory-limit.js');
 const agentSessions = require('./lib/agent-sessions.js');
 const claudeCli = require('./lib/claude-cli-label.js');
+const claudeSandboxEnv = require('./lib/claude-sandbox-env.js');
 const spendAlerts = require('./lib/spend-alerts.js');
 const { telegramConfig, sendTelegramMessage } = require('./lib/alerts-send.js');
 const { CREATE_TABLE_SQL: PROXY_USAGE_TABLE_SQL, PROXY_USAGE_RETENTION_MS } = require('./lib/proxy-usage.js');
@@ -1687,6 +1688,57 @@ function samplePackages() {
 let packagesTimer = null;
 const firstPackages = setTimeout(() => { samplePackages(); packagesTimer = setInterval(samplePackages, PACKAGES_INTERVAL_MS); }, PACKAGES_FIRST_DELAY_MS);
 
+// ── Claude Code sandbox flag (BUG-22) ────────────────────────────────────────
+// Manual compaction of a session on the Claude plan runs Claude Code as root with bypassPermissions,
+// which it refuses unless IS_SANDBOX=1 is set; Connect now writes it into the agent's Claude Code
+// settings (lib/claude-sandbox-env.js). This is the repair for agents connected before that: for each
+// running agent whose openclaw.json routes anthropic/* through Claude Code, the same idempotent merge
+// runs once per container per daemon process. It visits every running agent itself, so it does not
+// depend on costs.db. Agents without the Claude route are never touched.
+const SANDBOX_ENV_FIRST_DELAY_MS = 45_000;
+const SANDBOX_ENV_INTERVAL_MS = 10 * 60 * 1000;
+const SANDBOX_ENV_EXEC_TIMEOUT_MS = 15_000;
+const sandboxEnvDone = new Set(); // containers whose result was ok, set or invalid
+const sandboxEnvWarned = new Set(); // containers whose failure was already logged once
+let sandboxEnvRunning = false;
+
+async function repairSandboxEnv() {
+  if (sandboxEnvRunning) return;
+  sandboxEnvRunning = true;
+  try {
+    let agents;
+    try {
+      agents = await listRunningAgents();
+    } catch {
+      return; // Docker unreachable: the next pass retries
+    }
+    for (const { container } of agents) {
+      if (sandboxEnvDone.has(container)) continue;
+      if ((await readClaudeRule(container)) !== true) continue;
+      let result = null;
+      try {
+        const out = await containerExec(container, ['node', '-e', claudeSandboxEnv.ENSURE_SANDBOX_ENV_SCRIPT], SANDBOX_ENV_EXEC_TIMEOUT_MS, 4096);
+        result = claudeSandboxEnv.parseEnsureSandboxResult(out);
+      } catch { /* retried next pass */ }
+      if (result === 'ok' || result === 'set' || result === 'invalid') sandboxEnvDone.add(container);
+      if (result === 'set') log(`[claude] IS_SANDBOX=1 set in ${container}'s Claude Code settings (manual compaction)`);
+      else if (result === 'invalid') log(`[claude] ${container}: Claude Code settings.json is not a JSON object with a plain env, left unchanged (manual compaction may fail)`);
+      else if (result !== 'ok' && !sandboxEnvWarned.has(container)) {
+        // Retried every pass, logged once: an agent whose settings cannot be written stays visible.
+        sandboxEnvWarned.add(container);
+        log(`[claude] ${container}: could not set IS_SANDBOX=1 in Claude Code settings (${result ?? 'no readable answer'}); retrying every 10 min`);
+      }
+    }
+  } finally {
+    sandboxEnvRunning = false;
+  }
+}
+function sampleSandboxEnv() {
+  repairSandboxEnv().catch((e) => log(`[claude] sandbox env repair: ${e.message}`));
+}
+let sandboxEnvTimer = null;
+const firstSandboxEnv = setTimeout(() => { sampleSandboxEnv(); sandboxEnvTimer = setInterval(sampleSandboxEnv, SANDBOX_ENV_INTERVAL_MS); }, SANDBOX_ENV_FIRST_DELAY_MS);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
@@ -1703,6 +1755,8 @@ process.on('SIGTERM', () => {
   stopOomStream();
   clearTimeout(firstPackages);
   clearInterval(packagesTimer);
+  clearTimeout(firstSandboxEnv);
+  clearInterval(sandboxEnvTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1724,6 +1778,8 @@ process.on('SIGINT', () => {
   stopOomStream();
   clearTimeout(firstPackages);
   clearInterval(packagesTimer);
+  clearTimeout(firstSandboxEnv);
+  clearInterval(sandboxEnvTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
