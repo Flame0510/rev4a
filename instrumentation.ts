@@ -136,6 +136,12 @@ export async function register() {
         if (changed) console.log(`[rev4a] Restricted the gateway token file on ${changed} agent(s)`);
       })
       .catch((e) => console.warn(`[rev4a] Could not check the agent token files on startup: ${(e as Error)?.message ?? e}`));
+    // Agents already connected to Claude: switch off the tools no agent uses on Claude runs, only where
+    // tools.byProvider.anthropic.deny is absent. One running agent at a time; not awaited, so it cannot
+    // delay the server start. Runs here, not in the daemon: the config lock lives in this process.
+    import('./lib/claude-lean-tools')
+      .then(({ repairLeanClaudeToolsAtStartup }) => repairLeanClaudeToolsAtStartup())
+      .catch((e) => console.warn(`[rev4a] Could not check Claude tools on startup: ${(e as Error)?.message ?? e}`));
     // Retention for the lifecycle job tables: the panel reads the latest row of each
     // agent, so the history is trimmed to the newest rows per agent. Best-effort.
     try {

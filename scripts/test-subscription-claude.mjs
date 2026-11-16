@@ -646,7 +646,7 @@ test('cancel: once the code is submitted nothing changes, and a disconnect needs
 });
 
 /** Loads lib/subscription-claude.ts with Docker and the agent lookups stubbed; the parse helpers run for real. */
-function loadClaudeModule({ reads, execs, sandboxEnvAnswer = '{"result":"set"}\n' }) {
+function loadClaudeModule({ reads, execs, leanCalls = [], sandboxEnvAnswer = '{"result":"set"}\n' }) {
   const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
   const code = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -695,6 +695,7 @@ function loadClaudeModule({ reads, execs, sandboxEnvAnswer = '{"result":"set"}\n
     '@/lib/subscription-claude-parse': claude,
     '@/lib/subscriptions-parse': require('../lib/subscriptions-parse.js'),
     '@/lib/claude-sandbox-env': sandboxEnv,
+    '@/lib/claude-lean-tools': { ensureLeanClaudeTools: async (c) => { leanCalls.push(c); return 'written'; } },
   };
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', sandbox)(
     (name) => {
@@ -732,6 +733,16 @@ await testAsync('disconnect: a read-back that could not read the configuration d
   await assert.rejects(() => mod.disconnectClaudeAgent('a1'), (e) => e.status === 502);
   assert.ok(execs.some((argv) => argv.includes('patch')), 'the patch was attempted');
   assert.equal(execs.some((argv) => argv.includes('logout')), false, 'the sign-out did not run after a failed removal');
+});
+
+test('connect: the lean tools list is requested after the sandbox step and is not fatal', () => {
+  const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('async function verifyAndConnect'));
+  const sandbox = body.indexOf('await ensureSandboxEnvInAgent(j.container);');
+  const lean = body.indexOf('await ensureLeanClaudeTools(j.container);');
+  assert.ok(sandbox > 0 && lean > sandbox, 'right after ensureSandboxEnvInAgent');
+  assert.ok(lean < body.indexOf("finish(j, 'connected')"), 'before the connection is reported');
+  assert.equal(body.slice(sandbox, lean).includes('withAgentConfigLock'), false, 'not inside a lock hold');
 });
 
 test('api account: the facts carry a machine-readable flag, only for that case', () => {

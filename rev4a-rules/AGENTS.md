@@ -13,7 +13,8 @@ mounted read-only by the container runtime.
 - **This file (`.rev4a/AGENTS.md`) is read-only system configuration.**
   Do not attempt to modify, delete, or move it. The filesystem will reject writes.
 - **Your config (`openclaw.json`), channels, model selection, and provider keys**
-  are managed through the Rev4a dashboard — not by editing config files directly.
+  are managed through the Rev4a dashboard — not by editing config files directly
+  (one narrow exception: the list in "Tools Switched Off on Claude Runs" below).
   Rev4a may apply configuration changes at any time.
 - **Rev4a may restart your gateway** for updates or configuration changes.
   This is normal operation and does not indicate a problem.
@@ -30,6 +31,23 @@ Your container may have a memory limit: read `/sys/fs/cgroup/memory.max` on cgro
 Do not load very large files or datasets into memory at once; stream them. A process that
 ends with exit code 137 was most likely killed for lack of memory: tell the user instead of
 retrying it in a loop.
+
+## Tools Switched Off on Claude Runs
+
+On Claude runs (the Claude plan through Claude Code) some tools are off to save tokens. The
+list is `tools.byProvider.anthropic.deny`: read it with
+`openclaw config get tools.byProvider.anthropic.deny`. Other models are unaffected.
+
+This list is the one part of `openclaw.json` you may change yourself (the exception to the
+boundary above). To switch a tool on, write the list back without that name; a patch replaces
+the whole array:
+
+`printf '%s' '{"tools":{"byProvider":{"anthropic":{"deny":[...the others...]}}}}' | openclaw config patch --stdin`
+
+It applies from your next turn, with no restart. To switch every tool on, write `[]`, never `null`
+(null deletes the list, and Rev4a writes its default back at the next dashboard start). Tell the user what you switched on and why.
+Switch it off again when the task is done, unless you will need it again soon. Do not add tools
+you use regularly to the list, and do not touch any other key.
 
 ## Credentials on the ChatGPT Subscription Runtime (Codex)
 

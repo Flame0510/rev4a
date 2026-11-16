@@ -52,6 +52,7 @@ import {
   type AgentSubscription,
 } from '@/lib/subscriptions';
 import { OPENCLAW_RELOAD_TIMEOUT_MS } from '@/lib/credentials/native';
+import { ensureLeanClaudeTools } from '@/lib/claude-lean-tools';
 import { ENSURE_SANDBOX_ENV_SCRIPT, parseEnsureSandboxResult } from '@/lib/claude-sandbox-env';
 import {
   CLAUDE_STATUS_SCRIPT_SRC,
@@ -651,6 +652,8 @@ async function verifyAndConnect(j: Job): Promise<void> {
     return;
   }
   await ensureSandboxEnvInAgent(j.container);
+  // FEAT-27.1: Claude runs start lean. Not fatal: the connection reports connected either way.
+  await ensureLeanClaudeTools(j.container);
   if (j.cancelled) { finish(j, 'cancelled'); return; }
   dropClaudeCaches();
   finish(j, 'connected');
