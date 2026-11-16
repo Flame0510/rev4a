@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-15
+> **Last updated:** 2026-11-16
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -300,17 +300,22 @@ The central container, running the Next.js dashboard + orchestration API.
   unproven owner could permit concurrent volume writers.
   `agentBusyReason()` (`lib/agent-busy.ts`) covers it for every route that changes an agent.
 - **Where Rev4a listens (SEC-9B, 1.28.0).** `REV4A_LISTEN` (panel) and `REV4A_AGENT_PORTS_LISTEN` (agents) are resolved by
-  the pure `lib/listen-addresses.js` (`listenAddresses()`, `agentPortsListen()`). `all` (the default) is the old
-  behaviour: one `server.listen(PORT)`, agents on `0.0.0.0`. `local` / `<IP>`: `server.js` builds one `http.Server` per
+  the pure `lib/listen-addresses.js` (`listenAddresses()`, `agentPortsListen()`). The panel defaults to `all`
+  (one `server.listen(PORT)`); agent ports default to keeping each current binding, with new agents on `0.0.0.0`.
+  Explicit `all` moves every agent binding back to every interface on its next rebuild. `local` / `<IP>`: `server.js` builds one `http.Server` per
   address, all with the same request and `upgrade` handlers, so the terminal WebSocket works on each; the addresses are
   127.0.0.1, ::1 (when the host has it), the requested IP, and on Linux the Docker default-bridge gateway (`GET /networks/bridge`
   → `IPAM.Config[0].Gateway`, what `host.docker.internal:host-gateway` resolves to) because agents reach the model at
   `host.docker.internal:3740`. Docker Desktop reaches the host's loopback, so no gateway there. Docker unreachable: loopback
   only and one warning. An address the host lacks, or an invalid value, falls back to `local`; loopback v4 is always bound.
-  The effective result is published in `REV4A_LISTEN_STATE` for `GET /api/system/listen`. The terminal server stays on
+  Explicit wildcard IP spellings (including expanded and IPv4-mapped IPv6) are invalid; a wildcard gateway is never added.
+  The effective result is published in `REV4A_LISTEN_STATE` for `GET /api/system/listen`; agent mode `keep`
+  distinguishes an unset setting from explicit `all` on the System Remote access line. The terminal server stays on
   127.0.0.1:3741. Agent ports: `portMappingArgs(start, end, hostIp)` adds `<ip>:` (IPv6 in brackets) to `-p`; create, the range
   edit and recreate read the setting through `agentPortsHostIp()` (`.env` first, so a Config change counts at the next
-  Recreate; a copy the launcher took from `.env` is ignored via `REV4A_DOTENV_KEYS`, so clearing the entry applies at once). An IP the host lacks reads as `local`; recreate refuses, before removing the old container, any `-p` on a missing address. On recreate a set value overrides each binding's old HostIp; unset keeps it (SEC-22 LC-01). `REV4A_LISTEN_STATE` and `REV4A_DOTENV_KEYS` are runtime-only keys.
+  Recreate; a copy the launcher took from `.env` is ignored via `REV4A_DOTENV_KEYS`, so clearing the entry applies at once). An IP the host lacks reads as `local`; recreate refuses, before removing the old container, any `-p` on a missing address. On recreate a set value overrides each binding's old HostIp; unset keeps it (SEC-22 LC-01). Port edits use
+  `portArgsFromBindings` with the new range and the existing Control UI (3000/tcp) HostIps, including dynamic
+  publishes with no fixed old HostPort; an explicit setting overrides them, while unset keeps those addresses. `REV4A_LISTEN_STATE` and `REV4A_DOTENV_KEYS` are runtime-only keys.
 - **Host ports** have one source of truth: `lib/agent-ports.ts` holds the pure rules
   (`validatePortInput`, `findAvailablePortBlock`, `portMappingArgs`,
   `hostPortsFromBindings`, `hostPortsFromArgs`) and `lib/agent-ports-server.ts` answers
@@ -1164,9 +1169,9 @@ evaluates nothing). Same event shape; the detector keeps its streaks and cooldow
 | `container_memory` | `mem_mb` ≥ 90 % of Docker's memory (`memTotalMb`) on 5 consecutive samples | at most once per 60 min per container; no rule without a known total |
 | `container_oom` | Docker's `oom` event for a container carrying `AGENT_ID` (a process was killed for lack of memory, with or without a memory limit) | at most once per container per 10 minutes, counting the kills in between; written by the OOM stream in `daemon.js`, not by the detector |
 
-At dashboard startup `instrumentation.ts` also runs, not awaited, `repairLeanClaudeToolsAtStartup` (`lib/claude-lean-tools.ts`, FEAT-27.1): for each running agent connected to Claude, one at a time, it writes the default `tools.byProvider.anthropic.deny` list only when the key is absent (in the Next.js server because the config lock lives there; the daemon is not involved).
+At dashboard startup `instrumentation.ts` also runs, not awaited, `repairLeanClaudeToolsAtStartup` (`lib/claude-lean-tools.ts`, FEAT-27.1): for each running agent connected to Claude, one at a time, it writes the default `tools.byProvider.anthropic.deny` list only when the key is absent (in the Next.js server because the config lock lives there; the daemon is not involved). Agents stopped during that pass get it at a later dashboard start while running, or at Claude connect; an agent start alone does not run this repair.
 
-The daemon also repairs Claude-connected agents (BUG-22): `repairSandboxEnv` in `daemon.js` (45 s after start, then every 10 min, independent of `costs.db`) runs `lib/claude-sandbox-env.js`'s fixed `node -e` script once per container per process in each running agent whose `openclaw.json` routes `anthropic/*` through Claude Code, merging `env.IS_SANDBOX=1` into `/root/.claude/settings.json` so manual compaction works; Connect does the same step on new connections (see GATEWAY.md, Subscription runtimes).
+The daemon also repairs Claude-connected agents (BUG-22): `repairSandboxEnv` in `daemon.js` (45 s after start, then every 10 min, independent of `costs.db`) runs `lib/claude-sandbox-env.js`'s fixed `node -e` script (shared literal ES2019 source, safe under production function renaming) once per container per process in each running agent whose `openclaw.json` routes `anthropic/*` through Claude Code, merging `env.IS_SANDBOX=1` into `/root/.claude/settings.json` so manual compaction works; Connect does the same step on new connections (see GATEWAY.md, Subscription runtimes).
 
 A fourth alert, `packages_failed`, comes from `collectPackagesStatus` in `daemon.js`, not from the detector: 60 s after start and then every 10 min it lists the running agent containers (`AGENT_ID` label) and, one at a time, runs `docker exec <container> cat /root/.rev4a/packages-status.json` (argv, 5 s timeout). The status is read with a 1 MB buffer; a "no such file" answer (an image without the recorder) is not logged, any other read failure is logged once per container. A status of `failed` or `partial` records one anomaly with the `container` field and `values` = the failed package names, once per (container, `at`) in memory; a status whose `at` is older than the daemon's start minus 24 h is skipped, so a daemon restart repeats an old failure at most once a day. Parsing is `lib/agent-packages.js`. An unreadable file (older image, stopped container) is silent apart from one log line. The same file backs `GET /api/agents/[id]/packages` and the panel's SYSTEM PACKAGES section.
 

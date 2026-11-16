@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-16
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -181,7 +181,8 @@ controls (`NODE_OPTIONS`, `NODE_REPL_EXTERNAL_MODULE`, `LD_PRELOAD`,
 The server removes those keys again after Next loads `.env`, preserving loader
 settings inherited from the operator's shell or systemd. Runtime-only keys
 (`REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
-`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`) are excluded from Config reads and
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE`,
+`REV4A_DOTENV_KEYS`) are excluded from Config reads and
 silently ignored on Config writes, including older open tabs. The launcher
 removes their real assignments from `.env` at startup, logging names only, and
 clears inherited copies from the base child environment before setting fresh
@@ -195,7 +196,7 @@ be reconstructed automatically. File read failures other than a missing file abo
 environment writes; existing dotted keys are preserved when saving other keys.
 
 ### Login (`/login`)
-Password-protected access to the dashboard. (Network exposure: `REV4A_LISTEN` and `REV4A_AGENT_PORTS_LISTEN` take `all`, `local` or one IP; `local` keeps the panel and the agents' ports off the internet, for use behind a reverse proxy or Tailscale. An agent's Open button then shows an SSH tunnel when its port is open only on the server.) Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.
+Password-protected access to the dashboard. (Network exposure: `REV4A_LISTEN` and `REV4A_AGENT_PORTS_LISTEN` take `all`, `local` or one IP; `local` binds the panel to loopback plus the Docker gateway on Linux, and agent ports to loopback, for use behind a reverse proxy or Tailscale; firewall port 3740 on the public interface because nearby hosts could route to the Linux gateway. Unset agent-port settings keep each agent's address; explicit `all` moves them back to every interface at the next Recreate, Update or Edit. An agent's Open button then shows an SSH tunnel when its port is open only on the server.) Enter the Rev4a password to authenticate. Session persists via a JWT cookie (7-day expiry). From the 6th wrong password within an hour the login is locked for that address for 30 seconds, doubling up to 15 minutes; the page shows how long to wait. A restart of Rev4a clears the lock. Behind a reverse proxy, set `REV4A_TRUSTED_PROXIES` to the proxy's address (`127.0.0.1` for a proxy on the same host; a pinned address, never the agent network, for one in Docker), otherwise every visitor shares one address and one attacker can lock everyone out.
 
 Once a password change takes effect, every browser session using the old password is refused by API authentication, protected pages and terminal connections. A password saved in Config takes effect after restarting Rev4a. After the SEC-21 update, every browser has to log in once because older cookies lack the password fingerprint; cookie flags, lifetime and Bearer API access are unchanged.
 

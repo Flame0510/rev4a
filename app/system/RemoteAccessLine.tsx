@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 interface ListenState {
   panel: { mode: 'all' | 'local' | 'address'; port: number; addresses: string[] };
-  agents: { mode: 'all' | 'local' | 'address'; differing?: number | null };
+  agents: { mode: 'keep' | 'all' | 'local' | 'address'; differing?: number | null };
 }
 
 const GUIDE_URL = 'https://rev4a.app/en/docs/remote-access';
@@ -16,7 +16,7 @@ function panelText(panel: ListenState['panel']): string {
 }
 
 const agentsText = (mode: ListenState['agents']['mode']) =>
-  mode === 'all' ? 'every network interface' : mode === 'local' ? 'this host only' : 'one address';
+  mode === 'keep' ? 'each agent keeps its address' : `on ${mode === 'all' ? 'every network interface' : mode === 'local' ? 'this host only' : 'one address'}`;
 
 /** One line on the System page: where the panel and the agents' ports listen. Hidden until it loads. */
 export function RemoteAccessLine() {
@@ -35,7 +35,7 @@ export function RemoteAccessLine() {
   if (!state) return null;
   return (
     <p className="ui-muted" style={{ fontSize: 12, margin: 0 }}>
-      Remote access: the panel listens on {panelText(state.panel)}; agent ports on {agentsText(state.agents.mode)}.{' '}
+      Remote access: the panel listens on {panelText(state.panel)}; agent ports: {agentsText(state.agents.mode)}.{' '}
       {!!state.agents.differing && (
         <> {state.agents.differing} running {state.agents.differing === 1 ? 'agent is' : 'agents are'} still published on a different address than this setting — Recreate {state.agents.differing === 1 ? 'it' : 'them'} to apply.</>
       )}{' '}

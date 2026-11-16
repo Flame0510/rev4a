@@ -27,6 +27,33 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log(`ok   ${name}`); };
 
 const linux = { platform: 'linux', gateway: '172.17.0.1', hasIpv6: true, hostAddresses: ['127.0.0.1', '::1', '10.0.0.5', '172.17.0.1', '2001:db8::5'] };
+const wildcards = ['0.0.0.0', '::', '::0', '0::', '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0', '[::]',
+  '0000:0000::0', '0:0:0:0:0:ffff:0:0', '[::FFFF:0.0.0.0]', '::%eth0', '::ffff:0.0.0.0%eth0'];
+
+test('every wildcard spelling is invalid and falls back to local for panel and agents', () => {
+  for (const value of wildcards) {
+    assert.equal(parseSetting(value).kind, 'invalid', value);
+    const host = { ...linux, hostAddresses: [...linux.hostAddresses, value] };
+    const panel = listenAddresses(value, host);
+    assert.equal(panel.mode, 'local', value);
+    assert.deepEqual(panel.addresses, ['127.0.0.1', '::1', '172.17.0.1'], value);
+    assert.equal(panel.warnings.length, 1, value);
+    const agents = agentPortsListen(value, host.hostAddresses);
+    assert.equal(agents.mode, 'local', value);
+    assert.equal(agents.hostIp, '127.0.0.1', value);
+    assert.equal(agents.warnings.length, 1, value);
+  }
+});
+
+test('Linux never includes a wildcard gateway in local or one-address listeners', () => {
+  for (const gateway of wildcards) {
+    for (const value of ['local', '10.0.0.5']) {
+      const r = listenAddresses(value, { ...linux, gateway });
+      assert.deepEqual(r.addresses, value === 'local' ? ['127.0.0.1', '::1'] : ['127.0.0.1', '::1', '10.0.0.5'], gateway);
+      assert.equal(r.warnings.length, 1, gateway);
+    }
+  }
+});
 
 test('unset, empty and "all" listen on every interface (one wildcard listener)', () => {
   for (const v of [undefined, null, '', '  ', 'all', 'ALL', ' All ']) {

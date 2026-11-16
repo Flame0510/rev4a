@@ -57,6 +57,7 @@ Wait for the dashboard to listen on port 3740 and the `[SETUP]` code to appear.
 **Plain HTTP or HTTPS:** HTTPS through a reverse proxy is recommended. Plain HTTP by IP works
 with no extra setting (the session cookie follows the scheme your browser uses); the agents'
 **Open** buttons then warn first and offer an SSH tunnel.
+Use one address consistently: after an HTTPS login or silent cookie upgrade, the Secure cookie prevents a later plain-HTTP login on the same host (even on port 3740) until it expires, up to 7 days; log out over HTTPS to clear it.
 
 Open `http://<server>:3740` (replace `<server>` with your VPS IP), or your HTTPS
 dashboard address. Enter the **Setup code** printed by the current `rev4a serve`,
@@ -135,7 +136,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_AGENT_IMAGE_REGISTRY` | `ghcr.io/flame0510/rev4a/openclaw-agent-base` | No | Registry repository agent images are pulled from, as `<repository>:<OpenClaw version>`. A `localhost` registry is reached over plain HTTP |
 | `REV4A_TRUSTED_PROXIES` | — | No | Comma-separated IPs or CIDRs (e.g. `192.0.2.10`; `127.0.0.1,::1` for a proxy on the same host) of the reverse proxies whose `X-Forwarded-For` names the client for the login lock. Unset: no `X-Forwarded-For` is trusted. List the proxy's own address, pinned and not on `rev4a-network` with the agents |
 | `REV4A_LISTEN` | `all` | No | Where the panel listens: `all` (every interface), `local` (127.0.0.1 and ::1, plus the Docker host-gateway address on Linux so agents reach their model; if Docker is down at start-up only loopback, with a warning) or one IP address of this host (that address plus the `local` ones). An address this host lacks, or any other value, falls back to `local` with a log line. Read at start-up: restart Rev4a |
-| `REV4A_AGENT_PORTS_LISTEN` | `all` | No | Where agents' published ports listen: `all` (`0.0.0.0`), `local` (`127.0.0.1`) or one IP address. Applies when an agent is created or recreated, and wins over the address the agent had (left empty, a Recreate keeps that address; write `all` to move an agent back to every interface); running agents change at their next Recreate. Unset keeps every agent as it is |
+| `REV4A_AGENT_PORTS_LISTEN` | unset (keep current) | No | Where agents' published ports listen: `all` (`0.0.0.0`), `local` (`127.0.0.1`) or one IP address. Applies at create, Recreate, Update or Edit, and an explicit setting wins over the address the agent had. Unset keeps each agent's current address, including on a port edit (new agents use every interface); `all` moves agents back to every interface |
 | `REV4A_TIMEZONE` | server's own zone | No | Default dashboard time zone (IANA name, e.g. `Europe/Rome`), used only while none is saved in *Config > Time zone*; an invalid name is ignored |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 
@@ -144,18 +145,18 @@ interface and every agent publishes its ports (3710-3779) on `0.0.0.0`; Docker b
 reachable from the internet. Set `REV4A_LISTEN=local`, `REV4A_AGENT_PORTS_LISTEN=local` and
 `REV4A_TRUSTED_PROXIES=127.0.0.1,::1` (Config page or `.env`; the last so the login lock sees the real client behind
 your proxy), restart Rev4a, and Recreate each agent (Recreate, Update and Edit all apply the agent setting): the panel then answers only on this host (plus the Docker gateway on Linux,
-which agents use to reach their model: that address is reachable by containers on this host, not from the internet)
+which agents use to reach their model)
 and the agents' ports only on 127.0.0.1. A reverse proxy on the host targets
 `127.0.0.1:3740`; Traefik or nginx in Docker target `host.docker.internal:3740` with
 `extra_hosts: host.docker.internal:host-gateway`; Tailscale: `tailscale serve --bg 3740`. From another computer the
 agents' **Open** button then shows the SSH tunnel steps instead of a link that cannot work. See
+[Remote access](https://rev4a.app/en/docs/remote-access).
+On Linux, hosts on the same network segment could route to the Docker bridge gateway even in local mode; firewall port 3740 on the public interface.
 If the proxy runs in a container and `ufw` is on, allow the Docker bridge to reach port 3740 (for example
 `ufw allow from 172.17.0.0/16 to any port 3740`).
 
 **Rolling back to 1.27.x** ignores `REV4A_LISTEN` and opens port 3740 on every interface again; agents recreated with
 `local` keep their 127.0.0.1 ports until recreated.
-
-[Remote access](https://rev4a.app/en/docs/remote-access).
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
 

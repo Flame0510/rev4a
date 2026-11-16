@@ -12,7 +12,7 @@ type Mode = 'all' | 'local' | 'address';
 
 /**
  * How many running agents publish ports on a wider address than the setting asks (they were created
- * or last recreated before it): the setting applies at the next Recreate. Addresses only. null: Docker unreachable.
+ * or last recreated before it): the setting applies at the next Recreate, Update or Edit. Addresses only. null: Docker unreachable.
  */
 async function runningAgentsPublishedDifferently(hostIp: string | null): Promise<number | null> {
   if (!hostIp) return 0;
@@ -45,5 +45,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     panel = { mode: parseSetting(process.env.REV4A_LISTEN).kind === 'all' ? 'all' : 'local', port, addresses: [] };
   }
   const agents = currentAgentPortsListen();
-  return NextResponse.json({ panel, agents: { mode: agents.mode, differing: await runningAgentsPublishedDifferently(agents.hostIp) } });
+  return NextResponse.json({ panel, agents: { mode: agents.hostIp === null ? 'keep' : agents.mode, differing: await runningAgentsPublishedDifferently(agents.hostIp) } });
 }

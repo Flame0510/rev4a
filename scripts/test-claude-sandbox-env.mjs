@@ -9,11 +9,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const m = require('../lib/claude-sandbox-env.js');
+// Optional module path lets the exact regression run against a saved pre-fix module.
+const modulePath = process.argv[2] ? path.resolve(process.argv[2]) : require.resolve('../lib/claude-sandbox-env.js');
+const m = require(modulePath);
 
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log(`ok  ${name}`); };
@@ -56,6 +59,19 @@ test('parseEnsureSandboxResult', () => {
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-env-'));
 try {
+  const { minify } = require('next/dist/compiled/terser');
+  const wrapped = `(function(module, exports, require) {\n${fs.readFileSync(modulePath, 'utf8')}\n})(module, exports, require);`;
+  const minified = await minify(wrapped, { mangle: { toplevel: true } });
+  const bundled = { exports: {} };
+  vm.runInNewContext(minified.code, { module: bundled, exports: bundled.exports, require });
+  test('bundled script: top-level mangling still sets IS_SANDBOX', () => {
+    const f = path.join(root, 'bundled', 'settings.json');
+    const src = bundled.exports.ENSURE_SANDBOX_ENV_SCRIPT.split(m.CLAUDE_SETTINGS_PATH).join(f);
+    assert.notEqual(src, bundled.exports.ENSURE_SANDBOX_ENV_SCRIPT, 'the fixed path is in the script');
+    const out = execFileSync(process.execPath, ['--no-warnings', '-e', src], { encoding: 'utf8' });
+    assert.equal(out, '{"result":"set"}\n');
+    assert.equal(fs.readFileSync(f, 'utf8'), pretty({ env: { IS_SANDBOX: '1' } }));
+  });
   const run = (file) => {
     const src = m.ENSURE_SANDBOX_ENV_SCRIPT.split(m.CLAUDE_SETTINGS_PATH).join(file);
     assert.notEqual(src, m.ENSURE_SANDBOX_ENV_SCRIPT, 'the fixed path is in the script');

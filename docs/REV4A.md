@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-15
+> **Last updated:** 2026-11-16
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -10,6 +10,13 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 **Repository:** `github.com/Flame0510/rev4a.git` (branch: `main`)
 
 ---
+
+## 1.28.0 pre-release fixes (FIX-128)
+
+- Claude connections set `IS_SANDBOX=1` correctly in production builds; the existing daemon repair also fixes earlier connections.
+- Port edits keep the Control UI's current listen address when `REV4A_AGENT_PORTS_LISTEN` is unset; explicit settings still win.
+- Wildcard IP spellings are refused as explicit listen addresses, and wildcard Docker gateways are excluded from local listeners. Use `all` to request every interface.
+- System's Remote access line distinguishes keeping each agent's address from publishing on every interface.
 
 ## Architecture
 
@@ -51,9 +58,9 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_LISTEN` | No | Where the panel listens (1.28.0): `all` (default, every interface), `local` (127.0.0.1, ::1 and, on Linux, the Docker host-gateway address) or one IP of this host. Read at start-up: restart Rev4a. Editable on the Config page |
-| `REV4A_AGENT_PORTS_LISTEN` | No | Where agents' published ports listen (1.28.0): `all` (default), `local` (127.0.0.1) or one IP. Read at each create, Recreate, Update and port edit, so a change needs only a Recreate. Left empty, a Recreate keeps the address each agent already has; write `all` to move agents back to every interface. A value that is not empty, `all`, `local` or an IP is refused by the Config page; an IP this host lacks is treated as `local`, and a Recreate whose existing binding is on a missing address is refused before the old container is removed. System shows how many running agents are still on a different address Editable on the Config page |
+| `REV4A_AGENT_PORTS_LISTEN` | No | Where agents' published ports listen (1.28.0): `all`, `local` (127.0.0.1) or one IP; unset keeps each agent's current address (new agents use every interface). Read at each create, Recreate, Update and port edit, so a change needs only a Recreate. Left empty, a Recreate or port edit keeps the address each agent already has; write `all` to move agents back to every interface. A value that is not empty, `all`, `local` or an IP is refused by the Config page; an IP this host lacks is treated as `local`, and a Recreate whose existing binding is on a missing address is refused before the old container is removed. System distinguishes keeping each agent's address from publishing on every interface and shows how many running agents are still on a different address. Editable on the Config page |
 | `REV4A_TIMEZONE` | No | Default dashboard time zone (IANA name), used only while none is saved in *Config > Time zone*; a saved zone wins, and with neither the server's own zone is used |
-| `REV4A_FORCE_INSECURE_COOKIE` | No | No longer read since 1.28.0: the cookie follows the scheme the browser uses; safe to delete from .env (kept by Rev4a for rollback) |
+| `REV4A_FORCE_INSECURE_COOKIE` | No | No longer read since 1.28.0: the cookie follows the scheme the browser uses. Leave it in `.env` if you may roll back to 1.27; without it, 1.27 on plain HTTP by IP loops at login |
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | No | How long `rev4a serve` waits for the Docker daemon at start-up (default `90`, capped at 600) |
 | `REV4A_LEGACY_BACKUP_VOLUME` | No | Name of the legacy Docker volume older releases kept agent backups in (default `rev4a-backups`). Set it only when a second Rev4a (a test instance) runs on the same Docker, so it never migrates the real volume; an invalid name disables the legacy side |

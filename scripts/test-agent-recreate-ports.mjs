@@ -44,6 +44,7 @@ function recreateHarness(hostIp) {
   for (const name of ['container', 'backups-volume', 'cold-backup', 'agent-readiness', 'agent-recreate-state', 'agent-busy', 'agent-stop']) {
     dependencies[`@/lib/${name}`] = {};
   }
+  dependencies['@/lib/agent-stop'] = { removeAgentContainer: async () => calls.push(['rm']) };
   dependencies['@/app/api/gateway/sync'] = {};
   return { calls, ...load('lib/agent-recreate.ts', dependencies) };
 }
@@ -92,10 +93,83 @@ await test('HIGH: a HostIp the host does not have refuses the recreate and the o
   assert.ok(ok.calls.some((a) => a[0] === 'rm') && ok.calls.some((a) => a[0] === 'run'));
 });
 
-await test('create route and edit build their -p from the same setting', () => {
-  for (const file of ['app/api/agents/create/route.ts', 'lib/agent-edit.ts']) {
-    assert.match(fs.readFileSync(path.join(root, file), 'utf8'), /portMappingArgs\([^)]*agentPortsHostIp\(\)\)/, file);
+await test('create route builds its -p from the setting', () => {
+  assert.match(fs.readFileSync(path.join(root, 'app/api/agents/create/route.ts'), 'utf8'), /portMappingArgs\([^)]*agentPortsHostIp\(\)\)/);
+});
+
+async function editPorts(hostIp, controlBindings, range = '3710-3719', extraBindings = {}) {
+  const h = recreateHarness(hostIp);
+  let finish;
+  const finished = new Promise((resolve) => { finish = resolve; });
+  const inspected = { Id: 'original', HostConfig: { NetworkMode: 'bridge', PortBindings: {
+    ...extraBindings, ...(controlBindings === undefined ? {} : { '3000/tcp': controlBindings }),
+  } } };
+  const edit = load('lib/agent-edit.ts', {
+    '@/lib/container': { isValidAgentId: () => true },
+    '@/lib/agent-ports': ports,
+    '@/lib/agent-ports-server': { getUsedHostPorts: async () => new Set(ports.hostPortsFromBindings(inspected)), agentPortsHostIp: () => hostIp },
+    '@/lib/agent-images': { resolveRecreateImage: async () => 'image' },
+    '@/lib/agent-recreate': { inspectAgentContainer: async () => inspected, recreateAgentContainer: h.recreateAgentContainer },
+    '@/lib/agent-busy': { agentBusyReason: async () => null },
+    '@/lib/agent-readiness': { waitForGatewayReady: async () => true },
+    '@/lib/agent-setup': { applyRuntimeConfig: async () => {} },
+    '@/app/api/gateway/sync': { patchRev4aProvider: async () => {} },
+    '@/lib/agent-edit-state': { isEditActive: () => false, insertEdit: () => 1, updateEditRow: (_id, row) => finish(row) },
+  });
+  assert.equal(await edit.startAgentEdit('agent_x', { portRange: range }), 1);
+  return { h, row: await finished };
+}
+
+await test('edit unset: a loopback Control UI keeps loopback for the new port range', async () => {
+  const { h, row } = await editPorts(null, [{ HostIp: '127.0.0.1', HostPort: '3700' }]);
+  assert.equal(row.status, 'done');
+  assert.deepEqual(publishes(h), ['127.0.0.1:3710-3719:3000-3009']);
+});
+
+await test('edit unset: dynamically assigned or missing old host port still keeps its HostIp', async () => {
+  for (const binding of [{ HostIp: '127.0.0.1', HostPort: '' }, { HostIp: '::1' }]) {
+    const { h, row } = await editPorts(null, [binding], '3710');
+    assert.equal(row.status, 'done');
+    assert.deepEqual(publishes(h), [binding.HostIp === '::1' ? '[::1]:3710:3000' : '127.0.0.1:3710:3000']);
   }
+});
+
+await test('edit unset: preserve IPv6 and multiple Control UI addresses; ignore other ports', async () => {
+  const { h, row } = await editPorts(null, [{ HostIp: '::1', HostPort: '3700' }, { HostIp: '10.0.0.5', HostPort: '3700' }], '3710', {
+    '3001/tcp': [{ HostIp: '127.0.0.1', HostPort: '3701' }],
+  });
+  assert.equal(row.status, 'done');
+  assert.deepEqual(publishes(h), ['[::1]:3710:3000', '10.0.0.5:3710:3000']);
+});
+
+await test('edit unset: wildcard, empty or missing Control UI HostIp retains wildcard', async () => {
+  for (const bindings of [undefined, null, [], [{ HostPort: '3700' }], [{ HostIp: '', HostPort: '3700' }],
+    [{ HostIp: '0.0.0.0', HostPort: '3700' }, { HostIp: '::', HostPort: '3700' }]]) {
+    const { h, row } = await editPorts(null, bindings);
+    assert.equal(row.status, 'done');
+    assert.deepEqual(publishes(h), ['3710-3719:3000-3009']);
+  }
+});
+
+await test('edit explicit all/local/IP overrides every old Control UI address', async () => {
+  for (const [hostIp, prefix] of [['', ''], ['127.0.0.1', '127.0.0.1:'], ['10.0.0.5', '10.0.0.5:'], ['2001:db8::5', '[2001:db8::5]:']]) {
+    const { h, row } = await editPorts(hostIp, [{ HostIp: '::1', HostPort: '3700' }, { HostIp: '127.0.0.1', HostPort: '3700' }]);
+    assert.equal(row.status, 'done');
+    assert.deepEqual(publishes(h), [`${prefix}3710-3719:3000-3009`]);
+  }
+});
+
+await test('edit unset: a lost Control UI address fails before removing the container', async () => {
+  const { h, row } = await editPorts(null, [{ HostIp: '100.64.0.9', HostPort: '3700' }]);
+  assert.equal(row.status, 'failed');
+  assert.match(row.error, /100\.64\.0\.9, which this host does not have\. Nothing was changed/);
+  assert.equal(h.calls.length, 0, 'no remove or run');
+});
+
+await test('edit can retain its own host port without a false conflict', async () => {
+  const { h, row } = await editPorts(null, [{ HostIp: '127.0.0.1', HostPort: '3700' }], '3700');
+  assert.equal(row.status, 'done');
+  assert.deepEqual(publishes(h), ['127.0.0.1:3700:3000']);
 });
 
 console.log(`\n${passed} tests passed`);

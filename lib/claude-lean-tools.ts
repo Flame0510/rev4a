@@ -121,7 +121,8 @@ export async function ensureLeanClaudeTools(container: string): Promise<LeanTool
 
 /**
  * Installs already connected to Claude: one pass at dashboard startup over the RUNNING agents,
- * one at a time, a slow or failed one never stops the others. Stopped agents get it at a later start.
+ * one at a time, a slow or failed one never stops the others. Stopped agents get it at a later
+ * dashboard start while running, or when connected to Claude.
  */
 export async function repairLeanClaudeToolsAtStartup(): Promise<number> {
   const { listAgentContainers } = await import('@/lib/agent-containers');

@@ -23,12 +23,13 @@ function load(file, dependencies = {}) {
 const agentPorts = load('lib/agent-ports.ts');
 let denied = null;
 let agentsMode = 'all';
+let keepAgentAddresses = false;
 let dockerDown = false;
 let containers = [];
 const { GET } = load('app/api/system/listen/route.ts', {
   'next/server': { NextResponse: { json: (body, opts) => ({ body: JSON.parse(JSON.stringify(body)), status: opts?.status ?? 200 }) } },
   '@/lib/rev4a-auth': { requireAuthJWT: async () => denied },
-  '@/lib/agent-ports-server': { currentAgentPortsListen: () => ({ mode: agentsMode, hostIp: agentsMode === 'local' ? '127.0.0.1' : agentsMode === 'address' ? '10.0.0.5' : null }) },
+  '@/lib/agent-ports-server': { currentAgentPortsListen: () => ({ mode: agentsMode, hostIp: keepAgentAddresses ? null : agentsMode === 'local' ? '127.0.0.1' : agentsMode === 'address' ? '10.0.0.5' : '' }) },
   '@/lib/agent-ports': agentPorts,
   '@/lib/docker-socket': { dockerFetch: async (_m, url) => { if (dockerDown) throw new Error('down'); return url.startsWith('/containers/json') ? containers.map((c) => ({ Id: c.Id })) : containers.find((c) => url.includes(c.Id)); } },
   '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
@@ -40,7 +41,7 @@ async function test(name, fn) {
     for (const [k, v] of [['REV4A_LISTEN_STATE', saved.state], ['REV4A_LISTEN', saved.listen], ['PORT', saved.port]]) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
-    denied = null; agentsMode = 'all'; dockerDown = false; containers = [];
+    denied = null; agentsMode = 'all'; keepAgentAddresses = false; dockerDown = false; containers = [];
   }
   passed++; console.log(`ok   ${name}`);
 }
@@ -66,6 +67,17 @@ await test('mode all publishes no addresses; the agents mode is read now', async
   const r = await GET({});
   assert.deepEqual(r.body.panel, { mode: 'all', port: 3740, addresses: [] });
   assert.equal(r.body.agents.mode, 'address');
+});
+
+await test('unset agent setting reports keep, distinct from explicit all, even without Docker', async () => {
+  keepAgentAddresses = true;
+  dockerDown = true;
+  const r = await GET({});
+  assert.deepEqual(r.body.agents, { mode: 'keep', differing: 0 });
+  keepAgentAddresses = false;
+  assert.deepEqual((await GET({})).body.agents, { mode: 'all', differing: 0 });
+  const line = fs.readFileSync(path.join(root, 'app/system/RemoteAccessLine.tsx'), 'utf8');
+  assert.ok(line.includes("mode === 'keep' ? 'each agent keeps its address'"));
 });
 
 await test('no or broken state (not started by server.js): the setting alone, no addresses, never an error', async () => {

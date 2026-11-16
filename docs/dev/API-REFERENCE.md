@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-15
+> **Last updated:** 2026-11-16
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -85,14 +85,14 @@ Login — exchange the static password for a signed JWT cookie.
 Sets `Set-Cookie: rev4a_token=<jwt>; HttpOnly; Secure; SameSite=Strict` in production.
 The flags follow the scheme of the request's `Origin` header (`lib/session-cookie.ts`): `http:` (and development) gives a non-Secure cookie with `SameSite=Lax`; `https:`, no `Origin`, `null` or an unusable one gives Secure + Strict. `X-Forwarded-Proto` is never read. `REV4A_FORCE_INSECURE_COOKIE` is no longer read (1.28.0). `wizard_done` (wizard complete/reset) uses the same rule.
 
+**Error:** `401` if the password is wrong or the server is not configured; `500` for an unreadable body.
+
+**Throttle:** failed attempts are counted per client address, in memory. The first 5 failures in an hour are free; from the 6th the address is locked for 30 s, doubling with each further failure (60 s, 120 s, ...) up to 15 minutes. While locked the route answers `429` with `{ "error": "Too many failed attempts. Try again in <time>." }` and `Retry-After: <seconds>` (integer, rounded up, at least 1) **without checking the password**, so a correct password during a lock is refused too. A successful login clears the address; failures older than an hour are forgotten, but while an address keeps failing its lock does not fall back below the level it reached (it starts from zero after an hour without a failure). A wrong or empty password and an unreadable body count as failures; "server not configured" does not. Other addresses are not affected. An IPv6 client is counted per /64. `X-Forwarded-For` (rightmost entry) is honoured only from peers listed in `REV4A_TRUSTED_PROXIES`; with it unset no peer is trusted, loopback included, and every client is keyed by its socket address (see REV4A.md, auth flow). A proxy that is not trusted, or one that sends no header, puts every visitor under one address, and one lock then covers them all. The address is `x-rev4a-client-ip`, set by `server.js` (see ARCHITECTURE, Login throttle). Counters reset when Rev4a restarts. Bearer-token calls and the terminal WebSocket are not throttled.
+
 ### `POST /api/auth/refresh-cookie`
 Re-sets `rev4a_token` with the same JWT as Secure + Strict, for a session made over plain HTTP and now used over HTTPS. Once per browser tab, from `AuthGuard`.
 
 **Auth:** session (`401` otherwise). **Response:** `204` with `Cache-Control: no-store`. Only an `https:` Origin sets a cookie; any other Origin changes nothing. `Max-Age` is the time left until the token's `exp`; a token with no time left is left alone. No new token, no fingerprint change.
-
-**Error:** `401` if the password is wrong or the server is not configured; `500` for an unreadable body.
-
-**Throttle:** failed attempts are counted per client address, in memory. The first 5 failures in an hour are free; from the 6th the address is locked for 30 s, doubling with each further failure (60 s, 120 s, ...) up to 15 minutes. While locked the route answers `429` with `{ "error": "Too many failed attempts. Try again in <time>." }` and `Retry-After: <seconds>` (integer, rounded up, at least 1) **without checking the password**, so a correct password during a lock is refused too. A successful login clears the address; failures older than an hour are forgotten, but while an address keeps failing its lock does not fall back below the level it reached (it starts from zero after an hour without a failure). A wrong or empty password and an unreadable body count as failures; "server not configured" does not. Other addresses are not affected. An IPv6 client is counted per /64. `X-Forwarded-For` (rightmost entry) is honoured only from peers listed in `REV4A_TRUSTED_PROXIES`; with it unset no peer is trusted, loopback included, and every client is keyed by its socket address (see REV4A.md, auth flow). A proxy that is not trusted, or one that sends no header, puts every visitor under one address, and one lock then covers them all. The address is `x-rev4a-client-ip`, set by `server.js` (see ARCHITECTURE, Login throttle). Counters reset when Rev4a restarts. Bearer-token calls and the terminal WebSocket are not throttled.
 
 ### `GET /api/auth/check`
 Validate the current browser cookie and report whether the user is authenticated.
@@ -506,7 +506,8 @@ Read stored and runtime variables with `REV4A_` or `PROVIDER_` prefixes.
 
 Per-process keys are never included, from either the file or runtime environment:
 `REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
-`REV4A_TERMINAL_SECRET` and `REV4A_SETUP_CODE` (the shared
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE` and
+`REV4A_DOTENV_KEYS` (the shared
 `RUNTIME_ONLY_ENV_KEYS` list in `lib/env-file.js`). Other allowed keys absent from
 the file are supplemented from `process.env` for display.
 
@@ -2387,7 +2388,7 @@ Where Rev4a listens (SEC-9B, 1.28.0). No secrets.
 { "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "agents": { "mode": "local" } }
 ```
 `panel.mode` is `all` | `local` | `address` as resolved at start-up from `REV4A_LISTEN` (`addresses` is empty for `all`);
-`agents.mode` is `REV4A_AGENT_PORTS_LISTEN` read now (an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate applies the setting), or `null` when Docker cannot be read. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or an IP.
+`agents.mode` is `keep` when `REV4A_AGENT_PORTS_LISTEN` is unset or empty (each agent keeps its current address), otherwise `all` | `local` | `address` read now (explicit `all` means every interface; an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate, Update or Edit applies the setting), or `null` when Docker cannot be read; it is `0` in `keep` and `all` modes. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
 
 ---
 
