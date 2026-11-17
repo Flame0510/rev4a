@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -10,6 +10,58 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 **Repository:** `github.com/Flame0510/rev4a.git` (branch: `main`)
 
 ---
+
+## 1.29.0 — Remote access presets (NET-1a)
+
+The dedicated **Remote access** page (`/remote-access`, Setup sidebar group next to Config) offers three choices:
+**This computer only** (both listen keys `local`), **Direct (IP)** (both `all`), and
+**Domain (your own proxy)** (both `local`, append missing `127.0.0.1` and `::1` to
+`REV4A_TRUSTED_PROXIES`). Unset listen keys show **Default (as before)**; a mix that matches none is **Custom**. A confirmation lists
+all keys and values in a compact PropertyList, with accent values and unchanged pills, then saves through Config's shared `lib/env-edit.ts` writer.
+The current preset is labelled Current and disabled; Apply reads Already applied and is disabled when no values change. Preset icons are shared with the wizard; running agents use ItemList rows with keyed Recreating feedback.
+No other environment lines or existing proxy entries are removed. The guide is
+[Remote access](https://rev4a.app/en/docs/remote-access); proxy installation is separate.
+
+Only localhost, localhost., 127.0.0.1 and ::1 browser URLs can choose This computer only.
+Other 127.x loopback URLs show the canonical `http://127.0.0.1:<port>` to open first.
+Domain always requires the Switch acknowledgement confirming an already tested HTTPS proxy, including
+on an HTTPS hostname. The modal names `127.0.0.1:<port>`, `[::1]:<port>` or the Docker host
+bridge as its required target; forwarding to a LAN/public/Tailscale IP stops working.
+These client-location guards prevent accidental lockout; they are UX guards, not authorization.
+Direct is always available; the plain HTTP security warnings remain. A loopback browser
+with the panel listening on all interfaces sees **Rev4a is also reachable from your network**
+and a **Manage** link to the page. System keeps one compact mode/status row below the host charts; memory and storage remain at the top. Plain HTTP and LAN notices remain on System.
+
+**Restart now** restarts all Rev4a services. The list then offers individual **Recreate**
+buttons for running agents whose published addresses differ (including local → all).
+Each click takes the existing cold backup and polls its job. Its Recreating button stays visible
+through backup stops and new port bindings until the job finishes. Pending trusted-proxy changes
+survive a page reload by comparing saved settings with the current boot. Nothing recreates automatically.
+If restart confirmation times out after 60 seconds, Retry becomes available while the previous boot identity
+is retained. A later read from a new boot clears the obsolete timeout and enables Recreate.
+Successful reads clear transient status errors without dismissing action failures, restoring System's LAN notice.
+Stopped agents are counted only: they keep their ports until recreated; Start is unchanged.
+
+Supervisor restart flags use `REV4A_DATA_DIR/data`, or `~/.config/rev4a/data` when unset, exactly like
+the launcher on Linux, macOS and Windows. A systemctl timeout is logged as a failure and falls back to
+the supervisor when available; a non-timeout shutdown signal alone does not request a second restart.
+
+First run is **Welcome → Access → Providers → Agent → Ready** (four setup steps, then Ready).
+Access is skippable. **Only this computer** defers both the preset write and restart to Finish,
+so choosing another option or skipping cancels it without changing `.env`;
+**From other devices** links to the domain/Tailscale guide and changes
+nothing; **By IP for now (not secure)** changes nothing and explains the warnings. Completed
+installs still land at Ready and never receive a new Access prompt. A local choice is
+remembered per tab until Finish, including after a page reload. Finish uses authenticated
+Config restart, so an inherited service password works; Setup keeps its `.env` password check.
+When automatic restart is unavailable, Ready shows the manual-restart message and
+Continue to Rev4a completes without repeatedly requesting a restart.
+
+**Upgrade safety:** no schema, provider key, agent volume or default changes; no automatic
+network edits or agent jobs on update. Startup only adds a runtime supervisor marker and
+uses the existing idempotent repair to remove stale copies from plain `.env` files. Older
+agents use the existing Recreate flow. Rollback to 1.28.0 understands every saved setting;
+Config's restart on non-systemd installs returns to the old limitation after rollback.
 
 ## 1.28.0 pre-release fixes (FIX-128)
 
@@ -58,7 +110,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
 | `REV4A_LISTEN` | No | Where the panel listens (1.28.0): `all` (default, every interface), `local` (127.0.0.1, ::1 and, on Linux, the Docker host-gateway address) or one IP of this host. Read at start-up: restart Rev4a. Editable on the Config page |
-| `REV4A_AGENT_PORTS_LISTEN` | No | Where agents' published ports listen (1.28.0): `all`, `local` (127.0.0.1) or one IP; unset keeps each agent's current address (new agents use every interface). Read at each create, Recreate, Update and port edit, so a change needs only a Recreate. Left empty, a Recreate or port edit keeps the address each agent already has; write `all` to move agents back to every interface. A value that is not empty, `all`, `local` or an IP is refused by the Config page; an IP this host lacks is treated as `local`, and a Recreate whose existing binding is on a missing address is refused before the old container is removed. System distinguishes keeping each agent's address from publishing on every interface and shows how many running agents are still on a different address. Editable on the Config page |
+| `REV4A_AGENT_PORTS_LISTEN` | No | Where agents' published ports listen (1.28.0): `all`, `local` (127.0.0.1) or one IP; unset keeps each agent's current address (new agents use every interface). Read at each create, Recreate, Update and port edit, so a change needs only a Recreate. Left empty, a Recreate or port edit keeps the address each agent already has; write `all` to move agents back to every interface. A value that is not empty, `all`, `local` or an IP is refused by the Config page; an IP this host lacks is treated as `local`, and a Recreate whose existing binding is on a missing address is refused before the old container is removed. Remote access distinguishes keeping each agent's address from publishing on every interface and shows how many running agents are still on a different address. Editable on the Config page |
 | `REV4A_TIMEZONE` | No | Default dashboard time zone (IANA name), used only while none is saved in *Config > Time zone*; a saved zone wins, and with neither the server's own zone is used |
 | `REV4A_FORCE_INSECURE_COOKIE` | No | No longer read since 1.28.0: the cookie follows the scheme the browser uses. Leave it in `.env` if you may roll back to 1.27; without it, 1.27 on plain HTTP by IP loops at login |
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
@@ -116,9 +168,11 @@ When environment variables are saved via the Config page (Save & Restart):
    Config shows this error, keeps the edit and does not restart or save any part of the request.
 2. After a file change, `sudo systemctl daemon-reload` is attempted; it is harmless
    where there is no systemd. A no-op save neither writes nor reloads.
-3. **Save & Restart** runs `sudo systemctl restart rev4a.service`: the restart only works
-   when Rev4a runs as that systemd service. Started any other way, restart `rev4a serve`
-   yourself — `serve` reads `.env` at start-up, so nothing changes until then.
+3. **Save & Restart** uses `lib/rev4a-restart.ts`, shared with setup and System. After
+   sending the answer, it restarts its own systemd unit or writes the supervisor's
+   `.restart-flag`, reloading all services and `.env` on Linux, macOS and Windows.
+   A direct `next dev` start returns 409, **Restart Rev4a by hand to apply**, without
+   touching a restart flag or terminating a process.
 
 **BUG-14 update note:** on startup, before Next.js builds or starts, `ensureEnv()`
 removes assignments of the runtime-only keys left in `.env` by earlier Config
@@ -225,9 +279,10 @@ back also restores the older setup and loader security behaviour.
 | `/containers` | All Docker containers on the host, each running one with its CPU, memory and processes now (from the daemon's container samples) and a link to its charts |
 | `/costs` | What each agent spent, as its own OpenClaw priced it with the rates Rev4a syncs: today / 7 / 30 UTC days, by day, by agent, by model, the most expensive sessions, the calls that could not be priced, the DeepSeek band now, **metered at the proxy** next to **recorded by the agent**, per agent (the proxy counts every call it carries, the agent only what it recorded; the page counts the larger and marks an agent the proxy saw clearly more of), and a check against what DeepSeek and OpenRouter actually billed (read by the daemon every 5 min into `costs.db`; each agent's own figures, the ones Home's "Spent today" shows, are also in its panel, COSTS). Spent on this page is the larger of the two figures per agent, so it can be higher than Home's; calls without an agent header ("Unidentified callers") are listed but not counted in Spent. Calls made with a ChatGPT subscription (provider `openai`, or the legacy `openai-codex`) or on a Claude plan through Claude Code (provider `claude-cli`: the daemon stores an `anthropic` turn of an agent whose Claude Code rule is on under that name, from the day the rule was seen on; a daily model `anthropic` row that carries a cost above 0 is paid API spend and is never relabelled (sessions and cron runs have no cost guard and never feed Spent), and the days are closed at the last day the rule was seen on; remaining approximation: a zero-cost `anthropic` row on the day of Connect or Disconnect counts as plan usage) are covered by the plan: they are in no spend figure and each plan has its own section, **ChatGPT subscription** and **Claude subscription** (shown only when the range has some): tokens, calls and the **API value** — what the same calls would have cost at API prices (OpenClaw's price catalog, refreshed every 6 hours; OpenAI prices for the ChatGPT section, Anthropic prices for the Claude section; OpenClaw stores a Claude Code turn with cost 0, so the Claude section usually reads "no price" for the API value while its tokens and calls are shown) — by agent and by model; a model with no price shows "no price" (never $0) and the headline then says "at least"; it links to `/subscriptions` for the quota windows |
 | `/system` | The host machine: CPU, memory and swap, storage per filesystem — current values and 1h / 24h / 7d / 30d history (from `metrics.db`, sampled by the daemon every 30 s); **Agents and containers**: what Docker holds on disk, and one row per container — CPU, memory, storage, processes — that opens to its own CPU / Memory / Storage charts (sampled every 60 s; a recently seen row without current statistics says "no data", and stale current figures are hidden; each agent's numbers are also in its panel, RESOURCES); and the recent alerts: the machine's CPU, memory and disks, plus a container with 1000 or more processes on two samples in a row or 90 % of Docker's memory on five (at most one alert per container and rule per hour) ; a **Memory limit** warning appears only when the running containers use 85 % or more of Docker's memory and a running agent has no limit or its limit could not be read; Recent alerts also lists `container_oom` (a process killed for lack of memory in an agent) |
+| `/remote-access` | Current setup, guarded access presets, exact-edit confirmation with proxy acknowledgement, explicit restart and running-agent recreates. In Setup beside Config; System keeps a compact status row and Manage link below host charts |
 | `/config` (Agent defaults) | Besides the environment variables, a *Default memory limit for new agents* picker, **No limit by default**. It only prefills the create wizard's memory limit; it never changes an agent that exists (`agent-defaults.json`, `GET`/`PUT /api/agent-defaults`) |
 | `/config` (Time zone) | A *Time zone* card: the zone the dashboard shows times in (Costs, System, Crons, Context, the header clock, the live feed and the session drawer), with dates in each viewer's own format. Until one is saved it is **From REV4A_TIMEZONE (<zone>)** when that variable holds a valid zone, otherwise **Server default (<zone>)**; *Use server default* forgets a saved one. Saved on its own (`settings.json`, `GET`/`PUT /api/settings`), applies at once |
-| `/wizard` | First-run setup wizard (Welcome → Providers → Agent → Ready) |
+| `/wizard` | First-run setup wizard (Welcome → Access → Providers → Agent → Ready) |
 | `/workspace` | File explorer with a lazy tree (one folder at a time, "Show hidden files" switch, lock badge on read-only places, `?agent=&file=&hidden=` in the URL) + editor — agent container workspaces; a banner appears when the agent changes the open file; PDF, images, SVG, audio and video open read-only; logs and files over 2 MB open on their last 256 KB (read-only, "Load earlier"); every file has a Download button; a save never overwrites a newer version from the agent without asking |
 | `/lineage` | Sessions of every agent container as a tree: container (stopped ones marked) → `main` → sessions → sub-agents (any depth) → cron runs, with OpenClaw's real status, model, tokens and cost ("not priced" when unknown). Filters: agent, period (15m · 1h · 6h · 1d · 7d · 30d · all, default 1d, remembered per browser), active only, no cron. Click a node for the session drawer. |
 | `/memory` | Context: per agent, read-only, what OpenClaw injects into the prompt (size, truncation against the caps), the `memory/` files and the Rev4a rules file; file names open in Workspace |
@@ -578,7 +633,7 @@ Lists all agents (Docker containers with `AGENT_ID` label), with:
 - Name, image, template, status, ports, IP
 - TG channel status chip (green = connected, hidden if not configured)
 - **Shared gateway token** — text input with Save & Sync. Changing the token saves it to `data/agents-token.json` and pushes it to all running containers.
-- **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container. Local dashboards use a different cookie host: `localhost` (case-insensitive, also `localhost.`) opens on `127.0.0.1`; `::1`, `[::1]` and any `127.x.y.z` open on `localhost`, which resolves to both loopback address families. Both the page and the `gatewayUrl` fragment use that host, because cookies are shared across ports. LAN/public IPs and domains keep the dashboard host. When the dashboard is on plain HTTP on such a host, the agent's port also receives the Rev4a session cookie (cookies ignore ports), so **Open** first shows a modal (*Open the Control UI*): the risk in one paragraph, the SSH tunnel command (`ssh -L <port>:127.0.0.1:<port> user@<host>`) with Copy, **Copy tunnel link** (a link built for `localhost`, from `GET /api/agents/[id]/open-control-ui?tunnel=1`, issued only when pressed; the command reads only the port, through `?tunnel=port`), a link to the HTTPS guide, and **Cancel** / **Open anyway**. It is asked every time; nothing is remembered. On HTTPS and on loopback hosts there is no modal. The System page shows a warning card on plain HTTP and a **Remote access** line (where the panel and the agents' ports listen, from `GET /api/system/listen`, with the guide link). When an agent's port is published only on loopback (`REV4A_AGENT_PORTS_LISTEN=local`) or on an IP that is not the dashboard's own IP, and the dashboard is not on the server itself, the plain link cannot work: **Open** then shows the same modal in a variant (any protocol, https included) with *This agent's port is open only on the server itself. Use an SSH tunnel:*, the command, **Copy tunnel link**, the guide link and **no** *Open anyway*. A loopback dashboard opens directly. While the agent's Gateway is still starting the card shows a `STARTING m:ss` chip (`GET /api/agents/gateway`); while the Gateway answers 503 **Open** reads *Starting…* and is disabled. When it gives no answer at all (normal in the first seconds of a boot) the chip shows but Open stays enabled. After 10 minutes without readiness the chip reads NOT READY and Open is enabled again; a container in a restart loop reaches NOT READY too (the 10 minutes count from the first start Rev4a saw, not from each restart; they start again when Rev4a restarts). Only a real 503 disables Open; a failed, missing or unexpected readiness answer never does.
+- **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container. Local dashboards use a different cookie host: `localhost` (case-insensitive, also `localhost.`) opens on `127.0.0.1`; `::1`, `[::1]` and any `127.x.y.z` open on `localhost`, which resolves to both loopback address families. Both the page and the `gatewayUrl` fragment use that host, because cookies are shared across ports. LAN/public IPs and domains keep the dashboard host. When the dashboard is on plain HTTP on such a host, the agent's port also receives the Rev4a session cookie (cookies ignore ports), so **Open** first shows a modal (*Open the Control UI*): the risk in one paragraph, the SSH tunnel command (`ssh -L <port>:127.0.0.1:<port> user@<host>`) with Copy, **Copy tunnel link** (a link built for `localhost`, from `GET /api/agents/[id]/open-control-ui?tunnel=1`, issued only when pressed; the command reads only the port, through `?tunnel=port`), a link to the HTTPS guide, and **Cancel** / **Open anyway**. It is asked every time; nothing is remembered. On HTTPS and on loopback hosts there is no modal. The System page shows a warning card on plain HTTP and a compact **Remote access** status row linking to `/remote-access` (the dedicated page holds guarded presets, restart and individual running-agent recreates, from `GET /api/system/listen` and `/api/system/remote-access`). When an agent's port is published only on loopback (`REV4A_AGENT_PORTS_LISTEN=local`) or on an IP that is not the dashboard's own IP, and the dashboard is not on the server itself, the plain link cannot work: **Open** then shows the same modal in a variant (any protocol, https included) with *This agent's port is open only on the server itself. Use an SSH tunnel:*, the command, **Copy tunnel link**, the guide link and **no** *Open anyway*. A loopback dashboard opens directly. While the agent's Gateway is still starting the card shows a `STARTING m:ss` chip (`GET /api/agents/gateway`); while the Gateway answers 503 **Open** reads *Starting…* and is disabled. When it gives no answer at all (normal in the first seconds of a boot) the chip shows but Open stays enabled. After 10 minutes without readiness the chip reads NOT READY and Open is enabled again; a container in a restart loop reaches NOT READY too (the 10 minutes count from the first start Rev4a saw, not from each restart; they start again when Rev4a restarts). Only a real 503 disables Open; a failed, missing or unexpected readiness answer never does.
 - **Agent creation wizard** — multi-step form at `/agents/create`.
 - **Channel Manager** — each agent detail panel has a Channels section with Telegram configuration and pairing management. Pending requests (a sender's `/start` creates one) show an **Approve** button; approved senders show **Revoke** with a confirmation. Approved senders are OpenClaw's pairing store, not the agent config: on 2026.9.x the SQLite store, read and revoked through OpenClaw's own store functions (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 - **Browser access** — the detail panel section right after Channels. From OpenClaw 9.x each new browser must be approved once before the Control UI connects: the section lists requests waiting for approval (Approve / Reject) and approved browsers (Rename / Revoke), and the agent card shows a "browser waiting" badge. The **Open** buttons first ask the agent for a one-time link that pairs the browser with no approval, and open the plain token link when none can be issued (the agent is stopped, or the link fails). **Invite link** gives a link to send to someone else: their browser passes gateway auth and waits in the approval list until approved. The link carries the gateway token every agent shares; changing the agents token invalidates every link sent. All of it runs the OpenClaw CLI inside the container asynchronously.

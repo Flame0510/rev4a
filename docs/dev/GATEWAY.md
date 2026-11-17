@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -504,15 +504,20 @@ triggering a server restart.
 
 Update environment variables on the VPS host.
 
-**Body:** `{ "REV4A_PASSWORD": "newpass", ... }`
+**Body:** `{ "env": { "REV4A_PASSWORD": "newpass", ... } }`
 
-**Response:** `{ "ok": true }`
+**Response:** `{ "status": "ok", "updated": ["REV4A_PASSWORD"] }`
 
 ### `POST /api/config/restart`
 
-Restart the Rev4a server (via systemd).
+Restart all Rev4a services after answering (1.29.0). The shared helper detects this process in
+`system.slice/rev4a.service` with `INVOCATION_ID`, then reloads and restarts the system unit
+(direct `systemctl` as root, `sudo -n` otherwise). A refused restart falls back to the restart
+flag when `REV4A_SUPERVISED=1`. Other supervised installs use the flag directly; a user
+systemd unit alone does not qualify. Direct `next dev` returns 409, "Restart Rev4a by hand to apply".
 
-**Response:** `{ "ok": true }`
+**Response:** `{ "status": "ok", "restarting": true, "mode": "systemd" | "supervisor" }`.
+The wizard uses this authenticated endpoint at Finish; Setup restart retains its `.env` password check.
 
 ---
 

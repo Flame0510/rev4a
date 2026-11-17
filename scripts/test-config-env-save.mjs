@@ -27,6 +27,7 @@ function load(file, dependencies, globals = {}) {
   }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(code, { module, exports: module.exports, require: (name) => {
+    if (name === '@/lib/env-edit') return load('lib/env-edit.ts', dependencies, globals);
     assert.ok(name in dependencies, `Unexpected dependency: ${name}`);
     return dependencies[name];
   }, ...globals }, { filename: file });

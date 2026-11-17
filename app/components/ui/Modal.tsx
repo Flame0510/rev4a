@@ -6,7 +6,7 @@ import type { Tone } from './tokens';
 interface ModalProps {
   open: boolean;
   onClose: () => void;
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   tone?: Tone;
   maxWidth?: number;

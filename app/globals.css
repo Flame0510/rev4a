@@ -1298,6 +1298,10 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   gap: 4px 12px;
   font-size: 11px;
 }
+.ui-property-list--spacious {
+  row-gap: 10px;
+  align-items: center;
+}
 .ui-property-label {
   color: var(--text-dim);
   white-space: nowrap;
@@ -2178,3 +2182,39 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
 .node.agent circle { stroke: var(--violet); fill: #120d06; }
 .node.stopped { opacity: 0.55; }
 .feed-agent { color: var(--violet-dim, var(--text-dim)); font-size: 10px; flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Shared selectable cards (agent templates and remote access). */
+.ui-template-option {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px;
+  text-align: left; font-size: 14px; font-family: var(--font-mono-stack); color: var(--text);
+  cursor: pointer; background: transparent; border: 1px solid var(--border); border-radius: 0;
+}
+.ui-template-option--selected { background: var(--violet-bg); border-color: var(--violet); }
+.ui-template-option:focus-visible { outline: 1px solid var(--violet); outline-offset: 2px; }
+.ui-template-option:disabled { opacity: .5; cursor: not-allowed; }
+.ui-template-option__avatar {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--border); color: #666; font-size: 12px; font-weight: 600; flex-shrink: 0;
+}
+.ui-template-option--selected .ui-template-option__avatar { background: var(--violet); color: #111; }
+.ui-template-option__avatar--icon { border-radius: 0; color: var(--text-dim); font-weight: normal; }
+.ui-template-option--selected .ui-template-option__avatar--icon { color: var(--bg); }
+.ui-template-option__body { flex: 1; min-width: 0; }
+.ui-template-option__title { display: block; font-weight: 500; }
+.ui-template-option__description { display: block; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+/* Compact status/callout surfaces and read-only action lists. */
+.ui-surface--compact { min-height: 0; padding: 12px 16px; }
+.ui-text-small { font-size: 12px; }
+.ui-text-accent { color: var(--violet); }
+.ui-item-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); }
+.ui-item-list__row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px; font-size: 12px; }
+.ui-item-list__row + .ui-item-list__row { border-top: 1px solid var(--border); }
+.ui-item-list__content { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ui-template-option--current:disabled { opacity: 1; cursor: default; }
+.ui-property-list--wrap .ui-property-value { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 575px) {
+  .ui-property-list--wrap { grid-template-columns: minmax(0, 1fr); }
+  .ui-property-list--wrap .ui-property-value + .ui-property-label { margin-top: 6px; }
+  .ui-property-list--wrap .ui-property-label { white-space: normal; overflow-wrap: anywhere; }
+}

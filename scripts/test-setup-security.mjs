@@ -33,6 +33,7 @@ function load(file, dependencies, globals = {}) {
   }, fileName: file }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(code, { module, exports: module.exports, require: (name) => {
+    if (name === '@/lib/env-edit') return load('lib/env-edit.ts', dependencies, globals);
     if (!(name in dependencies)) throw new Error(`Unexpected import ${name} in ${file}`);
     return dependencies[name];
   }, TextEncoder, Response, ReadableStream, AbortController, ...globals }, { filename: file });
@@ -68,7 +69,8 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
     status: options.status ?? 200, json: async () => body, cookies: { set: () => effects.push(['cookie']) },
   }) };
   const dependencies = {
-    'next/server': { NextResponse }, fs: mockFs, 'node:fs': mockFs,
+    'next/server': { NextResponse, after: () => effects.push(['timer']) },
+    '@/lib/rev4a-restart': { prepareRestart: () => ({ mode: 'supervisor', run: () => effects.push(['restart']) }), RestartUnavailable: class extends Error {} }, fs: mockFs, 'node:fs': mockFs,
     path, 'node:path': path, crypto, 'node:os': { homedir: () => '/mock' },
     '@/lib/rev4a-paths': { ENV_FILE, REV4A_DATA: '/mock' },
     '@/lib/env-file': validator, './env-file.js': validator, '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
@@ -566,6 +568,8 @@ await test('launcher strips inherited runtime-only state before supplying per-bo
           assert.match(value, /^[a-f0-9]{64}$/);
         } else if (key === 'REV4A_SETUP_CODE' && entry === 'server.js' && !configured) {
           assert.match(value, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/);
+        } else if (key === 'REV4A_SUPERVISED') {
+          assert.equal(value, '1');
         } else if (key === 'REV4A_DOTENV_KEYS') {
           // Names of the keys that came from .env (SEC-9B); never a runtime-only key and never a value.
           assert.equal(typeof value, 'string');

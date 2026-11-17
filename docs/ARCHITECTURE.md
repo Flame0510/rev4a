@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -310,7 +310,7 @@ The central container, running the Next.js dashboard + orchestration API.
   only and one warning. An address the host lacks, or an invalid value, falls back to `local`; loopback v4 is always bound.
   Explicit wildcard IP spellings (including expanded and IPv4-mapped IPv6) are invalid; a wildcard gateway is never added.
   The effective result is published in `REV4A_LISTEN_STATE` for `GET /api/system/listen`; agent mode `keep`
-  distinguishes an unset setting from explicit `all` on the System Remote access line. The terminal server stays on
+  distinguishes an unset setting from explicit `all` on the System Remote access section. The terminal server stays on
   127.0.0.1:3741. Agent ports: `portMappingArgs(start, end, hostIp)` adds `<ip>:` (IPv6 in brackets) to `-p`; create, the range
   edit and recreate read the setting through `agentPortsHostIp()` (`.env` first, so a Config change counts at the next
   Recreate; a copy the launcher took from `.env` is ignored via `REV4A_DOTENV_KEYS`, so clearing the entry applies at once). An IP the host lacks reads as `local`; recreate refuses, before removing the old container, any `-p` on a missing address. On recreate a set value overrides each binding's old HostIp; unset keeps it (SEC-22 LC-01). Port edits use
@@ -508,6 +508,24 @@ is never written, and the command hangs with no error to point at.
   `ensureEnv()` also tightens an existing file with broader permissions before
   any content repair or child startup, logging the permission repair once.
   It does not rewrite content just to repair permissions.
+
+- **Operator restarts (1.29.0, NET-1a).** Config, Setup and System share the server-only
+  `lib/rev4a-restart.ts` planner. `INVOCATION_ID` plus this process's
+  `/proc/self/cgroup` membership in `system.slice/rev4a.service` selects systemd (user.slice units are excluded); an unrelated active
+  unit never qualifies. Otherwise the runtime-only `REV4A_SUPERVISED=1` set in the
+  launcher's child environment selects the supervisor. Config hides/ignores this key;
+  startup's existing idempotent runtime-key repair removes stale persisted copies.
+  The routes send `{ status: 'ok', restarting: true, mode: 'systemd' | 'supervisor' }`
+  then use Next's `after()` to daemon-reload and restart the unit (direct systemctl as root, sudo -n otherwise), or
+  write `<REV4A_DATA>/data/.restart-flag`. The supervisor reloads all three services and
+  re-reads `.env`. Neither route SIGTERMs itself. With neither owner, 409 says
+  **Restart Rev4a by hand to apply** and changes nothing. A supervisor directory that
+  is not writable fails before scheduling; post-response failures are logged. A refused
+  systemd restart falls back to the flag when supervised.
+  Presets share the Config validation/write path in `lib/env-edit.ts`; they add no
+  dependency, schema migration, startup scan or automatic network change. Non-secret startup
+  access settings come from process.env (never mutated by saves), so proxy-only edits remain
+  pending across UI reloads.
 
 - **The process model and self-update.** `rev4a serve` (the systemd unit's process) is a
   supervisor: it spawns `rev4a _run <port>`, which in turn runs Next, the daemon and the

@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -12,11 +12,12 @@ The main page. See live sessions (who's working right now), cost summary, an ove
 The health cards cover Rev4a's own runtime, cron and watchdog, and lineage. The Machine card shows the server's CPU, RAM and fullest disk right now, coloured when it reaches a threshold, and links to the System page for details. There is no wizard banner on the dashboard; an incomplete setup redirects to `/wizard` instead.
 
 ### First-run wizard (`/wizard`)
-First-run setup wizard that guides new users through configuration. Four steps:
+First-run setup wizard that guides new users through configuration. Five screens (four setup steps, then Ready), since 1.29.0:
 1. **Welcome** — what Rev4a is and what it can do
-2. **Providers** — add API keys for DeepSeek, OpenAI, OpenRouter, or Groq (saved via the Provider Gateway)
-3. **First Agent** — understand how agents work and what you need to create one
-4. **Ready** — site map of key sections with quick links
+2. **Access** — skippable: Only this computer saves both listen keys as local at Finish, then restarts (disabled unless the browser uses a supported loopback host); From other devices links to the domain/Tailscale guide; By IP for now changes nothing and keeps warnings
+3. **Providers** — add API keys for DeepSeek, OpenAI, OpenRouter, or Groq (saved via the Provider Gateway)
+4. **First Agent** — understand how agents work and what you need to create one
+5. **Ready** — site map of key sections with quick links
 
 The wizard is always accessible from the sidebar. There is no progress badge on that entry and no banner elsewhere.
 
@@ -191,7 +192,7 @@ The server removes those keys again after Next loads `.env`, preserving loader
 settings inherited from the operator's shell or systemd. Runtime-only keys
 (`REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
 `REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE`,
-`REV4A_DOTENV_KEYS`) are excluded from Config reads and
+`REV4A_DOTENV_KEYS`, `REV4A_SUPERVISED`) are excluded from Config reads and
 silently ignored on Config writes, including older open tabs. The launcher
 removes their real assignments from `.env` at startup, logging names only, and
 clears inherited copies from the base child environment before setting fresh
@@ -239,3 +240,34 @@ A session is one unit of agent work. It starts when an agent receives a task and
 - Status (working, idle, done, error, aborted)
 
 Sessions can have parent-child relationships (lineage): one agent spawns another to delegate work. Rev4a reads them from each agent's container; nothing needs to be registered.
+
+## Remote access presets and restart (1.29.0)
+
+Remote access (/remote-access, next to Config in Setup) offers This computer only (both listen keys local), Direct (IP) (both all), and
+Domain (your own proxy) (both local, append 127.0.0.1 and ::1 to trusted proxies).
+Review the keys and values in the confirmation, Apply, then Restart now. Local requires a
+localhost, localhost., 127.0.0.1 or ::1 browser URL. Other 127.x loopback URLs must first
+reconnect at http://127.0.0.1:<port>. Domain always asks you to confirm an already tested
+HTTPS proxy with a loopback or Docker bridge target. Client location is a UX guard, not an
+authorization boundary. Unset listen keys show Default (as before); Custom settings select
+no card. Saved trusted proxies are compared with the current boot, so a pending proxy-only
+restart survives reloading. A loopback dashboard listening on every interface says it is
+also reachable from the network on System, with a Manage link to Remote access. System keeps one compact mode/status row below host charts. The page shows Current setup properties, icon preset choices, structured confirmation with a Switch acknowledgement, and running-agent ItemList rows. The current preset and unchanged Apply are disabled.
+
+After restart, recreate each listed running agent explicitly to apply its port setting;
+stopped agents are counted only. There is no automatic recreate and Start is unchanged.
+The active Recreate row retains its loading button through backup stops and matching-port
+refreshes until the job finishes.
+
+Completed installs never get the new wizard step or any automatic settings change. The
+wizard defers local writes until Finish; choosing another option or skipping cancels them.
+Finish uses authenticated Config restart (inherited passwords work). A 409 shows the manual
+restart message and allows completion without another restart request.
+
+Config Save & Restart, System and setup share a helper. This process's own systemd unit
+comes first (user units excluded), with daemon-reload then restart: direct systemctl as
+root, sudo -n otherwise. A refused restart while supervised falls back to rev4a serve's
+restart flag. Other supervised installs use the flag directly, reloading all services and
+.env. Direct next dev returns 409, Restart Rev4a by hand to apply, and never terminates only
+the server. No schema, provider vault or volume migration; rollback to 1.28.0 reads the same
+settings.

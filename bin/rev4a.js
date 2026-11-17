@@ -708,6 +708,7 @@ function serve(port) {
   // Clear it from both sources before supplying this boot's credentials to specific children.
   for (const key of RUNTIME_ONLY_ENV_KEYS) delete childEnv[key];
   childEnv.REV4A_DOTENV_KEYS = dotenvKeys.join(',');
+  childEnv.REV4A_SUPERVISED = '1';
   let setupCode;
   if (!childEnv.REV4A_PASSWORD) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -893,7 +894,7 @@ if (cmd === 'serve') {
     );
     exitCode = result.signal ? 0 : (result.status ?? 0);
     if (exitCode === 42) {
-      console.log('[REV4A] Restarting with updated binary…');
+      console.log('[REV4A] Restarting…');
       // Wait for the port to be fully released before respawning
       const net = require('net');
       const portNum = port;

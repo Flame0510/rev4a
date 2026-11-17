@@ -1,5 +1,9 @@
 # REV4A — Multi-Agent Dashboard for OpenClaw
 
+> **Last updated:** 2026-11-17
+
+**1.29.0:** Choose guarded presets on the [Remote access page](/remote-access) or Access on first run; Save & Restart works under systemd and rev4a serve on Linux, macOS and Windows (direct next dev asks for a manual restart).
+
 > **One command to deploy a management dashboard for your OpenClaw agent fleet.**
 > Zero external databases. Only Node.js + Docker.
 
@@ -218,7 +222,7 @@ and order. Values shown from the process environment are not saved unless edited
 Unchanged values (also empty ones) stay byte-for-byte intact, and an unchanged
 GET-to-PUT round trip does not write the file. Rev4a edits `.env` automatically only when every line is blank, a comment or a one-line `KEY=value` (a quoted value closing on the same line). A file with a multi-line or unterminated quoted value, a value on the next line, text after a closing quote (including an inline comment such as `REV4A_TOKEN="t" # comment`), or a backslash immediately before a same-kind quote (including the closing quote) is ambiguous across tools: an edit from Config then answers `409` and writes nothing (edit the file by hand), and the startup repair of runtime keys is skipped with a log line. Unchanged values, including inherited multi-line ones, are never an edit.
 `REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
-`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE` and `REV4A_DOTENV_KEYS` are never returned by Config and are
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE`, `REV4A_DOTENV_KEYS` and `REV4A_SUPERVISED` are never returned by Config and are
 silently ignored on save, including from older open tabs. At startup, `rev4a serve`
 automatically removes existing assignments of those runtime-only keys from
 `.env`, logging names only; a second pass makes no further changes. Inherited

@@ -8,7 +8,7 @@ import {
   resetWizard,
 } from './storage';
 
-export type Step = 'welcome' | 'providers' | 'agents' | 'done';
+export type Step = 'welcome' | 'access' | 'providers' | 'agents' | 'done';
 
 export interface ProviderKeys {
   deepseek: string;
@@ -17,7 +17,7 @@ export interface ProviderKeys {
   groq: string;
 }
 
-const STEP_ORDER: Step[] = ['welcome', 'providers', 'agents', 'done'];
+export const STEP_ORDER: Step[] = ['welcome', 'access', 'providers', 'agents', 'done'];
 
 export function useWizard() {
   const [step, setStep] = useState<Step>('welcome');
@@ -71,13 +71,15 @@ export function useWizard() {
   }, [providerKeys, markStep, refreshOfferedModels]);
 
   const goNext = useCallback(async () => {
-    if (step === 'welcome') { markStep('welcome'); setStep('providers'); }
+    if (step === 'welcome') { markStep('welcome'); setStep('access'); }
+    else if (step === 'access') { markStep('access'); setStep('providers'); }
     else if (step === 'providers') { await saveProviders(); setStep('agents'); }
     else if (step === 'agents') { markStep('agents'); setStep('done'); }
   }, [step, saveProviders, markStep]);
 
   const skip = useCallback(() => {
-    if (step === 'welcome') { markStep('welcome'); setStep('providers'); }
+    if (step === 'welcome') { markStep('welcome'); setStep('access'); }
+    else if (step === 'access') { markStep('access'); setStep('providers'); }
     else if (step === 'providers') { markStep('providers'); setStep('agents'); }
     else if (step === 'agents') { markStep('agents'); setStep('done'); }
   }, [step, markStep]);

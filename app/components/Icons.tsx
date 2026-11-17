@@ -76,3 +76,16 @@ export function RotateIcon(p: IconProps) {
 export function PackageIcon(p: IconProps) {
   return <Svg {...p}><line x1="16.5" y1="9.4" x2="7.5" y2="4.21" /><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></Svg>;
 }
+
+// REMOTE ACCESS
+export function MonitorIcon(p: IconProps) {
+  return <Svg {...p}><rect x="3" y="3" width="18" height="13" /><path d="M8 21h8M12 16v5" /></Svg>;
+}
+
+export function GlobeIcon(p: IconProps) {
+  return <Svg {...p}><circle cx="12" cy="12" r="10" /><ellipse cx="12" cy="12" rx="4" ry="10" /><path d="M2 12h20" /></Svg>;
+}
+
+export function ShieldIcon(p: IconProps) {
+  return <Svg {...p}><path d="M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6z" /><path d="m8 12 3 3 5-6" /></Svg>;
+}

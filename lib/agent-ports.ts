@@ -113,6 +113,14 @@ export function publishesWiderThan(bindings: PortBindings, hostIp: string | null
   }));
 }
 
+/** Any mismatch, including a loopback binding when the operator explicitly selects all. */
+export function publishesDifferently(bindings: PortBindings, hostIp: string | null): boolean {
+  if (hostIp === null) return false; // unset keeps each agent's address
+  if (hostIp) return publishesWiderThan(bindings, hostIp);
+  return Object.values(bindings ?? {}).some((list) => (list ?? []).some((binding) =>
+    !!binding.HostPort && !['', '0.0.0.0', '::', '[::]'].includes((binding.HostIp ?? '').trim())));
+}
+
 /** The host ports a container publishes, from its inspect (`HostConfig.PortBindings`). */
 export function hostPortsFromBindings(container: {
   HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> };

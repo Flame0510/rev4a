@@ -65,7 +65,7 @@ function harness(kind, protocol = 'http:') {
     exports, fetch, AbortController, window: { location: { protocol } },
     checkSessionCookie: helper(fetch).checkSessionCookie,
     password: 'fixture-password', locked: false, submittingRef: busyRef, submitAbortRef: abortRef,
-    actionRef: busyRef, completionAbortRef: abortRef,
+    actionRef: busyRef, completionAbortRef: abortRef, accessRestart: false, manualRestart: false,
     setLoading: value => { state.loading = value; },
     setError: value => { state.error = value; },
     setCompletionError: value => { state.error = value; },
@@ -152,7 +152,7 @@ failedCompletion.completionSaved = false;
 await failedCompletion.submit();
 assert.match(failedCompletion.state.error, /Could not finish the wizard/);
 assert.deepEqual(failedCompletion.state.routes, []);
-assert.deepEqual(failedCompletion.state.calls, []);
+assert.deepEqual(failedCompletion.state.calls.map(call => call.url), ['/api/auth/check']);
 assert.equal(failedCompletion.state.action, null);
 
 // Aborts are cancellation, never a cookie refusal or network error.

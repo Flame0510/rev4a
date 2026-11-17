@@ -37,7 +37,7 @@ export function needsInferenceAccountAdoptionNotice(fromVersion: unknown, toVers
 }
 
 /** Same loopback rule as `controlUiHostFor` in lib/agent-devices.ts (server-only): these hosts get an isolated link. */
-function isLoopbackHost(hostname: string): boolean {
+export function isLoopbackHost(hostname: string): boolean {
   if (/^localhost\.?$/i.test(hostname) || hostname === '::1' || hostname === '[::1]') return true;
   return /^127(?:\.\d{1,3}){3}$/.test(hostname) && hostname.split('.').every((part) => Number(part) <= 255);
 }

@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-17
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -61,7 +61,7 @@ Files that store an agent's persistent knowledge and personality. OpenClaw injec
 The AI model used by an agent or session. Examples: GPT-5.4, Claude Sonnet 5, DeepSeek Flash. Models are linked to specific providers. The Gateway page controls which models are enabled for the whole deployment; the agent detail panel sets which one a given agent runs, plus its fallbacks. A model whose name the provider has retired is tagged `deprecated` on the agent card and in that panel. The Gateway page does not show it.
 
 ## First-run wizard
-First-time setup wizard at `/wizard`. Steps: Welcome → Providers → First Agent → Ready. Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar. The mobile bottom navigation has five entries — Home, Agents, Workspace, Gateway, Containers — and the wizard is not one of them.
+First-time setup wizard at `/wizard`. Steps: Welcome → Access → Providers → First Agent → Ready (1.29.0). Completion is recorded in `wizard.json` under the data directory. Always accessible from the sidebar. The mobile bottom navigation has five entries — Home, Agents, Workspace, Gateway, Containers — and the wizard is not one of them.
 
 Before choosing a password at `/setup`, enter the setup code from the terminal or
 service journal where `rev4a serve` runs. It changes on each unconfigured start;

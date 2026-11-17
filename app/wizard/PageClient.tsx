@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button, Surface } from '../components/ui';
 import { checkSessionCookie } from '@/lib/session-cookie-check';
+import { presetEdits } from '@/lib/remote-access';
+import { AccessStep } from './AccessStep';
 import { useWizard, type ProviderKeys } from './useWizard';
 import {
   ArrowRightIcon, CheckCircleIcon, CheckIcon,
@@ -16,8 +18,9 @@ import {
 
 const STEPS = [
   { key: 'welcome' as const,   labelMobile: '1', label: 'Welcome' },
-  { key: 'providers' as const, labelMobile: '2', label: 'Providers' },
-  { key: 'agents' as const,    labelMobile: '3', label: 'Agent' },
+  { key: 'access' as const, labelMobile: '2', label: 'Access' },
+  { key: 'providers' as const, labelMobile: '3', label: 'Providers' },
+  { key: 'agents' as const,    labelMobile: '4', label: 'Agent' },
   { key: 'done' as const,      labelMobile: '✓', label: 'Ready' },
 ];
 
@@ -31,12 +34,25 @@ export default function WizardPageClient() {
   } = useWizard();
   const [completionError, setCompletionError] = useState('');
   const [action, setAction] = useState<'complete' | 'restart' | null>(null);
+  const [accessRestart, setAccessRestart] = useState(false);
+  const [manualRestart, setManualRestart] = useState(false);
+  useEffect(() => {
+    try { setAccessRestart(sessionStorage.getItem('rev4a-access-choice') === 'local'); } catch { /* storage unavailable */ }
+  }, []);
+  const chooseAccess = (local: boolean) => {
+    setAccessRestart(local);
+    try {
+      if (local) sessionStorage.setItem('rev4a-access-choice', 'local');
+      else sessionStorage.removeItem('rev4a-access-choice');
+    } catch { /* storage unavailable */ }
+  };
   const actionRef = useRef(false);
   const completionAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => completionAbortRef.current?.abort(), []);
 
   const handleComplete = async () => {
     if (actionRef.current) return;
+    if (manualRestart) { router.push('/'); return; }
     actionRef.current = true;
     completionAbortRef.current?.abort();
     const controller = new AbortController();
@@ -44,22 +60,39 @@ export default function WizardPageClient() {
     setAction('complete');
     setCompletionError('');
     try {
+      const message = await checkSessionCookie(window.location.protocol, controller.signal);
+      if (controller.signal.aborted) return;
+      if (message) { setCompletionError(message); return; }
+      if (accessRestart) {
+        const response = await fetch('/api/system/remote-access', { method: 'PUT', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preset: 'local',
+            location: { protocol: window.location.protocol, hostname: window.location.hostname, port: window.location.port }, edits: presetEdits('local', {}) }) });
+        const body = await response.json();
+        if (controller.signal.aborted) return;
+        if (!response.ok) throw new Error(body.error || 'Could not save access settings');
+      }
       const done = await completeAll(controller.signal);
       if (controller.signal.aborted) return;
       if (!done) {
         setCompletionError('Could not finish the wizard. Please try again. If your session expired, sign in again.');
         return;
       }
-      const message = await checkSessionCookie(window.location.protocol, controller.signal);
-      if (controller.signal.aborted) return;
-      if (message) {
-        setCompletionError(message);
-        return;
+      if (accessRestart) {
+        const response = await fetch('/api/config/restart', { method: 'POST', signal: controller.signal });
+        const body = await response.json();
+        if (controller.signal.aborted) return;
+        if (response.status === 409) {
+          chooseAccess(false); setManualRestart(true);
+          setCompletionError(body.error || 'Restart Rev4a by hand to apply');
+          return;
+        }
+        if (!response.ok) throw new Error(body.error || 'Could not restart Rev4a');
+        chooseAccess(false);
       }
       router.push('/');
     } catch (error) {
       if (!controller.signal.aborted && (error as { name?: string })?.name !== 'AbortError') {
-        setCompletionError('Could not finish the wizard. Please try again.');
+        setCompletionError(error instanceof Error ? error.message : 'Could not finish the wizard. Please try again.');
       }
     } finally {
       actionRef.current = false;
@@ -74,6 +107,8 @@ export default function WizardPageClient() {
     setCompletionError('');
     try {
       await restart();
+      setManualRestart(false);
+      chooseAccess(false);
     } finally {
       actionRef.current = false;
       setAction(null);
@@ -85,9 +120,10 @@ export default function WizardPageClient() {
   return (
     <WizardFrame stepIndex={stepIndex} steps={STEPS} busy={action !== null} onStepClick={(index) => { if (!actionRef.current) goToStep(index); }}>
       {step === 'welcome'   && <WelcomeStep onNext={goNext} />}
+      {step === 'access' && <AccessStep onNext={goNext} onSkip={skip} localChosen={accessRestart} onChoice={chooseAccess} />}
       {step === 'providers' && <ProvidersStep keys={providerKeys} onChange={setProviderKeys} onNext={goNext} onSkip={skip} saving={saving} />}
       {step === 'agents'    && <AgentsStep onNext={goNext} onSkip={skip} />}
-      {step === 'done'      && <DoneStep onComplete={handleComplete} action={action} error={completionError} onRestart={handleRestart} />}
+      {step === 'done'      && <DoneStep manualRestart={manualRestart} accessRestart={accessRestart} onComplete={handleComplete} action={action} error={completionError} onRestart={handleRestart} />}
     </WizardFrame>
   );
 }
@@ -109,7 +145,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         <Feature icon={<AgentIcon />} title="One-Click Deploy" desc="Create new agents from templates with a single click. No Docker expertise needed." />
       </div>
       <div className="wizard-actions">
-        <span className="wizard-meta">3 steps · ~2 minutes</span>
+        <span className="wizard-meta">4 steps · ~2 minutes</span>
         <Button variant="primary" size="md" onClick={onNext}>
           Get Started <ArrowRightIcon />
         </Button>
@@ -192,7 +228,9 @@ function AgentsStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void
   );
 }
 
-function DoneStep({ onComplete, action, error, onRestart }: {
+function DoneStep({ onComplete, action, error, onRestart, accessRestart, manualRestart }: {
+  manualRestart: boolean;
+  accessRestart: boolean;
   onComplete: () => void;
   action: 'complete' | 'restart' | null;
   error: string;
@@ -224,6 +262,7 @@ function DoneStep({ onComplete, action, error, onRestart }: {
           </div>
         ))}
       </div>
+      {accessRestart && <p className="wizard-text">Finishing restarts Rev4a to apply Only this computer. Existing agents keep their ports until you recreate them from <Link href="/remote-access" className="wizard-link">Remote access</Link>.</p>}
       {error && <Surface variant="subtle" tone="danger"><div role="alert" style={{ overflowWrap: 'anywhere' }}>{error}</div></Surface>}
       <div className="wizard-actions" style={{ justifyContent: 'center', gap: 12 }}>
         <div className="wizard-done-actions">
@@ -231,7 +270,7 @@ function DoneStep({ onComplete, action, error, onRestart }: {
             {action === 'restart' ? 'Restarting…' : 'Restart Wizard'}
           </Button>
           <Button type="button" variant="primary" size="md" onClick={onComplete} loading={action === 'complete'} disabled={action !== null}>
-            {action === 'complete' ? 'Finishing…' : 'Start Using Rev4a'} <ArrowRightIcon />
+            {action === 'complete' ? 'Finishing…' : manualRestart ? 'Continue to Rev4a' : 'Start Using Rev4a'} <ArrowRightIcon />
           </Button>
         </div>
       </div>
@@ -281,7 +320,7 @@ function WizardFrame({
 
               return (
                 <div key={s.key} className="wizard-step">
-                  <button
+                  <button type="button"
                     onClick={() => clickable && onStepClick(i)}
                     disabled={!clickable}
                     title={s.label}

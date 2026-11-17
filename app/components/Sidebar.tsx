@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import MobileBottomNav from './MobileBottomNav';
+import { ShieldIcon } from './Icons';
 
 interface NavItem {
   href: string;
@@ -177,6 +178,11 @@ const NAV_GROUPS: NavGroup[] = [
             <path d="M1.5 6.5h13M4 10h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         ),
+      },
+      {
+        href: '/remote-access',
+        label: 'Remote access',
+        icon: <ShieldIcon size={16} aria-hidden="true" />,
       },
       {
         href: '/config',

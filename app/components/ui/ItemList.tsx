@@ -81,3 +81,13 @@ export function ListItemSeparator({ label }: ListItemSeparatorProps) {
     </div>
   );
 }
+
+/** Read-only rows with a separate action slot; never nest buttons inside a button. */
+export function ItemList({ items }: { items: { id: string; content: ReactNode; action?: ReactNode }[] }) {
+  return <ul className="ui-item-list">
+    {items.map((item) => <li key={item.id} className="ui-item-list__row">
+      <div className="ui-item-list__content">{item.content}</div>
+      {item.action}
+    </li>)}
+  </ul>;
+}

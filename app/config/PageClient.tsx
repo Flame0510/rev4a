@@ -115,7 +115,10 @@ export default function ConfigPageClient() {
         if (restart) {
           setRestarting(true);
           const restartRes = await fetch('/api/config/restart', { method: 'POST' });
-          if (!restartRes.ok) throw new Error('Configuration saved, but Rev4a could not restart. Try again.');
+          if (!restartRes.ok) {
+            const failure = await restartRes.json();
+            throw new Error(failure.error || failure.message || 'Configuration saved, but Rev4a could not restart. Try again.');
+          }
           setTimeout(() => {
             setRestarting(false);
             setStatus('idle');

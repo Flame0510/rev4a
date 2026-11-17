@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
-import { publishesWiderThan } from '@/lib/agent-ports';
+import { publishesDifferently } from '@/lib/agent-ports';
 import { dockerFetch } from '@/lib/docker-socket';
 import { parseSetting } from '@/lib/listen-addresses';
 
@@ -10,20 +10,28 @@ export const runtime = 'nodejs';
 
 type Mode = 'all' | 'local' | 'address';
 
-/**
- * How many running agents publish ports on a wider address than the setting asks (they were created
- * or last recreated before it): the setting applies at the next Recreate, Update or Edit. Addresses only. null: Docker unreachable.
- */
-async function runningAgentsPublishedDifferently(hostIp: string | null): Promise<number | null> {
-  if (!hostIp) return 0;
+/** Inspect stopped containers too: Docker's list omits their port bindings. Never return their ids. */
+async function agentsPublishedDifferently(hostIp: string | null) {
+  const empty = { differing: 0, stoppedDiffering: 0, runningDiffering: [] as { id: string; name: string }[] };
+  if (hostIp === null) return empty;
   try {
-    const filters = encodeURIComponent(JSON.stringify({ label: ['AGENT_ID'], status: ['running'] }));
-    const list = await dockerFetch<{ Id?: string }[]>('GET', `/containers/json?filters=${filters}`);
+    const filters = encodeURIComponent(JSON.stringify({ label: ['AGENT_ID'] }));
+    const list = await dockerFetch<{ Id?: string }[]>('GET', `/containers/json?all=true&filters=${filters}`);
     const infos = await Promise.all((Array.isArray(list) ? list : []).filter((c) => c.Id).map((c) =>
-      dockerFetch<{ HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> } }>('GET', `/containers/${c.Id}/json`).catch(() => null)));
-    return infos.filter((i) => i && publishesWiderThan(i.HostConfig?.PortBindings, hostIp)).length;
+      dockerFetch<{ Name?: string; State?: { Running?: boolean }; Config?: { Labels?: Record<string, string>; Env?: string[] }; HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> } }>('GET', `/containers/${c.Id}/json`).catch(() => null)));
+    for (const info of infos) {
+      if (!info) continue; // A recreate/delete can remove a container after the listing.
+      if (!publishesDifferently(info.HostConfig?.PortBindings, hostIp)) continue;
+      if (info.State?.Running === true) {
+        empty.differing++;
+        const id = info.Config?.Labels?.AGENT_ID;
+        const name = info.Config?.Env?.find((entry) => entry.startsWith('AGENT_NAME='))?.slice(11) || info.Name?.replace(/^\//, '') || id;
+        if (id && name) empty.runningDiffering.push({ id, name });
+      } else empty.stoppedDiffering++;
+    }
+    return empty;
   } catch {
-    return null;
+    return { differing: null, stoppedDiffering: null, runningDiffering: [] };
   }
 }
 
@@ -45,5 +53,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     panel = { mode: parseSetting(process.env.REV4A_LISTEN).kind === 'all' ? 'all' : 'local', port, addresses: [] };
   }
   const agents = currentAgentPortsListen();
-  return NextResponse.json({ panel, agents: { mode: agents.hostIp === null ? 'keep' : agents.mode, differing: await runningAgentsPublishedDifferently(agents.hostIp) } });
+  const startedAtMs = Number(process.env.REV4A_STARTED_AT) || null;
+  return NextResponse.json({ panel, startedAtMs, agents: { mode: agents.hostIp === null ? 'keep' : agents.mode, ...await agentsPublishedDifferently(agents.hostIp) } });
 }

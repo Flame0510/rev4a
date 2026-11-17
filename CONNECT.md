@@ -1,5 +1,9 @@
 # CONNECT.md — Getting Started with Rev4a
 
+> **Last updated:** 2026-11-17
+
+**1.29.0:** Choose guarded presets on the [Remote access page](/remote-access) or Access on first run; Save & Restart works under systemd and rev4a serve on Linux, macOS and Windows (direct next dev asks for a manual restart).
+
 > A monitoring dashboard for AI agent systems — tracks sessions, costs, agent hierarchy, workspace files, and event streams.
 
 ## Deploy on a VPS

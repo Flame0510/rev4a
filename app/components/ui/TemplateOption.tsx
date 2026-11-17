@@ -8,51 +8,23 @@ interface TemplateOptionProps {
   description: string;
   onClick: () => void;
   badge?: ReactNode;
+  disabled?: boolean;
+  icon?: ReactNode;
+  avatarVariant?: 'letter' | 'icon';
+  disabledReason?: string;
+  current?: boolean;
 }
 
-export function TemplateOption({ id, selected, description, onClick, badge }: TemplateOptionProps) {
+export function TemplateOption({ id, selected, description, onClick, badge, disabled, icon, avatarVariant = 'letter', disabledReason, current = false }: TemplateOptionProps) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        width: '100%',
-        padding: '14px 16px',
-        textAlign: 'left',
-        fontSize: 14,
-        fontFamily: 'var(--font-mono-stack)',
-        color: 'var(--text)',
-        cursor: 'pointer',
-        outline: 'none',
-        transition: 'background 0.1s, border-color 0.1s',
-        background: selected ? 'var(--violet-bg)' : 'transparent',
-        border: `1px solid ${selected ? 'var(--violet)' : 'var(--border)'}`,
-      }}
-    >
-      <span
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: selected ? 'var(--violet)' : 'var(--border)',
-          color: selected ? '#111' : '#666',
-          fontSize: 12,
-          fontWeight: 600,
-          flexShrink: 0,
-        }}
-      >
-        {id[0].toUpperCase()}
+    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={selected}
+      className={`ui-template-option${selected ? ' ui-template-option--selected' : ''}${current ? ' ui-template-option--current' : ''}`}>
+      <span className={`ui-template-option__avatar${avatarVariant === 'icon' ? ' ui-template-option__avatar--icon' : ''}`}>{icon ?? id[0].toUpperCase()}</span>
+      <span className="ui-template-option__body">
+        <span className="ui-template-option__title">{id}</span>
+        <span className="ui-template-option__description">{description}</span>
+        {disabledReason && <span className="ui-template-option__description">{disabledReason}</span>}
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 500, fontSize: 14 }}>{id}</div>
-        <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{description}</div>
-      </div>
       {badge}
     </button>
   );

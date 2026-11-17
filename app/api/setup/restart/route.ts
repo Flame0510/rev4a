@@ -7,14 +7,11 @@
  * Restart reloads .env for all services. Password setup itself takes effect
  * immediately; other environment edits still need a restart.
  *
- * Strategy:
- *   1. If running under systemd (rev4a.service), restart via systemctl.
- *   2. Otherwise send SIGTERM to the current process. The parent process
- *      manager (npx rev4a all or a shell wrapper) should restart it.
+ * Uses the shared restart helper; never terminates only the server.
  */
-import { NextResponse, type NextRequest } from 'next/server';
+import { after, NextResponse, type NextRequest } from 'next/server';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { prepareRestart, RestartUnavailable } from '@/lib/rev4a-restart';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { requireAuthIfConfigured } from '@/lib/rev4a-auth';
 import { readEnvValue } from '@/lib/env-file';
@@ -41,41 +38,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Try systemd first (production).
-    // If it fails, fall back to SIGTERM (dev mode / container).
-    let usedSystemd = false;
-    try {
-      execSync('sudo systemctl daemon-reload', { timeout: 5000 });
-      usedSystemd = true;
-    } catch {
-      // systemctl not available — fine, we'll SIGTERM
-    }
-
-    const response = NextResponse.json({
-      status: 'ok',
-      restarting: true,
-      mode: usedSystemd ? 'systemd' : 'process',
+    const restart = prepareRestart();
+    const response = NextResponse.json({ status: 'ok', restarting: true, mode: restart.mode });
+    after(() => {
+      try { restart.run(); } catch (error) { console.error('[setup/restart] restart failed:', error); }
     });
-
-    if (usedSystemd) {
-      setTimeout(() => {
-        try {
-          execSync('sudo systemctl restart rev4a.service', { timeout: 15000 });
-        } catch (err) {
-          console.error('[setup/restart] systemd restart failed:', err);
-        }
-      }, 2000);
-    } else {
-      // Dev mode / container: send SIGTERM after flushing response.
-      // The parent (npx rev4a all or shell) will restart the process,
-      // which will re-read .env at startup.
-      setTimeout(() => {
-        process.kill(process.pid, 'SIGTERM');
-      }, 2000);
-    }
 
     return response;
   } catch (e: unknown) {
+    if (e instanceof RestartUnavailable) return NextResponse.json({ error: e.message }, { status: 409 });
     console.error('[setup/restart]', e);
     return NextResponse.json({ error: 'Failed to restart' }, { status: 500 });
   }

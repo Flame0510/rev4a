@@ -10,7 +10,7 @@ import { BackupsMigrationNotice } from './BackupsMigrationNotice';
 import { MemoryLimitWarning } from './MemoryLimitWarning';
 import { OrphanVolumes } from './OrphanVolumes';
 import { PlainHttpNotice } from './PlainHttpNotice';
-import { RemoteAccessLine } from './RemoteAccessLine';
+import { RemoteAccessSummary } from './RemoteAccessSummary';
 import { RecentAlerts } from './RecentAlerts';
 import { SystemCardsSkeleton, SystemChartsSkeleton, SystemDescription } from './SystemSkeleton';
 
@@ -141,7 +141,6 @@ export default function SystemPageClient() {
       />
 
       <PlainHttpNotice />
-      <RemoteAccessLine />
 
       {error && <Surface tone="danger"><span style={{ color: 'var(--red)', fontSize: 12 }}>{error}</span></Surface>}
 
@@ -264,6 +263,8 @@ export default function SystemPageClient() {
         ))}
       </div>
       )}
+
+      <RemoteAccessSummary />
 
       <BackupsMigrationNotice />
 

@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-16
+> **Last updated:** 2026-11-17
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -202,7 +202,9 @@ Restart the service so a freshly written `.env` takes effect.
 **Auth:** setup code before a password exists, then browser cookie or bearer token (`requireAuthIfConfigured`)
 
 **Errors:** `400` if the last parsed `REV4A_PASSWORD` in `.env` is empty or missing;
-`500` if the `.env` file is missing, or the restart could not be issued.
+`409` with `{ "error": "Restart Rev4a by hand to apply" }` when neither systemd nor the supervisor owns the server; `500` if `.env` is missing or restart preparation fails.
+
+**Response 200 (1.29.0):** `{ "status": "ok", "restarting": true, "mode": "systemd" }` (or `"supervisor"`). Execution is scheduled after sending the answer; it restarts every Rev4a service, never only the server.
 
 ### `GET /api/setup/agent-image`
 Whether a supported OpenClaw version of the agent image is downloaded.
@@ -506,8 +508,8 @@ Read stored and runtime variables with `REV4A_` or `PROVIDER_` prefixes.
 
 Per-process keys are never included, from either the file or runtime environment:
 `REV4A_SERVER_PID`, `REV4A_STARTED_AT`, `REV4A_RUNNING_VERSION`,
-`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE` and
-`REV4A_DOTENV_KEYS` (the shared
+`REV4A_TERMINAL_SECRET`, `REV4A_SETUP_CODE`, `REV4A_LISTEN_STATE`,
+`REV4A_DOTENV_KEYS` and `REV4A_SUPERVISED` (the shared
 `RUNTIME_ONLY_ENV_KEYS` list in `lib/env-file.js`). Other allowed keys absent from
 the file are supplemented from `process.env` for display.
 
@@ -573,11 +575,11 @@ setup, `writeEnvVar()` and the launcher's default configuration generation follo
 the same rule.
 
 ### `POST /api/config/restart`
-Restart the Rev4a server (via systemd).
+Restart all Rev4a services through the shared helper (1.29.0).
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
 
-**Response:** `{ "status": "ok", "message": "Service restarted" }`
+**Response 200:** `{ "status": "ok", "restarting": true, "mode": "systemd" }` (or `"supervisor"`). After sending the response, the helper restarts its own `rev4a.service` or writes `<REV4A_DATA_DIR>/data/.restart-flag` for `rev4a serve`. Direct `next dev` returns `409` with `error` and `message` both **Restart Rev4a by hand to apply**, with no action scheduled. Preparation errors return `500`; execution failures after the response are logged.
 
 ---
 
@@ -2385,12 +2387,33 @@ Where Rev4a listens (SEC-9B, 1.28.0). No secrets.
 
 **Response 200:**
 ```json
-{ "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "agents": { "mode": "local" } }
+{ "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "agents": { "mode": "local", "differing": 1, "stoppedDiffering": 2, "runningDiffering": [{ "id": "atlas", "name": "Atlas" }] } }
 ```
 `panel.mode` is `all` | `local` | `address` as resolved at start-up from `REV4A_LISTEN` (`addresses` is empty for `all`);
-`agents.mode` is `keep` when `REV4A_AGENT_PORTS_LISTEN` is unset or empty (each agent keeps its current address), otherwise `all` | `local` | `address` read now (explicit `all` means every interface; an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate, Update or Edit applies the setting), or `null` when Docker cannot be read; it is `0` in `keep` and `all` modes. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
+`agents.mode` is `keep` when `REV4A_AGENT_PORTS_LISTEN` is unset or empty (each agent keeps its current address), otherwise `all` | `local` | `address` read now (explicit `all` means every interface; an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate, Update or Edit applies the setting), or `null` when Docker cannot be read; it is `0` in `keep` mode. Since 1.29.0, explicit `all` also counts agents still bound to a specific address. `agents.stoppedDiffering` counts stopped mismatches only (`null` if Docker cannot be read); no stopped ids are returned. `agents.runningDiffering` lists only running mismatches as `{ id, name }`, from fresh container inspection; `[]` on Docker failure. An individual inspect failure (for example removal during Recreate) is skipped without losing other rows. No secret environment values are exposed. Top-level `startedAtMs` is the server start timestamp (`REV4A_STARTED_AT`), or `null` for a direct development server; System waits for it to change before offering recreates after a restart request. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
 
 ---
+
+### `GET /api/system/remote-access` / `PUT /api/system/remote-access` (1.29.0)
+
+**Auth:** browser cookie or bearer token; normal cross-origin write protection applies.
+GET returns `{ settings: { REV4A_LISTEN, REV4A_AGENT_PORTS_LISTEN, REV4A_TRUSTED_PROXIES }, startupSettings: { REV4A_LISTEN, REV4A_AGENT_PORTS_LISTEN, REV4A_TRUSTED_PROXIES } }`
+with no-store and no secrets. Settings come from the file/current inherited environment;
+startupSettings is the boot environment, including the server's trusted-proxy matcher setting.
+Comparing both retains proxy-only restart prompts after a UI reload. No write on read.
+
+PUT takes `{ preset: 'local' | 'direct' | 'domain', location: { protocol, hostname, port? },
+proxyConfirmed?: boolean, edits: Record<string, string> }`. The browser location supplies
+UX lockout guards (it is not an authorization boundary): local is allowed only on localhost,
+localhost., 127.0.0.1 and ::1/[::1]. Other 127.x hosts receive a canonical reconnect URL with
+their browser port. Domain always requires `proxyConfirmed: true`, including HTTPS hostnames;
+the modal explains the required loopback or Docker host bridge target. Direct is always allowed.
+The server computes edits itself, appends only missing loopback proxy entries for domain,
+and compares them with the reviewed `edits` (409 on a stale/mismatched confirmation).
+It delegates to `lib/env-edit.ts`, the same validation, line preservation and 0600 write
+path as Config; explicitly selected settings are persisted even if inherited values match.
+Success is `{ status: 'ok', updated: string[] }`. Malformed JSON and invalid input/guards return 400;
+ambiguous files return 409; read/write errors return 500. PUT never restarts or recreates.
 
 ## System volumes
 
