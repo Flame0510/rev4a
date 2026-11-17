@@ -438,6 +438,14 @@ export interface ClaudeUsageWindow {
   resetAt: string | null;
 }
 
+export const CLAUDE_TERMS_MESSAGE = 'Anthropic asks this account to accept its updated terms before Claude can answer. Sign in at claude.ai with this account and accept them.';
+
+/** Detect only Anthropic's terms notice; other action-required notices stay ordinary failures. */
+export function claudeTermsRequired(text: unknown): boolean {
+  return typeof text === 'string' && /\[ACTION REQUIRED\]/i.test(text)
+    && /Consumer Terms|review the updated terms/i.test(text);
+}
+
 /**
  * The fixed probe that makes Claude Code report the plan's usage: one tiny call (measured live
  * 2026-11-14: about 1.5 s and a few hundred tokens of the plan; Haiku, no tools, no session) whose stream carries a single `rate_limit_event`. It is a
@@ -447,7 +455,7 @@ export interface ClaudeUsageWindow {
  */
 export const CLAUDE_USAGE_PROBE =
   'cd /tmp && timeout 60 /root/.local/bin/claude -p "." --model haiku --system-prompt "Answer with one character." '
-  + '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose; true';
+  + '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose 2>&1; true';
 
 /** The windows Claude Code reports, with the labels the ChatGPT usage uses for the same windows. */
 const CLAUDE_USAGE_WINDOWS: readonly (readonly [string, string])[] = [
@@ -456,7 +464,7 @@ const CLAUDE_USAGE_WINDOWS: readonly (readonly [string, string])[] = [
 ];
 
 /**
- * The usage windows from the stdout of the probe: only the `rate_limit_event` line is read (every
+ * The usage windows from the combined stdout/stderr of the probe: only the `rate_limit_event` line is read (every
  * other line, and every other field of that line, is ignored). `utilization` is a 0..1 fraction
  * and `resetsAt` epoch seconds. A window with no finite utilization is left out; null when there
  * is no event, nothing usable in it, or the text is not stream-json at all.

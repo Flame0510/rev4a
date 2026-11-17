@@ -18,6 +18,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Input, LoadingSpinner, Modal } from '@/app/components/ui';
 import type { SubscriptionProviderCopy } from './providers';
 import { linkCodeStep } from './providers';
+import { CLAUDE_TERMS_MESSAGE } from '@/lib/subscription-claude-parse';
+import { useClaudeTermsAutoCheck, type UsageResponse } from './usage';
 
 type LoginState = 'starting' | 'installing' | 'waiting' | 'verifying' | 'connecting' | 'connected' | 'failed' | 'expired' | 'cancelled';
 
@@ -28,6 +30,7 @@ interface Login {
   email: string | null;
   plan: string | null;
   error: string | null;
+  termsRequired?: boolean;
 }
 
 const ACTIVE: readonly LoginState[] = ['starting', 'installing', 'waiting', 'verifying', 'connecting'];
@@ -46,7 +49,8 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
   /** The provider's login route (`…/login`); the code route is `<loginPath>/code`. */
   loginPath: string;
   onClose: () => void;
-  onConnected: (email: string | null) => void;
+  /** `termsRequired`: connected, but Anthropic blocks the account until it accepts the updated terms. */
+  onConnected: (email: string | null, termsRequired: boolean) => void;
 }) {
   const text = copy.linkCode;
   if (!text) throw new Error('The Claude sign-in dialog needs link-code copy.');
@@ -73,6 +77,39 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
   const stateSeqRef = useRef(0);
   const startedRef = useRef(false);
   const announcedRef = useRef(false);
+  const termsRef = useRef<AbortController | null>(null);
+  const termsCheckingRef = useRef(false);
+  const termsBusy = useCallback(() => termsCheckingRef.current, []);
+  const [checkingTerms, setCheckingTerms] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
+  const termsEmail = login?.state === 'connected' && login.termsRequired ? login.email : null;
+  const checkTerms = useCallback(async () => {
+    if (!termsEmail) return;
+    termsRef.current?.abort();
+    const controller = new AbortController();
+    termsRef.current = controller;
+    termsCheckingRef.current = true;
+    setCheckingTerms(true);
+    setTermsError(null);
+    try {
+      const json = await readJson<UsageResponse>(await fetch(
+        `/api/subscriptions/usage?provider=anthropic&refresh=1&email=${encodeURIComponent(termsEmail)}`,
+        { signal: controller.signal },
+      ));
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(json.accounts) || !Array.isArray(json.errors)) throw new Error('unavailable');
+      const terms = json.errors.some((e) => e.email === termsEmail && e.code === 'terms-required');
+      if (!terms && json.accounts.some((a) => a.email === termsEmail)) {
+        setLogin((prev) => prev?.email === termsEmail ? { ...prev, termsRequired: false } : prev);
+      } else if (!terms) setTermsError('Could not check the account. Try again.');
+    } catch (e) {
+      if ((e as Error)?.name !== 'AbortError') setTermsError('Could not check the account. Try again.');
+    } finally {
+      if (termsRef.current === controller) { termsCheckingRef.current = false; setCheckingTerms(false); }
+    }
+  }, [termsEmail]);
+  const openClaude = useClaudeTermsAutoCheck(termsEmail, checkTerms, termsBusy);
+  useEffect(() => () => { termsRef.current?.abort(); }, [termsEmail]);
 
   const start = useCallback(async () => {
     // A second start (Start again) supersedes a first one still in flight.
@@ -163,7 +200,7 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
   useEffect(() => {
     if (login?.state === 'connected' && !announcedRef.current) {
       announcedRef.current = true;
-      onConnected(login.email);
+      onConnected(login.email, login.termsRequired === true);
     }
   }, [login, onConnected]);
 
@@ -294,7 +331,17 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
         {step === 'connecting' && <LoadingSpinner compact label={text.connecting} />}
 
         {step === 'connected' && login && (
-          <>
+          login.termsRequired ? <>
+            <div>{CLAUDE_TERMS_MESSAGE}</div>
+            {login.email && <div>{login.email}</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Button type="button" variant="primary" size="sm" disabled={checkingTerms} onClick={openClaude}>Open claude.ai</Button>
+              <Button type="button" variant="secondary" size="sm" loading={checkingTerms} disabled={checkingTerms || !termsEmail} onClick={() => { void checkTerms(); }}>
+                {checkingTerms ? 'Checking…' : 'Check again'}
+              </Button>
+            </div>
+            {termsError && <div style={{ color: 'var(--red)' }}>{termsError}</div>}
+          </> : <>
             <div style={{ color: 'var(--green)' }}>
               {text.connected}
               {login.email ? ` · ${login.email}${login.plan ? ` · ${login.plan}` : ''}` : login.plan ? ` · ${login.plan}` : ''}
@@ -316,7 +363,7 @@ export default function ClaudeConnectModal({ agentId, agentName, copy, loginPath
             </Button>
           )}
           {step === 'connected' ? (
-            <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            <Button type="button" variant="secondary" size="sm" disabled={checkingTerms} onClick={onClose}>
               {text.done}
             </Button>
           ) : step === 'failed' ? (

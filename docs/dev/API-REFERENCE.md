@@ -3319,6 +3319,15 @@ absence from older responses.
 ### `GET /api/subscriptions/usage`
 **Query:** `email=<account>` for one account, `refresh=1` to bypass the cache, optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`; a known provider without usage limits → **400** `{ "error": "This subscription provider has no usage limits" }`). `provider=anthropic` answers the Claude plan's usage with the same response shape (windows "5 hours" and "Week"); each read is ONE tiny Claude Code call inside a running connected agent (`claude -p "." --model haiku` with no tools, MCP or session: about 1.5 s and a few hundred tokens of the plan), of which only the `rate_limit_event` line is read; the result and a failure (`Could not read the Claude usage limits.` in `errors`) are cached 3 minutes per account, `refresh=1` bypasses it, concurrent callers share one probe, and no credential file is read. **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is OpenClaw's own label, seen as "5h" and "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json` under an in-container `timeout 120`; 11 to 50 s on a slow host) and cached 3 minutes per account, failures included, so the next refresh does not start another CLI. A connect or disconnect does not drop this cache; `refresh=1` is the only way to force a read. One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
 
+Claude usage `errors[]` adds optional `code: "terms-required"`. Its `email` is the blocked account
+and its `message` is "Anthropic asks this account to accept its updated terms before Claude can answer. Sign in at claude.ai with this account and accept them."
+The same fixed usage probe captures stderr (`2>&1; true`) and detects `[ACTION REQUIRED]` plus
+`Consumer Terms` or `review the updated terms` (case-insensitive). Terms errors share the existing
+3-minute account cache and in-flight deduplication; `?provider=anthropic&refresh=1&email=<account>`
+bypasses that cache. Other failures keep their existing message and no code; ChatGPT is unchanged.
+Rev4a does not accept terms for the user or drive the interactive notice, because Anthropic's
+Consumer Terms §3.7 forbid automated access and Claude Code requires account flows to complete through Anthropic's own flow.
+
 ### `POST /api/subscriptions/openai/login`
 **Body:** `{ "agentId": "atlas" }`. Starts the device-code login (waits for the agent's Gateway to be ready, then runs `openclaw models auth login --provider openai --device-code` inside the container). **Response:** `{ login }` with `state` `starting`. 409 when the agent is stopped, busy, already connected, or not on a supported OpenClaw version ("This agent is not on a supported OpenClaw version (2026.9.x). Update it first."); 503 when its subscription status cannot be read ("Could not read this agent's subscription status: <reason>"). Every login answer carries `Cache-Control: no-store` (the body holds the device code). When a login is already running for the agent, the same `{ login }` is returned with 200 (a second tab or a reopened dialog resumes it), also for a login that has just connected and whose CLI is still finishing. `expiresAt` in the login is epoch milliseconds. A busy login lasts at most 60 s readiness + 900 s + 60 s tail; after 1020 s the job counts as expired.
 
@@ -3385,7 +3394,7 @@ answer `pending: true`, as for ChatGPT.
 `/root/.local/bin/claude` is missing it first installs Claude Code with Anthropic's installer
 (`curl -fsSL https://claude.ai/install.sh | bash`, bounded by `timeout 300`), then runs
 `timeout 600 script -e -qfc "/root/.local/bin/claude auth login" /dev/null` with stdin piped. **Response:** `{ login }`
-with `{ agentId, state, url, email, plan, error }`, `state` one of `starting`, `installing`, `waiting`,
+with `{ agentId, state, url, email, plan, error, termsRequired }`, `state` one of `starting`, `installing`, `waiting`,
 `verifying`, `connecting`, `connected`, `failed`, `expired`, `cancelled`. `url` is Anthropic's link and
 is shown only when it starts with `https://claude.com/cai/oauth/authorize?` or
 `https://claude.ai/oauth/authorize?`, is at most 2048 characters and carries no whitespace or control
@@ -3393,6 +3402,12 @@ character: any other link is dropped. When a login is already running for the ag
 is returned with 200. 409 when the agent is stopped, busy, already connected, or not on a supported
 OpenClaw version; 503 when its status cannot be read. The job is in memory, one per agent; a dashboard
 restart loses it, and the in-container `timeout` bounds the orphaned process.
+
+`termsRequired` is an additive boolean, false by default. After the route, sandbox setting and
+lean tools are applied, the job runs the same usage probe once (in-container `timeout 60`, host
+exec deadline with grace). A terms notice sets it to true while the state still finishes
+`connected`; every other probe failure is non-fatal. No credential file is read and the terms screen is never driven.
+The log names only the container. Existing connected accounts are detected on their next usage read.
 
 ### `GET /api/subscriptions/anthropic/login?agentId=<id>`
 **Response:** `{ login }`, `{ login: null }` when there is none. It carries no code and no token, only the
@@ -3404,6 +3419,8 @@ Cancels the login, including the `claude auth login` process inside the containe
 `/proc`; the images have no `ps`). An installer already running keeps its own `timeout 300` and
 does not start a login afterwards. Once the code has been submitted (`verifying`, `connecting`) it
 changes nothing: the job finishes on its own (connected or failed) and is returned as it stands.
+This includes the final usage probe that checks Anthropic's terms (bounded by its own 60 s timeout):
+the agent is already connected by then.
 **Response:** `{ login }` with the job as it stands (`cancelled`, its final state if it had already
 ended, or `verifying`/`connecting` after the code), `{ login: null }` when there is none.
 

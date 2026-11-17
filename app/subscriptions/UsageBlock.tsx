@@ -16,7 +16,7 @@ import { Button, Meter } from '@/app/components/ui';
 import { DEFAULT_SUBSCRIPTION_PROVIDER, type SubscriptionProvider } from '@/lib/subscription-providers';
 import { getProviderCopy } from './providers';
 import { Skeleton } from '@/app/components/Skeleton';
-import { agoText, formatReset, reachedWindow, usageTone, windowTitle, type UsageAccount, type UsageResponse } from './usage';
+import { agoText, formatReset, reachedWindow, usageTone, windowTitle, useClaudeTermsAutoCheck, type UsageAccount, type UsageResponse } from './usage';
 
 const DIM = 'var(--text-dim, #888)';
 
@@ -35,6 +35,8 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
   const refreshingRef = useRef<string | null>(null);
   const [failed, setFailed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  /** Read by the automatic terms checks when they fire: set synchronously by load, so two cannot overlap. */
+  const isRefreshing = useCallback(() => refreshingRef.current !== null, []);
   const key = emails.join('\n');
 
   // `background`: the periodic refresh — no skeleton, no spinner, and a failure keeps what is shown.
@@ -56,15 +58,25 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
         : `${base}${base.includes('?') ? '&' : '?'}provider=${encodeURIComponent(provider.id)}`;
       const res = await fetch(url, { signal: controller.signal });
       const json = (await res.json().catch(() => ({}))) as Partial<UsageResponse>;
+      if (controller.signal.aborted) return;
       if (!res.ok) throw new Error('unavailable');
       const next: UsageResponse = { accounts: json.accounts ?? [], errors: json.errors ?? [] };
+      if (provider.id === 'anthropic' && refreshEmail && next.errors.some((e) => e.email === refreshEmail && e.code !== 'terms-required')) setFailed(true);
       // A one-account refresh replaces only that account's entry and error.
-      setData((prev) => (refreshEmail && prev
+      setData((prev) => {
+        // A failed read cannot prove that previously required terms were accepted.
+        const retained = (prev?.errors ?? []).filter((e) => e.code === 'terms-required'
+          && (!refreshEmail || e.email === refreshEmail)
+          && !next.accounts.some((a) => a.email === e.email)
+          && !next.errors.some((n) => n.email === e.email && n.code === 'terms-required'));
+        const errors = [...next.errors.filter((e) => !retained.some((r) => r.email === e.email)), ...retained];
+        return refreshEmail && prev
         ? {
             accounts: [...prev.accounts.filter((x) => x.email !== refreshEmail), ...next.accounts].sort((x, y) => (x.email ?? '').localeCompare(y.email ?? '')),
-            errors: [...prev.errors.filter((x) => x.email !== refreshEmail), ...next.errors],
+            errors: [...prev.errors.filter((x) => x.email !== refreshEmail), ...errors],
           }
-        : next));
+        : { ...next, errors };
+      });
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') return;
       if (!background) setFailed(true);
@@ -90,7 +102,7 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
   if (!key) return null;
 
   const shown = (data?.accounts ?? []).filter((a) => a.email && emails.includes(a.email));
-  const errors = data?.errors ?? [];
+  const errors = (data?.errors ?? []).filter((e) => provider.id !== 'anthropic' || !e.email || emails.includes(e.email));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} aria-busy={loading}>
@@ -105,19 +117,42 @@ export default function UsageBlock({ provider, emails, fallbackName }: {
       {failed && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, color: 'var(--red)' }}>
           Could not read the usage limits.
-          <Button variant="secondary" size="sm" loading={loading} onClick={() => { void load(null); }}>
+          <Button type="button" variant="secondary" size="sm" loading={loading} disabled={loading || refreshingKey !== null} onClick={() => { void load(null); }}>
             {loading ? 'Retrying…' : 'Retry'}
           </Button>
         </div>
       )}
       {shown.map((a) => (
-        <AccountUsage key={a.email} account={a} reachedText={getProviderCopy(provider.id)?.usageReached ?? ''} fallbackName={fallbackName} refreshing={refreshingKey === a.email} disabled={refreshingKey !== null} onRefresh={() => { void load(a.email); }} />
+        <AccountUsage key={a.email} account={a} reachedText={getProviderCopy(provider.id)?.usageReached ?? ''} fallbackName={fallbackName} refreshing={refreshingKey === a.email} disabled={loading || refreshingKey !== null} onRefresh={() => { void load(a.email); }} />
       ))}
       {errors.map((e) => (
         <div key={e.email ?? e.message} style={{ fontSize: 12, color: 'var(--red)' }}>
           {e.email ? `${e.email}: ` : ''}{e.message}
+          {provider.id === 'anthropic' && e.code === 'terms-required' && e.email && (
+            <TermsActions email={e.email} load={load} isBusy={isRefreshing} checking={refreshingKey === e.email} disabled={loading || refreshingKey !== null} />
+          )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Feature composition of shared Buttons; retries use the existing per-account refresh and its action key. */
+function TermsActions({ email, load, isBusy, checking, disabled }: {
+  email: string;
+  load: (email: string) => Promise<void>;
+  isBusy: () => boolean;
+  checking: boolean;
+  disabled: boolean;
+}) {
+  const check = useCallback(() => load(email), [email, load]);
+  const openClaude = useClaudeTermsAutoCheck(email, check, isBusy);
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+      <Button type="button" variant="primary" size="sm" disabled={disabled} onClick={openClaude}>Open claude.ai</Button>
+      <Button type="button" variant="secondary" size="sm" loading={checking} disabled={disabled} onClick={() => { void check(); }}>
+        {checking ? 'Checking…' : 'Check again'}
+      </Button>
     </div>
   );
 }
@@ -139,7 +174,7 @@ function AccountUsage({ account, reachedText, fallbackName, refreshing, disabled
         <div style={{ fontSize: 12, fontWeight: 600 }}>{account.email}{account.plan ? ` · ${account.plan}` : ''}</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: DIM }}>{agoText(account.updatedAt)}</span>
-          <Button variant="secondary" size="sm" loading={refreshing} disabled={disabled} onClick={onRefresh}>
+          <Button type="button" variant="secondary" size="sm" loading={refreshing} disabled={disabled} onClick={onRefresh}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>

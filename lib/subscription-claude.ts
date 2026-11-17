@@ -53,6 +53,7 @@ import {
 } from '@/lib/subscriptions';
 import { OPENCLAW_RELOAD_TIMEOUT_MS } from '@/lib/credentials/native';
 import { ensureLeanClaudeTools } from '@/lib/claude-lean-tools';
+import { runClaudeProbe } from '@/lib/claude-probe';
 import { ENSURE_SANDBOX_ENV_SCRIPT, parseEnsureSandboxResult } from '@/lib/claude-sandbox-env';
 import {
   CLAUDE_STATUS_SCRIPT_SRC,
@@ -406,6 +407,8 @@ export interface ClaudeLoginView {
   email: string | null;
   plan: string | null;
   error: string | null;
+  /** Connected configuration, but Anthropic requires the user to accept terms at claude.ai. */
+  termsRequired: boolean;
 }
 
 interface Job extends ClaudeLoginView {
@@ -431,7 +434,7 @@ const jobs = (): Map<string, Job> => (g.__rev4aClaudeLogins ??= new Map());
 const deadlineAt = (j: Job): number => j.startedAt + LOGIN_DEADLINE_S * 1000;
 
 function view(j: Job): ClaudeLoginView {
-  return { agentId: j.agentId, state: j.state, url: j.url, email: j.email, plan: j.plan, error: j.error };
+  return { agentId: j.agentId, state: j.state, url: j.url, email: j.email, plan: j.plan, error: j.error, termsRequired: j.termsRequired ?? false };
 }
 
 function finish(j: Job, state: ClaudeLoginState, error: string | null = null): void {
@@ -655,6 +658,12 @@ async function verifyAndConnect(j: Job): Promise<void> {
   // FEAT-27.1: Claude runs start lean. Not fatal: the connection reports connected either way.
   await ensureLeanClaudeTools(j.container);
   if (j.cancelled) { finish(j, 'cancelled'); return; }
+  // Reuse the usage call. An unreadable quota must never turn a successful sign-in into a failure.
+  // Not cancellable (see cancelClaudeLogin): the agent is already connected, and the call is
+  // bounded by its own 60 s timeout.
+  const probe = await runClaudeProbe(j.container);
+  j.termsRequired = 'termsRequired' in probe;
+  if (j.termsRequired) console.warn(`[claude] ${j.container}: Anthropic asks this account to accept its updated terms`);
   dropClaudeCaches();
   finish(j, 'connected');
 }
@@ -694,7 +703,7 @@ export async function startClaudeLogin(agentId: unknown): Promise<ClaudeLoginVie
 
   prune();
   const j: Job = {
-    agentId, state: 'starting', url: null, email: null, plan: null, error: null,
+    agentId, state: 'starting', url: null, email: null, plan: null, error: null, termsRequired: false,
     child: null, container: '', output: '', failedText: null, startedAt: Date.now(), finishedAt: null, cancelled: false, codeSubmitted: false, settled: false,
   };
   jobs().set(agentId, j);
@@ -783,7 +792,8 @@ export async function cancelClaudeLogin(
   if (!j) return null;
   if (!ACTIVE.includes(j.state)) return view(j);
   // Once the code is submitted the job finishes on its own (connected or failed): a cancel now
-  // would mark it cancelled while the configuration change keeps running and writes the rule.
+  // would mark it cancelled while the configuration change keeps running and writes the rule, or
+  // (during the final terms read) while the agent is already connected.
   if (j.codeSubmitted) return view(j);
   // finish() clears the child: take it first, or the host-side `docker exec` is never killed.
   const child = j.child;

@@ -631,7 +631,7 @@ test('kill scripts: the script text never matches its own pattern, and the patte
   }
 });
 
-test('cancel: once the code is submitted nothing changes, and a disconnect needs a readable configuration', () => {
+test('cancel: a submitted code finishes on its own (configuration writes and the terms read)', () => {
   const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
   const cancel = source.slice(source.indexOf('export async function cancelClaudeLogin'));
   const body = cancel.slice(0, cancel.indexOf('\n}'));
@@ -696,6 +696,7 @@ function loadClaudeModule({ reads, execs, leanCalls = [], sandboxEnvAnswer = '{"
     '@/lib/subscriptions-parse': require('../lib/subscriptions-parse.js'),
     '@/lib/claude-sandbox-env': sandboxEnv,
     '@/lib/claude-lean-tools': { ensureLeanClaudeTools: async (c) => { leanCalls.push(c); return 'written'; } },
+    '@/lib/claude-probe': { runClaudeProbe: async () => ({ failed: true }) },
   };
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', sandbox)(
     (name) => {
@@ -946,7 +947,7 @@ test('usage: only the three known fields come back, nothing else from the stream
 
 test('usage: the probe is the fixed command, with no input in it and no credential read', () => {
   assert.match(claude.CLAUDE_USAGE_PROBE, /^cd \/tmp && timeout 60 \/root\/\.local\/bin\/claude -p "\." --model haiku /);
-  assert.match(claude.CLAUDE_USAGE_PROBE, /--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose; true$/);
+  assert.match(claude.CLAUDE_USAGE_PROBE, /--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --output-format stream-json --verbose 2>&1; true$/);
   // A call refused at the limit exits 1 but prints the event: the shell must not turn it into a failed exec.
   const refused = execFileSync('sh', ['-c', 'printf %s\\\\n ' + JSON.stringify(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1794671400, status: 'rejected' } } } })) + '; false; true'], { encoding: 'utf8' });
   assert.deepEqual(claude.parseClaudeUsageEvent(refused).map((w) => w.usedPercent), [100]);

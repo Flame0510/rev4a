@@ -1044,3 +1044,19 @@ than background mutation. The first startup only marks active restores, with no 
 archive extraction; older agents retain their normal lifecycle controls. Previous releases can
 read the original data and ignore the additive fields/tables, but cannot finish pending repairs or
 honor unresolved reservations: finish cleanup/model repair before downgrading.
+
+## BUG-23 update note: Claude account terms
+
+Connected Claude accounts blocked by updated Anthropic terms now show guidance in the connect
+dialog, Subscriptions usage block and agent MODEL line. Open claude.ai, sign in with that account
+and accept there; Check again refreshes the account. After Open, the dialog and usage block also
+check every 15 seconds while visible, for at most 5 minutes. Rev4a never accepts terms or drives
+the notice, because Anthropic's Consumer Terms §3.7 forbid automated access and Claude Code
+requires Anthropic's own account flow. A successful connection stays configured.
+
+No database, configuration, environment, provider vault or agent volume changes are introduced.
+Already connected accounts are detected on their next usage read without a migration or repair.
+There is no startup scan or first-run workload; Connect adds only the bounded existing usage
+probe (60-second in-container timeout). Older Claude Code notices with different text simply
+keep the previous generic usage error and non-fatal connection behaviour. All response fields
+are additive; the previous Rev4a release can still use the same stored data on rollback.

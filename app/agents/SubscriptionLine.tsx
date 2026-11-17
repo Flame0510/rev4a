@@ -9,9 +9,10 @@
  */
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/app/components/ui';
 import { getSubscriptionProvider } from '@/lib/subscription-providers';
 import { EXPERIMENTAL_LABEL, getProviderCopy } from '@/app/subscriptions/providers';
-import { formatReset, reachedWindow, windowShort, type UsageAccount } from '@/app/subscriptions/usage';
+import { formatReset, reachedWindow, windowShort, type UsageAccount, type UsageResponse } from '@/app/subscriptions/usage';
 
 /**
  * The provider of the ChatGPT line: the ChatGPT (Codex) sign-in itself, bound explicitly so a
@@ -65,10 +66,11 @@ export default function SubscriptionLine({ status, claudeStatus, loading, models
   claudeModelsLoading?: boolean;
 }) {
   const email = status?.connected && !status.error ? (status.email ?? null) : null;
-  const usage = useAccountUsage(email, 'openai');
+  const usage = useAccountUsage(email, 'openai').account;
   const claudeConnected = isClaudeConnected(claudeStatus);
   const claudeEmail = claudeConnected ? (claudeStatus?.email ?? null) : null;
-  const claudeUsage = useAccountUsage(claudeEmail, 'anthropic');
+  const claudeRead = useAccountUsage(claudeEmail, 'anthropic');
+  const claudeUsage = claudeRead.account;
 
   if (loading) return <div style={{ fontSize: 11, color: '#888' }}>Subscription: checking…</div>;
 
@@ -120,7 +122,12 @@ export default function SubscriptionLine({ status, claudeStatus, loading, models
       )}
       {claudeConnected && claudeStatus && (
         <div style={{ fontSize: 11, color: '#888' }}>
-          {claudeUsage && !claudeReached ? (
+          {claudeRead.termsRequired ? (
+            <>
+              <span>Anthropic needs this account to accept its updated terms; Claude cannot answer until then.</span>{' '}
+              <Button type="button" variant="primary" size="sm" onClick={() => { window.open('https://claude.ai', '_blank', 'noopener,noreferrer'); }}>Open claude.ai</Button>
+            </>
+          ) : claudeUsage && !claudeReached ? (
             <>
               {CLAUDE_PROVIDER.shortName}{claudeStatus.plan ? ` ${claudeStatus.plan}` : ''}
               {claudeUsage.windows.map((w) => ` · ${windowShort(w.label)} ${Math.max(0, 100 - Math.round(w.usedPercent))}% left`).join('')}
@@ -138,13 +145,15 @@ export default function SubscriptionLine({ status, claudeStatus, loading, models
   );
 }
 
-/** The account's usage windows, loaded apart; null while loading or when it cannot be read. */
-function useAccountUsage(email: string | null, provider: 'openai' | 'anthropic'): UsageAccount | null {
+/** The account's usage windows and terms notice, loaded together by the existing minute poll. */
+function useAccountUsage(email: string | null, provider: 'openai' | 'anthropic'): { account: UsageAccount | null; termsRequired: boolean } {
   const [usage, setUsage] = useState<UsageAccount | null>(null);
+  const [termsRequired, setTermsRequired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     abortRef.current?.abort();
     setUsage(null);
+    setTermsRequired(false);
     if (!email) return;
     const read = async () => {
       abortRef.current?.abort();
@@ -156,11 +165,16 @@ function useAccountUsage(email: string | null, provider: 'openai' | 'anthropic')
           `/api/subscriptions/usage?email=${encodeURIComponent(email)}${provider === 'openai' ? '' : `&provider=${provider}`}`,
           { signal: controller.signal },
         );
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) return;
+        const json = await res.json().catch(() => ({})) as Partial<UsageResponse>;
+        if (controller.signal.aborted || !res.ok) return;
+        const terms = provider === 'anthropic' && (json.errors ?? []).some((e) => e.email === email && e.code === 'terms-required');
         const account = ((json.accounts ?? []) as UsageAccount[]).find((a) => a.email === email);
-        if (account && account.windows.length > 0) setUsage(account);
-      } catch { /* keeps the last value on error, including an abort */ }
+        if (terms) { setTermsRequired(true); setUsage(null); }
+        else if (account && account.windows.length > 0) { setTermsRequired(false); setUsage(account); }
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        // Keep the last value on a transient request failure.
+      }
     };
     void read();
     // Every minute while visible, and when the tab comes back (the server caches for 3 minutes).
@@ -173,5 +187,5 @@ function useAccountUsage(email: string | null, provider: 'openai' | 'anthropic')
       abortRef.current?.abort();
     };
   }, [email, provider]);
-  return usage;
+  return { account: usage, termsRequired };
 }

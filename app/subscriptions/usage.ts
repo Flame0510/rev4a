@@ -1,8 +1,33 @@
 /** Shared by the Subscriptions page and the agent panel: the shape and wording of the usage limits. */
+import { useEffect, useState } from 'react';
 
 export interface UsageWindow { label: string; usedPercent: number; resetAt: string | null }
 export interface UsageAccount { email: string | null; plan: string | null; windows: UsageWindow[]; updatedAt: string | null }
-export interface UsageResponse { accounts: UsageAccount[]; errors: { email: string | null; message: string }[] }
+export interface UsageError { email: string | null; message: string; code?: 'terms-required' }
+export interface UsageResponse { accounts: UsageAccount[]; errors: UsageError[] }
+
+/**
+ * Account-scoped retry window, started only by opening Anthropic's own page. No interactive automation.
+ * `isBusy` is read when a tick fires (pass a stable callback reading a ref): a busy state that changes
+ * must not restart the timer, or the timers of two accounts line up and one check always aborts the other.
+ */
+export function useClaudeTermsAutoCheck(email: string | null, check: () => Promise<void>, isBusy: () => boolean): () => void {
+  const [opened, setOpened] = useState<{ email: string; until: number } | null>(null);
+  useEffect(() => {
+    if (!email || opened?.email !== email) return;
+    const remaining = opened.until - Date.now();
+    if (remaining <= 0) return;
+    const timer = setInterval(() => {
+      if (Date.now() < opened.until && document.visibilityState === 'visible' && !isBusy()) void check();
+    }, 15_000);
+    const deadline = setTimeout(() => clearInterval(timer), remaining);
+    return () => { clearInterval(timer); clearTimeout(deadline); };
+  }, [email, opened, check, isBusy]);
+  return () => {
+    window.open('https://claude.ai', '_blank', 'noopener,noreferrer');
+    if (email) setOpened({ email, until: Date.now() + 5 * 60_000 });
+  };
+}
 
 export function windowTitle(label: string): string {
   if (/^5\s*h/i.test(label)) return '5 hours';

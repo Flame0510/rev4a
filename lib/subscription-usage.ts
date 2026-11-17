@@ -23,6 +23,7 @@ const HOST_TIMEOUT_MS = 130_000;
 export interface UsageError {
   email: string | null;
   message: string;
+  code?: 'terms-required';
 }
 
 export interface SubscriptionUsage {

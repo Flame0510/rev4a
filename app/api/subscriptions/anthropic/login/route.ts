@@ -10,6 +10,7 @@
  * when the agent already has a login running, and 409 when the agent is busy, stopped, already
  * connected or not on a supported OpenClaw version; 503 when its status cannot be read. Every
  * answer carries `Cache-Control: no-store`: the body holds a link and an email.
+ * Views add `termsRequired` (false by default) after the final, non-fatal usage probe.
  *
  * The code is NOT part of this route: it goes to /code once, is written to the process and is
  * never stored, logged or returned (Anthropic's flow keeps the tokens in the agent).

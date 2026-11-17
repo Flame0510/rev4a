@@ -550,9 +550,11 @@ export default function SubscriptionsPageClient() {
           copy={connectView.copy}
           loginPath={connectView.provider.loginPath}
           onClose={closeConnect}
-          onConnected={(email) => {
+          onConnected={(email, termsRequired) => {
             const id = connectAgent;
-            showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success');
+            // A blocked account is connected but cannot answer yet: no success toast; the dialog explains.
+            if (termsRequired) showToast(`${connectName} connected, but Anthropic asks this account to accept its updated terms`, 'info');
+            else showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success');
             if (id) {
               void api.current.loadRow(id.providerId, id.agentId);
               void loadModels(id.providerId);

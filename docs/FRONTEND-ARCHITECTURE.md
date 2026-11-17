@@ -293,6 +293,20 @@ and interrupted job messages into the error display, including any stop warning.
 
 ## Request orchestration rule
 
+**Claude terms recovery (BUG-23).** The connect dialog consumes the additive login
+`termsRequired` flag; `UsageBlock` and `SubscriptionLine` consume account usage errors with
+`code: 'terms-required'`. The dialog and usage error render shared primary/secondary `Button`s
+for **Open claude.ai** and **Check again** (dedicated **Checking…** state, siblings disabled).
+The account-scoped timing hook `useClaudeTermsAutoCheck` lives beside shared usage logic in
+`app/subscriptions/usage.ts`: an explicit Open starts a 15-second visible-tab timer with an
+absolute 5-minute deadline; it skips a busy check and cleans up on account change/unmount.
+The dialog uses an AbortController ref and the usage block reuses its existing `load(email)`
+and refresh key; aborted responses cannot overwrite current data. An inconclusive read retains
+a known terms warning; a successful matching usage account clears it. The agent line adds only
+the warning and Open button and keeps its existing 60-second polling. Rev4a never accepts terms
+or drives the terms screen: Anthropic's Consumer Terms §3.7 forbid automated access and Claude
+Code requires account flows through Anthropic itself.
+
 For interactive pages that can change view/file/tab quickly:
 
 1. Abort obsolete fetches with `AbortController`.
