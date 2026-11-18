@@ -111,6 +111,7 @@ const { GET } = load('app/api/agents/route.ts', {
   '@/lib/agent-images': { listLocalAgentImages: async () => [], newestLocalSupportedVersion: () => null, containerOpenClawVersion: async () => null, imageOpenClawVersion: async () => null },
   '@/lib/agent-versions': { LOCAL_IMAGE_REPOSITORY: 'base', compareVersions: () => 0, newBuildAvailableFor: () => false },
   '@/lib/agent-ports-server': { currentAgentPortsListen: () => { listReads++; return setting; } }, '@/lib/agent-ports': portsRules,
+  '@/lib/domain': require('../lib/domain.js'),
   '@/lib/domain-urls': { domainIsConfigured: () => true, readAgentPublicRoutes: async () => {
     publicReads++;
     return (agent, port) => {

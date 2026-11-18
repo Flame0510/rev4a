@@ -407,6 +407,11 @@ console.log('ok   Current preset is inert, unchanged edits cannot submit, page t
   const rows = h.render().find((node) => node.type === ui.PropertyList && node.props.rows.some((row) => row.label === 'Caddy installed')).props.rows;
   for (const label of ['Agent routes', 'Restart pending', 'Dev-port credential']) assert.ok(rows.some((row) => row.label === label));
   assert.equal(rows.find((row) => row.label === 'Agent routes').value, 4);
+  const explanation = h.render().find(node => Array.isArray(node.props?.children)
+    && node.props.children.some(part => typeof part === 'string' && part.includes('Managed HTTPS dev-port names')));
+  assert.ok(explanation);
+  assert.match(explanation.props.children.filter(part => typeof part === 'string').join(''), /Basic authentication.*Direct host-port access.*Recreate makes the agent ports loopback only/);
+  assert.ok(explanation.props.children.some(part => part?.props?.children === 'REV4A_AGENT_PORTS_LISTEN'));
   assert.ok(text('••••••••'));
   assert.ok(!text(samplePassword));
   assert.ok(!h.calls.some(({ url }) => url === '/api/domain/credential'));

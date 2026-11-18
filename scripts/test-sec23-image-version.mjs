@@ -102,6 +102,7 @@ async function agentsWith(h, containers) {
     '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
     '@/lib/agent-ports-server': { currentAgentPortsListen: () => ({ hostIp: null }) },
     '@/lib/agent-ports': load('lib/agent-ports.ts', {}),
+    '@/lib/domain': require('../lib/domain.js'),
     '@/lib/domain-urls': { domainIsConfigured: () => false, readAgentPublicRoutes: async () => null },
     '@/lib/docker-socket': {
       dockerAvailable: () => true,

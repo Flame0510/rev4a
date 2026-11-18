@@ -1,8 +1,11 @@
 import 'server-only';
+import { execFile } from 'node:child_process';
 import { isIP } from 'node:net';
-import { dockerExec } from './docker-exec';
+import { promisify } from 'node:util';
 import { domainIsConfigured, readAgentPublicRoutes } from './domain-urls';
 import type { PortBindings } from './agent-ports';
+
+const execFileAsync = promisify(execFile);
 
 export interface AgentPortStatus {
   containerPort: number;
@@ -29,8 +32,11 @@ export function parseListeningPorts(text: string): Set<number> | null {
 
 async function readListeningPorts(container: string, signal?: AbortSignal): Promise<Set<number> | null> {
   try {
-    const text = await dockerExec(container, ['cat', '/proc/net/tcp', '/proc/net/tcp6'], { timeoutMs: 3_000, signal });
-    return parseListeningPorts(text);
+    signal?.throwIfAborted();
+    const { stdout } = await execFileAsync('docker', [
+      'exec', container, 'sh', '-c', 'cat /proc/net/tcp && if [ -e /proc/net/tcp6 ]; then cat /proc/net/tcp6; fi',
+    ], { encoding: 'utf8', timeout: 3_000, killSignal: 'SIGKILL', signal });
+    return parseListeningPorts(stdout);
   } catch {
     return null;
   }

@@ -1041,7 +1041,7 @@ networks:
 The operator Caddyfile imports `REV4A_CADDY_FILE`. Rev4a synchronizes only the generated import, so a Debian Caddy service reload
 from its main file retains all routes. The root setup command is the one operation that edits `REV4A_CADDY_MAIN`.
 It backs up the original, adopts the dashboard site as comments, and installs the global on-demand TLS permission callback.
-The three domain settings are managed on the host. Setup and Config share a lock for `.env` edits on Linux. A failed setup
+The three domain settings are managed on the host. Setup and Config share a lock for `.env` edits on Linux when `flock` is available. A failed setup
 restores only the settings it wrote that still have their setup values. If the main Caddyfile was edited after setup wrote it,
 setup keeps the current file and reports the edit.
 
@@ -1053,9 +1053,10 @@ the local callback Host. The HTTP server overwrites both internal address header
 generated file and confirms that the container is running and still owns the active Docker binding. Unknown hosts and unmapped ports get 404.
 
 The sync inspects running and stopped containers. The name table allocates collision suffixes by parsed Docker creation time
-and breaks ties by container ID. It reserves each label’s dev-port variants, and records assignments by container name in the
-import so Recreate preserves them. Routes require a running container with an active host TCP mapping reachable at 127.0.0.1.
-After a successful sync, requests for stopped agents fall through to the wildcard 404 handler.
+and breaks ties by container ID. Control UI names ending in a dev-port suffix receive an `-agent` suffix before numbering.
+Control UI and dev-port names share a namespace. The import records assignments by container name for Recreate and reserves
+retired labels after Delete. Routes require a running, unpaused container with an active host TCP mapping reachable at 127.0.0.1.
+After a successful sync, requests for stopped or paused agents fall through to the wildcard 404 handler.
 Each Control UI handle serves its own `/manifest.webmanifest` as `application/manifest+json` with `Cache-Control: no-cache`.
 The manifest uses the agent's display name (falling back to the assigned host label), an app ID derived from the label,
 and relative OpenClaw icon URLs. It applies to the versioned manifest link in OpenClaw's HTML because Caddy matches the
@@ -1071,9 +1072,9 @@ requests use the tunnel flow in both modes.
 `lib/agent-devices.ts` rewrites the one-time link to HTTPS and the fragment's Gateway URL to WSS, on
 the same public host with the default TLS port. It preserves the path and query. Older agents and CLI
 outputs with unsupported URL schemes use the token fallback on the same HTTPS origin.
-The Ports endpoint samples Linux's IPv4 and IPv6 TCP tables with one bounded `docker exec` per
-request on a running container. A failed read yields unknown status. The sample is independent of
-Caddy routing and is refreshed by opening the agent panel or pressing Refresh.
+The Ports endpoint samples Linux's IPv4 and available IPv6 TCP tables with one bounded `docker exec` per
+request on a running container. A failed listener read yields unknown status. The sample is independent of
+Caddy routing and is refreshed on panel open, on changes to the agent's running state or port bindings, and on Refresh.
 Dev handles enforce Basic authentication and remove its Authorization header before proxying. The generated import contains only the
 bcrypt hash. The password is stored in the data directory with mode 0600. Sync rotates an invalid credential or one with an
 incorrect mode and logs the repair without credential content.
@@ -1086,11 +1087,13 @@ fresh name under the wildcard and a five-second deadline. One lookup runs per pr
 Requests for the same hostname share the in-flight lookup and its result for ten seconds. The authenticated credential read returns only the
 username and password from the protected file. It never invokes sync. Setup stays in the root CLI.
 
-The dashboard requests sync on startup and after create, start, stop, restart, Recreate, Update (including rollback), Edit or
-delete. The daemon repeats it every five minutes to detect changes made outside the dashboard.
-The processes share an advisory lock on the generated file’s directory. Changed content is renamed atomically into place, validated
-through the main Caddyfile, checked for an explicit or matching glob import, then reloaded. Failure restores the previous import.
-A temporary comment marks an interrupted reload for retry on the next sync. If setup changes the domain, dashboard port or
+The dashboard requests sync on startup and after create, start, stop, restart, Recreate, Update (including rollback), Edit, Restore or
+Delete. Delete waits up to 20 seconds for sync after removing the container. The daemon repeats sync every five minutes to detect
+changes made outside the dashboard. The processes share an advisory lock on the generated file’s directory when `flock` is available.
+Changed content is renamed atomically into place and validated through the main Caddyfile. Sync checks for an explicit or matching
+glob import and saves any new dev-port credential before reloading. Failure restores the previous import.
+Pending metadata preserves the previous host-port reservations while the new file awaits reload. The allocator also reserves
+the ports listed in the candidate file. The next sync retries an interrupted reload. If setup changes the domain, dashboard port or
 callback URL, the older process pauses synchronization until restart. An unset domain disables all sync work.
 
 ## 8. Daemon & Data Pipeline
@@ -1337,10 +1340,9 @@ Schema steps live in `lib/db-bootstrap.mjs` and are idempotent; since LIN-6 it a
    - Distributed: per-agent memory, Rev4a indexes centrally — more resilient
    - Recommendation: distributed with central index
 
-3. **External access to agents** — decided: each agent's Control UI is published on a
-   host port, and Rev4a sets no reverse-proxy labels. HTTPS or a domain means the
-   operator's own proxy in front of that port. A first-class integration, with routing
-   labels applied at `docker run`, would be a separate feature.
+3. **External access to agents** — each agent's Control UI is published on a host port.
+   [Domain mode](#caddy-domain-mode-1300) manages HTTPS hostnames through Caddy. Operators can
+   also configure their own proxy to the published ports.
 
 4. **Hermes and other frameworks: dashboard integration?**
    - Hermes has its own session format

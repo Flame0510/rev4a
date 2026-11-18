@@ -5,21 +5,24 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { isIP } from 'node:net';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import vm from 'node:vm';
 import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const domain = require('../lib/domain.js');
 
-function load(file, dependencies, env = {}) {
+function load(file, dependencies, env = {}, globals = {}) {
   const source = ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    fileName: file,
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const context = {
     exports: {}, URL, AbortSignal, process: { env }, require(name) {
       assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`);
       return dependencies[name];
     },
+    ...globals,
   };
   vm.runInNewContext(source, context, { filename: file });
   return context.exports;
@@ -41,7 +44,7 @@ const table = domain.buildNameTable([
 ]);
 const render = () => domain.renderCaddyfile(domain.domainConfig(env), table, '$2a$14$' + 'a'.repeat(53));
 
-function urlFixture(file, settings = env, activeBindings = bindings) {
+function urlFixture(file, settings = env, activeBindings = bindings, state = {}) {
   const reads = [];
   const urls = load('lib/domain-urls.ts', {
     'server-only': {},
@@ -54,7 +57,7 @@ function urlFixture(file, settings = env, activeBindings = bindings) {
     './docker-socket-path.js': { dockerRequestJson: async (_method, path) => {
       const container = path.split('/')[2];
       return { Name: `/${container}`, Config: { Labels: { AGENT_ID: container } },
-        State: { Running: container !== 'agent-halted' }, NetworkSettings: { Ports: activeBindings } };
+        State: { Running: container !== 'agent-halted', ...state }, NetworkSettings: { Ports: activeBindings } };
     } },
   }, settings);
   return { urls, reads };
@@ -79,6 +82,10 @@ test('agentPublicUrl uses only the configured managed file, assignment and exact
   assert.equal(await urls.agentPublicUrl('agent-atlas', 3006), null);
   assert.equal(await urls.agentPublicUrl('agent-atlas', 3010), null);
   assert.equal(await urls.agentPublicUrl('agent-halted', 3000), null);
+  for (const state of [{ Paused: true }, { Restarting: true }]) {
+    assert.equal(await urlFixture(file, env, bindings, state).urls.agentPublicUrl('agent-atlas', 3000), null);
+    assert.equal(await urlFixture(file, env, bindings, state).urls.agentPublicUrl('agent-atlas', 3005), null);
+  }
   assert.equal(await urls.agentPublicUrl('missing', 3000), null);
   const edgePorts = [2999, 3000, 3001, 3009, 3010, 0, -1, 3000.5, '3000', null, undefined, NaN, 1e50];
   const edgeBindings = { ...bindings, '3001/tcp': [published(3701)], '3009/tcp': [published(3709)] };
@@ -99,45 +106,63 @@ const proc = [
   '   0: 00000000000000000000000000000000:0BBD 00000000000000000000000000000000:0000 0A 0:0',
 ].join('\n') + '\n';
 
-function portsFixture({ file = render(), settings = env, activeBindings = bindings, running = true, output = proc, denied = null, agentExists = true } = {}) {
+function portsFixture({ file = render(), settings = env, activeBindings = bindings, running = true, paused = false,
+  output = proc, denied = null, agentExists = true, stall, deadline = new AbortController() } = {}) {
   const { urls } = urlFixture(file, settings, activeBindings);
   const calls = [];
+  const reads = [];
+  const aborted = signal => new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
   const ports = load('lib/agent-ports-status.ts', {
     'server-only': {}, 'node:net': { isIP }, './domain-urls': urls,
-    './docker-exec': { dockerExec: async (container, args, opts) => {
-      calls.push({ container, args, opts });
-      if (output === null) throw new Error('Permission denied');
-      return output;
+    'node:util': { promisify },
+    'node:child_process': { execFile(program, args, opts, done) {
+      calls.push({ program, args, opts });
+      if (stall === 'exec') void aborted(opts.signal).catch(done);
+      else if (output === null) done(new Error('Permission denied'));
+      else done(null, { stdout: output });
     } },
+  });
+  const devices = load('lib/agent-devices.ts', {
+    '@/lib/docker-exec': {},
+    '@/lib/docker-socket': { dockerFetch: () => assert.fail('Unbounded Docker request') },
+    '@/lib/container': { isValidAgentId: id => id === 'atlas-id' },
+    '@/lib/gateway-cli': {},
   });
   const route = load('app/api/agents/[id]/ports/route.ts', {
     'next/server': { NextResponse: Response },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => denied },
-    '@/lib/agent-devices': {
-      findAgentContainer: async (id) => {
-        assert.equal(id, 'atlas-id');
-        return agentExists ? { name: 'agent-atlas', running } : null;
-      },
-      hostnameFromHostHeader: (value) => value && new URL(`http://${value}`).hostname,
-    },
+    '@/lib/agent-devices': devices,
     '@/lib/agent-ports-status': ports,
-    '@/lib/docker-socket': {
-      dockerFetch: async (method, path) => {
+    '@/lib/domain': domain,
+    '@/lib/docker-socket-path': {
+      dockerRequestJson: async (method, path, _timeout, signal) => {
+        reads.push({ path, signal });
         assert.equal(method, 'GET');
+        if (path.startsWith('/containers/json?')) {
+          if (stall === 'list') return aborted(signal);
+          return agentExists ? [{ Names: ['/agent-atlas'], State: running ? 'running' : 'exited' }] : [];
+        }
         assert.equal(path, '/containers/agent-atlas/json');
+        if (stall === 'inspect') return aborted(signal);
         return {
-          State: { Running: running },
+          State: { Running: running, Paused: paused },
           HostConfig: { PortBindings: bindings },
           NetworkSettings: { Ports: running ? activeBindings : {} },
         };
       },
     },
-  });
-  const get = (host = 'dashboard.example.test:3740') => route.GET(
-    new Request('https://dashboard.example.test/api/agents/atlas-id/ports?host=untrusted.example.test', { headers: { host } }),
+  }, {}, { AbortSignal: { any: signals => AbortSignal.any(signals), timeout: ms => {
+    assert.equal(ms, 5000);
+    return deadline.signal;
+  } } });
+  const get = (host = 'dashboard.example.test:3740', signal) => route.GET(
+    new Request('https://dashboard.example.test/api/agents/atlas-id/ports?host=untrusted.example.test', { headers: { host }, signal }),
     { params: Promise.resolve({ id: 'atlas-id' }) },
   );
-  return { calls, get, ports };
+  return { calls, reads, get, ports, deadline };
 }
 
 test('proc parser accepts IPv4 and IPv6 LISTEN rows, handles empty tables and rejects unreadable output', () => {
@@ -160,9 +185,10 @@ test('Ports uses the active binding for managed routes and exposes only the requ
     { containerPort: 3006, hostPort: 3706, listening: false, url: null, auth: null },
   ] });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].container, 'agent-atlas');
-  assert.deepEqual([...calls[0].args], ['cat', '/proc/net/tcp', '/proc/net/tcp6']);
-  assert.equal(calls[0].opts.timeoutMs, 3000);
+  assert.equal(calls[0].program, 'docker');
+  assert.deepEqual([...calls[0].args.slice(0, 4)], ['exec', 'agent-atlas', 'sh', '-c']);
+  assert.match(calls[0].args[4], /cat \/proc\/net\/tcp && if \[ -e \/proc\/net\/tcp6 \]; then cat \/proc\/net\/tcp6/);
+  assert.equal(calls[0].opts.timeout, 3000);
   assert.ok(calls[0].opts.signal instanceof AbortSignal);
 });
 
@@ -189,11 +215,38 @@ test('Ports withholds stale and pending URLs and recognizes an IPv6-only publish
   console.log('Ports stale/pending/IPv6-only [hostPort, url]:', JSON.stringify(results.map(({ hostPort, url }) => [hostPort, url])));
 });
 
-test('a stopped agent has unknown listeners and no links even with a stale Caddy route', async () => {
-  const { get, calls } = portsFixture({ running: false });
+test('stopped and paused agents have unknown listeners and no links even with a stale Caddy route', async () => {
+  for (const state of [{ running: false }, { paused: true }]) {
+    const { get, calls } = portsFixture(state);
+    const { ports } = await (await get()).json();
+    assert.deepEqual(ports.map(({ listening, url, auth }) => [listening, url, auth]), Array.from({ length: 3 }, () => [null, null, null]));
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('IPv4 listeners are reported when the container has no tcp6 table', async () => {
+  const { get } = portsFixture({ output: proc.slice(0, proc.indexOf(ipv6Header)) });
   const { ports } = await (await get()).json();
-  assert.deepEqual(ports.map(({ listening, url, auth }) => [listening, url, auth]), Array.from({ length: 3 }, () => [null, null, null]));
-  assert.deepEqual(calls, []);
+  assert.deepEqual(ports.map(({ listening }) => listening), [true, false, false]);
+});
+
+test('Ports bounds and cancels Docker list, inspect and listener reads', async () => {
+  for (const [stall, status] of [['list', 504], ['inspect', 504], ['exec', 200]]) {
+    for (const cancel of [false, true]) {
+      const { calls, reads, get, deadline } = portsFixture({ stall });
+      const request = new AbortController();
+      const result = get(undefined, request.signal);
+      await new Promise(resolve => setImmediate(resolve));
+      const signal = stall === 'exec' ? calls[0].opts.signal : reads.at(-1).signal;
+      assert.ok(reads.every(read => read.signal === signal));
+      (cancel ? request : deadline).abort();
+      assert.equal(signal.aborted, true);
+      const response = await result;
+      assert.equal(response.status, cancel && status === 504 ? 503 : status);
+      if (status === 200) assert.ok((await response.json()).ports.every(row => row.listening === null));
+      else assert.match((await response.json()).error, cancel ? /Could not read/ : /timed out/);
+    }
+  }
 });
 
 test('unreadable tables return unknown status, and only authenticated requests for known agents read TCP tables', async () => {
@@ -207,4 +260,72 @@ test('unreadable tables return unknown status, and only authenticated requests f
   const missing = portsFixture({ agentExists: false });
   assert.equal((await missing.get()).status, 404);
   assert.deepEqual(missing.calls, []);
+});
+
+test('Ports panel refetches for running state and binding changes and clears rows after a failed refresh', async () => {
+  const hooks = [];
+  const effects = [];
+  const requests = [];
+  let hook = 0;
+  const changed = (slot, deps) => !hooks[slot] || deps.some((dep, i) => dep !== hooks[slot].deps[i]);
+  const react = {
+    useState(initial) {
+      const slot = hook++;
+      if (!(slot in hooks)) hooks[slot] = initial;
+      return [hooks[slot], value => { hooks[slot] = value; }];
+    },
+    useRef(initial) { return hooks[hook++] ??= { current: initial }; },
+    useCallback(fn, deps) {
+      const slot = hook++;
+      if (changed(slot, deps)) hooks[slot] = { fn, deps };
+      return hooks[slot].fn;
+    },
+    useEffect(fn, deps) {
+      const slot = hook++;
+      if (changed(slot, deps)) {
+        hooks[slot]?.cleanup?.();
+        hooks[slot] = { deps };
+        effects.push(() => { hooks[slot].cleanup = fn(); });
+      }
+    },
+  };
+  const ui = Object.fromEntries(['Button', 'ConfirmModal', 'ItemList', 'Pill', 'Surface'].map(name => [name, function Primitive() {}]));
+  const { default: PortsSection } = load('app/agents/PortsSection.tsx', {
+    react, 'react/jsx-runtime': require('react/jsx-runtime'),
+    '../components/ui': ui, './BrowserAccessSection': {},
+    '@/lib/control-ui-navigation': { controlUiTunnelCommand: () => 'fixture tunnel' },
+  }, {}, {
+    AbortController,
+    window: { location: { protocol: 'https:', hostname: 'rev4a.example.test' } },
+    fetch: (url, { signal }) => new Promise(resolve => {
+      assert.equal(url, '/api/agents/atlas-id/ports');
+      requests.push({ signal, resolve });
+    }),
+  });
+  function render(running, mapping = bindings) {
+    hook = 0;
+    const tree = PortsSection({ agentId: 'atlas-id', bindings: mapping, running });
+    effects.splice(0).forEach(effect => effect());
+    return tree.props.children;
+  }
+  const finish = async (index, ok) => {
+    requests[index].resolve({ ok, json: async () => ({ ports: [{ containerPort: 3005, hostPort: 3705, listening: true, url: null }] }) });
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  render(false);
+  await finish(0, true);
+  assert.ok(render(false).some(node => node?.type === ui.ItemList));
+  render(false, structuredClone(bindings));
+  assert.equal(requests.length, 1, 'equivalent bindings should not restart the request');
+  render(true);
+  assert.equal(requests.length, 2);
+  const updated = { ...bindings, '3005/tcp': [published(4705)] };
+  render(true, updated);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[1].signal.aborted, true);
+  await finish(2, false);
+  await finish(1, true);
+  const failed = render(true, updated);
+  assert.ok(failed.some(node => node?.props?.role === 'alert'));
+  assert.ok(!failed.some(node => node?.type === ui.ItemList));
 });

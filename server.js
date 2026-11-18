@@ -274,12 +274,16 @@ async function startListeners(first, makeServer) {
     console.log(`[rev4a] Ready on port ${PORT} (terminal on ${TERMINAL_PATH} → 127.0.0.1:${TERMINAL_WS_PORT})`);
   }
   if (!TERMINAL_SECRET) console.log('[rev4a] REV4A_TERMINAL_SECRET is not set: the terminal is disabled (start with `rev4a serve`).');
-  // Never stay without the bridge listener because of one unlucky lookup: agents reach their model through it.
+  // A failed lookup or bind must not leave agents without a bridge listener for their model.
   // Retry in the background and add the listener when the address appears; no restart needed.
-  if (wantsGateway && !gateway && plan.mode !== 'all') {
+  if (wantsGateway && !bound.includes(gateway) && plan.mode !== 'all') {
     const retry = setInterval(async () => {
       const found = await dockerGateway(os.networkInterfaces());
-      if (!found || bound.includes(found)) return;
+      if (!found) return;
+      if (bound.includes(found)) {
+        clearInterval(retry);
+        return;
+      }
       const srv = makeServer();
       try {
         await listenOn(srv, found);

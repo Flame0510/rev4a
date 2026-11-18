@@ -99,7 +99,8 @@ Reports read-only local configuration, without looking up DNS or contacting Dock
 and absolute data directory. Listen modes are `all`, `local` or `address`, with `keep` also available
 for agents. `managedFile` is `ok`, `missing`, `pending` (a generated file awaiting activation
 for this domain), `unmanaged` (unrecognized or unreadable), or `incomplete` (a generated file
-for this domain without both site blocks). `routes` counts agent routes in the applied file.
+for this domain without both site blocks). `routes` counts agent routes in the managed file on disk
+when it is `ok`.
 `askTarget` is `ok`, `missing` (including unreadable main Caddyfiles), `invalid`, or `stale`
 (a Rev4a loopback callback on a different valid port). `restartPending` reports changes to saved
 Rev4a runtime settings. The interface lists contain only global IPs and exclude reserved ranges.
@@ -574,6 +575,8 @@ Per-process keys are never included, from either the file or runtime environment
 `REV4A_DOTENV_KEYS` and `REV4A_SUPERVISED` (the shared
 `RUNTIME_ONLY_ENV_KEYS` list in `lib/env-file.js`). Other allowed keys absent from
 the file are supplemented from `process.env` for display.
+The CLI-managed keys `REV4A_DOMAIN`, `REV4A_CADDY_FILE` and `REV4A_CADDY_MAIN` are hidden
+from both sources.
 
 File values use the shared `lib/env-file.js` reader, also used by the launcher,
 authentication fallbacks, password setup and setup/restart: dotenv-style inline
@@ -608,6 +611,10 @@ Update environment variables on the VPS host.
   needed for that repair
 - Only keys prefixed with `REV4A_` or `PROVIDER_` are accepted. Runtime-only keys
   listed above are silently ignored, so older open tabs can still save
+- Attempts to edit `REV4A_DOMAIN`, `REV4A_CADDY_FILE` or `REV4A_CADDY_MAIN` return `400`.
+  Configure Domain mode on the host with the CLI.
+- On Linux, Config uses `flock` to coordinate edits when it is available.
+  When the executable is missing, Rev4a logs a warning once and continues the save.
 - An absent key whose submitted value equals `process.env[key]` is ignored: it is
   an unchanged GET-injected value. A different non-empty value is a new setting
 - Clearing a key absent from the file but non-empty in `process.env` rejects the
@@ -1134,7 +1141,7 @@ no key) or `missing` (no longer in the catalogue). `null` when no primary is set
 has it — so `offered` with `resolvable: false` means the container is out of sync.
 
 ### `POST /api/agents/create`
-Create a new agent container from a template. `docker run` is spawned without a shell and the gateway token is handed to docker through its environment (`-e OPENCLAW_GATEWAY_TOKEN`), so it never appears in argv; error messages returned or logged have the token replaced with `***`. The success response still returns `controlToken`.
+Create a new agent container from a template. `docker run` is spawned without a shell and the gateway token is handed to docker through its environment (`-e OPENCLAW_GATEWAY_TOKEN`), so it never appears in argv; error messages returned or logged have the token replaced with `***`. Since 1.30.0 the success response no longer returns the gateway token (`controlToken`); Open builds the Control UI link server-side.
 
 **Auth:** browser cookie
 
@@ -1179,7 +1186,6 @@ Create a new agent container from a template. `docker run` is spawned without a 
   "displayName": "my-agent",
   "image": "openclaw-agent-base:2026.9.3",
   "network": "rev4a-network",
-  "controlToken": "asdfghjkl",
   "port": 3700,
   "portEnd": 3709,
   "isBlock": true,
@@ -1219,7 +1225,9 @@ The `id` is validated (`isValidAgentId`) before being interpolated into any
 docker command.
 
 Deletion uses immediate `docker rm -f` with a 30 s deadline before removing its volume
-and backups.
+and backups. In Domain mode, deletion then waits up to 20 s for the route-removing sync.
+A sync failure or timeout is logged and deletion continues. Managed routes keep their host ports
+reserved until sync succeeds.
 
 **Auth:** browser cookie
 
@@ -2046,8 +2054,9 @@ unreachable, managed route unavailable, or the agent's Gateway still starting,
 ### `GET /api/agents/[id]/ports`
 
 Returns the agent's published TCP container ports 3000–3009 (1.30.0), ordered by
-container port. Requires a signed-in session. An unknown agent returns `404` and a
-failed container lookup or inspect returns `503`.
+container port. Requires a dashboard session cookie or Bearer token. An unknown agent returns
+`404`. A failed Docker lookup or inspect returns `503`, or `504` if the five-second Docker read
+deadline is reached. Request cancellation also cancels Docker reads.
 
 ```json
 {
@@ -2058,8 +2067,8 @@ failed container lookup or inspect returns `503`.
 }
 ```
 
-`listening` is a snapshot of the IPv4 and IPv6 TCP tables inside the container.
-It is `null` when the container is stopped or the tables cannot be read.
+`listening` is a snapshot of the IPv4 and available IPv6 TCP tables inside the container.
+It is `null` when the container is stopped or paused, or the listener read fails or times out.
 `url` is the managed HTTPS route when it matches the active Docker publish, a reachable
 HTTP host-port URL outside Domain mode, or `null` when neither applies. A managed URL on port 3000 is an origin
 only. Use `open-control-ui` to obtain the authenticated navigation.
@@ -2079,8 +2088,8 @@ nothing opens until an operator approves it.
 { "url": "http://203.0.113.7:3710/#token=…", "loopbackHost": false }
 ```
 
-- `url` is the plain token link. The host is the one the request reached Rev4a on
-  (the `Host` header); the port is the agent's published Control UI port. The token is
+- `url` is the token link. In Domain mode it uses the agent's managed public HTTPS host.
+  In direct mode it uses the request's `Host` header and the published Control UI port. The token is
   read inside the container with the entrypoint's precedence (`/root/.agent-token`,
   then `OPENCLAW_GATEWAY_TOKEN`), so it is the one the Gateway checks.
 - `loopbackHost` is true when that host is `localhost`, `127.x` or `[::1]`: nobody else
@@ -2092,7 +2101,8 @@ nothing opens until an operator approves it.
 **Errors:** `400` host not readable, `404` unknown agent, `409` agent not running, no
 published Control UI port, or no browser approval on this agent (the link would open
 with no approval), `502` approval state or token not readable, `503` Docker
-unreachable.
+unreachable or the managed route unavailable in Domain mode. An unavailable managed route
+triggers a background Caddy sync.
 
 ---
 
@@ -2544,7 +2554,7 @@ Top-level `startedAtMs` is the server start timestamp in epoch milliseconds (`RE
 or `null` for a direct development server. The Remote access page waits for it to change to
 confirm a restart before offering Recreate.
 
-`GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent has no managed public route, its port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
+`GET /api/agents/[id]/open-control-ui` answers `503` and requests a sync when Domain mode is configured and the managed route is unavailable. In direct mode it answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
 
 ---
 

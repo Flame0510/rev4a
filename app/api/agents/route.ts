@@ -6,6 +6,7 @@ import { LOCAL_IMAGE_REPOSITORY, compareVersions, newBuildAvailableFor } from '@
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
 import { publishesDifferently } from '@/lib/agent-ports';
 import { domainIsConfigured, readAgentPublicRoutes } from '@/lib/domain-urls';
+import { canRouteAgent } from '@/lib/domain';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             || null;
           publicUrl = publicRoutes?.({
             containerName: name,
-            running: inspect.State?.Running === true && inspect.State?.Restarting !== true,
+            running: canRouteAgent(inspect.State),
             activeBindings: inspect.NetworkSettings?.Ports,
           }, 3000)?.url ?? null;
         } catch {

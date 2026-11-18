@@ -6,8 +6,8 @@
  * approval" list; nothing opens until an operator approves it.
  *
  * Refused on agents without browser approval, where the same link would open the
- * Control UI directly. The host is the one this request reached Rev4a on, never a
- * parameter.
+ * Control UI directly. Domain mode uses the agent's managed HTTPS hostname.
+ * Direct mode uses the request host and the agent's published Control UI port.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';

@@ -192,6 +192,10 @@ async function runRestore(id: number, agentId: string, file: string): Promise<vo
     }
     void reapplyWhenReady(plan.name).catch(() => console.warn('[restore] credential re-apply failed after Gateway readiness'));
     updateRestoreRow(id, { status: 'done', phase: 'complete' });
+    if (process.env.REV4A_DOMAIN?.trim()) {
+      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+    }
   } catch (error) {
     let failure = safeFailure(error);
     if (recovery) failure += `; recovery backup: ${recovery}`;
@@ -205,7 +209,14 @@ async function runRestore(id: number, agentId: string, file: string): Promise<vo
     }
     else if (plan?.container.State?.Running && !(await isColdBackupRunning(agentId).catch(() => true))) {
       const current = await inspectAgentContainer(agentId).catch(() => null);
-      if (current?.Id === plan.container.Id && current?.State?.Running === false) await startAndVerifyContainer(agentId, plan.name).catch(() => undefined);
+      if (current?.Id === plan.container.Id && current?.State?.Running === false) {
+        await startAndVerifyContainer(agentId, plan.name).catch(() => undefined);
+        // The daemon may have removed the agent's route while it was stopped.
+        if (process.env.REV4A_DOMAIN?.trim()) {
+          void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+            .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+        }
+      }
     }
     updateRestoreRow(id, { status: unresolved ? 'unresolved' : 'failed', phase: unresolved ? 'cleanup_unresolved' : replacing ? 'replacement_failed' : plan ? 'backup_failed' : 'preflight_failed', error: failure });
   } finally {

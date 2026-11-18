@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** SEC-9B: the pure rules for where the panel and the agents' ports listen, and the port arguments they produce. */
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -248,7 +249,7 @@ test('hostIpsFromPortArgs lists the addresses -p publishes on, none for wildcard
     fsMock.content = content;
     const mod = load('lib/agent-ports-server.ts', {
       fs: fsMock, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }, { address: '::1' }], eth0: [{ address: '10.0.0.5' }] }) }, '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
-      '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'),
+      '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'), './domain.js': require('../lib/domain.js'),
     });
     return mod;
   };
@@ -276,7 +277,7 @@ test('hostIpsFromPortArgs lists the addresses -p publishes on, none for wildcard
   const mod = () => load('lib/agent-ports-server.ts', {
     fs: fsMock, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }], eth0: [{ address: '10.0.0.5' }] }) },
     '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
-    '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'),
+    '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'), './domain.js': require('../lib/domain.js'),
   });
   test('clearing REV4A_AGENT_PORTS_LISTEN in .env takes effect without a restart (the launcher\'s copy is stale)', () => {
     const saved = [process.env.REV4A_AGENT_PORTS_LISTEN, process.env.REV4A_DOTENV_KEYS];
@@ -307,6 +308,73 @@ test('hostIpsFromPortArgs lists the addresses -p publishes on, none for wildcard
     assert.throws(() => assertPortArgsHostIps(['-p', '192.0.2.9:3700:3000']), /192\.0\.2\.9, which this host does not have\. Nothing was changed/);
     assert.throws(() => assertPortArgsHostIps(['-p', '[2001:db8::99]:3700-3702:3000-3002']), /2001:db8::99/);
   });
+}
+
+{
+  // Load only the two listener functions. The server entry point is never evaluated.
+  const ast = ts.createSourceFile('server.js', fs.readFileSync(path.join(root, 'server.js'), 'utf8'), ts.ScriptTarget.Latest, true);
+  const source = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['listenOn', 'startListeners'].includes(node.name?.text))
+    .map(node => node.getText(ast)).join('\n');
+  const gatewayAddress = '172.17.0.1';
+  function fixture({ gateway = gatewayAddress, failBinds = 0, mode = 'local', platform = 'linux' } = {}) {
+    const env = { REV4A_LISTEN: mode };
+    const warnings = [];
+    const listens = [];
+    let retries = 0;
+    let lookups = 0;
+    let retry;
+    const start = vm.runInNewContext(`${source}\nstartListeners`, {
+      process: { env, platform },
+      os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }] }) },
+      PORT: 3740, TERMINAL_SECRET: 'fake', TERMINAL_PATH: '/terminal', TERMINAL_WS_PORT: 3741,
+      hostAddressList, parseSetting, listenAddresses, formatHostPort,
+      dockerGateway: async () => { lookups++; return gateway; },
+      console: { log() {}, error() {}, warn: message => warnings.push(message) },
+      setInterval: (fn, ms) => {
+        assert.equal(ms, 30_000);
+        retries++;
+        return retry = { tick: fn, unref() {} };
+      },
+      clearInterval: timer => { assert.equal(timer, retry); retry = undefined; },
+    });
+    const makeServer = () => Object.assign(new EventEmitter(), {
+      listen({ host }, done) {
+        listens.push(host);
+        if (host === gatewayAddress && failBinds-- > 0) {
+          this.emit('error', Object.assign(new Error('Address unavailable'), { code: 'EADDRNOTAVAIL' }));
+        } else {
+          done();
+        }
+      },
+    });
+    return { start: () => start(makeServer(), makeServer), env, warnings, listens,
+      get lookups() { return lookups; }, get retries() { return retries; }, get retry() { return retry; } };
+  }
+  const retrying = fixture({ failBinds: 2 });
+  const servers = await retrying.start();
+  assert.equal(servers.length, 1);
+  assert.deepEqual(JSON.parse(retrying.env.REV4A_LISTEN_STATE).addresses, ['127.0.0.1']);
+  assert.equal(retrying.retries, 1);
+  await retrying.retry.tick();
+  assert.match(retrying.warnings.at(-1), /EADDRNOTAVAIL.*will retry/);
+  await retrying.retry.tick();
+  assert.equal(servers.length, 2);
+  assert.equal(retrying.retry, undefined);
+  assert.deepEqual(JSON.parse(retrying.env.REV4A_LISTEN_STATE).addresses, ['127.0.0.1', gatewayAddress]);
+  const listening = fixture();
+  await listening.start();
+  assert.equal(listening.retries, 0);
+  const unknown = fixture({ gateway: null });
+  await unknown.start();
+  assert.equal(unknown.retries, 1);
+  for (const opts of [{ mode: 'all' }, { platform: 'darwin' }]) {
+    const other = fixture(opts);
+    await other.start();
+    assert.equal(other.lookups, 0);
+    assert.equal(other.retries, 0);
+  }
+  passed++;
+  console.log('ok   Linux gateway bind failures retry until listening and then clear the interval');
 }
 
 console.log(`\n${passed} tests passed`);

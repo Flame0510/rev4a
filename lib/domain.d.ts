@@ -25,6 +25,7 @@ export interface DomainAssignment {
 }
 export interface DomainNameTable {
   assignments: Map<string, DomainAssignment>;
+  retired?: ReadonlySet<string>;
   routes: { name: string; hostPort: number; dev: boolean; displayName?: string }[];
 }
 export function isGenerated(content: string): boolean;
@@ -33,11 +34,24 @@ export function domainConfig(env: DomainEnv): DomainConfig | null;
 export function parsePort(value: string | undefined): number | null;
 export function agentBase(agent: DomainAgent): string;
 export function agentHostPort(agent: DomainAgent, containerPort: number): number | null;
+export interface DomainAgentState {
+  Running?: boolean;
+  Paused?: boolean;
+  Restarting?: boolean;
+}
+export function canRouteAgent(state?: DomainAgentState): boolean;
 export function buildNameTable(
-  agents: readonly DomainAgent[], previous?: ReadonlyMap<string, DomainAssignment>, dashboardPort?: number,
+  agents: readonly DomainAgent[], previous?: ReadonlyMap<string, DomainAssignment>, dashboardPort?: number, retired?: ReadonlySet<string>,
 ): DomainNameTable;
 export function readAssignments(content: string | null, domain: string): Map<string, DomainAssignment>;
+export function readRetiredLabels(content: string | null, domain: string): Set<string>;
 export function readManagedRoutes(content: string, domain: string): Map<string, number> | null;
+export function readRouteReservations(content: string): {
+  routes: Map<string, number>;
+  dashboardPort: number | null;
+  pendingPorts: Set<number>;
+};
+export function pendingCaddyfile(next: string, previous?: string): string;
 export function renderCaddyfile(config: DomainConfig, table: DomainNameTable, hash?: string): string;
 export interface DomainRouteCheck {
   container: string;

@@ -170,7 +170,7 @@ export function useDomainAccess() {
   const show = () => run('credential', async (signal) => {
     const response = await fetch('/api/domain/credential', { cache: 'no-store', referrerPolicy: 'no-referrer', signal }).catch(() => null);
     if (!response) throw new Error('Could not reveal the dev-port password.');
-    if (response.status === 404) throw new Error('No dev-port credential is available. Rev4a creates it when Caddy accepts a published dev-port route.');
+    if (response.status === 404) throw new Error('No dev-port credential is available. Rev4a creates it when configuring a published dev-port route.');
     const next = response.ok ? await response.json().catch(() => null) : null;
     if (next?.user !== 'rev4a' || typeof next.password !== 'string') throw new Error('Could not reveal the dev-port password.');
     if (!signal.aborted) setCredential(next);
@@ -218,7 +218,7 @@ export function DomainSection({ data }: { data: ReturnType<typeof useDomainAcces
             onClick={show}>{busy === 'credential' ? 'Showing…' : 'Show'}</Button>}
         </span> },
       ]} />
-      <p className="ui-text-small ui-muted">Every published agent dev port (<code>{`<agent>-<3001..3009>.${domain}`}</code>) asks for this credential.</p>
+      <p className="ui-text-small ui-muted">Managed HTTPS dev-port names (<code>{`<agent>-<3001..3009>.${domain}`}</code>) use Basic authentication with this credential. Direct host-port access follows <code>REV4A_AGENT_PORTS_LISTEN</code>. With the Domain mode setting, Recreate makes the agent ports loopback only.</p>
     </> : status && <>
       <p className="ui-text-small">Domain mode is off. Set up Caddy to serve the dashboard and agent subdomains over HTTPS.</p>
       <Input label="Dashboard domain" value={input} placeholder="rev4a.example.com" autoComplete="off"

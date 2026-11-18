@@ -29,7 +29,7 @@ const listen = require('../lib/listen-addresses.js');
 const portsServer = load('lib/agent-ports-server.ts', {
   fs: { readFileSync: () => '' }, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }], eth0: [{ address: '10.0.0.5' }, { address: '2001:db8::5' }] }) },
   '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
-  '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': listen,
+  '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': listen, './domain.js': require('../lib/domain.js'),
 });
 function recreateHarness(hostIp) {
   const calls = [];

@@ -323,6 +323,7 @@ try {
     const module = { exports: {} };
     const context = {
       module, exports: module.exports, console, AbortSignal,
+      process: { env: { REV4A_DOMAIN: options.domain } },
       require(spec) {
         if (spec.startsWith('node:')) return require(spec);
         if (spec === '@/lib/container') return { isValidAgentId: value => /^agent_[a-z]+$/.test(value) };
@@ -334,6 +335,7 @@ try {
         if (spec === '@/lib/backup-inspection') return { async inspectBackupArchive(...args) { await inspectionGate; return inspectBackupArchive(...args); }, BackupInspectionError };
         if (spec === '@/lib/backup-compatibility') return { checkBackupCompatibility };
         if (spec === '@/lib/credentials/delivery') return { reapplyWhenReady: async () => { reapplied++; } };
+        if (spec === '@/lib/domain-sync') return { syncDomainRoutes: async () => { events.push({ kind: 'domain-sync' }); } };
         if (spec === '@/lib/agent-readiness') return { waitForGatewayReady: async () => { events.push({ kind: 'readiness' }); return ready; } };
         if (spec === '@/lib/agent-recreate') return {
           async inspectAgentContainer() {
@@ -426,6 +428,21 @@ try {
     assert.equal(m.rows[0].phase, 'complete'); assert.equal(m.reapplied, 1);
     assert.deepEqual(m.events.filter(row => ['backup', 'extract', 'start', 'readiness'].includes(row.kind)).map(row => row.kind), ['backup', 'extract', 'start', 'readiness']);
     assert.ok(m.api.agentRestoreView('agent_fixture').preflight.archiveSha256);
+  });
+  await test('only a successful restore in Domain mode requests a route sync after readiness', async () => {
+    for (const [opts, expected] of [[{}, false], [{ domain: 'rev4a.example.test', ready: false }, false],
+      [{ domain: 'rev4a.example.test' }, true]]) {
+      const m = restoreHarness(opts);
+      await m.api.startAgentRestore('agent_fixture', m.name);
+      await waitUntil(() => m.rows[0].status !== 'restoring');
+      const sync = m.events.findIndex(event => event.kind === 'domain-sync');
+      if (expected) {
+        const done = m.events.findIndex(event => event.kind === 'state' && event.status === 'done');
+        assert.ok(done >= 0 && sync > done);
+      } else {
+        assert.equal(sync, -1);
+      }
+    }
   });
   await test('source replacement/deletion after preflight cannot change pinned extraction bytes', async () => {
     for (const options of [{ replaceOriginal: true }, { deleteOriginal: true }]) {

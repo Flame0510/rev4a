@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** BUG-14 boundaries: mocked files, auth, processes and hooks; no services are started. */
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -593,6 +594,63 @@ await test('SEC-9B: a key the launcher copied from .env and the user then cleare
   const svc = harness(fixture, { REV4A_AGENT_PORTS_LISTEN: 'local', REV4A_DOTENV_KEYS: 'PORT' });
   assert.equal((await svc.get()).body.env.REV4A_AGENT_PORTS_LISTEN, 'local');
   assert.equal((await svc.put({ REV4A_AGENT_PORTS_LISTEN: '' })).status, 400);
+});
+
+await test('Config hides Domain setup keys from file and service settings and rejects edits', async () => {
+  const keys = ['REV4A_DOMAIN', 'REV4A_CADDY_FILE', 'REV4A_CADDY_MAIN'];
+  const initial = fixture + keys.map(key => `\n${key}=fixture`).join('') + '\n';
+  for (const h of [harness(initial), harness(fixture, Object.fromEntries(keys.map(key => [key, 'fixture'])))]) {
+    const before = h.content;
+    const { body } = await h.get();
+    for (const key of keys) {
+      assert.ok(!Object.hasOwn(body.env, key));
+      const response = await h.put({ [key]: 'other' });
+      assert.equal(response.status, 400);
+      assert.ok(response.body.error.includes(key));
+    }
+    assert.equal(h.content, before);
+  }
+});
+
+await test('missing flock warns once and saves, while other acquisition errors fail', async () => {
+  const warnings = [];
+  let errorCode = 'ENOENT';
+  let exitCode;
+  let closed = 0;
+  let writes = 0;
+  const { withFileDirectoryLock } = load('lib/file-lock.js', {
+    'node:fs/promises': {
+      open: async (directory, mode) => {
+        assert.equal(directory, '/mock');
+        assert.equal(mode, 'r');
+        return { fd: 3, close: async () => { closed++; } };
+      },
+    },
+    'node:path': path,
+    'node:child_process': { spawn: (command, args, opts) => {
+      assert.equal(command, 'flock');
+      assert.deepEqual([...args], ['--exclusive', '--timeout', '20', '0']);
+      assert.equal(opts.stdio[0], 3);
+      const child = new EventEmitter();
+      queueMicrotask(() => errorCode
+        ? child.emit('error', Object.assign(new Error('Fixture spawn error'), { code: errorCode }))
+        : child.emit('exit', exitCode));
+      return child;
+    } },
+  }, { console: { warn: message => warnings.push(message) } });
+  const save = async () => ++writes;
+  assert.deepEqual(await Promise.all([withFileDirectoryLock(ENV_FILE, save), withFileDirectoryLock(ENV_FILE, save)]), [1, 2]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /flock is unavailable/);
+  errorCode = 'EACCES';
+  await assert.rejects(withFileDirectoryLock(ENV_FILE, save), { code: 'EACCES' });
+  errorCode = undefined;
+  exitCode = 1;
+  await assert.rejects(withFileDirectoryLock(ENV_FILE, save), /Could not acquire the lock/);
+  exitCode = 0;
+  assert.equal(await withFileDirectoryLock(ENV_FILE, save), 3);
+  assert.equal(closed, 5);
+  assert.equal(warnings.length, 1);
 });
 
 console.log(`\n${passed} config environment save checks passed`);

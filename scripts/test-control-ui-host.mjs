@@ -369,4 +369,37 @@ await test('authentication still precedes link issuance and warnings', async () 
   assert.deepEqual(f.calls, []);
 });
 
+await test('invite links use the published HTTPS host in Domain mode and request sync if its route is missing', async () => {
+  const { devices, calls } = devicesFixture();
+  let configured = true;
+  let routeUrl = publicUrl;
+  let syncs = 0;
+  const invite = load('app/api/agents/[id]/invite-link/route.ts', {
+    'next/server': { NextResponse: Response },
+    '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
+    '@/lib/agent-devices': { ...devices, requiresBrowserApproval: async () => true },
+    '@/lib/domain-urls': {
+      domainIsConfigured: () => configured,
+      agentPublicUrl: async () => routeUrl,
+      requestDomainRouteSync: () => { syncs++; },
+    },
+  });
+  const get = () => invite.GET(new Request('https://dashboard.example.test/?host=ignored.example.test', {
+    headers: { host: 'dashboard.example.test' },
+  }), { params: Promise.resolve({ id: 'fixture-agent' }) });
+  const active = await get();
+  assert.equal(active.status, 200);
+  assert.equal(active.headers.get('cache-control'), 'no-store');
+  const result = await active.json();
+  assert.equal(new URL(result.url).origin, publicUrl);
+  assert.equal(result.loopbackHost, false);
+  routeUrl = null;
+  assert.equal((await get()).status, 503);
+  assert.equal(syncs, 1);
+  assert.equal(calls.length, 1, 'missing route does not issue a token link');
+  configured = false;
+  assert.equal(new URL((await (await get()).json()).url).origin, `http://dashboard.example.test:${port}`);
+  assert.equal(syncs, 1);
+});
+
 console.log(`\n${passed} passed`);

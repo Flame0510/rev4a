@@ -19,6 +19,7 @@ export default function PortsSection({ agentId, bindings, running, gateway, bloc
   const [busyAction, setBusyAction] = useState<'refresh' | null>('refresh');
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const bindingsKey = JSON.stringify(Object.entries(bindings ?? {}).sort(([a], [b]) => a.localeCompare(b)));
   const refresh = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -32,7 +33,10 @@ export default function PortsSection({ agentId, bindings, running, gateway, bloc
       const data: { ports: AgentPortStatus[] } = await response.json();
       if (!controller.signal.aborted) setPorts(data.ports);
     } catch (e) {
-      if ((e as Error)?.name !== 'AbortError' && !controller.signal.aborted) setError('Could not load ports. Try refreshing.');
+      if ((e as Error)?.name !== 'AbortError' && !controller.signal.aborted) {
+        setPorts(null);
+        setError('Could not load ports. Try refreshing.');
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction(null);
     }
@@ -41,7 +45,7 @@ export default function PortsSection({ agentId, bindings, running, gateway, bloc
   useEffect(() => {
     void refresh();
     return () => abortRef.current?.abort();
-  }, [refresh]);
+  }, [refresh, running, bindingsKey]);
 
   return (
     <Surface compact>

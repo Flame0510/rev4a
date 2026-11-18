@@ -53,10 +53,10 @@ interface DockerContainer {
 }
 
 /** The container carrying `AGENT_ID=<agentId>`, through the Docker API rather than a blocking `docker ps`. */
-export async function findAgentContainer(agentId: string): Promise<AgentContainer | null> {
+export async function findAgentContainer(agentId: string, readDocker = dockerFetch): Promise<AgentContainer | null> {
   if (!isValidAgentId(agentId)) return null;
   const filters = encodeURIComponent(JSON.stringify({ label: [`AGENT_ID=${agentId}`] }));
-  const list = await dockerFetch<DockerContainer[]>('GET', `/containers/json?all=true&filters=${filters}`);
+  const list = await readDocker<DockerContainer[]>('GET', `/containers/json?all=true&filters=${filters}`);
   const c = Array.isArray(list) ? list[0] : undefined;
   if (!c) return null;
   const port = (c.Ports ?? []).find((p) => p.PrivatePort === 3000 && p.PublicPort)?.PublicPort;

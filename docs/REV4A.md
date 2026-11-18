@@ -15,19 +15,29 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 On Linux, `sudo rev4a domain setup <domain>` configures a dashboard hostname and agent subdomains on the system Caddy instance.
 
+**Create response.** `POST /api/agents/create` no longer returns the shared gateway token (`controlToken`). Nothing in Rev4a read it; a script that did should open the agent through `/api/agents/<id>/open-control-ui`.
+
 **Approval on a subdomain.** Open's one-time link pairs a new browser with no approval (OpenClaw accepts it only when the Control UI connects with that bootstrap token). A browser that already keeps a gateway token for that agent's subdomain (from an earlier token or invite link) connects with it instead and is asked for approval once; approve it, or clear the site data for that subdomain. The invite link in Domain mode is `https://<agent>.<domain>/#token=…` and always needs approval, as before.
 
 **Forwarded headers.** Every route to an agent removes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`: the OpenClaw gateway answers 403 `proxy_attribution_required` to any request carrying them unless `gateway.trustedProxies` is set inside the agent (seen live on 2026.10.10). The Control UI keeps its own token and device pairing; dev ports also drop the `Authorization` header Caddy checked.
 
-**Known limits of Domain mode (1.30.0).** Do not edit Rev4a's configuration (`.env`, Config page) while `rev4a domain setup` runs: if setup fails it rolls back only the keys it changed, and an edit made in those seconds can stop that rollback (the error then names the keys to fix by hand). A stopped agent loses its route at the next successful Caddy reload; if that reload fails, Caddy keeps serving the last accepted configuration (Rev4a keeps each agent's host ports reserved while it exists, so no other agent takes them). A failed first sync leaves an empty managed file, so an `import` already in the Caddyfile always has a valid target.
+Avoid editing Rev4a's `.env` while `rev4a domain setup` runs. If setup fails after saving settings, it rolls back the keys it changed that still hold the values it wrote. Setup reports rollback errors. If validation, credential saving or reload fails after the first managed file is written, Rev4a replaces it with an empty managed file so the import still has a target. Failures before the write leave the file as it was.
 Add `--dry-run` to preview the Caddyfile and environment changes. Setup backs up the main Caddyfile and preserves any adopted
 dashboard site as comments. Restart Rev4a and Recreate running agents to use the local listen settings.
+Setup reads `PORT` from the data directory's `.env`. If Rev4a runs on another port, pass it explicitly
+as in `sudo PORT=8080 rev4a domain setup rev4a.example.com`.
 
 The dashboard is at `https://<domain>`. A running agent named Atlas uses `https://atlas.<domain>` for Control UI
 and `https://atlas-3001.<domain>` through `https://atlas-3009.<domain>` for its published dev ports.
-Stopping the agent removes its routes on the next sync. Starting it restores the routes under the same names.
-OpenClaw token and pairing protect Control UI. Dev ports use HTTP Basic authentication as `rev4a` with the password
-in `<REV4A_DATA_DIR>/domain-auth.json`. An invalid or incorrectly protected credential file is replaced during sync.
+Stopping or pausing the agent removes its routes on the next successful sync. Starting or resuming it restores the routes
+under the same names. Newly assigned labels for agent names ending in `-3001` through `-3009` receive an `-agent` suffix before collision numbering.
+The next sync corrects Control UI names previously assigned a dev-port suffix. The managed file keeps deleted labels reserved.
+Delete waits up to 20 seconds for route sync. If a reload fails or is still pending, Rev4a
+reserves the routed host ports until a successful sync removes the routes. Restore requests a sync as soon as the restored agent is ready.
+OpenClaw token and pairing protect Control UI. Managed HTTPS dev-port names use HTTP Basic authentication as `rev4a`
+with the password in `<REV4A_DATA_DIR>/domain-auth.json`. Direct host-port access follows `REV4A_AGENT_PORTS_LISTEN`.
+With Domain mode's local setting, Recreate republishes the ports on loopback only.
+Sync replaces an invalid or incorrectly protected credential and saves it before reloading Caddy.
 The dashboard session cookie is host-only.
 
 Each agent's HTTPS Control UI can be installed as a separate app with the agent's display name.
@@ -47,24 +57,27 @@ and adopts the Caddyfile when changes are needed. After setup and restart, open 
 and select **Check** to confirm status and DNS.
 
 With Domain mode on, **Remote access** shows the HTTPS dashboard link, Caddy installation, managed
-file, import, on-demand TLS ask, count of agent routes in the applied file, and whether a restart is
+file, import, on-demand TLS ask, count of agent routes in the managed file on disk, and whether a restart is
 pending. DNS is checked automatically when you open the page with Domain mode active. If the Caddy
 callback points to an old Rev4a port, run the setup command again. A generated file missing either
 site is marked **Incomplete**. Current setup shows **Domain (Caddy, managed by Rev4a)** when the
 managed file is ready. Under **Dev-port credential**, the username
 is `rev4a`. Select **Show** to fetch the password, then **Copy** or **Hide**. The password is available
-once Caddy has accepted a dev-port route and Rev4a has saved the credential.
+once Rev4a has saved the credential for a validated dev-port configuration.
 
 With an active managed route, **Open** on the agent card or in the panel goes directly
 to the agent's HTTPS subdomain through a one-time link, with a token link as fallback.
 Rev4a checks the route against the agent's current Docker publish on every Open. While the address
 is being updated, the tab asks you to try again in a moment and Rev4a requests a Caddy sync.
 The **Ports** section lists published TCP ports 3000–3009, their host mapping and whether a process is listening.
-It loads on opening the panel and on **Refresh**. It shows managed HTTPS links in Domain mode.
+It loads when the panel opens, when the agent's running state or port bindings change, and on **Refresh**.
+It shows managed HTTPS links in Domain mode.
 Each routed dev port prompts for HTTP Basic authentication as `rev4a`. See **Remote access** for the password.
 A reachable publish outside Domain mode shows a direct link. Unreachable publishes on a running agent show an SSH tunnel command.
 For an IPv6-only wildcard publish, the command forwards to `[::1]` on the server.
 Dev servers must bind to `0.0.0.0` inside the container and accept the operator's domain in their Host checks.
+
+The default model offered in **Create Agent** may change with the 1.30.0 model catalogue.
 
 See [Domain mode setup](../CONNECT.md#caddy-domain-mode-1300) for DNS, setup and rollback steps.
 
@@ -222,7 +235,7 @@ See [Alerts](#alerts-telegram) below for the Telegram alert variables.
 Every agent is created with:
 
 - A host port mapping (`-p <port>:3000`) for direct access
-- Control UI at `http://<host>:<port>`, opened from the Agents page through `GET /api/agents/[id]/open-control-ui`
+- Control UI at `http://<host>:<port>` in direct mode or the agent's managed HTTPS hostname in [Domain mode](#1300--caddy-domain-mode), opened from the Agents page through `GET /api/agents/[id]/open-control-ui`
 - The provider gateway at `http://host.docker.internal:3740/api/provider/v1`
 - `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback: true`, so the Control UI opens on whatever host the agent is reached on, and pages from other origins are refused
 - `--init`: Docker's tini runs as PID 1, with OpenClaw as its child, and collects orphaned processes the moment they exit. Without it `openclaw-gateway` is PID 1 and never collects them: every process a tool leaves behind (Chrome, builds, scripts) stays a zombie and counts against the container's pids limit (9 365 on the VPS) until the container cannot start anything. Measured before the fix: 1 542 zombies in one agent after four days of browsing and builds. tini forwards `docker stop`'s SIGTERM, so OpenClaw still shuts down cleanly. Set at create and in `recreateAgentContainer` (recreate, update, edit); an existing agent gets it the next time it is recreated.
@@ -779,7 +792,7 @@ Available templates:
    - `gateway.controlUi` with the browser-origin policy (`withControlUiPolicy()` in `lib/agent-setup.ts`): the Host-header fallback on, so the Control UI is accepted from the host the browser connected to — a public IP is refused without it — while pages from other origins are refused; an `allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` are dropped, any other allowlist is kept. Recreate re-applies the policy. Each new browser still needs a one-time device approval
    - `agents.defaults.model.primary` + fallbacks — the primary model selected in the wizard
 5. The route builds `models.providers.rev4a` with `buildRev4aProviderConfig()` and writes it with `openclaw config patch --stdin`.
-6. The agent's Control UI is reachable at `http://<host>:<port>#token=<gateway-token>`. For HTTPS or a domain, put your own reverse proxy in front of the published port: Rev4a sets no reverse-proxy labels on agent containers.
+6. The agent's Control UI is reachable at `http://<host>:<port>#token=<gateway-token>` in direct mode. [Domain mode](#1300--caddy-domain-mode) manages a separate HTTPS hostname per agent. You can also configure your own reverse proxy to the published port.
 
 ---
 

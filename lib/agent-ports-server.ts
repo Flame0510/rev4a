@@ -19,10 +19,11 @@ import * as os from 'os';
 import { dockerFetch } from '@/lib/docker-socket';
 import { ENV_FILE } from '@/lib/rev4a-paths';
 import { readEnvValue } from '@/lib/env-file';
+import { agentHostPort, domainConfig, readAssignments, readRouteReservations } from './domain.js';
 import { agentPortsListen, hostAddressList, hostHasAddress, hostIpsFromPortArgs, type AgentPortsListen } from './listen-addresses';
 
 export interface HostPortHolder {
-  /** Container name; agent containers are named after their id. */
+  /** Container name or the managed Caddy routes that still reserve the port. */
   name: string;
   /** The container's `AGENT_NAME`, the name the panel shows; null for non-agent containers. */
   displayName: string | null;
@@ -36,29 +37,28 @@ interface ContainerInspect {
 }
 
 /**
- * Host ports held by containers, running or stopped, each mapped to the container that
- * holds it. `excludeContainerId` drops one container from the result: the block of the
- * container a rebuild is about to replace is not a conflict with itself.
+ * Host ports held by containers, running or stopped, and by managed Caddy routes.
+ * A rebuild can keep its own bindings when `excludeContainerId` identifies the container.
  *
- * Best-effort: an unreachable daemon yields an empty map, as the previous shell-based
- * lookup did, rather than failing the caller.
+ * Docker and the managed Caddy file are read independently on a best-effort basis.
  */
 export async function getHostPortHolders(opts: { excludeContainerId?: string } = {}): Promise<Map<number, HostPortHolder>> {
   const holders = new Map<number, HostPortHolder>();
-  let list: { Id?: string }[];
-  try {
-    list = await dockerFetch<{ Id?: string }[]>('GET', '/containers/json?all=true');
-  } catch {
-    return holders;
-  }
+  const domainEnabled = Boolean(process.env.REV4A_DOMAIN?.trim());
+  const list = await dockerFetch<{ Id?: string }[]>('GET', '/containers/json?all=true').catch(() => []);
   const ids = (Array.isArray(list) ? list : [])
     .map((c) => c.Id)
-    .filter((id): id is string => typeof id === 'string' && id !== opts.excludeContainerId);
+    .filter((id): id is string => typeof id === 'string' && (domainEnabled || id !== opts.excludeContainerId));
   const infos = await Promise.all(
     ids.map((id) => dockerFetch<ContainerInspect>('GET', `/containers/${id}/json`).catch(() => null)),
   );
-  for (const info of infos) {
+  let excluded: ContainerInspect | null = null;
+  for (const [index, info] of infos.entries()) {
     if (!info) continue;
+    if (ids[index] === opts.excludeContainerId) {
+      excluded = info;
+      continue;
+    }
     const name = (info.Name ?? '').replace(/^\//, '') || (info.Id ?? '').slice(0, 12);
     const agentName = (info.Config?.Env ?? []).find((entry) => entry.startsWith('AGENT_NAME='));
     const holder: HostPortHolder = { name, displayName: agentName ? agentName.slice('AGENT_NAME='.length) : null };
@@ -67,6 +67,33 @@ export async function getHostPortHolders(opts: { excludeContainerId?: string } =
         const port = Number(binding?.HostPort);
         if (Number.isInteger(port)) holders.set(port, holder);
       }
+    }
+  }
+  if (domainEnabled) {
+    try {
+      const config = domainConfig(process.env);
+      if (config && (await fs.promises.lstat(config.file)).isFile()) {
+        const content = await fs.promises.readFile(config.file, 'utf8');
+        const { routes, dashboardPort, pendingPorts } = readRouteReservations(content);
+        const containerName = excluded?.Name?.replace(/^\//, '') ?? '';
+        const label = readAssignments(content, config.domain).get(containerName)?.name;
+        // A rebuild may keep its own mapped ports. Ports of a previous reload
+        // that have only a reservation marker stay reserved until sync finishes.
+        if (label) {
+          for (let port = 3000; port <= 3009; port++) {
+            const routeLabel = port === 3000 ? label : `${label}-${port}`;
+            const mapped = agentHostPort({ containerName, running: true, activeBindings: excluded?.HostConfig?.PortBindings }, port);
+            if (mapped === routes.get(routeLabel)) routes.delete(routeLabel);
+          }
+        }
+        const holder = { name: 'managed Caddy routes', displayName: null };
+        if (dashboardPort) pendingPorts.add(dashboardPort);
+        for (const port of [...routes.values(), ...pendingPorts]) {
+          if (!holders.has(port)) holders.set(port, holder);
+        }
+      }
+    } catch {
+      // Domain mode can start before Caddy creates the managed file.
     }
   }
   return holders;

@@ -455,7 +455,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       displayName: displayName.trim(),
       image,
       network,
-      controlToken: agentsToken,
       port: portStart,
       portEnd,
       isBlock,

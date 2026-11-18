@@ -1,6 +1,6 @@
 import 'server-only';
 import { readFile } from 'node:fs/promises';
-import { agentHostPort, domainConfig, readAssignments, readManagedRoutes, type DomainAgent } from './domain.js';
+import { agentHostPort, canRouteAgent, domainConfig, readAssignments, readManagedRoutes, type DomainAgent, type DomainAgentState } from './domain.js';
 import { dockerRequestJson } from './docker-socket-path.js';
 
 type PublicRoute = { url: string; hostPort: number };
@@ -42,13 +42,13 @@ export async function agentPublicUrl(container: string, containerPort: number): 
     const inspect = await dockerRequestJson<{
       Name?: string;
       Config?: { Labels?: Record<string, string> };
-      State?: { Running?: boolean; Restarting?: boolean };
+      State?: DomainAgentState;
       NetworkSettings?: { Ports?: DomainAgent['activeBindings'] };
     }>('GET', `/containers/${encodeURIComponent(container)}/json`, 2_000, AbortSignal.timeout(2_000));
     if (inspect.Name !== `/${container}` || !inspect.Config?.Labels?.AGENT_ID) return null;
     return lookup({
       containerName: container,
-      running: inspect.State?.Running === true && inspect.State?.Restarting !== true,
+      running: canRouteAgent(inspect.State),
       activeBindings: inspect.NetworkSettings?.Ports,
     }, containerPort)?.url ?? null;
   } catch {

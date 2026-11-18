@@ -93,7 +93,7 @@ On Linux, hosts on the same network segment could route to the Docker bridge gat
 ### Caddy Domain mode (1.30.0)
 
 1. Point DNS for `rev4a.example.com` and `*.rev4a.example.com` at the Rev4a host. Allow public HTTP and HTTPS on ports 80 and 443.
-2. On the Linux host, preview and apply the root setup using the same `REV4A_DATA_DIR` and dashboard `PORT` as the service. The default dashboard port is 3740. For a service launched with `--port 8080`, pass `PORT=8080` in the setup command environment.
+2. On the Linux host, preview and apply root setup using the service's `REV4A_DATA_DIR`. Setup reads `PORT` from its `.env` and defaults to 3740. If the service is running on another port, pass it explicitly, for example `sudo PORT=8080 rev4a domain setup rev4a.example.com`.
 
    ```bash
    sudo rev4a domain setup rev4a.example.com --dry-run
@@ -109,9 +109,9 @@ On Linux, hosts on the same network segment could route to the Docker bridge gat
 Setup installs Caddy from its official apt repository if needed, backs up the main Caddyfile, comments out an existing dashboard site,
 and adds the Rev4a import and the global certificate permission callback. Rev4a must be able to write the generated file and reload
 the system Caddy instance. Caddy must be able to read the import. If you override the main file path, configure the service to use that file as well.
-Routes are added for running agents with active port bindings. The dashboard requests a sync after start, stop and restart,
-and the daemon checks changes made outside the dashboard every five minutes. Keep agent ports reserved until the new
-Caddy configuration has loaded.
+Routes are added for running, unpaused agents with active port bindings. The dashboard requests a sync after lifecycle
+operations, and the daemon checks changes made outside the dashboard every five minutes. Rev4a reserves ports from
+the managed file until the new Caddy configuration has loaded.
 The local listen settings take effect after the restart and each agent rebuild. During the transition, original wildcard publishes still accept direct connections.
 
 **Rollback or disable Domain mode:** Rolling back to 1.29.0 leaves Caddy serving the last imported file. To restore your earlier

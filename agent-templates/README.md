@@ -1,5 +1,7 @@
 # Agent Templates
 
+> **Last updated:** 2026-11-18
+
 ## Base image: `openclaw-agent-base`
 
 The image every agent container runs, built from
@@ -79,8 +81,8 @@ An agent's Control UI is reached on its published host port,
 one-time link that also approves the browser; any other browser needs approval once
 in the agent's Browser access section.
 
-Rev4a sets no reverse-proxy labels. For HTTPS or a domain, put your own reverse
-proxy in front of the published port.
+For HTTPS, [Domain mode](../CONNECT.md#caddy-domain-mode-1300) manages a dedicated hostname for
+each agent through Caddy. You can also configure your own reverse proxy to the published port.
 
 ### Creating an agent by hand
 

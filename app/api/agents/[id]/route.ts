@@ -44,8 +44,21 @@ export async function DELETE(request: Request,
     });
 
     if (process.env.REV4A_DOMAIN?.trim()) {
-      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes(containerName))
-        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes(containerName)),
+          new Promise<null>(resolve => {
+            timer = setTimeout(() => resolve(null), 20_000);
+          }),
+        ]);
+        if (!result) console.warn('[domain] Caddy sync timed out after agent deletion.');
+        else if (!result.ok) console.warn('[domain] Caddy sync failed after agent deletion.');
+      } catch {
+        console.warn('[domain] Could not run Caddy sync after agent deletion.');
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     // Destructive delete: also remove the persistent volume and all backups.

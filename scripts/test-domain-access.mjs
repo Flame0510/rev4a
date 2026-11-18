@@ -78,7 +78,7 @@ function fixture() {
   const agentPorts = load('lib/agent-ports-server.ts', {
     fs: { readFileSync: (file) => { const entry = getFile(file); if (entry.error) throw entry.error; return entry.text; } },
     os: { networkInterfaces: () => interfaces }, '@/lib/docker-socket': { dockerFetch: forbidden },
-    '@/lib/rev4a-paths': { ENV_FILE: `${dataDir}/.env` }, '@/lib/env-file': envFile, './listen-addresses': listen,
+    '@/lib/rev4a-paths': { ENV_FILE: `${dataDir}/.env` }, '@/lib/env-file': envFile, './listen-addresses': listen, './domain.js': domain,
   }, globals);
   const navigation = load('lib/control-ui-navigation.ts', { './cron-ids': {} });
   const access = load('lib/remote-access.ts', { './control-ui-navigation': navigation });

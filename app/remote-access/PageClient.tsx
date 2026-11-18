@@ -24,6 +24,6 @@ export default function RemoteAccessPageClient() {
     <PresetPicker data={data} managedDomain={managedDomain} />
     <DomainSection data={domain} />
     <AgentsToRecreate data={data} />
-    <ConfirmPresetModal data={data} />
+    <ConfirmPresetModal data={data} managedDomain={domain.status?.enabled === true} />
   </Page>;
 }
