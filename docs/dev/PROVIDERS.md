@@ -149,9 +149,15 @@ of a locked database is about 200 ms once per minute while it stays locked (the 
 whole event loop), after which metering is skipped (calls dropped, one log line) for 60 s instead of trying on every call. See
 `lib/proxy-usage.js` and `app/api/provider/upstream.ts`.
 
-**Provider API paths:** Most providers use the standard `/v1/chat/completions` endpoint.
-GLM uses `/api/paas/v4/chat/completions` and Qwen uses `/compatible-mode/v1/chat/completions`.
-The upstream module (`app/api/provider/upstream.ts`) handles this via a per-provider `basePath` field.
+**Provider API paths.** The upstream module (`app/api/provider/upstream.ts`) defaults to
+`/v1/chat/completions` after the configured base URL. GLM uses
+`/api/paas/v4/chat/completions` and Qwen uses `/compatible-mode/v1/chat/completions`.
+Google's base URL already includes `/v1beta/openai`, so its explicit empty `basePath`
+appends only `/chat/completions`. This fixes requests that previously went to
+`/v1beta/openai/v1/chat/completions`. [Google's Chat Completions compatibility guide](https://aistudio.google.com/docs/openai)
+
+The Claude compatibility endpoint rejects `file` content parts. The direct Anthropic
+catalogue advertises text and image input. [Anthropic's compatibility guide](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk)
 
 **Request body** (OpenAI-compatible):
 ```json

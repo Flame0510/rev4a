@@ -27,46 +27,18 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CATALOGUE_URL, fetchUpstream, matchUpstream, peakOpenRouterPricing } from './lib/model-upstream.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRICING_FILE = path.join(ROOT, 'model-pricing.json');
 const MODELS_FILE = path.join(ROOT, 'models.config.json');
 /** Generated: descriptions, specs, benchmarks. Never hand-edited (see the plan). */
 const DETAILS_FILE = path.join(ROOT, 'model-details.json');
-import { CATALOGUE_URL, fetchUpstream, matchUpstream } from './lib/model-upstream.mjs';
 
 const dryRun = process.argv.includes('--dry-run');
 
-/**
- * A direct provider's OpenRouter vendor name, when it differs from ours:
- * `glm/glm-5.3` is `z-ai/glm-5.3` upstream, `kimi/kimi-k3` is `moonshotai/kimi-k3`.
- * Used for details only — prices for direct entries come from the vendor's own price list.
- */
-const VENDOR_ALIAS = { glm: 'z-ai', kimi: 'moonshotai' };
-
-/**
- * Same model, different name on OpenRouter. Only exact same-model cases belong here: a
- * different tier (`-highspeed`) or another vendor's copy of the weights is a curated
- * `info` block, not an alias, because description and benchmarks would be someone else's.
- */
-const MODEL_ALIAS = {
-  'deepseek/deepseek-flash': 'deepseek/deepseek-v4.1-flash',   // our name for DeepSeek's V4.1
-};
-
-/**
- * Try the id with its version separators swapped: our `claude-haiku-4-5` is OpenRouter's
- * `claude-haiku-4.5`. A normalisation, not an alias: the name is otherwise identical.
- */
-function separatorVariants(id) {
-  return [
-    id.replace(/-(\d+)-(\d+)$/, '-$1.$2'),   // claude-haiku-4-5 → claude-haiku-4.5
-    id.replace(/-(\d+)\.(\d+)$/, '-$1-$2'), // and the other way round
-  ].filter((v) => v !== id);
-}
-
 function perMillion(raw) {
-  if (raw === undefined || raw === null) return null;
-  const n = parseFloat(raw);
+  const n = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
   // -1 marks router models (OpenRouter Auto): dynamic, not a real price.
   if (!Number.isFinite(n) || n < 0) return null;
   return n * 1_000_000;
@@ -94,16 +66,6 @@ function serialisePricing(pricing) {
     })
     .join(',\n');
   return `{\n${body}\n}\n`;
-}
-
-/**
- * Our catalogue namespaces OpenRouter entries as `openrouter/<upstream id>`,
- * but OpenRouter also publishes house models under a literal `openrouter/`
- * vendor prefix (openrouter/auto). Try the stripped form, then the id as-is.
- */
-function upstreamCandidates(id) {
-  const stripped = id.slice('openrouter/'.length);
-  return stripped === id ? [id] : [stripped, id];
 }
 
 /** The fields the details modal shows, taken from the OpenRouter entry. */
@@ -229,6 +191,7 @@ async function main() {
   const modalityChanges = [];
   let missing = 0;
   let dynamic = 0;
+  let timeWindowed = 0;
 
   for (const m of models) {
     if (m.provider !== 'openrouter') continue;
@@ -241,17 +204,21 @@ async function main() {
     }
 
     // Pricing
-    const input = perMillion(up.pricing?.prompt);
-    const output = perMillion(up.pricing?.completion);
-    if (input === null || output === null) {
+    const rates = peakOpenRouterPricing(up.pricing);
+    const input = perMillion(rates?.prompt);
+    const output = perMillion(rates?.completion);
+    if (rates === null) {
+      timeWindowed++;
+      console.log(`  ? ${m.id} — time-windowed, review by hand`);
+    } else if (input === null || output === null) {
       dynamic++; // router model — keep whatever the file says (-1/-1)
     } else {
       const current = pricing[m.id];
       const next = { input: round(input), output: round(output) };
       // Cache rates when OpenRouter publishes them: OpenClaw prices cached tokens with
       // these, and without one they fall back to the input rate (lib/model-pricing.ts).
-      const cacheRead = perMillion(up.pricing?.input_cache_read);
-      const cacheWrite = perMillion(up.pricing?.input_cache_write);
+      const cacheRead = perMillion(rates.input_cache_read);
+      const cacheWrite = perMillion(rates.input_cache_write);
       if (cacheRead !== null) next.cacheRead = round(cacheRead);
       if (cacheWrite !== null) next.cacheWrite = round(cacheWrite);
       const show = (x) => `${x.input}/${x.output}` + (x.cacheRead !== undefined ? ` cache ${x.cacheRead}` : '');
@@ -282,10 +249,9 @@ async function main() {
   // One entry per catalogue model we can match upstream, so the file's key space is
   // our catalogue's. Direct entries are matched through VENDOR_ALIAS for the data
   // only; their price stays in model-pricing.json, from their own vendor.
-  const upstreamMatch = (id) => matchUpstream(live, id);
   const details = {};
   for (const m of models) {
-    const up = upstreamMatch(m.id);
+    const up = matchUpstream(live, m.id);
     if (up) details[m.id] = detailsFor(up);
   }
   // Hugging Face pass: sizes for the open-weight models, small concurrency.
@@ -315,12 +281,12 @@ async function main() {
 
   const direct = models.filter((m) => m.provider !== 'openrouter').length;
   console.log(
-    `\nSkipped:  ${dynamic} dynamic (router), ${missing} not upstream, ` +
+    `\nSkipped:  ${dynamic} dynamic (router), ${missing} not upstream, ${timeWindowed} time-windowed, ` +
     `${direct} direct-provider (different vendor, different rates — update by hand)`,
   );
 
   if (priceChanges.length === 0 && modalityChanges.length === 0 && sameDetails) {
-    console.log('\n✓ Already up to date.');
+    console.log(timeWindowed ? '\nNo changes to write. Review the time-windowed prices above.' : '\n✓ Already up to date.');
     return;
   }
 

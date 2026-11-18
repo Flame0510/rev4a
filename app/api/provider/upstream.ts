@@ -31,6 +31,7 @@ export interface ProviderEnvConfig {
 export const PROVIDER_ENVS: Record<string, ProviderEnvConfig> = {
   google: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    basePath: '',
     authHeader: 'x-goog-api-key',
   },
   openai: {
@@ -138,7 +139,7 @@ export async function callUpstream(
   // Old vaults can contain malformed keys. Fail before building any headers or calling fetch.
   if (/[\x00-\x1f\x7f]/.test(apiKey)) throw new TypeError('Invalid upstream API key');
 
-  const basePath = envConfig.basePath || '/v1';
+  const basePath = envConfig.basePath ?? '/v1';
   const targetUrl = `${envConfig.baseUrl}${basePath}/chat/completions`;
 
   const upstreamBody: Record<string, unknown> = { ...body, model: model || undefined };

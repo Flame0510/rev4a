@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -629,6 +629,8 @@ without the route. No restart is needed.
 
 ## Maintaining the model catalogue
 
+Follow `skills/rev4a-models-update/SKILL.md` in the repository for the update workflow and subscription model checks.
+
 Two files, both tracked in the repo, both maintained by hand:
 
 | File | Holds |
@@ -641,24 +643,32 @@ them on a schedule that suits you, and always before shipping a release.
 
 ### Where the truth lives
 
-Do not copy figures from blog posts or search results — they go stale and
-contradict each other. Two sources answer authoritatively:
+Use the direct vendor's official models, pricing and deprecation pages for the
+API and region the proxy calls. Open each page before recording a figure. Use a
+direct vendor's list API to cross-check account availability when a key is
+available. OpenRouter publishes its catalogue and rates through its public API.
 
 ```bash
 # OpenRouter: ids, prices and input modalities for every model, no auth
 curl -s https://openrouter.ai/api/v1/models
 
-# DeepSeek: the definitive list of callable model names
+# DeepSeek: optional cross-check of model names visible to this key
 curl -s https://api.deepseek.com/models -H "Authorization: Bearer $DEEPSEEK_KEY"
 ```
 
 The OpenRouter payload carries `pricing.prompt`, `pricing.completion`,
-`pricing.input_cache_read` (multiply by 1e6 for per-million figures) and
+`pricing.input_cache_read` and `pricing.input_cache_write` (multiply by 1e6 for per-million figures), and
 `architecture.input_modalities`, so prices and modalities can be checked in the
-same pass.
+same pass. The refresh preserves model ID suffixes such as `:batch`, `:free` and
+`:extended` when matching rows, including when it tries alternate version separators.
+OpenRouter's top-level rates can reflect the current UTC window. The refresh uses
+the peak rate row at the shortest context tier for scheduled models. When the
+schedule does not identify a peak, it keeps the bundled price and prints
+`time-windowed, review by hand`. [OpenRouter pricing overrides](https://openrouter.ai/docs/guides/overview/models#pricing-overrides)
 
-For direct-provider prices, use the provider's own pricing page. DeepSeek's is
-at `api-docs.deepseek.com/quick_start/pricing`. Record the **peak** rates, and
+For direct-provider prices, use the provider's Standard rates at the shortest
+published context tier. Record promotion end dates and published cache discounts.
+For scheduled pricing such as DeepSeek's, record the **peak** rates, and
 the cache-hit rate as `cacheRead` (`cacheWrite` is the input rate for a vendor that
 bills a cache miss as ordinary input); the off-peak discount is applied by
 `PRICE_SCHEDULES` in `lib/model-pricing.ts`, which is where a schedule change goes.
@@ -667,15 +677,20 @@ These prices are what every agent's OpenClaw computes its costs with (see
 
 ### What to check, in order
 
-1. **Models that no longer exist upstream.** Set `enabled: false`; do not delete
-   an id an agent might still be configured with — see below.
+1. **Models that no longer exist upstream.** Confirm the withdrawal and flag the
+   existing ID. For an existing OpenRouter ID with an empty public endpoints
+   response, set `deprecated: true`, preserve its enabled default and list the ID
+   for the assignment audit. The empty response leaves account availability and
+   formal retirement unverified.
 2. **Prices that drifted.** Compare every `openrouter/*` entry against the live
    API; direct providers against their pricing page.
 3. **Modalities.** `architecture.input_modalities` is authoritative. Compare the
    *set*, not the string: `text+image` and `image+text` are the same thing, and
    rewriting one into the other produces a diff full of noise.
-4. **New models worth carrying.** Add with `enabled` reflecting policy, not
-   availability — see the DeepSeek rule below.
+4. **New models worth carrying.** Check for alternate spellings of the same model
+   and confirm the proxy's Chat Completions compatibility. Confirm the exact IDs
+   to enable or disable and any default selection or picker-order change with the
+   maintainer before editing the catalogue.
 5. **Retired names.** Mark them, do not remove them yet.
 
 ### The deprecation lifecycle
@@ -686,10 +701,10 @@ a successor and billed at the successor's rates.
 Handle it in two releases:
 
 ```json5
-// release N — flag it. It still works, and it stays selectable.
+// release N — flag it and preserve its enabled default.
 { "id": "provider/retired-model", "deprecated": true }
 
-// release N+1 — remove it. Agents still on it show NOT IN CATALOGUE, in red.
+// release N+1 or later — disable the default or remove the ID after an assignment audit.
 ```
 
 The gap between the two releases is what gives anyone using it a chance to move.
@@ -707,12 +722,15 @@ Do **not** encode deprecation in `name`. The name is the model's name; the flag
 renders itself, and putting it in both produces `DeepSeek V4 Flash (legacy →
 Flash) (deprecated)`.
 
-**Never remove an id in the same release you deprecate it**, and never remove one
-without checking who uses it: an agent whose primary model leaves the catalogue
+Keep the ID and its enabled default in the first deprecation release. Audit
+primaries, fallbacks and job pins before disabling a default or removing an ID
+in a later release. An agent whose primary model leaves the catalogue
 fails on its next turn, and with an empty fallback list it fails hard. The agent
 cards surface this — `NOT IN CATALOGUE` in red — but only after the fact.
 
 ### Policy vs availability
+
+See the [default-enabled policy in the model catalogue update skill](../../skills/rev4a-models-update/SKILL.md#decisions-to-confirm-with-the-maintainer) for choosing and reviewing bundled defaults.
 
 `enabled` expresses **what this deployment should offer**, not what exists. Both
 DeepSeek direct and OpenRouter carry the DeepSeek models; this deployment uses
