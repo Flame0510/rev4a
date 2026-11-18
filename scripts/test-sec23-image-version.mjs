@@ -100,6 +100,8 @@ async function agentsWith(h, containers) {
   const route = load('app/api/agents/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => ({ body, status: options?.status ?? 200 }) } },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
+    '@/lib/agent-ports-server': { currentAgentPortsListen: () => ({ hostIp: null }) },
+    '@/lib/agent-ports': load('lib/agent-ports.ts', {}),
     '@/lib/docker-socket': {
       dockerAvailable: () => true,
       dockerFetch: async (_method, path) => {

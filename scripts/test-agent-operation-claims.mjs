@@ -154,5 +154,28 @@ try {
     assert.throws(() => recreate.insert('agent_unresolved'), error => error.code === 'REV4A_AGENT_JOB_BUSY');
     real.updateRestoreRow(id, { status: 'interrupted' });
   });
+  await test('Start checks claims inside a short transaction and runs its Docker command outside it, never blocking other writers', async () => {
+    const operation = load('lib/agent-operation.ts', {
+      '@/lib/db': { openDb: () => new Database(file) },
+      '@/lib/agent-busy': { agentBusyReason: async () => null, currentBusyReason: () => null },
+    });
+    const fastFactory = load('lib/agent-job-state.ts', {
+      '@/lib/db': { openDb: () => new Database(file, { timeout: 1 }) },
+    });
+    const competing = fastFactory.createJobState(spec('agent_edits', 'editing'));
+    // While the Docker command runs, other writers are not blocked (no SQLITE_BUSY for up to 35 s).
+    let during = null;
+    await operation.runAgentOperation('agent_start', () => { during = competing.insert('agent_start'); });
+    assert.ok(during, 'a competing writer succeeds while the command runs');
+    competing.update(during, { status: 'done' });
+    const id = competing.insert('agent_start');
+    let commands = 0;
+    await assert.rejects(operation.runAgentOperation('agent_start', () => { commands++; }), operation.AgentOperationBusyError);
+    assert.equal(commands, 0);
+    competing.update(id, { status: 'done' });
+    await assert.rejects(operation.runAgentOperation('agent_start', () => { throw new Error('Docker failed'); }), /Docker failed/);
+    const next = competing.insert('agent_start'); competing.update(next, { status: 'done' });
+    console.log('SQL_CHECK writers not blocked during the command; existing claim=409; failure releases=true');
+  });
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 console.log(`\n${passed} passed`);

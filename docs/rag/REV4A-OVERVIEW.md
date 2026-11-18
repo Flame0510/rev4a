@@ -255,7 +255,19 @@ restart survives reloading. A loopback dashboard listening on every interface sa
 also reachable from the network on System, with a Manage link to Remote access. System keeps one compact mode/status row below host charts. The page shows Current setup properties, icon preset choices, structured confirmation with a Switch acknowledgement, and running-agent ItemList rows. The current preset and unchanged Apply are disabled.
 
 After restart, recreate each listed running agent explicitly to apply its port setting;
-stopped agents are counted only. There is no automatic recreate and Start is unchanged.
+stopped mismatches say **N stopped agents will ask before starting** (NET-1e, 1.29.0).
+Start asks **Move and start** (cold backup then Recreate, with progress until running),
+**Start as is** (keep its bindings), or Cancel, with a Remote access link. Restart of a
+stopped container (including the panel's Restart Container button and direct `/restart` calls)
+asks too; Stop and running Restart retain their behavior. Failed Move or Recreate leaves an
+initially stopped old container stopped; only an originally running one is restarted on failure.
+Start and Restart recheck busy ownership after inspect and reserve the Docker mutation against
+competing lifecycle jobs. Busy agents keep their
+existing refusal. Cards and detail panels show **Ports: every interface** (or their current
+Control UI address) when ports differ; the running panel offers Recreate beside the pill.
+An empty agent-port setting never asks or shows a pill. Explicit all detects local bindings too.
+There is no automatic recreate or data migration; the choice is made for each start.
+Older agents can still start as is. Rollback keeps the same data but loses this prompt.
 The active Recreate row retains its loading button through backup stops and matching-port
 refreshes until the job finishes.
 

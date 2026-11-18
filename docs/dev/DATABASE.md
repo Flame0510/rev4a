@@ -166,13 +166,16 @@ CREATE TABLE agent_recreates (
 );
 
 CREATE INDEX idx_agent_recreates_agent ON agent_recreates(agent_id, started_at);
+-- 1.29.0, additive (ALTER TABLE ADD COLUMN, guarded):
+--   was_running INTEGER  -- 1/0: container running when the job was admitted; NULL on older rows
 ```
 
 One row per recreate attempt (`lib/agent-recreate.ts`), the same-version counterpart of
 an update: a cold backup, the container rebuilt, the gateway waited for. It is written
 so a page reload or a Rev4a restart mid-way is visible instead of lost
 (`GET /api/agents/[id]/recreate`). At startup, rows still in an active status become
-`interrupted` and the agent is started again once its backup helper has finished. Rows
+`interrupted` and the agent is started again once its backup helper has finished, unless `was_running` is 0
+(the agent was stopped when the job began, e.g. a Start "Move and start"): then it stays stopped. Rows
 are never pruned.
 
 ### `agent_restores` — agent restores

@@ -17,7 +17,7 @@ export function AgentsToRecreate({ data }: { data: RemoteAccessData }) {
       </Button>,
     }))} />}
     {recreate && <p role="status" className="ui-text-small">{recreate.job?.status === 'backing_up' ? `Backing up… ${recreate.job.backupPercent ?? 0}%` : 'Recreating container…'}</p>}
-    {!!state?.agents.stoppedDiffering && <p className="ui-muted ui-text-small">{state.agents.stoppedDiffering} stopped agents keep their old ports until they are recreated</p>}
+    {!!state?.agents.stoppedDiffering && <p className="ui-muted ui-text-small">{state.agents.stoppedDiffering} stopped agents will ask before starting</p>}
     {state?.agents.differing === null && <p className="ui-muted ui-text-small">Could not check agent ports. Docker may be unavailable.</p>}
   </section>;
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, AgentCard, Badge, ConfirmModal, Input, type Tone } from '../components/ui';
+import { Button, AgentCard, AgentStartDialog, Badge, ConfirmModal, Input, Pill, type AgentStartPrompt, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
@@ -16,6 +16,7 @@ import CredentialsSection from './CredentialsSection';
 import BrowserAccessSection, { Elapsed, OpenControlUiButton, type GatewayState } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
 import { validatePortInput } from '@/lib/agent-ports';
+import { agentPortsLabel, requestAgentLifecycle } from '@/lib/agent-start';
 import { GATEWAY_POLL_STUCK_MS, skipGatewayTick } from '@/lib/gateway-state';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
@@ -67,6 +68,7 @@ interface Agent {
   controlPort: string | null;
   /** Host address the Control UI port is published on; null/0.0.0.0 = every interface. Never a token. */
   controlUiHostIp?: string | null;
+  portsDiffer?: boolean;
   /** OpenClaw version the agent runs; null when it cannot be read (stopped agent on an unlabelled image). */
   openclawVersion?: string | null;
   /** A newer supported OpenClaw version is downloaded. */
@@ -273,9 +275,10 @@ function AgentListItem({
     : b.kind === 'edit' ? 'EDITING'
     : 'UPDATING';
   const gw = agent.state === 'running' ? gatewaySummary[agent.agentId] : undefined;
-  const hasChips = !!b || gw?.state === 'starting' || gw?.state === 'not_ready' || channelSummary[agent.agentId]?.telegram || pending > 0 || agent.updateAvailable || agent.newBuildAvailable;
+  const hasChips = agent.portsDiffer || !!b || gw?.state === 'starting' || gw?.state === 'not_ready' || channelSummary[agent.agentId]?.telegram || pending > 0 || agent.updateAvailable || agent.newBuildAvailable;
   const chips = hasChips ? (
     <>
+      {agent.portsDiffer && <Pill tone="warning" title="Recreate to apply the Remote access setting">Ports: {agentPortsLabel(agent.controlUiHostIp)}</Pill>}
       {activity && <Badge tone="neutral"><span style={{ fontSize: 8, padding: '1px 6px' }}>{activity}</span></Badge>}
       {gw?.state === 'starting' && (
         <Badge tone="neutral"><span style={{ fontSize: 8, padding: '1px 6px' }}>STARTING <Elapsed startedAtMs={gw.startedAtMs} /></span></Badge>
@@ -352,6 +355,15 @@ export default function AgentsPageClient() {
   const [tokenSaving, setTokenSaving] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [lifecycleLoading, setLifecycleLoading] = useState<string | null>(null);
+  const lifecycleBusyRef = useRef(false);
+  const lifecycleAbortRef = useRef<AbortController | null>(null);
+  const listAbortRef = useRef<AbortController | null>(null);
+  const [startPrompt, setStartPrompt] = useState<AgentStartPrompt | null>(null);
+  const [lifecycleError, setLifecycleError] = useState('');
+  useEffect(() => () => {
+    lifecycleAbortRef.current?.abort();
+    listAbortRef.current?.abort();
+  }, []);
   const skipNextPoll = useRef(false);
   /** Guards the un-awaited channel-summary fetch against out-of-order responses. */
   const chSummarySeq = useRef(0);
@@ -483,7 +495,7 @@ export default function AgentsPageClient() {
   const boostGateway = useCallback(() => {
     setGwBoostUntil(Date.now() + 20000);
     void refreshGateway();
-  }, [refreshGateway]);
+  }, [refreshGateway, refreshModelSummary, refreshDeviceSummary, refreshBackupSummary]);
 
   const anyGatewayStarting = Object.values(gwSummary).some((g) => g.state === 'starting');
   const gwFast = anyGatewayStarting || gwBoostUntil > 0;
@@ -500,10 +512,14 @@ export default function AgentsPageClient() {
   }, [gwBoostUntil]);
 
   const load = useCallback(async () => {
+    listAbortRef.current?.abort();
+    const controller = new AbortController();
+    listAbortRef.current = controller;
     try {
-      const res = await fetch('/api/agents');
+      const res = await fetch('/api/agents', { signal: controller.signal });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (!Array.isArray(data)) throw new Error('Invalid response');
       setAgents(data);
       setError('');
@@ -533,9 +549,10 @@ export default function AgentsPageClient() {
       // Like a tick: the 15 s list poll must not abort a slow Gateway request that is still young.
       void refreshGateway(true);
     } catch (e: any) {
+      if (controller.signal.aborted || e?.name === 'AbortError') return;
       setError(e.message || 'Loading error');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [refreshGateway]);
 
@@ -595,28 +612,39 @@ export default function AgentsPageClient() {
   }, []);
 
   const handleLifecycle = useCallback(async (agent: Agent) => {
+    if (lifecycleBusyRef.current || startPrompt) return;
+    lifecycleBusyRef.current = true;
     const action = agent.state === 'running' ? 'stop' : 'start';
     setLifecycleLoading(agent.agentId);
+    setLifecycleError('');
+    lifecycleAbortRef.current?.abort();
+    const controller = new AbortController();
+    lifecycleAbortRef.current = controller;
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}/lifecycle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        console.error(`Lifecycle ${action} failed:`, data.error || res.statusText);
+      const result = await requestAgentLifecycle(agent.agentId, action, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result.kind === 'ports_differ') {
+        setStartPrompt({ agentId: agent.agentId, name: agent.displayName || agent.name, hostIp: agent.controlUiHostIp, setting: result.setting });
+        return;
       }
       // Refresh agent list to pick up new state; skip the next polling cycle
       skipNextPoll.current = true;
       if (action === 'start') boostGateway();
-      await load();
+      void load();
     } catch (e: unknown) {
-      console.error(`Lifecycle request failed:`, (e as Error).message);
+      if (!controller.signal.aborted && (e as Error).name !== 'AbortError') setLifecycleError((e as Error).message);
     } finally {
+      lifecycleBusyRef.current = false;
       setLifecycleLoading(null);
     }
-  }, [load, boostGateway]);
+  }, [load, boostGateway, startPrompt]);
+
+  const lifecycleFeedback = <>
+    {lifecycleError && <p role="alert">{lifecycleError}</p>}
+    {startPrompt && <AgentStartDialog key={startPrompt.agentId} prompt={startPrompt}
+      onClose={() => setStartPrompt(null)} onStarted={() => { boostGateway(); void refreshBackupSummary(); }}
+      onComplete={() => { setStartPrompt(null); boostGateway(); void load(); }} />}
+  </>;
 
   async function saveToken() {
     setTokenSaving(true);
@@ -732,6 +760,7 @@ export default function AgentsPageClient() {
   if (loading || providersConfigured === null) {
     return (
       <div style={{ padding: 14, display: 'grid', gap: 14 }}>
+        {lifecycleFeedback}
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} style={{ border: '1px solid var(--border)', background: 'var(--bg2)', padding: 12 }}>
             <SkeletonLines count={4} />
@@ -744,6 +773,7 @@ export default function AgentsPageClient() {
   if (error) {
     return (
       <div style={{ padding: 40, textAlign: 'center' }}>
+        {lifecycleFeedback}
         <div style={{ color: '#ef4444', fontSize: 14, marginBottom: 10 }}>{error}</div>
         <Button variant="secondary" size="sm" onClick={() => load()}>
           RETRY
@@ -757,6 +787,7 @@ export default function AgentsPageClient() {
     if (!showList && selected) {
       return (
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
+          {lifecycleFeedback}
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
@@ -778,6 +809,7 @@ export default function AgentsPageClient() {
     // Mobile: list
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
+        {lifecycleFeedback}
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
@@ -808,7 +840,7 @@ export default function AgentsPageClient() {
               deviceSummary={dvSummary}
               backupSummary={bkSummary}
               gatewaySummary={gwSummary}
-              busy={!!bkSummary[agent.agentId]}
+              busy={!!bkSummary[agent.agentId] || !!lifecycleLoading || !!startPrompt}
               onClick={() => selectAgent(agent)}
               onLifecycle={() => handleLifecycle(agent)}
             />
@@ -821,6 +853,7 @@ export default function AgentsPageClient() {
   // ─── Desktop: split view ───
   return (
     <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {lifecycleFeedback}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
@@ -858,7 +891,7 @@ export default function AgentsPageClient() {
                 deviceSummary={dvSummary}
                 backupSummary={bkSummary}
                 gatewaySummary={gwSummary}
-                busy={!!bkSummary[agent.agentId]}
+                busy={!!bkSummary[agent.agentId] || !!lifecycleLoading || !!startPrompt}
                 selected={isSelected}
                 onClick={() => setSelectedId(agent.agentId)}
                 onLifecycle={() => handleLifecycle(agent)}
@@ -1375,7 +1408,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
       <IntegrationSection agentName={agent.name} />
 
       {/* Restart */}
-      <RestartSection agentName={agent.name} agentBusy={busy} onRestarted={onRestarted} />
+      <RestartSection agentName={agent.agentId} displayName={agent.displayName || agent.name} hostIp={agent.controlUiHostIp} agentBusy={busy} onRestarted={onRestarted} />
 
       {/* Backup - persistent volume backup & restore */}
       <BackupSection agentName={agent.name} agentId={agent.agentId} agentBusy={busy} onChanged={() => setBackupsChanged((n) => n + 1)} onStarted={(kind) => onActivity(agent.agentId, kind)} />
@@ -1406,7 +1439,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
           <UpdateSection backupsChanged={backupsChanged} agentId={agent.agentId} displayName={agent.displayName || agent.name} running={agent.state === 'running'} onChanged={onChanged} onStarted={() => onActivity(agent.agentId, 'update')} />
         </div>
       </div>
-      <RecreateSection agentName={agent.name} displayName={agent.displayName || agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
+      <RecreateSection portsDiffer={agent.portsDiffer} hostIp={agent.controlUiHostIp} agentRunning={agent.state === 'running'} agentName={agent.name} displayName={agent.displayName || agent.name} agentBusy={busy} newBuildVersion={agent.newBuildAvailable ? agent.openclawVersion ?? null : null} onRecreated={onChanged} onStarted={() => onActivity(agent.agentId, 'recreate')} />
 
       {/* Delete */}
       <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, background: 'rgba(239,68,68,0.04)', overflow: 'hidden' }}>
@@ -1957,9 +1990,16 @@ function BackupSection({ agentName, agentId, agentBusy, onStarted, onChanged }: 
 
 /* ─── Restart section - simple container restart ─── */
 
-function RestartSection({ agentName, agentBusy, onRestarted }: { agentName: string; agentBusy?: boolean; onRestarted: () => void }) {
+function RestartSection({ agentName, displayName, hostIp, agentBusy, onRestarted }: {
+  agentName: string; displayName: string; hostIp?: string | null; agentBusy?: boolean; onRestarted: () => void;
+}) {
   const [restarting, setRestarting] = useState(false);
+  const restartingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const [startPrompt, setStartPrompt] = useState<AgentStartPrompt | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -1967,20 +2007,30 @@ function RestartSection({ agentName, agentBusy, onRestarted }: { agentName: stri
   };
 
   const handleRestart = async () => {
+    if (restartingRef.current || startPrompt) return;
+    restartingRef.current = true;
     setRestarting(true);
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const res = await fetch(`/api/agents/${agentName}/restart`, { method: 'POST' });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/restart`, { method: 'POST', signal: controller.signal });
       const data = await res.json();
-      if (data.success) {
+      if (controller.signal.aborted) return;
+      if (res.status === 409 && data.code === 'ports_differ') {
+        setStartPrompt({ agentId: agentName, name: displayName, hostIp, setting: data.setting });
+      } else if (res.ok && data.success) {
         showToast('Container restarted');
         onRestarted();
       } else {
         showToast(data.error || 'Restart failed');
       }
     } catch (e: unknown) {
-      showToast((e as Error).message || 'Network error');
+      if (!controller.signal.aborted && (e as Error).name !== 'AbortError') showToast((e as Error).message || 'Network error');
+    } finally {
+      restartingRef.current = false;
+      if (!controller.signal.aborted) setRestarting(false);
     }
-    setRestarting(false);
   };
 
   return (
@@ -1990,10 +2040,12 @@ function RestartSection({ agentName, agentBusy, onRestarted }: { agentName: stri
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Restart the container without losing any data.
         </div>
-        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting || !!agentBusy} onClick={handleRestart}>
-          {restarting ? 'Restarting...' : 'Restart Container'}
+        <Button variant="secondary" size="sm" loading={restarting} disabled={restarting || !!startPrompt || !!agentBusy} onClick={handleRestart}>
+          {restarting ? 'Restarting…' : 'Restart Container'}
         </Button>
       </div>
+      {startPrompt && <AgentStartDialog prompt={startPrompt} onClose={() => setStartPrompt(null)}
+        onStarted={onRestarted} onComplete={() => { setStartPrompt(null); onRestarted(); }} />}
       {toast && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: '#22c55e' }}>
           {toast}
@@ -2013,7 +2065,10 @@ interface RecreateJob {
   error: string | null;
 }
 
-function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = null, onRecreated, onStarted }: {
+function RecreateSection({ agentName, displayName, agentBusy, portsDiffer, hostIp, agentRunning, newBuildVersion = null, onRecreated, onStarted }: {
+  portsDiffer?: boolean;
+  hostIp?: string | null;
+  agentRunning?: boolean;
   agentName: string;
   /** The agent display name, for texts the user reads; agentName is the container, for URLs. */
   displayName?: string;
@@ -2186,9 +2241,12 @@ function RecreateSection({ agentName, displayName, agentBusy, newBuildVersion = 
         <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
           Takes an automatic cold backup — the agent stops for it — then rebuilds the container on the same OpenClaw version, keeping workspace, config, credentials and state. To move to a newer OpenClaw version, use Update above.
         </div>
-        <Button variant="secondary" size="sm" loading={running || starting} disabled={running || starting || !!agentBusy} onClick={() => setShowConfirm(true)}>
-          {starting ? 'Starting…' : running ? 'Recreating…' : 'Recreate Container'}
-        </Button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          {portsDiffer && <Pill tone="warning" title="Recreate to apply the Remote access setting">Ports: {agentPortsLabel(hostIp)}</Pill>}
+          {(!portsDiffer || agentRunning) && <Button type="button" variant="secondary" size="sm" loading={running || starting} disabled={running || starting || !!agentBusy} onClick={() => setShowConfirm(true)}>
+            {starting ? 'Starting…' : running ? 'Recreating…' : 'Recreate Container'}
+          </Button>}
+        </div>
         {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
         {warning && <div role="status" style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 6 }}>{warning}</div>}
       </div>

@@ -25,3 +25,4 @@ export * from './Meter';
 export * from './TimeSeriesChart';
 export * from './MemoryLimitPicker';
 export * from './AgentCard';
+export { AgentStartDialog, type AgentStartPrompt } from './AgentStartDialog';

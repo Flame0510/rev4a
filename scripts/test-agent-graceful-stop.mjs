@@ -139,7 +139,7 @@ for (const failed of [false, true]) await test(`Recreate job opts in and retains
     prunePrerecreateBackups: async () => {}, COLD_BACKUP_WAIT_TIMEOUT_MS: 1, RECREATE_READY_TIMEOUT_MS: 1,
     shortError: e => e.message,
   }, ['runRecreate']);
-  await runRecreate(1, 'agent_fixture', 'image');
+  await runRecreate(1, 'agent_fixture', 'image', true, 'fixture-id');
   assert.equal(rows.at(-1).status, failed ? 'failed' : 'done'); assert.match(rows.at(-1).error, /Graceful stop timed out/);
 });
 await test('other lifecycle entrypoints do not use the graceful helper or expanded create deadline', () => {
@@ -222,7 +222,7 @@ for (const outcome of ['clean', 'exit137', 'kill', 'unconfirmed']) {
         prunePrerecreateBackups: async () => [], COLD_BACKUP_WAIT_TIMEOUT_MS: 1, RECREATE_READY_TIMEOUT_MS: 1,
         shortError: e => e.message,
       }, ['runRecreate']);
-      await runRecreate(1, 'agent_fixture', 'image');
+      await runRecreate(1, 'agent_fixture', 'image', true, 'fixture-id');
       assert.deepEqual(events.filter(e => e[0] === 'stop'), [['stop', '-t', '30', 'fixture']]);
       assert.equal(events.filter(e => e[0] === 'kill').length, outcome === 'kill' ? 1 : 0);
       assert.equal(rows.at(-1).status, failure ? 'failed' : 'done');

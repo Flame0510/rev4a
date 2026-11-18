@@ -112,7 +112,7 @@ test('the local-only variant: https included, no "Open anyway", the agent list c
   assert.match(list, /controlUiHostIp = port3000Binding\?\.\[0\]\?\.HostIp \|\| null/);
   assert.ok(!/token/i.test(list.slice(list.indexOf('controlUiHostIp'), list.indexOf('controlUiHostIp') + 120)));
   const page = fs.readFileSync(path.join(root, 'app/agents/PageClient.tsx'), 'utf8');
-  assert.equal((page.match(/hostIp=\{agent\.controlUiHostIp\}/g) || []).length, 2, 'both Open buttons get the HostIp');
+  assert.equal((page.match(/<OpenControlUiButton\b[^>]*hostIp=\{agent\.controlUiHostIp\}/g) || []).length, 2, 'both Open buttons get the HostIp');
 });
 
 console.log(`\n${passed} passed`);

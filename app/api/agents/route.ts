@@ -3,6 +3,8 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { dockerAvailable, dockerFetch } from '@/lib/docker-socket';
 import { containerOpenClawVersion, imageOpenClawVersion, listLocalAgentImages, newestLocalSupportedVersion, type LocalAgentImage } from '@/lib/agent-images';
 import { LOCAL_IMAGE_REPOSITORY, compareVersions, newBuildAvailableFor } from '@/lib/agent-versions';
+import { currentAgentPortsListen } from '@/lib/agent-ports-server';
+import { publishesDifferently } from '@/lib/agent-ports';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +16,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    const portsSetting = currentAgentPortsListen();
     // List all containers (including stopped) with AGENT_ID label via Docker API
     const containers: any[] = await dockerFetch(
       'GET',
@@ -130,6 +133,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           env,
           controlPort,
           controlUiHostIp,
+          portsDiffer: publishesDifferently(portBindings, portsSetting.hostIp),
           openclawVersion,
           // A newer supported OpenClaw version is downloaded. Recreate keeps the agent's
           // version; moving to the newer one is a separate, backed-up update.

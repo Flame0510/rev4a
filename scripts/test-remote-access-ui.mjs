@@ -140,6 +140,7 @@ console.log('ok   Domain acknowledgement, exact confirm/apply, keyed loading and
 const h = harness('localhost'); h.render(); await flush();
 assert.ok(h.render().some((node) => node.type === ui.Pill && JSON.stringify(node.props.children).includes('Different address → this host')));
 assert.equal(h.render().filter((node) => node.type === ui.Button && node.props.children === 'Recreate').length, 1, 'only running ids get buttons; stopped count has none');
+assert.ok(h.render().some((node) => node.type === 'p' && node.props.children?.join?.('') === '2 stopped agents will ask before starting'));
 h.button('Recreate').props.onClick(); await flush(); h.render(); await flush();
 assert.equal(h.calls.filter((call) => call.url.endsWith('/recreate') && call.options.method === 'POST').length, 1);
 assert.equal(h.calls.filter((call) => call.url.endsWith('/recreate') && !call.options.method).length, 1, 'polls the job after the explicit click');

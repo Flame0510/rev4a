@@ -53,7 +53,8 @@ function ignoreLoginSkips(ignore: IgnoreLogin | undefined, provider: 'openai' | 
   return ignore === true || ignore === provider;
 }
 
-function currentBusyReason(agentId: string, opts?: { ignoreLogin?: IgnoreLogin }): string | null {
+/** Synchronous owners, also revalidated inside the short lifecycle command reservation. */
+export function currentBusyReason(agentId: string, opts?: { ignoreLogin?: IgnoreLogin }): string | null {
   if (memoryLimitClaims.has(agentId)) return 'A memory limit change for this agent is being applied';
   if (isUpdateActive(agentId)) return 'An update of this agent is running';
   if (isRecreateActive(agentId)) return 'A recreate of this agent is running';

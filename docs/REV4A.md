@@ -40,7 +40,31 @@ survive a page reload by comparing saved settings with the current boot. Nothing
 If restart confirmation times out after 60 seconds, Retry becomes available while the previous boot identity
 is retained. A later read from a new boot clears the obsolete timeout and enables Recreate.
 Successful reads clear transient status errors without dismissing action failures, restoring System's LAN notice.
-Stopped agents are counted only: they keep their ports until recreated; Start is unchanged.
+**Start with different ports (NET-1e, 1.29.0):** stopped agents whose bindings differ from the
+Remote access setting ask before starting. **Start <agent>** offers **Move and start** (the existing
+cold-backup Recreate job, followed until running), **Start as is** (retain the current bindings), and
+Cancel, with a Remote access link. The panel's **Restart Container** asks too when stopped,
+using the same dialog; `/restart` also enforces the choice for direct callers. Nothing recreates automatically.
+If Move or Recreate fails, the old container is restarted only if it was running when the job
+began; an initially stopped agent stays stopped, with the failure shown.
+Cards and the detail panel show a warning **Ports: every interface** (or the current Control UI address)
+with the title **Recreate to apply the Remote access setting**. The panel keeps its existing Recreate
+confirmation next to the pill for running agents; stopped mismatches show only the pill and ask on Start.
+Remote access says **N stopped agents will ask before starting**. An empty agent-port setting keeps
+existing behavior without a prompt or pill; an explicit all also detects local bindings.
+Running Restart and Stop retain their behavior. Busy operations keep their existing refusal;
+Start and Restart recheck after inspect, then check the persisted lifecycle claims in a short SQLite
+transaction and run the Docker command right after it (outside the transaction, so other writers are
+never blocked). A claim from another process landing in the few microseconds between the check and the
+command is not excluded; before 1.29.0 Start had no such check at all. A recreate (or Move) cut off by a
+Rev4a restart starts the old container again only if it was running when the job began
+(`agent_recreates.was_running`).
+
+**Upgrade safety (NET-1e):** no database, config, environment, provider-key or volume migration.
+The first read checks already-inspected bindings; no startup fleet rewrite or backup runs. Older
+OpenClaw agents can still start as is, stop and open their Control UI; Move uses existing image and
+backup checks. Existing stopped mismatches are covered immediately by the new prompt. Rollback can
+read the same data and existing recreate records, but an older dashboard resumes without this prompt.
 
 Supervisor restart flags use `REV4A_DATA_DIR/data`, or `~/.config/rev4a/data` when unset, exactly like
 the launcher on Linux, macOS and Windows. A systemctl timeout is logged as a failure and falls back to
@@ -631,6 +655,7 @@ View all running Docker containers with:
 ### Agent management (`/agents`)
 Lists all agents (Docker containers with `AGENT_ID` label), with:
 - Name, image, template, status, ports, IP
+- **Start and port setting (1.29.0)** — switching on a stopped agent with different port bindings opens **Start <agent>**: Move and start (cold backup and Recreate), Start as is, or Cancel. The job shows progress and errors. A warning **Ports: every interface** (or its current Control UI address) appears on the card and in the panel, beside the existing Recreate action for a running agent. An empty setting keeps Start unchanged and shows no pill. No rebuild happens without a click.
 - TG channel status chip (green = connected, hidden if not configured)
 - **Shared gateway token** — text input with Save & Sync. Changing the token saves it to `data/agents-token.json` and pushes it to all running containers.
 - **Control UI link** — the **Open** buttons go through `GET /api/agents/[id]/open-control-ui`, which redirects to the agent's published port: a one-time link on OpenClaw 9.x, the plain `#token=` link otherwise, with the token read inside the container. Local dashboards use a different cookie host: `localhost` (case-insensitive, also `localhost.`) opens on `127.0.0.1`; `::1`, `[::1]` and any `127.x.y.z` open on `localhost`, which resolves to both loopback address families. Both the page and the `gatewayUrl` fragment use that host, because cookies are shared across ports. LAN/public IPs and domains keep the dashboard host. When the dashboard is on plain HTTP on such a host, the agent's port also receives the Rev4a session cookie (cookies ignore ports), so **Open** first shows a modal (*Open the Control UI*): the risk in one paragraph, the SSH tunnel command (`ssh -L <port>:127.0.0.1:<port> user@<host>`) with Copy, **Copy tunnel link** (a link built for `localhost`, from `GET /api/agents/[id]/open-control-ui?tunnel=1`, issued only when pressed; the command reads only the port, through `?tunnel=port`), a link to the HTTPS guide, and **Cancel** / **Open anyway**. It is asked every time; nothing is remembered. On HTTPS and on loopback hosts there is no modal. The System page shows a warning card on plain HTTP and a compact **Remote access** status row linking to `/remote-access` (the dedicated page holds guarded presets, restart and individual running-agent recreates, from `GET /api/system/listen` and `/api/system/remote-access`). When an agent's port is published only on loopback (`REV4A_AGENT_PORTS_LISTEN=local`) or on an IP that is not the dashboard's own IP, and the dashboard is not on the server itself, the plain link cannot work: **Open** then shows the same modal in a variant (any protocol, https included) with *This agent's port is open only on the server itself. Use an SSH tunnel:*, the command, **Copy tunnel link**, the guide link and **no** *Open anyway*. A loopback dashboard opens directly. While the agent's Gateway is still starting the card shows a `STARTING m:ss` chip (`GET /api/agents/gateway`); while the Gateway answers 503 **Open** reads *Starting…* and is disabled. When it gives no answer at all (normal in the first seconds of a boot) the chip shows but Open stays enabled. After 10 minutes without readiness the chip reads NOT READY and Open is enabled again; a container in a restart loop reaches NOT READY too (the 10 minutes count from the first start Rev4a saw, not from each restart; they start again when Rev4a restarts). Only a real 503 disables Open; a failed, missing or unexpected readiness answer never does.

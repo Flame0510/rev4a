@@ -875,7 +875,7 @@ Use `EventSource` in the browser or `curl -N` for testing.
 ## Agents
 
 ### `GET /api/agents`
-List running agent containers (Docker containers with `AGENT_ID` label) with full metadata.
+List running and stopped agent containers (Docker containers with `AGENT_ID` label) with full metadata.
 
 **Auth:** browser cookie
 
@@ -897,6 +897,7 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
     "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
     "controlPort": "3033",
     "controlUiHostIp": null,
+    "portsDiffer": false,
     "openclawVersion": "2026.9.3",
     "updateAvailable": false,
     "newBuildAvailable": false
@@ -905,6 +906,9 @@ List running agent containers (Docker containers with `AGENT_ID` label) with ful
 ```
 
 **Notes:**
+- `portsDiffer` (1.29.0) compares all inspected port bindings with the current agent-port setting,
+  read once per request, using the same `publishesDifferently` rule as `/api/system/listen`.
+  Unset/empty means false; explicit `all` also detects restricted bindings.
 - `openclawVersion` comes from the image's `org.opencontainers.image.version` label (read by
   image id, so also for an image that lost every tag) or version tag, else from
   `openclaw --version` inside the running container (cached per Docker container id and
@@ -1246,7 +1250,15 @@ banner polls to resume after a reload. `status`: `rebuilding` → `done` | `fail
 ### `POST /api/agents/[id]/restart`
 Restart an agent container (shorter than recreate — keeps everything intact). After a successful restart, credential assignments are re-applied in the background once the Gateway is ready.
 
-**Auth:** browser cookie
+**Auth:** browser cookie or bearer token
+
+**Body:** optional `{ "ports": "as_is" | "move" }`; an empty body remains supported.
+A non-running container with mismatching ports returns the same **409** `ports_differ`
+body as lifecycle Start below. `as_is` restarts its existing container; `move` starts the
+shared Recreate job and returns **202** `{ "started": true, "id": <job id> }`.
+Invalid `ports` returns **400**. A busy agent returns **409** before any port choice;
+ownership is rechecked after inspect and immediately before the Docker command.
+Running restart does not read the port setting and keeps its existing success response.
 
 **Response:**
 ```json
@@ -1596,14 +1608,40 @@ Start, stop or restart an agent container.
 
 **Auth:** browser cookie or bearer token
 
-**Body:** `{ "action": "start" | "stop" | "restart" }`
+**Body:** `{ "action": "start" | "stop" | "restart", "ports"?: "as_is" | "move" }`
 
 Redundant actions are no-ops: starting a running container, or stopping a stopped
 one, succeeds without touching it.
 After an actual start or restart, credential assignments are re-applied in the background once the Gateway is ready.
 
-**Errors:** `400` for a malformed body, an unknown action, or an invalid agent id;
-`404` when no container carries that `AGENT_ID`.
+**Port choice (1.29.0):** when starting a non-running container (including Restart),
+its inspected bindings are compared with the current Remote access agent-port setting.
+An empty setting never asks. A mismatch without `ports` returns **409** without starting,
+recreating or consuming the lifecycle cooldown:
+
+```json
+{ "error": "This agent's ports do not match the Remote access setting.", "code": "ports_differ", "setting": "local" }
+```
+
+`setting` is the effective mode (`all`, `local` or `address`).
+Repeat with `ports: "as_is"` to start the existing container, or `ports: "move"` to call
+the same backed-up recreate starter as `POST /api/agents/[id]/recreate`, with its busy,
+backup and address checks. Move returns **202** `{ "started": true, "id": <job id> }`;
+poll `GET /api/agents/[id]/recreate` until that id reports done/failed/interrupted.
+With no mismatch either choice follows ordinary lifecycle behavior. Stop and running Restart
+are unchanged, and a busy agent's existing 409 wins over the port prompt.
+
+**Errors:** `400` for a malformed body, an unknown action, an invalid agent id, or any
+`ports` value other than `as_is` / `move`; `404` when no container carries that
+`AGENT_ID`; `429` during the lifecycle cooldown. Move shares Recreate's error statuses.
+No operator choice is persisted and no agent is automatically recreated.
+Both lifecycle and `/restart` recheck busy state after asynchronous inspect and the final
+backup probe. Owners are revalidated inside a short SQLite IMMEDIATE transaction (it sees every persisted
+lifecycle claim); the Docker command runs right after it, outside the transaction, so other
+writers are never blocked while Docker works.
+A backup that becomes busy during inspect returns **409** with no Docker mutation.
+If Move or Recreate fails, only the original container that was running at job admission
+may be restarted; an initially stopped container stays stopped and the job reports failure.
 
 ---
 

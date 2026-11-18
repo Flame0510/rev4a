@@ -11,7 +11,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { isValidAgentId } from '@/lib/container';
-import { agentRecreateView, RecreateRefusedError, startAgentRecreate } from '@/lib/agent-recreate';
+import { agentRecreateView, recreateErrorStatus, startAgentRecreate } from '@/lib/agent-recreate';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,10 +30,7 @@ export async function POST(request: NextRequest, ctx: Ctx): Promise<NextResponse
     const rowId = await startAgentRecreate(id);
     return NextResponse.json({ started: true, id: rowId }, { status: 202 });
   } catch (e) {
-    const status = e instanceof RecreateRefusedError
-      ? 409
-      : /No container|not available locally|Cannot tell which image/.test((e as Error).message) ? 404 : 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json({ error: (e as Error).message }, { status: recreateErrorStatus(e) });
   }
 }
 

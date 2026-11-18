@@ -200,6 +200,12 @@ export async function recreateAgentContainer(
 
 export class RecreateRefusedError extends Error {}
 
+/** Shared by explicit Recreate and the lifecycle Move and start choice. */
+export function recreateErrorStatus(error: unknown): number {
+  return error instanceof RecreateRefusedError ? 409
+    : /No container|not available locally|Cannot tell which image/.test((error as Error).message) ? 404 : 500;
+}
+
 /** Recreate jobs running in this process, so a second start for the same agent is refused. */
 const running = new Set<string>();
 
@@ -225,8 +231,14 @@ export async function startAgentRecreate(agentId: string): Promise<number> {
     // Refuse before any state is written when the image cannot be resolved.
     const image = await resolveRecreateImage(container);
 
+    const busyAfterReads = await agentBusyReason(agentId);
+    if (busyAfterReads) throw new RecreateRefusedError(busyAfterReads);
+
     const id = insertRecreate(agentId, image);
-    void runRecreate(id, agentId, image).finally(() => running.delete(agentId));
+    const wasRunning = container.State?.Running === true;
+    // Persisted before any await: a Rev4a restart mid-job must know whether to start the old container.
+    updateRecreateRow(id, { was_running: wasRunning ? 1 : 0 });
+    void runRecreate(id, agentId, image, wasRunning, container.Id).finally(() => running.delete(agentId));
     return id;
   } catch (e) {
     running.delete(agentId);
@@ -237,7 +249,7 @@ export async function startAgentRecreate(agentId: string): Promise<number> {
   }
 }
 
-async function runRecreate(id: number, agentId: string, image: string): Promise<void> {
+async function runRecreate(id: number, agentId: string, image: string, wasRunning: boolean, originalContainerId?: string): Promise<void> {
   let stoppedByBackup = false;
   let warning: string | null = null;
   // Best effort: a failed write of the warning must not change what Recreate does next.
@@ -283,15 +295,13 @@ async function runRecreate(id: number, agentId: string, image: string): Promise<
       .then((removed) => { if (removed.length) console.log(`[agent:recreate] removed old prerecreate backups: ${removed.join(', ')}`); })
       .catch((err: unknown) => console.warn('[agent:recreate] backup cleanup failed:', (err as Error).message));
   } catch (e) {
-    // A failure while the backup had stopped the old container and the recreate had
-    // not run yet: start the old container again, so a failed recreate never leaves
-    // the agent down. Nothing is left to start only when the rebuild itself failed
-    // after removing the container — the retry inside recreateAgentContainer already
-    // tried once, so the row says so and a new recreate is needed.
-    if (stoppedByBackup) {
+    // Restore only the job's original running state. In particular, a failed Move
+    // from a stopped agent must never start its old, potentially public bindings.
+    // A replacement left by a failed run is not the old container to recover.
+    if (stoppedByBackup && wasRunning) {
       const container = await inspectAgentContainer(agentId).catch(() => null);
       const name = container?.Name?.replace(/^\//, '');
-      if (name && !container?.State?.Running) {
+      if (name && container?.Id === originalContainerId && !container?.State?.Running) {
         await runDocker(['start', name], { timeoutMs: 60_000 }).catch(() => {});
       } else if (!container) {
         console.error(`[agent:recreate] ${agentId}: the container is gone after the failed rebuild; run Recreate again`);
@@ -349,12 +359,18 @@ export async function agentRecreateView(agentId: string): Promise<AgentRecreateV
 export async function recoverInterruptedRecreates(): Promise<number> {
   const ids = activeRecreateAgentIds();
   if (ids.size === 0) return 0;
+  // Read before the rows are marked: a job admitted on a stopped agent (Move and start) must leave it stopped.
+  const wasRunning = new Map([...ids].map((agentId) => [agentId, latestRecreate(agentId)?.was_running ?? null]));
   const interrupted = markInterruptedRecreates();
-  for (const agentId of ids) void finishInterruptedRecreate(agentId);
+  for (const agentId of ids) void finishInterruptedRecreate(agentId, wasRunning.get(agentId) ?? null);
   return interrupted;
 }
 
-async function finishInterruptedRecreate(agentId: string): Promise<void> {
+async function finishInterruptedRecreate(agentId: string, wasRunning: number | null): Promise<void> {
+  if (wasRunning === 0) {
+    console.warn(`[agent:recreate] ${agentId}: recreate interrupted by a restart; the agent was stopped before it, so it stays stopped`);
+    return;
+  }
   // A helper that outlived the restart keeps archiving; wait for it before touching
   // the agent. `waitForColdBackup` resolves immediately with the last job when none runs.
   const running = await isColdBackupRunning(agentId).catch(() => false);

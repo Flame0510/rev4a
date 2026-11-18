@@ -79,7 +79,7 @@ export function portMappingArgs(start: number, end: number, hostIp?: string | nu
   return ['-p', end === start ? `${prefix}${start}:3000` : `${prefix}${start}-${end}:3000-${3000 + (end - start)}`];
 }
 
-type PortBindings = Record<string, { HostIp?: string; HostPort?: string }[] | null> | null | undefined;
+export type PortBindings = Record<string, { HostIp?: string; HostPort?: string }[] | null> | null | undefined;
 
 /**
  * `-p` arguments that recreate a container's current publishes (`HostConfig.PortBindings`).

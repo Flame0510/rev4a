@@ -22,6 +22,8 @@ export interface AgentRecreateRow {
   started_at: number;
   updated_at: number;
   finished_at: number | null;
+  /** 1 or 0 from 1.29.0 on: was the container running when the job was admitted. NULL on older rows. */
+  was_running?: number | null;
 }
 
 const FINAL: readonly RecreateStatus[] = ['done', 'failed', 'interrupted'];
@@ -32,10 +34,10 @@ const state = createJobState({
   activeStatuses: ACTIVE_RECREATE_STATUSES,
   finalStatuses: FINAL,
   insertColumns: ['image'],
-  writableColumns: ['backup_file'],
+  writableColumns: ['backup_file', 'was_running'],
 });
 
-type Writable = Partial<Pick<AgentRecreateRow, 'status' | 'backup_file' | 'error'>>;
+type Writable = Partial<Pick<AgentRecreateRow, 'status' | 'backup_file' | 'error' | 'was_running'>>;
 
 export function insertRecreate(agentId: string, image: string): number {
   return state.insert(agentId, image);
