@@ -252,6 +252,9 @@ and require Basic auth as `rev4a`. On **Remote access → Domain mode**, select 
 **Dev-port credential**, then **Copy**. The password is read from the protected `domain-auth.json`
 in the Rev4a data directory only after Show is clicked.
 
+Install each agent's Control UI from its HTTPS subdomain as a separate app named after the agent.
+On iOS, **Add to Home Screen** may suggest **OpenClaw Control**. Rename it to the agent's name before adding it.
+
 When Domain mode is off, **Remote access → Domain mode** validates the dashboard hostname, lists the
 dashboard and wildcard A/AAAA records, and offers **Check** to refresh status and compare expected and found addresses.
 If the host has no public interface addresses, use the server's public IP. Copy the dry-run command

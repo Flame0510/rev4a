@@ -1056,6 +1056,11 @@ The sync inspects running and stopped containers. The name table allocates colli
 and breaks ties by container ID. It reserves each label’s dev-port variants, and records assignments by container name in the
 import so Recreate preserves them. Routes require a running container with an active host TCP mapping reachable at 127.0.0.1.
 After a successful sync, requests for stopped agents fall through to the wildcard 404 handler.
+Each Control UI handle serves its own `/manifest.webmanifest` as `application/manifest+json` with `Cache-Control: no-cache`.
+The manifest uses the agent's display name (falling back to the assigned host label), an app ID derived from the label,
+and relative OpenClaw icon URLs. It applies to the versioned manifest link in OpenClaw's HTML because Caddy matches the
+path independently of the query. Other Control UI paths and all dev-port paths go to their respective upstreams.
+Startup sync adds the manifest to existing managed imports through the same validation and reload path.
 The dashboard reads name assignments and routes from the last applied managed file via `lib/domain-urls.ts`.
 Agent-list URLs and the Ports section use one file read per response. Both use `agentHostPort`, the
 same active IPv4-loopback-compatible binding selector used by the certificate callback, to check the

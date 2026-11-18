@@ -25,7 +25,7 @@ export interface DomainAssignment {
 }
 export interface DomainNameTable {
   assignments: Map<string, DomainAssignment>;
-  routes: { name: string; hostPort: number; dev: boolean }[];
+  routes: { name: string; hostPort: number; dev: boolean; displayName?: string }[];
 }
 export function isGenerated(content: string): boolean;
 export { normalizeDomain } from './domain-name.js';

@@ -8,7 +8,7 @@ import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const domain = require('../lib/domain.js');
-const { ASK_PATH, PENDING, agentBase, agentHostPort, buildNameTable, domainConfig, normalizeDomain, readAssignments, renderCaddyfile } = domain;
+const { ASK_PATH, PENDING, agentBase, agentHostPort, buildNameTable, domainConfig, normalizeDomain, readAssignments, readManagedRoutes, renderCaddyfile } = domain;
 const { CLIENT_IP_HEADER, SOCKET_PEER_HEADER, parseTrustedProxies, setClientAddressHeaders } = require('../lib/client-address.js');
 const envEditor = require('../lib/env-file.js');
 const { checkAgentRoute, syncCaddy } = require('../lib/caddy.js');
@@ -31,6 +31,15 @@ const fleet = [
   { containerName: 'beacon', displayName: 'Beacon', created: '2026-10-02T00:00:00Z', running: true, activeBindings: { ...bindings('3710', '', '0.0.0.0'), '3009/tcp': [binding('3719', '0.0.0.0')] } },
   { containerName: 'relay', displayName: 'Relay', created: '2026-10-03T00:00:00Z', running: true, activeBindings: bindings('3720', '') },
 ];
+const goldenManifest = (label, name) => [
+  `\t\t@${label}_manifest path /manifest.webmanifest`,
+  `\t\theader @${label}_manifest Content-Type "application/manifest+json"`,
+  `\t\theader @${label}_manifest Cache-Control "no-cache"`,
+  `\t\trespond @${label}_manifest \`{"name":"${name}","short_name":"${name}","id":"/?rev4a-agent=${label}",`
+    + `"start_url":"./","scope":"./","display":"standalone","theme_color":"#0a0a0a","background_color":"#0a0a0a",`
+    + `"description":"${name} · OpenClaw agent (Rev4a)","icons":[{"src":"./favicon.svg","sizes":"any","type":"image/svg+xml"},`
+    + `{"src":"./favicon-32.png","sizes":"32x32","type":"image/png"},{"src":"./apple-touch-icon.png","sizes":"180x180","type":"image/png"}]}\` 200`,
+];
 const golden = n => [
   '# Managed by Rev4a; do not edit by hand. Configure with: rev4a domain setup',
   '# Rev4a domain: rev4a.example.com',
@@ -49,6 +58,7 @@ const golden = n => [
   ...(n ? [
     '\t@atlas host atlas.rev4a.example.com',
     '\thandle @atlas {',
+    ...goldenManifest('atlas', 'Atlas'),
     '\t\treverse_proxy 127.0.0.1:3700 {',
     '\t\t\theader_up -X-Forwarded-For',
     '\t\t\theader_up -X-Forwarded-Proto',
@@ -73,6 +83,7 @@ const golden = n => [
   ...(n === 3 ? [
     '\t@beacon host beacon.rev4a.example.com',
     '\thandle @beacon {',
+    ...goldenManifest('beacon', 'Beacon'),
     '\t\treverse_proxy 127.0.0.1:3710 {',
     '\t\t\theader_up -X-Forwarded-For',
     '\t\t\theader_up -X-Forwarded-Proto',
@@ -95,6 +106,7 @@ const golden = n => [
     '',
     '\t@relay host relay.rev4a.example.com',
     '\thandle @relay {',
+    ...goldenManifest('relay', 'Relay'),
     '\t\treverse_proxy 127.0.0.1:3720 {',
     '\t\t\theader_up -X-Forwarded-For',
     '\t\t\theader_up -X-Forwarded-Proto',
@@ -109,6 +121,7 @@ const golden = n => [
   '}',
   '',
 ].join('\n');
+const legacyCaddyfile = n => golden(n).replace(/^\t\t.*_manifest .*\n/gm, '');
 
 test('slug normalization, fallbacks, length and collision namespaces', () => {
   const title = 'x'.repeat(45);
@@ -155,6 +168,33 @@ test('creation order is deterministic and both slots survive a Recreate and its 
 test('golden generated Caddyfiles for 0, 1, and 3 agents', () => {
   for (const n of [0, 1, 3]) {
     assert.equal(renderCaddyfile(config, buildNameTable(fleet.slice(0, n)), hash), golden(n));
+  }
+});
+
+test('manifest values round-trip through JSON without raw Caddy delimiters or placeholders', () => {
+  const fixtures = [
+    ['{`}"\n\\\u0000{$REV4A_DOMAIN} {http.request.host}\n\t\treverse_proxy 127.0.0.1:9999 {', '{`}"\n\\\u0000{$REV'],
+    ['Unicode\u2028# Rev4a agent: phantom phantom phantom\u2029', 'Unicode\u2028# Re'],
+    ['🚀'.repeat(11) + '🧪🌍', '🚀'.repeat(11) + '🧪'],
+    ['X'.repeat(100_000) + '{tail}`', 'XXXXXXXXXXXX'],
+    ['', 'atlas'],
+  ];
+  for (const [displayName, shortName] of fixtures) {
+    const agent = { ...fleet[0], displayName };
+    const table = buildNameTable([agent]);
+    const label = table.assignments.get(agent.containerName).name;
+    const content = renderCaddyfile(config, table, hash);
+    const body = content.split('\n')
+      .find(line => line.startsWith(`\t\trespond @${label}_manifest `))?.match(/`([^`]*)` 200$/)?.[1];
+    assert.ok(body, 'manifest body must fit inside one backtick argument');
+    const manifest = JSON.parse(body);
+    for (const token of body.match(/"[^"\\]*(?:\\.[^"\\]*)*"/g)) assert.doesNotMatch(token, /[{}\x60\u2028\u2029]/);
+    assert.equal(manifest.name, displayName || label);
+    assert.equal(manifest.short_name, shortName);
+    assert.equal(manifest.description, `${displayName || label} · OpenClaw agent (Rev4a)`);
+    assert.equal(manifest.id, `/?rev4a-agent=${label}`);
+    assert.deepEqual(readAssignments(content, config.domain), table.assignments);
+    assert.deepEqual([...readManagedRoutes(content, config.domain)], [[label, 3700], [`${label}-3001`, 3701]]);
   }
 });
 
@@ -345,6 +385,22 @@ test('sync writes atomically, validates before reload, stores a 0600 password se
   t.diagnostic('Password: 32 characters; mode: 0600; stdin matches; argv, generated file and logs omit the password; unchanged writes: 0');
 });
 
+test('sync upgrades a pre-manifest import once and preserves routes and the existing credential', async () => {
+  const m = mockRuntime({ initial: {
+    [config.file]: legacyCaddyfile(3),
+    [authFile]: { text: JSON.stringify({ user: 'rev4a', password: 'a'.repeat(32), hash }), mode: 0o600 },
+  } });
+  const previousRoutes = readManagedRoutes(m.files.get(config.file).text, config.domain);
+  assert.equal(previousRoutes.size, 5);
+  const credential = m.files.get(authFile);
+  assert.deepEqual(await syncCaddy(m.options), { ok: true, changed: true, routes: 5 });
+  assert.equal(m.files.get(config.file).text, golden(3));
+  assert.deepEqual(readManagedRoutes(m.files.get(config.file).text, config.domain), previousRoutes);
+  assert.equal(m.files.get(authFile), credential);
+  assert.deepEqual(await syncCaddy(m.options), { ok: true, changed: false, routes: 5 });
+  assert.deepEqual(m.commands.map(command => command.args[0]), ['version', 'validate', 'reload', 'version']);
+});
+
 test('credential repair rotates malformed, null, loose-mode and out-of-range stored credentials safely', async t => {
   const marker = 'MALFORMED_FIXTURE_PASSWORD';
   const valid = { user: 'rev4a', password: 'a'.repeat(32), hash };
@@ -515,13 +571,15 @@ test('the public ask route needs no session and accepts only routed names from a
   content = renderCaddyfile(config, buildNameTable(currentFleet), hash);
   const startedStatus = await request('old.rev4a.example.com');
   assert.equal(startedStatus, 200);
-  assert.match(content, /@old host.*\n\s*handle @old \{\n\s*reverse_proxy 127\.0\.0\.1:9000/);
+  assert.match(content, /\thandle @old \{\n\t\t@old_manifest path \/manifest\.webmanifest\n/);
   t.diagnostic(`Trusted remote peer forwarding loopback: ${trustedRemote}; stale stopped route: ${staleStatus}; started route: ${startedStatus}`);
   content = golden(3);
   currentFleet = fleet.slice(1);
   assert.equal(await request('atlas.rev4a.example.com'), 404);
   currentFleet = [{ ...fleet[0], activeBindings: bindings('3700', '3901') }, ...fleet.slice(1)];
   assert.equal(await request('atlas-3001.rev4a.example.com'), 404);
+  assert.equal(await request('atlas.rev4a.example.com'), 200);
+  content = legacyCaddyfile(3);
   assert.equal(await request('atlas.rev4a.example.com'), 200);
   content = PENDING + golden(3);
   assert.equal(await request('atlas.rev4a.example.com'), 404);

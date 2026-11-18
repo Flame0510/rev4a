@@ -70,7 +70,9 @@ test('agentPublicUrl uses only the configured managed file, assignment and exact
     render().replace('\thandle @atlas {', '\thandle @unrelated {')]) {
     assert.equal(await urlFixture(file).urls.agentPublicUrl('agent-atlas', 3000), null);
   }
-  const { urls, reads } = urlFixture(render());
+  const file = render();
+  assert.match(file, /\thandle @atlas \{\n\t\t@atlas_manifest path \/manifest\.webmanifest\n/);
+  const { urls, reads } = urlFixture(file);
   assert.equal(await urls.agentPublicUrl('agent-atlas', 3000), 'https://atlas.rev4a.example.test');
   assert.deepEqual(reads, [['/fixture/rev4a.caddy', 'utf8']]);
   assert.equal(await urls.agentPublicUrl('agent-atlas', 3005), 'https://atlas-3005.rev4a.example.test');

@@ -30,6 +30,13 @@ OpenClaw token and pairing protect Control UI. Dev ports use HTTP Basic authenti
 in `<REV4A_DATA_DIR>/domain-auth.json`. An invalid or incorrectly protected credential file is replaced during sync.
 The dashboard session cookie is host-only.
 
+Each agent's HTTPS Control UI can be installed as a separate app with the agent's display name.
+Open the Control UI and use your browser's install action. On iOS, **Add to Home Screen** may
+suggest the page title **OpenClaw Control**. Rename it to the agent's name before adding it. A browser that opened the
+agent before this feature may still show "OpenClaw": its Control UI service worker keeps the old manifest
+until OpenClaw is updated on that agent. Uninstall the old app and clear the site data for that
+subdomain, then install again.
+
 On **Remote access**, the **Domain mode** wizard validates the dashboard hostname as you type and lists
 the A and AAAA records for that name and its wildcard. Create one record per expected public server
 address. If Rev4a finds no public addresses on the host, use the server's public IP.
