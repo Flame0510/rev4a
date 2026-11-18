@@ -13,7 +13,9 @@ unless otherwise noted.
 ```
 Authorization: Bearer <REV4A_TOKEN>
 ```
-Set `REV4A_TOKEN` env var. No default — auth is disabled when unset.
+Set the `REV4A_TOKEN` environment variable. There is no default. When unset,
+bearer authentication is unavailable; protected routes still require a valid
+browser JWT. An absent or empty token never grants access.
 
 ### Browser cookie (UI)
 After a successful `POST /api/auth/login`, the server sets an `rev4a_token`

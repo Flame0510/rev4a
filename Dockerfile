@@ -1,28 +1,31 @@
 # ── Rev4a Docker Image — ON HOLD, not currently built or published ────────
 #
 # This packages the Rev4a dashboard itself (Next.js + daemon + terminal-ws)
-# to run as a Docker-in-Docker container: the dashboard runs inside a
+# to use the host's Docker daemon: the dashboard runs inside a
 # container and creates agent containers as siblings via the mounted
-# host socket. Built for that DinD use case, not for general distribution.
+# host socket. This is not Docker-in-Docker: no daemon runs in this image.
+# Experimental packaging, not for general distribution.
 #
 # No CI workflow builds or pushes this image today (ghcr.io/flame0510/rev4a
 # does not exist). Deferred deliberately — do not wire up a build for this
 # without an explicit decision to resume it. The supported install path is
 # git clone + `rev4a serve` (see README.md).
 #
-# Kept here so the Docker-in-Docker approach isn't lost if picked back up.
+# Kept here so the host-socket approach isn't lost if picked back up.
 #
-# Usage (once resumed):
+# Historical sketch, not validated deployment instructions:
 #   docker run -d --name rev4a \
 #     -v rev4a-data:/rev4a/data \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -p 3740:3740 \
 #     ghcr.io/flame0510/rev4a:latest
 #
-# Data persistence:
-#   .env is stored in /rev4a/data/.env (survives container recreates)
-#   and copied to /rev4a/.env on startup for Next.js compatibility.
-#   All databases, credentials, and tokens live in the data/ volume.
+# Known gaps before resuming:
+#   The entrypoint and volume sketch above use an old data layout. Current code
+#   defaults to /root/.config/rev4a unless REV4A_DATA_DIR is set; that entire
+#   directory must persist. Agent and backup bind sources must also exist on
+#   the daemon host, not only inside this container. npm/git self-updates need
+#   a separate container-image update policy.
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM node:22-bookworm-slim

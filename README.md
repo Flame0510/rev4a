@@ -82,8 +82,8 @@ sudo env PORT=8080 rev4a serve
 
 > **Production install:** see `CONNECT.md` for systemd deployment on a VPS.
 >
-> **Container deploy:** on hold. The root `Dockerfile` (Docker-in-Docker packaging of
-> the dashboard itself) is an experimental path, not currently built or published —
+> **Container deploy:** on hold. The root `Dockerfile` (dashboard packaging using
+> the host Docker socket, with agent containers as siblings) is experimental, not currently built or published —
 > see the file for details. Use the git-clone install above.
 
 ---
