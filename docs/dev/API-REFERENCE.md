@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -908,9 +908,11 @@ List running and stopped agent containers (Docker containers with `AGENT_ID` lab
 ```
 
 **Notes:**
-- `portsDiffer` (1.29.0) compares all inspected port bindings with the current agent-port setting,
+- `portsDiffer` (1.29.0) compares inspected port bindings with the current agent-port setting,
   read once per request, using the same `publishesDifferently` rule as `/api/system/listen`.
   Unset/empty means false; explicit `all` also detects restricted bindings.
+  The comparison and rebuild skip dynamic bindings with an empty `HostPort`. Rev4a always
+  publishes explicit host ports.
 - `openclawVersion` comes from the image's `org.opencontainers.image.version` label (read by
   image id, so also for an image that lost every tag) or version tag, else from
   `openclaw --version` inside the running container (cached per Docker container id and
@@ -1255,7 +1257,7 @@ Restart an agent container (shorter than recreate — keeps everything intact). 
 **Auth:** browser cookie or bearer token
 
 **Body:** optional `{ "ports": "as_is" | "move" }`; an empty body remains supported.
-A non-running container with mismatching ports returns the same **409** `ports_differ`
+A stopped container with mismatching ports returns the same **409** `ports_differ`
 body as lifecycle Start below. `as_is` restarts its existing container; `move` starts the
 shared Recreate job and returns **202** `{ "started": true, "id": <job id> }`.
 Invalid `ports` returns **400**. A busy agent returns **409** before any port choice;
@@ -1440,8 +1442,7 @@ container id therefore reads the new container's version.
 
 Flow (each step recorded in `agent_recreates`):
 1. **Cold backup** `agent-<id>-prerecreate-<ts>.tar.gz` — the agent stops for it, so
-   the archive cannot catch its SQLite files mid-write. **If the backup fails, the
-   recreate aborts and the agent is started again.**
+   the archive cannot catch its SQLite files mid-write. A failed backup aborts the recreate.
 2. The container is rebuilt (`lib/agent-recreate.ts`) on the current build of its OpenClaw version (`openclaw-agent-base:<version>`, the pinned build when downloaded; an image with no version label and no version tag keeps its current image id, the version read inside the container being display-only, and the current image is kept when Docker cannot be read), environment
    variables (`AGENT_*`, `MODEL_*`, `OPENCLAW_*`), labels, port mappings and network,
    reattaching the same volume. The network comes from the attached networks, or from
@@ -1452,10 +1453,16 @@ Flow (each step recorded in `agent_recreates`):
 4. On success, older `prerecreate` archives are pruned to the newest two per agent
    (manual `cold` and `preupdate` archives are never touched).
 
-A failure before the rebuild starts the old container again, so a failed recreate never
-leaves the agent down. After a Rev4a restart, a job still active becomes `interrupted`
-at startup and the agent is started again — but only once its backup helper has
-finished, never while the archive is being written.
+On failure, Rev4a tries to restart the original container only if it still exists,
+was running when the job was admitted and was stopped by the backup. If the rebuild
+already removed it, nothing is restarted. If the replacement has already started when
+a later step fails (for example, a Gateway timeout), it is left running and the job is
+marked `failed`.
+
+After a Rev4a restart, an active job becomes `interrupted`. Recovery leaves a job
+admitted on a stopped agent alone. For a job admitted on a running agent or an older
+row without a recorded state, recovery waits for any backup helper to finish before
+trying to start the agent's container if it exists and is stopped.
 
 **Auth:** browser cookie or bearer token
 
@@ -1616,8 +1623,10 @@ Redundant actions are no-ops: starting a running container, or stopping a stoppe
 one, succeeds without touching it.
 After an actual start or restart, credential assignments are re-applied in the background once the Gateway is ready.
 
-**Port choice (1.29.0):** when starting a non-running container (including Restart),
+**Port choice (1.29.0):** when starting a stopped container (including Restart),
 its inspected bindings are compared with the current Remote access agent-port setting.
+A container counts as stopped when its status is `exited`, `created` or `dead`.
+Status `running` or `paused`, or `State.Running: true`, counts as running.
 An empty setting never asks. A mismatch without `ports` returns **409** without starting,
 recreating or consuming the lifecycle cooldown:
 
@@ -1631,7 +1640,7 @@ the same backed-up recreate starter as `POST /api/agents/[id]/recreate`, with it
 backup and address checks. Move returns **202** `{ "started": true, "id": <job id> }`;
 poll `GET /api/agents/[id]/recreate` until that id reports done/failed/interrupted.
 With no mismatch either choice follows ordinary lifecycle behavior. Stop and running Restart
-are unchanged, and a busy agent's existing 409 wins over the port prompt.
+skip the port check. A busy agent's existing 409 wins over the port prompt.
 
 **Errors:** `400` for a malformed body, an unknown action, an invalid agent id, or any
 `ports` value other than `as_is` / `move`; `404` when no container carries that
@@ -1642,8 +1651,7 @@ backup probe. Owners are revalidated inside a short SQLite IMMEDIATE transaction
 lifecycle claim); the Docker command runs right after it, outside the transaction, so other
 writers are never blocked while Docker works.
 A backup that becomes busy during inspect returns **409** with no Docker mutation.
-If Move or Recreate fails, only the original container that was running at job admission
-may be restarted; an initially stopped container stays stopped and the job reports failure.
+Move uses the [Recreate failure handling](#post-apiagentsidrecreate).
 
 ---
 
@@ -2427,10 +2435,16 @@ Where Rev4a listens (SEC-9B, 1.28.0). No secrets.
 
 **Response 200:**
 ```json
-{ "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "agents": { "mode": "local", "differing": 1, "stoppedDiffering": 2, "runningDiffering": [{ "id": "atlas", "name": "Atlas" }] } }
+{ "panel": { "mode": "local", "port": 3740, "addresses": ["127.0.0.1", "::1", "172.17.0.1"] }, "startedAtMs": 1794960000000, "agents": { "mode": "local", "differing": 1, "stoppedDiffering": 2, "runningDiffering": [{ "id": "atlas", "name": "Atlas" }] } }
 ```
 `panel.mode` is `all` | `local` | `address` as resolved at start-up from `REV4A_LISTEN` (`addresses` is empty for `all`);
-`agents.mode` is `keep` when `REV4A_AGENT_PORTS_LISTEN` is unset or empty (each agent keeps its current address), otherwise `all` | `local` | `address` read now (explicit `all` means every interface; an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate, Update or Edit applies the setting), or `null` when Docker cannot be read; it is `0` in `keep` mode. Since 1.29.0, explicit `all` also counts agents still bound to a specific address. `agents.stoppedDiffering` counts stopped mismatches only (`null` if Docker cannot be read); no stopped ids are returned. `agents.runningDiffering` lists only running mismatches as `{ id, name }`, from fresh container inspection; `[]` on Docker failure. An individual inspect failure (for example removal during Recreate) is skipped without losing other rows. No secret environment values are exposed. Top-level `startedAtMs` is the server start timestamp (`REV4A_STARTED_AT`), or `null` for a direct development server; System waits for it to change before offering recreates after a restart request. `GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
+`agents.mode` is `keep` when `REV4A_AGENT_PORTS_LISTEN` is unset or empty (each agent keeps its current address), otherwise `all` | `local` | `address` read now (explicit `all` means every interface; an IP the host lacks reads as `local`); `agents.differing` is the number of running agents published on a different address than that (Recreate, Update or Edit applies the setting), or `null` when Docker cannot be read; it is `0` in `keep` mode. Since 1.29.0, explicit `all` also counts agents still bound to a specific address. `agents.stoppedDiffering` counts stopped mismatches only (`null` if Docker cannot be read); no stopped ids are returned. `agents.runningDiffering` lists only running mismatches as `{ id, name }`, from fresh container inspection; `[]` on Docker failure. An individual inspect failure (for example removal during Recreate) is skipped without losing other rows. No secret environment values are exposed.
+
+Top-level `startedAtMs` is the server start timestamp in epoch milliseconds (`REV4A_STARTED_AT`),
+or `null` for a direct development server. The Remote access page waits for it to change to
+confirm a restart before offering Recreate.
+
+`GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
 
 ---
 

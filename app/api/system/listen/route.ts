@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
-import { publishesDifferently } from '@/lib/agent-ports';
+import { agentPortContainerState, publishesDifferently, type PortBindings } from '@/lib/agent-ports';
 import { dockerFetch } from '@/lib/docker-socket';
 import { parseSetting } from '@/lib/listen-addresses';
 
@@ -18,16 +18,17 @@ async function agentsPublishedDifferently(hostIp: string | null) {
     const filters = encodeURIComponent(JSON.stringify({ label: ['AGENT_ID'] }));
     const list = await dockerFetch<{ Id?: string }[]>('GET', `/containers/json?all=true&filters=${filters}`);
     const infos = await Promise.all((Array.isArray(list) ? list : []).filter((c) => c.Id).map((c) =>
-      dockerFetch<{ Name?: string; State?: { Running?: boolean }; Config?: { Labels?: Record<string, string>; Env?: string[] }; HostConfig?: { PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[] | null> } }>('GET', `/containers/${c.Id}/json`).catch(() => null)));
+      dockerFetch<{ Name?: string; State?: { Status?: string; Running?: boolean }; Config?: { Labels?: Record<string, string>; Env?: string[] }; HostConfig?: { PortBindings?: PortBindings } }>('GET', `/containers/${c.Id}/json`).catch(() => null)));
     for (const info of infos) {
       if (!info) continue; // A recreate/delete can remove a container after the listing.
       if (!publishesDifferently(info.HostConfig?.PortBindings, hostIp)) continue;
-      if (info.State?.Running === true) {
+      const state = agentPortContainerState(info.State);
+      if (state === 'running') {
         empty.differing++;
         const id = info.Config?.Labels?.AGENT_ID;
         const name = info.Config?.Env?.find((entry) => entry.startsWith('AGENT_NAME='))?.slice(11) || info.Name?.replace(/^\//, '') || id;
         if (id && name) empty.runningDiffering.push({ id, name });
-      } else empty.stoppedDiffering++;
+      } else if (state === 'stopped') empty.stoppedDiffering++;
     }
     return empty;
   } catch {

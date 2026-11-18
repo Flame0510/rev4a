@@ -52,19 +52,20 @@ for (const hostIp of [null, '', '127.0.0.1', '10.0.0.5']) for (const binding of 
       reset(); setting = { hostIp, mode: hostIp === null ? 'keep' : hostIp === '' ? 'all' : hostIp === '127.0.0.1' ? 'local' : 'address' }; ip = binding; state = status;
       const invalid = choice !== undefined && choice !== 'as_is' && choice !== 'move';
       const bindings = { '3000/tcp': [{ HostIp: binding, HostPort: '3710' }] };
-      const gated = status !== 'running' && action !== 'stop' && rules.publishesDifferently(bindings, hostIp);
+      const stopped = ['exited', 'created', 'dead'].includes(status);
+      const gated = stopped && action !== 'stop' && rules.publishesDifferently(bindings, hostIp);
       const result = await post(lifecycle, { action, ...(choice !== undefined ? { ports: choice } : {}) });
       assert.equal(result.status, invalid ? 400 : gated && choice === undefined ? 409 : gated && choice === 'move' ? 202 : 200);
       totals[result.status] = (totals[result.status] ?? 0) + 1;
       if (invalid || (gated && choice !== 'as_is')) assert.equal(commands.length, 0);
       assert.equal(recreates.length, !invalid && gated && choice === 'move' ? 1 : 0);
-      if (status === 'running') assert.equal(settingReads, 0);
+      if (!stopped) assert.equal(settingReads, 0);
       if (result.status === 409) assert.deepEqual(result.body, { error: "This agent's ports do not match the Remote access setting.", code: 'ports_differ', setting: setting.mode });
       cases++;
     }
   }
 }
-console.log(`MATRIX ${cases} ${JSON.stringify(totals)} 409/202 docker commands=0; as_is recreates=0; running setting reads=0`);
+console.log(`MATRIX ${cases} ${JSON.stringify(totals)} 409/202 docker commands=0; as_is recreates=0; port setting reads only for stopped Start/Restart`);
 for (const route of [lifecycle, restart]) {
   reset(); inspectHook = () => { busy = 'A backup of this agent is running'; };
   const result = await post(route, { action: 'start', ports: 'as_is' });
@@ -99,7 +100,7 @@ for (const ports of [null, '', false, {}, []]) { reset(); assert.equal((await po
 // Real lifecycle Move -> real recreate starter -> real worker -> real rebuild/recovery.
 for (const wasRunning of [false, true]) for (const failure of ['backup', 'address', 'run']) {
   reset(); let container = { Id: 'original', Name: '/agent_fixture', State: { Running: wasRunning }, Config: { Env: [], Labels: {} }, HostConfig: { NetworkMode: 'bridge', PortBindings: { '3000/tcp': [{ HostIp: '0.0.0.0', HostPort: '3710' }] } } };
-  let finalRow; const dockerCommands = [];
+  let finalRow; const dockerCommands = []; const inserts = [];
   const worker = load('lib/agent-recreate.ts', {
     '@/lib/docker-socket': { dockerFetch: async (_method, url) => url.startsWith('/containers/json') ? (container ? [{ Id: container.Id }] : []) : container },
     '@/lib/agent-images': { resolveRecreateImage: async () => 'image', runDocker: async argv => { dockerCommands.push(plain(argv)); if (argv[0] === 'rm') container = null; if (argv[0] === 'run') throw new Error('run failed'); } },
@@ -108,7 +109,7 @@ for (const wasRunning of [false, true]) for (const failure of ['backup', 'addres
     '@/lib/backups-volume': { pruneBackups: async () => [] },
     '@/lib/cold-backup': { startColdBackup: async () => { container.State.Running = false; return { file: 'backup' }; }, waitForColdBackup: async () => ({ status: failure === 'backup' ? 'failed' : 'succeeded', error: 'backup failed' }) },
     '@/lib/agent-readiness': { waitForGatewayReady: async () => true }, '@/app/api/gateway/sync': { patchRev4aProvider: async () => {} },
-    '@/lib/agent-recreate-state': { insertRecreate: () => 73, updateRecreateRow: (_id, row) => { if (row.status === 'failed') finalRow = plain(row); } },
+    '@/lib/agent-recreate-state': { insertRecreate: (...args) => { inserts.push(args); return 73; }, updateRecreateRow: (_id, row) => { if (row.status === 'failed') finalRow = plain(row); } },
     '@/lib/agent-busy': { agentBusyReason: async () => null }, '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
     '@/lib/agent-stop': { removeAgentContainer: async () => { container = null; } },
   });
@@ -119,6 +120,8 @@ for (const wasRunning of [false, true]) for (const failure of ['backup', 'addres
   }
   for (let i = 0; i < 30 && !finalRow; i++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(finalRow?.status, 'failed');
+  // was_running travels with the INSERT: no moment where the active row exists without it (dr129).
+  assert.deepEqual(inserts.map((args) => args[2]), [wasRunning]);
   const oldStartIssued = dockerCommands.some(argv => argv[0] === 'start' && argv[1] === 'agent_fixture');
   assert.equal(oldStartIssued, wasRunning && failure !== 'run');
   console.log(`MOVE_FAILURE ${failure} wasRunning=${wasRunning} status=${finalRow.status} oldStartIssued=${oldStartIssued} error=${JSON.stringify(finalRow.error)}`);

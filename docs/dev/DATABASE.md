@@ -1,6 +1,6 @@
 # Rev4a — Database Reference
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-18
 
 Rev4a keeps four SQLite files in WAL mode, by default all in the data directory's `data/`:
 `events.db` (events and the agents' sessions, below), `metrics.db` (machine and container metrics, see
@@ -175,8 +175,8 @@ an update: a cold backup, the container rebuilt, the gateway waited for. It is w
 so a page reload or a Rev4a restart mid-way is visible instead of lost
 (`GET /api/agents/[id]/recreate`). At startup, rows still in an active status become
 `interrupted` and the agent is started again once its backup helper has finished, unless `was_running` is 0
-(the agent was stopped when the job began, e.g. a Start "Move and start"): then it stays stopped. Rows
-are never pruned.
+(the agent was stopped when the job began, e.g. a Start "Move and start"): then it stays stopped.
+Lifecycle maintenance keeps the newest 20 rows per agent (`lib/agent-jobs-maintenance.ts`).
 
 ### `agent_restores` — agent restores
 

@@ -1,6 +1,6 @@
 # Data Freshness in Rev4a
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-18
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
@@ -128,7 +128,10 @@ the agent's detail panel on the Agents page.
 
 ## Subscriptions (ChatGPT / Codex and Claude)
 
-**Update frequency:** the status of each agent is read live (about 0.5 s for ChatGPT, up to about 40 s for Claude Code, on every request; a read that fails is retried up to twice (1 s, then 2 s; a timeout only once, so at most about 27 s) and then shown as an error with a Retry button, never read through the slower CLI); the model list of either provider is cached 10 minutes; the ChatGPT and the Claude usage limits are cached 3 minutes per account on the server (a failed read too; only the Refresh button forces a read; a Claude read is one tiny Claude Code call) and the Subscriptions page and the agent panel re-read that cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s. The Claude login dialog polls the in-memory job every 2 s while it runs.
+**Update frequency:** the status of each agent is read live (about 0.5 s for ChatGPT, up to about 40 s for Claude Code, on every request; a read that fails is retried up to twice (1 s, then 2 s; a timeout only once, so at most about 27 s) and then shown as an error with a Retry button, never read through the slower CLI); the model list of either provider is cached 10 minutes. The server caches ChatGPT and Claude usage limits for 3 minutes per account, including failed reads. A Claude read makes one small Claude Code call. The Subscriptions page and the agent panel re-read the cache every 60 s while visible and when the tab gets focus. The container list behind these reads is cached 5 s and the account-to-agent lookup 60 s. The Claude login dialog polls the in-memory job every 2 s while it runs.
+
+**Refresh**, **Check again** and the automatic checks after **Open claude.ai** bypass the
+usage cache for that account with `refresh=1`.
 
 ## Agent base image
 

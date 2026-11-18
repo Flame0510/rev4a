@@ -146,12 +146,13 @@ Navigation links inside Rev4a:
 - Costs (what each agent spent) → /costs
 - System (CPU, RAM, disk of the server) → /system
 - Config → /config
+- Remote access → /remote-access
 - Lineage → /lineage
 - Context → /memory
 - Workspace → /workspace
 - Plugins → /plugins
 - Skills → /skills
-- Wizard (first-run guide: providers, first agent) → /wizard
+- Wizard (first-run guide covering access, providers and the first agent) → /wizard
 `.trim();
 
 function buildSystemPrompt(page: string): string {

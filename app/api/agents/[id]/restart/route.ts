@@ -6,7 +6,7 @@ import { agentBusyReason } from '@/lib/agent-busy';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { dockerFetch } from '@/lib/docker-socket';
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
-import { publishesDifferently, type PortBindings } from '@/lib/agent-ports';
+import { agentPortContainerState, publishesDifferently, type PortBindings } from '@/lib/agent-ports';
 import { startAgentRecreate, recreateErrorStatus } from '@/lib/agent-recreate';
 import { AgentOperationBusyError, runAgentOperation } from '@/lib/agent-operation';
 
@@ -45,7 +45,7 @@ export async function POST(request: Request,
     if (body?.ports !== undefined && body.ports !== 'as_is' && body.ports !== 'move') {
       return NextResponse.json({ error: 'ports must be one of: as_is, move' }, { status: 400 });
     }
-    let inspect: { State?: { Status?: string }; HostConfig?: { PortBindings?: PortBindings } };
+    let inspect: { State?: { Status?: string; Running?: boolean }; HostConfig?: { PortBindings?: PortBindings } };
     try {
       inspect = await dockerFetch('GET', `/containers/${encodeURIComponent(containerName)}/json`);
     } catch {
@@ -53,7 +53,7 @@ export async function POST(request: Request,
     }
     const busyAfterInspect = await agentBusyReason(id);
     if (busyAfterInspect) return NextResponse.json({ error: busyAfterInspect }, { status: 409 });
-    if (inspect.State?.Status !== 'running') {
+    if (agentPortContainerState(inspect.State) === 'stopped') {
       const setting = currentAgentPortsListen();
       if (publishesDifferently(inspect.HostConfig?.PortBindings, setting.hostIp)) {
         if (!body?.ports) return NextResponse.json({

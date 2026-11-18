@@ -116,13 +116,23 @@ await test('the dedicated page shows the guide link; System links to it', async 
 });
 
 await test('stoppedDiffering counts only stopped mismatches; only running ids and display names are returned', async () => {
-  const bind = (id, running, ip) => ({ Id: id, State: { Running: running }, Name: '/' + id,
+  const bind = (id, state, ip) => ({ Id: id, State: state, Name: '/' + id,
     Config: { Labels: { AGENT_ID: id }, Env: ['AGENT_NAME=Name ' + id, 'PRIVATE=hidden'] },
     HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: ip, HostPort: '3700' }] } } });
-  containers = [bind('running-wide', true, '0.0.0.0'), bind('stopped-wide', false, ''), bind('stopped-local', false, '127.0.0.1'), bind('running-local', true, '127.0.0.1')];
+  containers = [
+    bind('running-wide', { Running: true }, '0.0.0.0'),
+    bind('paused-wide', { Status: 'paused' }, '0.0.0.0'),
+    bind('stopped-wide', { Status: 'exited', Running: false }, ''),
+    bind('stopped-local', { Status: 'created', Running: false }, '127.0.0.1'),
+    bind('running-local', { Status: 'running' }, '127.0.0.1'),
+    bind('removing-wide', { Status: 'removing', Running: false }, '0.0.0.0'),
+  ];
   agentsMode = 'local';
   let r = await GET({});
-  assert.deepEqual(r.body.agents, { mode: 'local', differing: 1, stoppedDiffering: 1, runningDiffering: [{ id: 'running-wide', name: 'Name running-wide' }] });
+  assert.deepEqual(r.body.agents, { mode: 'local', differing: 2, stoppedDiffering: 1, runningDiffering: [
+    { id: 'running-wide', name: 'Name running-wide' },
+    { id: 'paused-wide', name: 'Name paused-wide' },
+  ] });
   assert.ok(!JSON.stringify(r.body).includes('stopped-wide') && !JSON.stringify(r.body).includes('PRIVATE'));
   agentsMode = 'all'; r = await GET({});
   assert.deepEqual(r.body.agents, { mode: 'all', differing: 1, stoppedDiffering: 1, runningDiffering: [{ id: 'running-local', name: 'Name running-local' }] });

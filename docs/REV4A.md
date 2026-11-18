@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -24,6 +24,8 @@ No other environment lines or existing proxy entries are removed. The guide is
 
 Only localhost, localhost., 127.0.0.1 and ::1 browser URLs can choose This computer only.
 Other 127.x loopback URLs show the canonical `http://127.0.0.1:<port>` to open first.
+In local mode the panel also listens on the Docker bridge address on Linux, where it is
+reachable by containers on this host only.
 Domain always requires the Switch acknowledgement confirming an already tested HTTPS proxy, including
 on an HTTPS hostname. The modal names `127.0.0.1:<port>`, `[::1]:<port>` or the Docker host
 bridge as its required target; forwarding to a LAN/public/Tailscale IP stops working.
@@ -34,6 +36,7 @@ and a **Manage** link to the page. System keeps one compact mode/status row belo
 
 **Restart now** restarts all Rev4a services. The list then offers individual **Recreate**
 buttons for running agents whose published addresses differ (including local → all).
+Paused agents count as running for this purpose.
 Each click takes the existing cold backup and polls its job. Its Recreating button stays visible
 through backup stops and new port bindings until the job finishes. Pending trusted-proxy changes
 survive a page reload by comparing saved settings with the current boot. Nothing recreates automatically.
@@ -45,13 +48,17 @@ Remote access setting ask before starting. **Start <agent>** offers **Move and s
 cold-backup Recreate job, followed until running), **Start as is** (retain the current bindings), and
 Cancel, with a Remote access link. The panel's **Restart Container** asks too when stopped,
 using the same dialog; `/restart` also enforces the choice for direct callers. Nothing recreates automatically.
-If Move or Recreate fails, the old container is restarted only if it was running when the job
-began; an initially stopped agent stays stopped, with the failure shown.
+If Move or Recreate fails, Rev4a tries to restart the original container only if it was running at
+admission, the backup stopped it, and it still exists. If the rebuild already removed the original,
+nothing is restarted. If the replacement has already started when a later step fails (for example,
+the Gateway times out), it is left running and the job reports failure.
 Cards and the detail panel show a warning **Ports: every interface** (or the current Control UI address)
 with the title **Recreate to apply the Remote access setting**. The panel keeps its existing Recreate
 confirmation next to the pill for running agents; stopped mismatches show only the pill and ask on Start.
 Remote access says **N stopped agents will ask before starting**. An empty agent-port setting keeps
 existing behavior without a prompt or pill; an explicit all also detects local bindings.
+The comparison and rebuild skip dynamic bindings with an empty `HostPort`. Rev4a always
+publishes explicit host ports.
 Running Restart and Stop retain their behavior. Busy operations keep their existing refusal;
 Start and Restart recheck after inspect, then check the persisted lifecycle claims in a short SQLite
 transaction and run the Docker command right after it (outside the transaction, so other writers are
@@ -60,11 +67,15 @@ command is not excluded; before 1.29.0 Start had no such check at all. A recreat
 Rev4a restart starts the old container again only if it was running when the job began
 (`agent_recreates.was_running`).
 
-**Upgrade safety (NET-1e):** no database, config, environment, provider-key or volume migration.
+**Upgrade safety (NET-1e):** one additive database column, `agent_recreates.was_running` (added at
+startup with a guarded `ALTER TABLE … ADD COLUMN`, idempotent; NULL on older rows keeps the old
+recovery behaviour). No config, environment, provider-key or volume migration.
 The first read checks already-inspected bindings; no startup fleet rewrite or backup runs. Older
 OpenClaw agents can still start as is, stop and open their Control UI; Move uses existing image and
-backup checks. Existing stopped mismatches are covered immediately by the new prompt. Rollback can
-read the same data and existing recreate records, but an older dashboard resumes without this prompt.
+backup checks. Existing stopped mismatches are covered immediately by the new prompt. Rev4a 1.28.x
+can read the same data and recreate records. Before downgrading, wait for every in-progress Move
+or Recreate to finish (`done` or `failed`), because 1.28.x recovery restarts the old container on
+its old bindings.
 
 Supervisor restart flags use `REV4A_DATA_DIR/data`, or `~/.config/rev4a/data` when unset, exactly like
 the launcher on Linux, macOS and Windows. A systemctl timeout is logged as a failure and falls back to
@@ -738,7 +749,7 @@ a re-created agent keeps the workspace the user edited.
 | **Rollback** | after an update: stop → restore the pre-update backup → recreate on the previous version. Everything since the backup is lost, including a recreate or restore done after a failed update: the panel names that job and its date next to the failure and in the confirmation. This is the only way back: 2026.9.9 moves the OpenClaw state database from schema 16 to 19 and 2026.9.3 refuses to start on that volume (verified), so recreating on the older version without restoring the backup does not work |
 | **Restore** | stop → replace `/root` with the backup (real wipe incl. dotfiles) → restart. Software/image untouched — only data goes back in time |
 | **Recreate** | auto-backup first (aborts if it fails) → rebuild on the agent's own OpenClaw version (`openclaw-agent-base:<version>`, tagged or pulled when missing) keeping the volume. The cold backup's 30 s stop is the graceful stop; exit 137 or kill fallback keeps a lease warning in the job message, including after failure/interruption and reload. An image with no version label and no version tag keeps its current image id (the version read inside the container is display-only), and the current image is kept when Docker cannot be read. Never changes version |
-| **Restart** | `docker restart`, nothing else |
+| **Restart** | `docker restart` with the current bindings. For a stopped agent whose ports differ from the Remote access setting, the API returns `409 ports_differ` without a port choice and the panel asks what to do. `ports: "as_is"` restarts the existing container and `ports: "move"` returns `202` and starts a Recreate job |
 | **Delete** | **destructive**: removes container **+ volume + all backups**. Cannot be undone |
 
 **Release note (2026-11-07).** Edit, removal of a memory limit and Recreate allow a

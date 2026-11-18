@@ -33,14 +33,16 @@ const state = createJobState({
   initialStatus: 'backing_up',
   activeStatuses: ACTIVE_RECREATE_STATUSES,
   finalStatuses: FINAL,
-  insertColumns: ['image'],
-  writableColumns: ['backup_file', 'was_running'],
+  // was_running is written by the INSERT itself: a separate update could fail, or the process
+  // die in between, and leave an active row whose recovery would start a stopped agent.
+  insertColumns: ['image', 'was_running'],
+  writableColumns: ['backup_file'],
 });
 
-type Writable = Partial<Pick<AgentRecreateRow, 'status' | 'backup_file' | 'error' | 'was_running'>>;
+type Writable = Partial<Pick<AgentRecreateRow, 'status' | 'backup_file' | 'error'>>;
 
-export function insertRecreate(agentId: string, image: string): number {
-  return state.insert(agentId, image);
+export function insertRecreate(agentId: string, image: string, wasRunning: boolean): number {
+  return state.insert(agentId, image, wasRunning ? 1 : 0);
 }
 
 export function updateRecreateRow(id: number, fields: Writable): void {

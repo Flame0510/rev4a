@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/ui';
 import { PresetOption } from '../remote-access/PresetOption';
-import { presetGuard, REMOTE_ACCESS_GUIDE } from '@/lib/remote-access';
+import { LOCAL_ACCESS_DESCRIPTION, presetGuard, REMOTE_ACCESS_GUIDE } from '@/lib/remote-access';
 
 type Choice = 'local' | 'devices' | 'ip';
 export function AccessStep({ onNext, onSkip, localChosen, onChoice }: { onNext: () => void; onSkip: () => void; localChosen: boolean; onChoice: (local: boolean) => void }) {
@@ -20,7 +20,7 @@ export function AccessStep({ onNext, onSkip, localChosen, onChoice }: { onNext: 
   return <div style={{ display: 'grid', gap: 14 }}>
     <h2 className="wizard-title">Access</h2>
     <p className="wizard-text">How will you reach Rev4a?</p>
-    <PresetOption preset="local" id="Only this computer" description="Rev4a and its agents answer only on this computer. The restart at the end of the wizard applies it."
+    <PresetOption preset="local" id="Only this computer" description={LOCAL_ACCESS_DESCRIPTION}
       selected={choice === 'local'} disabled={!guard?.allowed} disabledReason={guard?.reason} onClick={() => { setChoice('local'); onChoice(true); }} />
     <PresetOption preset="domain" id="From other devices" description="Use your own domain or Tailscale" selected={choice === 'devices'} onClick={() => { setChoice('devices'); onChoice(false); }} />
     <a className="ui-link ui-text-small" href={REMOTE_ACCESS_GUIDE} target="_blank" rel="noopener noreferrer">Remote access guide ↗</a>

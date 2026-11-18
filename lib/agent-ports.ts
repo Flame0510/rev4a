@@ -81,6 +81,13 @@ export function portMappingArgs(start: number, end: number, hostIp?: string | nu
 
 export type PortBindings = Record<string, { HostIp?: string; HostPort?: string }[] | null> | null | undefined;
 
+/** Only running agents are offered Recreate and only stopped agents are asked on Start or Restart. */
+export function agentPortContainerState(state?: { Status?: string; Running?: boolean }): 'running' | 'stopped' | null {
+  if (state?.Running === true || state?.Status === 'running' || state?.Status === 'paused') return 'running';
+  if (state?.Status === 'exited' || state?.Status === 'created' || state?.Status === 'dead') return 'stopped';
+  return null;
+}
+
 /**
  * `-p` arguments that recreate a container's current publishes (`HostConfig.PortBindings`).
  * Each binding keeps its own HostIp, unless `overrideHostIp` is given: then every binding

@@ -25,7 +25,7 @@ function reset() {
 }
 reset();
 const starter = async id => { recreates.push(id); if (recreateError) throw recreateError; return 73; };
-const { POST } = load('app/api/agents/[id]/lifecycle/route.ts', {
+const dependencies = {
   'next/server': { NextResponse: { json } },
   child_process: { execSync: command => { calls.push(command); return command.includes('inspect') ? 'running' : ''; } },
   '@/lib/container': { resolveAgentedContainer: () => 'agent_fixture', isValidAgentId: id => id === 'agent_fixture',
@@ -38,16 +38,19 @@ const { POST } = load('app/api/agents/[id]/lifecycle/route.ts', {
   '@/lib/agent-ports-server': { currentAgentPortsListen: () => { reads++; return setting; } },
   '@/lib/agent-ports': portsRules,
   '@/lib/agent-recreate': { startAgentRecreate: starter, ...recreateErrors },
-});
+};
+const { POST } = load('app/api/agents/[id]/lifecycle/route.ts', dependencies);
+const { POST: restart } = load('app/api/agents/[id]/restart/route.ts', dependencies);
 const post = body => POST({ json: async () => body }, { params: Promise.resolve({ id: 'agent_fixture' }) });
 let cases = 0;
 for (const hostIp of [null, '', '127.0.0.1', '10.0.0.5']) {
   for (const binding of ['0.0.0.0', '127.0.0.1', '10.0.0.5']) {
-    for (const status of ['running', 'exited']) for (const action of ['start', 'restart', 'stop']) {
+    for (const status of ['running', 'paused', 'exited', 'created', 'dead', 'removing']) for (const action of ['start', 'restart', 'stop']) {
       for (const choice of [undefined, 'as_is', 'move']) {
         reset(); setting = { hostIp, mode: hostIp === '127.0.0.1' ? 'local' : hostIp ? 'address' : 'all' }; ip = binding; state = status;
         const mismatch = hostIp !== null && (hostIp === '' ? binding !== '0.0.0.0' : hostIp !== binding);
-        const gated = status !== 'running' && action !== 'stop' && mismatch;
+        const stopped = ['exited', 'created', 'dead'].includes(status);
+        const gated = stopped && action !== 'stop' && mismatch;
         const result = await post({ action, ...(choice === undefined ? {} : { ports: choice }) });
         const label = JSON.stringify({ hostIp, binding, status, action, choice });
         assert.equal(result.status, gated && !choice ? 409 : gated && choice === 'move' ? 202 : 200, label);
@@ -59,12 +62,27 @@ for (const hostIp of [null, '', '127.0.0.1', '10.0.0.5']) {
         if (gated && choice === 'move') assert.deepEqual(result.body, { started: true, id: 73 });
         if (gated && choice !== 'as_is') assert.deepEqual(calls, [], `nothing executes before consent / during move: ${label}`);
         if (choice === 'as_is') assert.equal(recreates.length, 0);
-        assert.ok(reads <= 1, 'setting read once'); cases++;
+        assert.equal(reads, stopped && action !== 'stop' ? 1 : 0, label);
+        cases++;
       }
     }
   }
 }
 console.log(`ok   ${cases} lifecycle decision-table cases`);
+reset(); state = 'paused';
+assert.equal((await post({ action: 'start' })).body.message, 'Already running');
+assert.deepEqual(calls, []);
+reset(); state = 'paused';
+assert.equal((await post({ action: 'stop' })).status, 200);
+assert.ok(calls.includes('docker stop -t 30 agent_fixture'));
+for (const body of [{}, { ports: 'move' }]) {
+  reset(); state = 'paused';
+  assert.deepEqual(await restart({ text: async () => JSON.stringify(body) }, { params: Promise.resolve({ id: 'agent_fixture' }) }),
+    { body: { success: true }, status: 200 });
+  assert.equal(reads + recreates.length, 0);
+  assert.deepEqual(calls, ['docker restart agent_fixture']);
+}
+console.log('ok   paused Start is a no-op, Stop acts and direct Restart keeps the current bindings');
 reset();
 assert.equal((await post({ action: 'start' })).status, 409);
 assert.equal((await post({ action: 'start', ports: 'as_is' })).status, 200, 'immediate answer is not rate limited');

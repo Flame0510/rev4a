@@ -6,7 +6,7 @@ import { agentBusyReason } from '@/lib/agent-busy';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { dockerFetch } from '@/lib/docker-socket';
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
-import { publishesDifferently, type PortBindings } from '@/lib/agent-ports';
+import { agentPortContainerState, publishesDifferently, type PortBindings } from '@/lib/agent-ports';
 import { startAgentRecreate, recreateErrorStatus } from '@/lib/agent-recreate';
 import { AgentOperationBusyError, runAgentOperation } from '@/lib/agent-operation';
 
@@ -60,13 +60,13 @@ export async function POST(
     }
 
     // Check current state to avoid unnecessary operations
-    let currentState = 'unknown';
+    let currentState: ReturnType<typeof agentPortContainerState>;
     let bindings: PortBindings;
     try {
-      const inspect = await dockerFetch<{ State?: { Status?: string }; HostConfig?: { PortBindings?: PortBindings } }>(
+      const inspect = await dockerFetch<{ State?: { Status?: string; Running?: boolean }; HostConfig?: { PortBindings?: PortBindings } }>(
         'GET', `/containers/${encodeURIComponent(containerName)}/json`,
       );
-      currentState = inspect.State?.Status ?? 'unknown';
+      currentState = agentPortContainerState(inspect.State);
       bindings = inspect.HostConfig?.PortBindings;
     } catch {
       return NextResponse.json({ error: `Container ${containerName} not found` }, { status: 404 });
@@ -80,12 +80,12 @@ export async function POST(
       markLifecycleCooldown(id);
       return NextResponse.json({ status: 'running', containerName, message: 'Already running' });
     }
-    if (action === 'stop' && currentState !== 'running') {
+    if (action === 'stop' && currentState === 'stopped') {
       markLifecycleCooldown(id);
       return NextResponse.json({ status: 'stopped', containerName, message: 'Already stopped' });
     }
 
-    if (currentState !== 'running' && (action === 'start' || action === 'restart')) {
+    if (currentState === 'stopped' && (action === 'start' || action === 'restart')) {
       const setting = currentAgentPortsListen();
       if (publishesDifferently(bindings, setting.hostIp)) {
         if (!body.ports) {

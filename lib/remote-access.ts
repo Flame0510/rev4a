@@ -4,8 +4,9 @@ export { isLoopbackHost } from './control-ui-navigation';
 export type AccessPreset = 'local' | 'direct' | 'domain';
 export type AccessSettings = { REV4A_LISTEN?: string; REV4A_AGENT_PORTS_LISTEN?: string; REV4A_TRUSTED_PROXIES?: string };
 export const REMOTE_ACCESS_GUIDE = 'https://rev4a.app/en/docs/remote-access';
+export const LOCAL_ACCESS_DESCRIPTION = 'Rev4a answers only on this computer. Running agents follow after Recreate.';
 export const PRESETS: { id: AccessPreset; title: string; description: string }[] = [
-  { id: 'local', title: 'This computer only', description: 'Rev4a and its agents answer only on this computer.' },
+  { id: 'local', title: 'This computer only', description: LOCAL_ACCESS_DESCRIPTION },
   { id: 'direct', title: 'Direct (IP)', description: 'As before: reachable from the network over plain HTTP.' },
   { id: 'domain', title: 'Domain (your own proxy)', description: 'For a reverse proxy (Caddy, nginx, Traefik) or Tailscale on this server' },
 ];

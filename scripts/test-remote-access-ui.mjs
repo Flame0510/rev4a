@@ -303,7 +303,9 @@ assert.ok(instruction.props.children.some((node) => node?.props?.href === '/remo
 assert.ok(!JSON.stringify(instruction.props.children).includes('from System'));
 for (const file of ['README.md', 'CONNECT.md']) {
   const note = fs.readFileSync(path.join(root, file), 'utf8').split('\n').find((line) => line.startsWith('**1.29.0:**'));
-  assert.match(note, /\[Remote access page\]\(\/remote-access\)/);
+  assert.match(note, /\*\*Remote access\*\* page/);
+  assert.ok(note.includes('`/remote-access`'));
+  assert.match(note, /\]\(https:\/\/rev4a\.app\/en\/docs\/remote-access\)/);
   assert.doesNotMatch(note, /presets in System/);
 }
 console.log('ok   Wizard completion and README/CONNECT direct operators to /remote-access');

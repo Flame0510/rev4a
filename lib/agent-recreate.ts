@@ -234,10 +234,10 @@ export async function startAgentRecreate(agentId: string): Promise<number> {
     const busyAfterReads = await agentBusyReason(agentId);
     if (busyAfterReads) throw new RecreateRefusedError(busyAfterReads);
 
-    const id = insertRecreate(agentId, image);
     const wasRunning = container.State?.Running === true;
-    // Persisted before any await: a Rev4a restart mid-job must know whether to start the old container.
-    updateRecreateRow(id, { was_running: wasRunning ? 1 : 0 });
+    // Persisted in the same INSERT as the active row: a Rev4a restart mid-job must know whether
+    // to start the old container, and there is no moment where the row exists without it.
+    const id = insertRecreate(agentId, image, wasRunning);
     void runRecreate(id, agentId, image, wasRunning, container.Id).finally(() => running.delete(agentId));
     return id;
   } catch (e) {
