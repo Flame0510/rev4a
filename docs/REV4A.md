@@ -11,7 +11,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## 1.30.0 — Caddy Domain mode (NET-1b1)
+## 1.30.0 — Caddy Domain mode
 
 On Linux, `sudo rev4a domain setup <domain>` configures a dashboard hostname and agent subdomains on the system Caddy instance.
 
@@ -27,6 +27,18 @@ Stopping the agent removes its routes on the next sync. Starting it restores the
 OpenClaw token and pairing protect Control UI. Dev ports use HTTP Basic authentication as `rev4a` with the password
 in `<REV4A_DATA_DIR>/domain-auth.json`. An invalid or incorrectly protected credential file is replaced during sync.
 The dashboard session cookie is host-only.
+
+With an active managed route, **Open** on the agent card or in the panel goes directly
+to the agent's HTTPS subdomain through a one-time link, with a token link as fallback.
+Rev4a checks the route against the agent's current Docker publish on every Open. While the address
+is being updated, the tab asks you to try again in a moment and Rev4a requests a Caddy sync.
+The **Ports** section lists published TCP ports 3000–3009, their host mapping and whether a process is listening.
+It loads on opening the panel and on **Refresh**. It shows managed HTTPS links in Domain mode.
+Each routed dev port prompts for HTTP Basic authentication as `rev4a`. See **Remote access** for the password.
+A reachable publish outside Domain mode shows a direct link. Unreachable publishes on a running agent show an SSH tunnel command.
+For an IPv6-only wildcard publish, the command forwards to `[::1]` on the server.
+Dev servers must bind to `0.0.0.0` inside the container and accept the operator's domain in their Host checks.
+
 See [Domain mode setup](../CONNECT.md#caddy-domain-mode-1300) for DNS, setup and rollback steps.
 
 ## 1.29.0 — Remote access presets (NET-1a)

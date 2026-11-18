@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, MemoryLimitPicker, TemplateOption, useDockerTotalMb } from '../../components/ui';
-import { OpenControlUiButton } from '../BrowserAccessSection';
+import { OpenControlUiButton, useControlUiPublicUrl } from '../BrowserAccessSection';
 import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
 import { memoryLimitPolicyError } from '@/lib/agent-resource-policy';
 
@@ -98,6 +98,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<{ containerName: string; displayName: string; containerId: string; port: number } | null>(null);
+  const publicUrl = useControlUiPublicUrl(result?.containerName);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const handleSelectTemplate = (id: string) => {
@@ -410,7 +411,7 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               Name: <span style={{ color: 'var(--text)' }}>{result.displayName || result.containerName}</span>
             </div>
             <div style={{ marginTop: 8 }}>
-              <OpenControlUiButton agentId={result.containerName} label="Open Control UI ↗" />
+              <OpenControlUiButton agentId={result.containerName} publicUrl={publicUrl} label="Open Control UI ↗" />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>

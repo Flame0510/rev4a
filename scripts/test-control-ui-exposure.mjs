@@ -64,14 +64,29 @@ test('tunnel path adds tunnel=1, keeps a valid job and rejects an invalid one', 
   assert.throws(() => navigation.controlUiTunnelPath('a1', '../x'));
 });
 
-test('the Open button asks only through controlUiExposesSession and the modal is opt-in per click', () => {
+test('the Open button uses the warning decision and the modal is opt-in per click', () => {
   const src = fs.readFileSync(path.join(root, 'app/agents/BrowserAccessSection.tsx'), 'utf8');
-  assert.match(src, /controlUiExposesSession\(window\.location\.protocol, window\.location\.hostname\)\) \{ setWarning\(true\)/);
+  assert.match(src, /controlUiOpenWarning\(publicUrl, hostIp, window\.location\.protocol, window\.location\.hostname\)/);
+  assert.match(src, /if \(reason\) \{ setWarning\(reason\); return; \}/);
   assert.match(src, /Plain HTTP: opens with a warning/);
   const modal = fs.readFileSync(path.join(root, 'app/agents/ControlUiExposureModal.tsx'), 'utf8');
   for (const text of ['Open the Control UI', 'Safe way: an SSH tunnel', 'Copy tunnel link', 'Open anyway', 'Cancel',
     'https://rev4a.app/en/docs/remote-access', 'noopener noreferrer']) assert.ok(modal.includes(text), text);
   assert.ok(!/localStorage|sessionStorage/.test(modal), 'nothing remembered');
+});
+
+test('a managed public URL skips both warnings while direct and tunnel decisions are preserved', () => {
+  const publicUrl = 'https://atlas.rev4a.example.com';
+  for (const [hostIp, protocol, hostname, warning] of [
+    ['127.0.0.1', 'https:', 'rev4a.example.com', 'local-only'],
+    ['127.0.0.1', 'http:', 'rev4a.example.com', 'local-only'],
+    ['0.0.0.0', 'http:', 'rev4a.example.com', 'session-exposure'],
+    ['0.0.0.0', 'https:', 'rev4a.example.com', null],
+    ['127.0.0.1', 'http:', 'localhost', null],
+  ]) {
+    assert.equal(navigation.controlUiOpenWarning(null, hostIp, protocol, hostname), warning);
+    assert.equal(navigation.controlUiOpenWarning(publicUrl, hostIp, protocol, hostname), null);
+  }
 });
 
 // SEC-9B: Open when the agent's port is not reachable from this browser.
@@ -89,10 +104,15 @@ test('controlUiPortLocalOnly decision table', () => {
   for (const [ip, host, expected] of rows) assert.equal(navigation.controlUiPortLocalOnly(ip, host), expected, `${ip} / ${host}`);
 });
 
-test('the tunnel command targets the port\'s own address only when it is a specific non-loopback IP', () => {
+test('the tunnel command targets the published address and uses IPv6 loopback for IPv6 wildcards', () => {
   const t = navigation.controlUiTunnelCommand;
   assert.equal(t('4550', 'srv.example.com'), 'ssh -L 4550:127.0.0.1:4550 user@srv.example.com');
-  for (const ip of [null, undefined, '', '127.0.0.1', '0.0.0.0', '::']) assert.equal(t('4550', 'srv.example.com', ip), 'ssh -L 4550:127.0.0.1:4550 user@srv.example.com', String(ip));
+  for (const ip of [null, undefined, '', '127.0.0.1', '0.0.0.0']) assert.equal(t('4550', 'srv.example.com', ip), 'ssh -L 4550:127.0.0.1:4550 user@srv.example.com', String(ip));
+  for (const ip of ['::', '[::]']) {
+    const command = t('4402', '192.0.2.5', ip);
+    assert.equal(command, "ssh -L '4402:[::1]:4402' user@192.0.2.5");
+    console.log(`     ${ip}: ${command}`);
+  }
   // An exact loopback address is the target as it is; ::1 is bracketed.
   assert.equal(t('4550', 'srv.example.com', '127.0.0.2'), 'ssh -L 4550:127.0.0.2:4550 user@srv.example.com');
   assert.equal(t('4550', 'srv.example.com', '::1'), "ssh -L '4550:[::1]:4550' user@srv.example.com");
@@ -103,7 +123,7 @@ test('the tunnel command targets the port\'s own address only when it is a speci
 
 test('the local-only variant: https included, no "Open anyway", the agent list carries the HostIp and never a token', () => {
   const button = fs.readFileSync(path.join(root, 'app/agents/BrowserAccessSection.tsx'), 'utf8');
-  assert.match(button, /controlUiPortLocalOnly\(hostIp, window\.location\.hostname\)\s*\|\|\s*controlUiExposesSession/);
+  assert.match(button, /localOnly=\{warning === 'local-only'\}/);
   const modal = fs.readFileSync(path.join(root, 'app/agents/ControlUiExposureModal.tsx'), 'utf8');
   assert.ok(modal.includes("This agent&apos;s port is open only on the server itself. Use an SSH tunnel:"));
   assert.match(modal, /\{!localOnly && <Button variant="danger"[^>]*>Open anyway<\/Button>\}/);
@@ -113,6 +133,7 @@ test('the local-only variant: https included, no "Open anyway", the agent list c
   assert.ok(!/token/i.test(list.slice(list.indexOf('controlUiHostIp'), list.indexOf('controlUiHostIp') + 120)));
   const page = fs.readFileSync(path.join(root, 'app/agents/PageClient.tsx'), 'utf8');
   assert.equal((page.match(/<OpenControlUiButton\b[^>]*hostIp=\{agent\.controlUiHostIp\}/g) || []).length, 2, 'both Open buttons get the HostIp');
+  assert.equal((page.match(/<OpenControlUiButton\b[^>]*publicUrl=\{agent\.domainConfigured === false \? undefined : agent\.publicUrl\}/g) || []).length, 2, 'both Open buttons get the public URL in Domain mode');
 });
 
 console.log(`\n${passed} passed`);

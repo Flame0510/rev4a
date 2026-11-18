@@ -22,10 +22,12 @@ const walk = (dir) => {
     if (entry.isDirectory()) { if (entry.name !== 'api') walk(rel); }
     else if (/\.tsx$/.test(entry.name)) {
       const text = fs.readFileSync(path.join(root, rel), 'utf8');
-      if (/^['"]use client['"]/m.test(text) && /from ['"]@\/lib\/(file-lock|caddy|env-edit)['"]/.test(text)) clientFiles.push(rel);
+      const serverImport = text.split('\n').some((line) => !/^\s*import type\b/.test(line)
+        && /from ['"]@\/lib\/(file-lock|caddy|env-edit|domain-urls|agent-ports-status)['"]/.test(line));
+      if (/^['"]use client['"]/m.test(text) && serverImport) clientFiles.push(rel);
     }
   }
 };
 walk('app');
 assert.deepEqual(clientFiles, [], `client components must not import server-only modules: ${clientFiles.join(', ')}`);
-console.log('lib/env-file.js is browser-safe; no client component imports server-only env/lock modules');
+console.log('lib/env-file.js is browser-safe; no client component imports server-only env, lock or domain runtime modules');

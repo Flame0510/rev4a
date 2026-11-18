@@ -5,6 +5,7 @@ import { containerOpenClawVersion, imageOpenClawVersion, listLocalAgentImages, n
 import { LOCAL_IMAGE_REPOSITORY, compareVersions, newBuildAvailableFor } from '@/lib/agent-versions';
 import { currentAgentPortsListen } from '@/lib/agent-ports-server';
 import { publishesDifferently } from '@/lib/agent-ports';
+import { domainIsConfigured, readAgentPublicRoutes } from '@/lib/domain-urls';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +18,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const portsSetting = currentAgentPortsListen();
+    const domainConfigured = domainIsConfigured();
+    const publicRoutes = await readAgentPublicRoutes();
     // List all containers (including stopped) with AGENT_ID label via Docker API
     const containers: any[] = await dockerFetch(
       'GET',
@@ -36,11 +39,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const agents = await Promise.all(
       containers.map(async (c: any) => {
         const agentId = c.Labels?.AGENT_ID || 'unknown';
+        const name: string = (c.Names?.[0] || '').replace(/^\//, '');
         let ip: string | null = null;
         let created: string | null = null;
         let env: string[] = [];
         let controlPort: string | null = null;
         let controlUiHostIp: string | null = null;
+        let publicUrl: string | null = null;
         let portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> | null = null;
 
         try {
@@ -63,7 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           portBindings = inspect.HostConfig?.PortBindings || null;
 
           // The host port mapped to the agent's Control UI (container port 3000).
-          // No link and no token are returned: the Open buttons go through
+          // No authenticated link or token is returned: the Open buttons go through
           // /api/agents/[id]/open-control-ui, which builds the link server-side.
           // Read from portBindings (works on a stopped container) with a fallback
           // to c.Ports, which is only populated while running.
@@ -73,6 +78,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           controlPort = port3000Binding?.[0]?.HostPort
             || (c.Ports || []).find((p: any) => p.PublicPort && p.PrivatePort === 3000)?.PublicPort?.toString()
             || null;
+          publicUrl = publicRoutes?.({
+            containerName: name,
+            running: inspect.State?.Running === true && inspect.State?.Restarting !== true,
+            activeBindings: inspect.NetworkSettings?.Ports,
+          }, 3000)?.url ?? null;
         } catch {
           // inspect non-critical, continue with partial data
         }
@@ -85,7 +95,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // its image is not tagged `openclaw-agent-base` (an image left untagged, or
         // pinned by id). The image name alone would miss those.
         const openclawVersion = await containerOpenClawVersion(
-          { id: c.Id, name: (c.Names?.[0] || '').replace(/^\//, ''), imageId: c.ImageID || '', running: c.State === 'running' },
+          { id: c.Id, name, imageId: c.ImageID || '', running: c.State === 'running' },
           images,
         );
         // Recreate acts only on image metadata, so an exec-only version cannot
@@ -120,8 +130,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return {
           id: (c.Id || '').slice(0, 12),
           agentId,
-          name: (c.Names?.[0] || '').replace(/^\//, ''),
-          displayName: (env.find((e: string) => e.startsWith('AGENT_NAME=')) || '').split('=').slice(1).join('=') || (c.Names?.[0] || '').replace(/^\//, ''),
+          name,
+          displayName: (env.find((e: string) => e.startsWith('AGENT_NAME=')) || '').split('=').slice(1).join('=') || name,
           image,
           imageTag: image.includes(':') ? image.split(':')[1] || 'latest' : (image.includes('@') ? 'digest' : 'latest'),
           template,
@@ -133,6 +143,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           env,
           controlPort,
           controlUiHostIp,
+          publicUrl,
+          domainConfigured,
+          portBindings,
           portsDiffer: publishesDifferently(portBindings, portsSetting.hostIp),
           openclawVersion,
           // A newer supported OpenClaw version is downloaded. Recreate keeps the agent's

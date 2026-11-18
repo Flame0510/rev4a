@@ -101,6 +101,7 @@ function routeFixture(base = oneTime, options = {}) {
       findAgentContainer: async (id) => { calls.push(`find:${id}`); return options.agent === undefined ? { name: 'legacy-container-name', running: true, controlPort: '4550' } : options.agent; },
       resolveControlUiUrl: async () => { calls.push('native-link'); return { url: base, kind: 'one-time' }; },
     }, '@/lib/cron-ids': ids, '@/lib/control-ui-navigation': navigation,
+    '@/lib/domain-urls': { domainIsConfigured: () => false },
   });
   const request = (query = '') => ({ url: `http://localhost:3740/api/agents/agent_123/open-control-ui${query}`, headers: { get: () => 'localhost:3740' } });
   return { calls, module, request, params: { params: Promise.resolve({ id: 'agent_123' }) } };
@@ -152,6 +153,7 @@ await test('SEC-9B: a loopback-only agent port answers a plain 409 with the tunn
         findAgentContainer: async () => ({ name: 'c', running: true, controlPort: '4550' }),
         resolveControlUiUrl: async () => { calls.push('native-link'); return { url: oneTime, kind: 'one-time' }; },
       }, '@/lib/cron-ids': ids, '@/lib/control-ui-navigation': navigation,
+      '@/lib/domain-urls': { domainIsConfigured: () => false },
     });
     const res = await f.GET({ url: 'http://x/api/agents/a/open-control-ui', headers: { get: () => host } }, { params: Promise.resolve({ id: 'a' }) });
     assert.equal(res.status === 409, blocked, `${hostIp} / ${host}`);
@@ -170,18 +172,20 @@ await test('actual route does not issue links for missing or stopped agents', as
   }
 });
 
-await test('shared Open button navigates synchronously and respects job/disabled validation', () => {
+await test('shared Open button navigates synchronously for known routes and retries a missing lookup before warning', async () => {
   const source = fs.readFileSync(path.join(root, 'app/agents/BrowserAccessSection.tsx'), 'utf8');
   const parsed = ts.createSourceFile('BrowserAccessSection.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const button = parsed.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'OpenControlUiButton');
-  const script = ts.transpileModule(button.getText(parsed) + '\nexports.ButtonUnderTest=OpenControlUiButton;', {
+  const functions = parsed.statements.filter((node) => ts.isFunctionDeclaration(node)
+    && ['OpenControlUiButton', 'lookupControlUiAgent'].includes(node.name?.text));
+  const script = ts.transpileModule(functions.map((fn) => fn.getText(parsed)).join('\n') + '\nexports.ButtonUnderTest=OpenControlUiButton;', {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const opened = [];
+  const warnings = [];
   const loopback = { protocol: 'http:', hostname: '127.0.0.1' };
   const context = { exports: {}, Button: () => {}, ControlUiExposureModal: () => {}, window: { open: (...args) => opened.push(args), location: loopback },
-    useState: (value) => [value, () => {}], useEffect: () => {},
-    controlUiOpenPath: navigation.controlUiOpenPath, controlUiExposesSession: navigation.controlUiExposesSession, controlUiPortLocalOnly: navigation.controlUiPortLocalOnly, isValidCronJobId: ids.isValidCronJobId,
+    useState: (value) => [value, (warning) => warnings.push(warning)], useEffect: () => {}, useRef: (current) => ({ current }), AbortController,
+    controlUiOpenPath: navigation.controlUiOpenPath, controlUiOpenWarning: navigation.controlUiOpenWarning, isValidCronJobId: ids.isValidCronJobId,
     require: () => ({ jsx: (_type, props) => props, jsxs: (_type, props) => props, Fragment: 'fragment' }), };
   vm.runInNewContext(script, context);
   const buttonProps = context.exports.ButtonUnderTest({ agentId: 'agent_123', jobId: job }).children[0];
@@ -192,6 +196,42 @@ await test('shared Open button navigates synchronously and respects job/disabled
     assert.equal(blocked.disabled, true); blocked.onClick({ stopPropagation() {} });
   }
   assert.equal(opened.length, 1);
+
+  context.window.location = { protocol: 'https:', hostname: 'rev4a.example.com' };
+  const local = { agentId: 'agent_123', hostIp: '127.0.0.1' };
+  context.exports.ButtonUnderTest(local).children[0].onClick({ stopPropagation() {} });
+  assert.deepEqual(warnings, ['local-only']);
+  assert.equal(opened.length, 1);
+  context.exports.ButtonUnderTest({ ...local, publicUrl: 'https://atlas.rev4a.example.com' }).children[0].onClick({ stopPropagation() {} });
+  assert.deepEqual(warnings, ['local-only']);
+  assert.deepEqual(opened[1], ['/api/agents/agent_123/open-control-ui', '_blank', 'noopener']);
+
+  const navigations = [];
+  let fetches = 0;
+  let refreshedAgent = { agentId: 'agent_123', publicUrl: 'https://atlas.rev4a.example.com', domainConfigured: true };
+  const tab = { opener: {}, close: () => navigations.push('closed'), location: { replace: (url) => navigations.push(url) } };
+  context.window.location.protocol = 'http:';
+  context.window.open = (...args) => { opened.push(args); return tab; };
+  context.fetch = async (url, { signal }) => {
+    assert.equal(url, '/api/agents');
+    assert.equal(signal.aborted, false);
+    fetches++;
+    return { ok: true, json: async () => [refreshedAgent] };
+  };
+  const staleButton = context.exports.ButtonUnderTest({ agentId: 'agent_123', publicUrl: null, jobId: job }).children[0];
+  await staleButton.onClick({ stopPropagation() {} });
+  assert.deepEqual(opened[2], ['about:blank', '_blank']);
+  assert.equal(tab.opener, null);
+  assert.deepEqual(navigations, [navigation.controlUiOpenPath('agent_123', job)]);
+  assert.equal(warnings.includes('session-exposure'), false);
+  console.log(`     null → HTTPS: fetches=${fetches}, ${navigations[0]}, dialogs=0`);
+
+  refreshedAgent = { agentId: 'agent_123', publicUrl: null, domainConfigured: false };
+  await staleButton.onClick({ stopPropagation() {} });
+  assert.equal(fetches, 2);
+  assert.equal(navigations.at(-1), 'closed');
+  assert.equal(warnings.at(-2), 'session-exposure');
+  console.log(`     null → domain off: fetches=${fetches}, tab=${navigations.at(-1)}, dialog=${warnings.at(-2)}`);
 });
 
 await test('cron collector preserves internal agentId and overwrites spoofed Rev4a identity with discovery', async () => {

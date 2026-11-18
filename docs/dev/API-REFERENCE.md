@@ -909,6 +909,9 @@ List running and stopped agent containers (Docker containers with `AGENT_ID` lab
     "env": ["AGENT_ID=prometheus", "AGENT_TEMPLATE=prometheus"],
     "controlPort": "3033",
     "controlUiHostIp": null,
+    "publicUrl": null,
+    "domainConfigured": false,
+    "portBindings": null,
     "portsDiffer": false,
     "openclawVersion": "2026.9.3",
     "updateAvailable": false,
@@ -937,8 +940,14 @@ List running and stopped agent containers (Docker containers with `AGENT_ID` lab
   downloaded and the agent's container runs a different image id (a recreate moves it).
   The version must come from image metadata (including inspection by id); an exec-only
   legacy version never produces this prompt because recreate retains that image id.
-- `controlPort` is the host port published for the Control UI. No link or token is
-  returned: the Open buttons go through `GET /api/agents/[id]/open-control-ui`
+- `controlPort` is the host port published for the Control UI. Authenticated links are
+  issued by `GET /api/agents/[id]/open-control-ui`.
+- `publicUrl` (1.30.0) is the credential-free HTTPS origin for the running agent's managed
+  Control UI route when its upstream port matches the current Docker publish, or `null` when unavailable.
+- `domainConfigured` (1.30.0) indicates whether `REV4A_DOMAIN` is set. When true and `publicUrl`
+  is `null`, the UI can retry discovery on Open while Caddy is catching up.
+- `portBindings` is the inspected `HostConfig.PortBindings` map, or `null` when unavailable.
+  The Ports panel uses each publish's address to show an SSH tunnel command.
 - `controlUiHostIp` is the host address the Control UI port is published on (`HostConfig.PortBindings`), or `null`
   (empty or wildcard: every interface). Set by `REV4A_AGENT_PORTS_LISTEN`; the Open button uses it to offer the SSH
   tunnel when the port is not reachable from the browser. Never a token.
@@ -1936,8 +1945,17 @@ existing query and authentication fragment are preserved. Invalid, empty or repe
 return 400 before container discovery or native link issuance. Callers cannot supply a target host.
 Without `job`, the existing root navigation is unchanged.
 
-The target host is derived from the `Host` header, with the agent's published port;
-callers cannot choose it through a parameter. To keep dashboard cookies away from
+With an active managed route (1.30.0), Open redirects to the running agent's assigned
+HTTPS subdomain. The one-time link uses HTTPS and WSS on that host's default port.
+The token fallback uses `https://<agent>.<domain>/#token=<token>`. Rev4a reads the
+route from its managed Caddy file and server configuration and checks its upstream
+port against the current Docker publish. When Domain mode is configured and the route
+is unavailable, the navigation returns `503` with “This agent's address is being updated.
+Try again in a moment.” and requests a Caddy sync in the background. Both explicit
+tunnel modes continue to return JSON in Domain mode.
+
+Outside Domain mode, the target host is derived from the `Host` header, with the
+agent's published port. To keep dashboard cookies away from
 agent ports, `localhost` (case-insensitive, including `localhost.`) maps to `127.0.0.1`;
 `::1`, `[::1]` and any `127.x.y.z` map to `localhost`, which resolves to both loopback
 address families so IPv6-only publishes remain reachable. Other hosts, including
@@ -1967,13 +1985,35 @@ answers 503 on `/startupz` inside 10 minutes of the container's `StartedAt` gets
 instead of a redirect to a dead port. `ready`, `not_ready`, no answer or a timeout, an unexpected answer, a failed probe, an
 unreadable `StartedAt` and a container with `RestartCount > 0` (restarted by its policy, not a fresh start) resolve the link as usual.
 
-A navigation, not a JSON call: the button opens this URL inside the click, so no tab
-is left blank after an `await` and no popup can be blocked.
+The Open button navigates to this URL in a new tab. If the public URL lookup needs
+a retry, the button opens the tab during the click and uses it after discovery.
 
 **Errors** (plain text, meant for the tab): `400` host not readable, `404` unknown agent,
-`409` agent not running or no published Control UI port, `503` Docker unreachable or the
-agent's Gateway still starting ("The agent's Gateway is still starting. Try again in a moment."),
+`409` agent not running or no published Control UI port outside Domain mode, `503` Docker
+unreachable, managed route unavailable, or the agent's Gateway still starting,
 `502` neither a one-time link nor a token available.
+
+### `GET /api/agents/[id]/ports`
+
+Returns the agent's published TCP container ports 3000–3009 (1.30.0), ordered by
+container port. Requires a signed-in session. An unknown agent returns `404` and a
+failed container lookup or inspect returns `503`.
+
+```json
+{
+  "ports": [
+    { "containerPort": 3000, "hostPort": 3700, "listening": true, "url": "https://atlas.example.com", "auth": null },
+    { "containerPort": 3005, "hostPort": 3705, "listening": false, "url": "https://atlas-3005.example.com", "auth": "basic" }
+  ]
+}
+```
+
+`listening` is a snapshot of the IPv4 and IPv6 TCP tables inside the container.
+It is `null` when the container is stopped or the tables cannot be read.
+`url` is the managed HTTPS route when it matches the active Docker publish, a reachable
+HTTP host-port URL outside Domain mode, or `null` when neither applies. A managed URL on port 3000 is an origin
+only. Use `open-control-ui` to obtain the authenticated navigation.
+`auth` is `"basic"` for routed dev ports and `null` for other ports.
 
 ---
 
@@ -2454,7 +2494,7 @@ Top-level `startedAtMs` is the server start timestamp in epoch milliseconds (`RE
 or `null` for a direct development server. The Remote access page waits for it to change to
 confirm a restart before offering Recreate.
 
-`GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent's port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
+`GET /api/agents/[id]/open-control-ui` answers a plain-text `409` with the SSH tunnel when the agent has no managed public route, its port is open only on the server and the request host is not loopback. `PUT /api/config/env` answers `400` for a `REV4A_LISTEN` or `REV4A_AGENT_PORTS_LISTEN` that is not empty, `all`, `local` or a non-wildcard IP. Wildcard IP spellings, including expanded and IPv4-mapped IPv6 forms, are refused.
 
 ---
 

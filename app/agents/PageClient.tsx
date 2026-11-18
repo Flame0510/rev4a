@@ -13,9 +13,10 @@ import { AgentSpendAlerts } from '../system/AgentSpendAlerts';
 import ResourceSection from './ResourceSection';
 import PackagesSection from './PackagesSection';
 import CredentialsSection from './CredentialsSection';
+import PortsSection from './PortsSection';
 import BrowserAccessSection, { Elapsed, OpenControlUiButton, type GatewayState } from './BrowserAccessSection';
 import UpdateSection from './UpdateSection';
-import { validatePortInput } from '@/lib/agent-ports';
+import { validatePortInput, type PortBindings } from '@/lib/agent-ports';
 import { agentPortsLabel, requestAgentLifecycle } from '@/lib/agent-start';
 import { GATEWAY_POLL_STUCK_MS, skipGatewayTick } from '@/lib/gateway-state';
 import {
@@ -68,6 +69,9 @@ interface Agent {
   controlPort: string | null;
   /** Host address the Control UI port is published on; null/0.0.0.0 = every interface. Never a token. */
   controlUiHostIp?: string | null;
+  publicUrl?: string | null;
+  domainConfigured?: boolean;
+  portBindings?: PortBindings;
   portsDiffer?: boolean;
   /** OpenClaw version the agent runs; null when it cannot be read (stopped agent on an unlabelled image). */
   openclawVersion?: string | null;
@@ -308,7 +312,7 @@ function AgentListItem({
       toggling={loading}
       toggleDisabled={agent.state === 'unknown' || !!busy}
       onToggle={() => { void onLifecycle(); }}
-      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
+      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
       meta={[
         imageLabel(agent),
         compactPorts(agent.ports),
@@ -1347,7 +1351,7 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
         <div style={{ padding: '12px 14px' }}>
           {agent.state === 'running' && agent.controlPort && (
             <div style={{ marginBottom: 8 }}>
-              <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
+              <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
               {gateway?.state === 'starting' && (
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway starting… <Elapsed startedAtMs={gateway.startedAtMs} /></div>
               )}
@@ -1359,6 +1363,8 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
           <BrowserAccessSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onAccessChanged} />
         </div>
       </div>
+
+      <PortsSection agentId={agent.agentId} bindings={agent.portBindings} running={agent.state === 'running'} gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
 
       {/* Model - primary + fallbacks (moved here from the Gateway page) */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>

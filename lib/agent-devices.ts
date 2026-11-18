@@ -240,13 +240,14 @@ export async function renameBrowser(container: string, deviceId: string, name: s
  * `openclaw dashboard --json` issues a ten-minute, single-use bootstrap token and
  * returns `browserUrl` aimed at the Gateway's own listener (`127.0.0.1:3000`), with
  * the WebSocket destination in the `gatewayUrl` fragment parameter. Both are
- * rewritten to the selected Control UI host and the agent's published port,
- * which is where the browser can actually connect.
+ * rewritten to the selected Control UI host. Direct links use the published port.
+ * Managed public links use HTTPS and WSS on their default ports.
  */
 export async function issueControlUiLink(
   container: string,
   hostname: string,
   port: string,
+  secure = false,
 ): Promise<{ url: string; expiresAtMs: number | null }> {
   const data = (await runCli(container, ['dashboard', '--json'], LINK_TIMEOUT_MS)) as Record<string, unknown>;
   const browserUrl = str(data?.browserUrl);
@@ -255,16 +256,23 @@ export async function issueControlUiLink(
   const host = hostForUrl(hostname);
   const [base, fragment = ''] = browserUrl.split('#');
   const url = new URL(base);
+  if (secure && !/^(https?|wss?):$/.test(url.protocol)) throw new Error('OpenClaw returned an unsupported browser URL scheme');
   url.hostname = host;
   url.port = port;
+  if (secure) url.protocol = 'https:';
 
   const params = new URLSearchParams(fragment);
   const gatewayUrl = params.get('gatewayUrl');
-  if (gatewayUrl) {
+  if (gatewayUrl !== null && (secure || gatewayUrl)) {
     const ws = new URL(gatewayUrl);
+    if (secure && !/^(https?|wss?):$/.test(ws.protocol)) throw new Error('OpenClaw returned an unsupported Gateway URL scheme');
     ws.hostname = host;
     ws.port = port;
-    params.set('gatewayUrl', ws.toString().replace(/\/$/, ''));
+    if (secure) ws.protocol = 'wss:';
+    const target = secure
+      ? (ws.pathname === '/' && !ws.search && !ws.hash ? ws.origin : ws.toString())
+      : ws.toString().replace(/\/$/, '');
+    params.set('gatewayUrl', target);
   }
   return { url: `${url.toString()}#${params.toString()}`, expiresAtMs: num(data.browserBootstrapExpiresAtMs) };
 }
@@ -348,21 +356,30 @@ export async function resolveTunnelControlUiUrl(
   return linkForHost(container, 'localhost', port);
 }
 
+/** The HTTPS origin resolved from Rev4a's managed Caddy file, with HTTPS/WSS on the default port. */
+export async function linkForPublicHost(
+  container: string,
+  publicUrl: string,
+): Promise<{ url: string; kind: 'one-time' | 'token' }> {
+  return linkForHost(container, new URL(publicUrl).hostname, '', true);
+}
+
 async function linkForHost(
   container: string,
   host: string,
   port: string,
+  secure = false,
 ): Promise<{ url: string; kind: 'one-time' | 'token' }> {
   if (await answersStartupzWithVersion(container)) {
     try {
-      return { url: (await issueControlUiLink(container, host, port)).url, kind: 'one-time' };
+      return { url: (await issueControlUiLink(container, host, port, secure)).url, kind: 'one-time' };
     } catch {
       // Fall back to the plain link below.
     }
   }
   const token = await readGatewayToken(container);
   if (!token) throw new Error('no one-time link could be issued and no gateway token is available');
-  return { url: plainLink(host, port, token), kind: 'token' };
+  return { url: secure ? `https://${host}/#token=${encodeURIComponent(token)}` : plainLink(host, port, token), kind: 'token' };
 }
 
 /**

@@ -1056,6 +1056,19 @@ The sync inspects running and stopped containers. The name table allocates colli
 and breaks ties by container ID. It reserves each label’s dev-port variants, and records assignments by container name in the
 import so Recreate preserves them. Routes require a running container with an active host TCP mapping reachable at 127.0.0.1.
 After a successful sync, requests for stopped agents fall through to the wildcard 404 handler.
+The dashboard reads name assignments and routes from the last applied managed file via `lib/domain-urls.ts`.
+Agent-list URLs and the Ports section use one file read per response. Both use `agentHostPort`, the
+same active IPv4-loopback-compatible binding selector used by the certificate callback, to check the
+managed upstream port. The authenticated Open route repeats the check against a fresh Docker inspect
+before issuing a link. A missing, pending or mismatched route in Domain mode returns 503 and requests a
+Caddy sync in the background. Outside Domain mode, Open uses the host-port flow. Explicit tunnel
+requests use the tunnel flow in both modes.
+`lib/agent-devices.ts` rewrites the one-time link to HTTPS and the fragment's Gateway URL to WSS, on
+the same public host with the default TLS port. It preserves the path and query. Older agents and CLI
+outputs with unsupported URL schemes use the token fallback on the same HTTPS origin.
+The Ports endpoint samples Linux's IPv4 and IPv6 TCP tables with one bounded `docker exec` per
+request on a running container. A failed read yields unknown status. The sample is independent of
+Caddy routing and is refreshed by opening the agent panel or pressing Refresh.
 Dev handles enforce Basic authentication and remove its Authorization header before proxying. The generated import contains only the
 bcrypt hash. The password is stored in the data directory with mode 0600. Sync rotates an invalid credential or one with an
 incorrect mode and logs the repair without credential content.

@@ -100,18 +100,35 @@ for (const [error, status] of [[new recreateErrors.RecreateRefusedError('Backup 
 console.log('ok   409 shape, immediate choice, validation, auth, busy and recreate errors');
 
 let listReads = 0;
+let publicReads = 0;
 const { GET } = load('app/api/agents/route.ts', {
   'next/server': { NextResponse: { json } }, '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
   '@/lib/docker-socket': { dockerAvailable: () => true, dockerFetch: async (_method, url) => url.startsWith('/containers/json')
     ? ['0.0.0.0', '127.0.0.1', '10.0.0.5'].map((ip, i) => ({ Id: String(i), Labels: { AGENT_ID: String(i) }, Names: ['/a' + i], State: i ? 'exited' : 'running' }))
-    : { Config: { Env: [] }, HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: ['0.0.0.0', '127.0.0.1', '10.0.0.5'][Number(url.split('/')[2])], HostPort: '3710' }] } } } },
+    : { Config: { Env: [] }, State: { Running: url === '/containers/0/json' },
+      NetworkSettings: { Ports: { '3000/tcp': [{ HostIp: '0.0.0.0', HostPort: '3710' }] } },
+      HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: ['0.0.0.0', '127.0.0.1', '10.0.0.5'][Number(url.split('/')[2])], HostPort: '3710' }] } } } },
   '@/lib/agent-images': { listLocalAgentImages: async () => [], newestLocalSupportedVersion: () => null, containerOpenClawVersion: async () => null, imageOpenClawVersion: async () => null },
   '@/lib/agent-versions': { LOCAL_IMAGE_REPOSITORY: 'base', compareVersions: () => 0, newBuildAvailableFor: () => false },
   '@/lib/agent-ports-server': { currentAgentPortsListen: () => { listReads++; return setting; } }, '@/lib/agent-ports': portsRules,
+  '@/lib/domain-urls': { domainIsConfigured: () => true, readAgentPublicRoutes: async () => {
+    publicReads++;
+    return (agent, port) => {
+      assert.equal(port, 3000);
+      if (!agent.running) return null;
+      assert.equal(agent.activeBindings['3000/tcp'][0].HostPort, '3710');
+      return { url: `https://${agent.containerName}.rev4a.example.test`, hostPort: 3710 };
+    };
+  } },
 });
 for (const [hostIp, expected] of [[null, [false, false, false]], ['', [false, true, true]], ['127.0.0.1', [true, false, true]], ['10.0.0.5', [true, true, false]]]) {
-  setting = { hostIp }; listReads = 0;
-  assert.deepEqual((await GET({})).body.map(a => a.portsDiffer), expected); assert.equal(listReads, 1);
+  setting = { hostIp }; listReads = 0; publicReads = 0;
+  const { body } = await GET({});
+  assert.deepEqual(body.map(a => a.portsDiffer), expected);
+  assert.deepEqual(body.map(a => a.publicUrl), ['https://a0.rev4a.example.test', null, null]);
+  assert.equal(body[1].portBindings['3000/tcp'][0].HostIp, '127.0.0.1');
+  assert.equal(listReads, 1);
+  assert.equal(publicReads, 1);
 }
-console.log('ok   agents list mismatch flags, running and stopped, setting read once');
+console.log('ok   agents list mismatch flags, running public URL and stopped fallback, settings and routes each read once');
 console.log('All agent start port route tests passed.');

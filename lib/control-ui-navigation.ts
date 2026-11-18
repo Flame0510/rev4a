@@ -68,6 +68,18 @@ export function controlUiPortLocalOnly(hostIp: string | null | undefined, dashbo
   return isIpLiteral && host !== ip;
 }
 
+/** A public route supplies a separate HTTPS origin, so neither dialog applies. */
+export function controlUiOpenWarning(
+  publicUrl: string | null | undefined,
+  hostIp: string | null | undefined,
+  protocol: string,
+  hostname: string,
+): 'local-only' | 'session-exposure' | null {
+  if (publicUrl) return null;
+  if (controlUiPortLocalOnly(hostIp, hostname)) return 'local-only';
+  return controlUiExposesSession(protocol, hostname) ? 'session-exposure' : null;
+}
+
 /**
  * The SSH command that forwards the agent's port to this computer. In `user@host` OpenSSH wants an
  * IPv6 address without brackets (with them it looks the bracketed text up as a name), and an
@@ -76,9 +88,10 @@ export function controlUiPortLocalOnly(hostIp: string | null | undefined, dashbo
  */
 export function controlUiTunnelCommand(port: string, hostname: string, targetIp?: string | null): string {
   const host = hostname.replace(/^\[(.*)\]$/, '$1');
-  const target = String(targetIp ?? '').trim().replace(/^\[(.*)\]$/, '$1');
+  const binding = String(targetIp ?? '').trim().replace(/^\[(.*)\]$/, '$1');
+  const target = binding === '::' ? '::1' : binding;
   // Loopback targets are used as they are (::1, 127.0.0.2): the port is published on exactly that address.
-  const to = !target || target === '0.0.0.0' || target === '::' ? '127.0.0.1' : (target.includes(':') ? `[${target}]` : target);
+  const to = !target || target === '0.0.0.0' ? '127.0.0.1' : (target.includes(':') ? `[${target}]` : target);
   const forward = `${port}:${to}:${port}`;
   // Brackets would be a glob in zsh: quote the argument that has them.
   return `ssh -L ${forward.includes('[') ? `'${forward}'` : forward} user@${host}`;

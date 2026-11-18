@@ -36,6 +36,7 @@ export function buildNameTable(
   agents: readonly DomainAgent[], previous?: ReadonlyMap<string, DomainAssignment>, dashboardPort?: number,
 ): DomainNameTable;
 export function readAssignments(content: string | null, domain: string): Map<string, DomainAssignment>;
+export function readManagedRoutes(content: string, domain: string): Map<string, number> | null;
 export function renderCaddyfile(config: DomainConfig, table: DomainNameTable, hash?: string): string;
 export interface DomainRouteCheck {
   container: string;

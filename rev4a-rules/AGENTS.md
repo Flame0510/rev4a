@@ -32,6 +32,18 @@ Do not load very large files or datasets into memory at once; stream them. A pro
 ends with exit code 137 was most likely killed for lack of memory: tell the user instead of
 retrying it in a loop.
 
+## Dev servers
+
+- Bind to `0.0.0.0` inside the container so the published port can reach the server. A listener
+  on `127.0.0.1` alone is unreachable through the published port. Use a published container
+  port in the range `3001–3009`.
+- Allow the operator's domain in Host header validation, or configure the server to accept any Host
+  when appropriate. For Vite, set `server.allowedHosts` and `preview.allowedHosts` to
+  `['.<domain>']` with the operator's domain, or to `true` to allow any host. For Next.js, use
+  `next dev -H 0.0.0.0 -p <port>` and add the domain to `allowedDevOrigins` if needed.
+  For Astro, use `astro dev --host 0.0.0.0 --port <port>` and configure `server.allowedHosts`.
+- Tell the user to find the public URL in the agent panel's **Ports** list.
+
 ## Tools Switched Off on Claude Runs
 
 On Claude runs (the Claude plan through Claude Code) some tools are off to save tokens. The

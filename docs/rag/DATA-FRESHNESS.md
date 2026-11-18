@@ -4,6 +4,12 @@
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
+## Agent ports
+
+Since 1.30.0, the agent panel's **Ports** list samples the container's TCP listeners when
+the panel opens and on Refresh. The status is unknown when the container is stopped or its
+TCP tables cannot be read. Public URLs reflect the managed routes at the time of the read.
+
 ---
 
 ## Session data

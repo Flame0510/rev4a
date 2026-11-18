@@ -252,6 +252,12 @@ and require Basic auth as `rev4a`. The password is in the host-side `domain-auth
 Never disclose or copy its contents into chat. Control UI still uses OpenClaw token and pairing.
 Caddy issues agent certificates on first use for hostnames in the generated route file with an active Docker binding.
 Stopping an agent removes those routes on sync. Starting it brings back the same hostnames.
+With the managed route active, **Open** goes directly to the agent's HTTPS subdomain, with a one-time
+link or token link. If the address is being updated, Rev4a requests a Caddy sync and the tab asks
+the operator to try again in a moment. The agent panel's **Ports** list shows TCP publishes in the range 3000–3009,
+their listening status and links. Open the panel or press **Refresh** to sample again. Routed dev ports
+use the username `rev4a` and point to Remote access for the password. Dev servers bind to
+`0.0.0.0` inside the container and allow the operator's domain in their Host header checks.
 
 ## Remote access presets and restart (1.29.0)
 

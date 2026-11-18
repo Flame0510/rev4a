@@ -1,6 +1,6 @@
 # Rev4a Glossary
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 
 Terms you'll encounter while using the Rev4a dashboard.
 
@@ -127,7 +127,7 @@ A capability available to agents: running shell commands, reading files, searchi
 A ChatGPT Plus or Pro (Codex) account connected to one agent from the Subscriptions page by a device-code login, or a Claude Pro/Max plan connected through Claude Code by Anthropic's own sign-in (marked Experimental). The sign-in is kept inside the agent, not in Rev4a. The agent can use a subscription model as its primary or as a fallback, chosen in the MODEL section of the agent panel; the previous model is pre-filled as a fallback for when the account's usage limit is reached. ChatGPT calls are not counted as spend: the Costs page shows them in a separate "ChatGPT subscription" section with their API value (what the same calls would have cost at OpenAI API prices). Claude calls consume the operator's own Claude plan; the Claude accordion shows the plan's usage limits (5 hours and Week bars, one tiny Claude Code call per account, cached for 3 minutes, Refresh bypasses the cache) and Anthropic's limits assume ordinary individual use.
 
 ## Traefik
-Optional reverse proxy an operator can put in front of the Rev4a dashboard or of an agent's port. Rev4a does not configure it and sets no routing labels on agents: an agent's Control UI is reached on its published port. Rev4a itself runs on port 3740 and does not require Traefik.
+Optional reverse proxy an operator can configure in front of the Rev4a dashboard or an agent's port. Rev4a runs on port 3740 by default. In Domain mode (1.30.0), Rev4a manages a Caddy import and Open uses the agent's HTTPS subdomain. With a direct publish, the Control UI uses its published port.
 
 ## Update (Agent)
 Move one agent to a newer OpenClaw version downloaded on the Agents page, from its OPENCLAW VERSION section. The agent goes offline for a few minutes: it is backed up while stopped, started on the new version (which converts its data), and checked for missing conversation history or cron jobs. A slow start is waited for, not treated as a failure. Undone with Rollback.

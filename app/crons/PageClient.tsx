@@ -8,7 +8,7 @@ import { apiFetch } from '@/lib/apiFetch';
 import { useRev4aTimezone } from '@/lib/hooks/useRev4aTimezone';
 import { formatDateTimeInTimezone } from '@/lib/timezone';
 import Link from 'next/link';
-import { OpenControlUiButton } from '../agents/BrowserAccessSection';
+import { OpenControlUiButton, useControlUiPublicUrl } from '../agents/BrowserAccessSection';
 import { isControlUiAgentId, isMissingInferenceAccountError } from '@/lib/control-ui-navigation';
 import { isValidCronJobId } from '@/lib/cron-ids';
 
@@ -155,6 +155,7 @@ export default function CronsPage() {
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState('all');
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
+  const publicUrl = useControlUiPublicUrl(selectedJob?.rev4aAgentId);
   const [runs, setRuns] = useState<CronRunEntry[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
@@ -523,7 +524,7 @@ export default function CronsPage() {
                 </div>
                 {isControlUiAgentId(selectedJob.rev4aAgentId) && isValidCronJobId(selectedJob.id) ? (
                   <div style={{ marginTop: 8 }}>
-                    <OpenControlUiButton agentId={selectedJob.rev4aAgentId} jobId={selectedJob.id} label="Open automation ↗" variant="secondary" disabled={busyJobId !== null} />
+                    <OpenControlUiButton agentId={selectedJob.rev4aAgentId} publicUrl={publicUrl} jobId={selectedJob.id} label="Open automation ↗" variant="secondary" disabled={busyJobId !== null} />
                   </div>
                 ) : (
                   <div style={{ marginTop: 6, color: 'var(--text-dim)' }}>Open the agent Control UI and select this job under Automations.</div>

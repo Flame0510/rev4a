@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, Button, ConfirmModal, Input, RemoveButton } from '../components/ui';
 import { SkeletonLines } from '../components/Skeleton';
-import { controlUiExposesSession, controlUiOpenPath, controlUiPortLocalOnly } from '@/lib/control-ui-navigation';
+import { controlUiOpenPath, controlUiOpenWarning } from '@/lib/control-ui-navigation';
 import { ControlUiExposureModal } from './ControlUiExposureModal';
 import { isValidCronJobId } from '@/lib/cron-ids';
 
@@ -164,10 +164,13 @@ export function OpenControlUiButton({
   jobId,
   disabled = false,
   hostIp,
+  publicUrl,
 }: {
   agentId: string;
   /** The address the agent's Control UI port is published on (`controlUiHostIp` of the agent list). */
   hostIp?: string | null;
+  /** The agent's managed HTTPS origin, if routed. The server resolves it again on Open. */
+  publicUrl?: string | null;
   label?: string;
   variant?: 'primary' | 'secondary';
   /** For buttons inside a clickable row. */
@@ -180,56 +183,123 @@ export function OpenControlUiButton({
   disabled?: boolean;
 }) {
   const validJob = jobId === undefined || isValidCronJobId(jobId);
-  const [warning, setWarning] = useState(false);
-  const openTab = () => { window.open(controlUiOpenPath(agentId, jobId), '_blank', 'noopener'); };
+  const [warning, setWarning] = useState<ReturnType<typeof controlUiOpenWarning>>(null);
+  const [busyAction, setBusyAction] = useState<'lookup' | null>(null);
+  const lookupRef = useRef<AbortController | null>(null);
+  const starting = gateway === 'starting' && blocksOpen === true;
+  const path = validJob ? controlUiOpenPath(agentId, jobId) : '';
+  const openTab = () => { window.open(path, '_blank', 'noopener'); };
+  const retryPublicUrl = async (reason: ReturnType<typeof controlUiOpenWarning>) => {
+    const controller = new AbortController();
+    lookupRef.current = controller;
+    setBusyAction('lookup');
+    // Reserve the tab during the click so a delayed lookup can still open it.
+    const tab = window.open('about:blank', '_blank');
+    if (tab) tab.opener = null;
+    const closeTab = () => tab?.close();
+    controller.signal.addEventListener('abort', closeTab, { once: true });
+    try {
+      const agent = await lookupControlUiAgent(agentId, controller.signal);
+      if (controller.signal.aborted) return;
+      if (reason && !agent?.publicUrl && !agent?.domainConfigured) {
+        closeTab();
+        setWarning(reason);
+      } else if (tab) {
+        tab.location.replace(path);
+      } else openTab();
+    } finally {
+      controller.signal.removeEventListener('abort', closeTab);
+      if (lookupRef.current === controller) {
+        lookupRef.current = null;
+        setBusyAction(null);
+      }
+    }
+  };
   const open = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
-    if (!validJob || disabled) return;
+    if (!validJob || disabled || starting || lookupRef.current) return;
     // The port is open only on the server: the plain link cannot work (https included); or plain HTTP on
     // a non-loopback host: the agent's port would receive the Rev4a session too.
-    if (controlUiPortLocalOnly(hostIp, window.location.hostname)
-      || controlUiExposesSession(window.location.protocol, window.location.hostname)) { setWarning(true); return; }
+    const reason = controlUiOpenWarning(publicUrl, hostIp, window.location.protocol, window.location.hostname);
+    if (publicUrl === null) return retryPublicUrl(reason);
+    if (reason) { setWarning(reason); return; }
     openTab();
   };
   // Decided after mount so the server-rendered title and the first client render agree.
-  const [exposes, setExposes] = useState(false);
-  const [localOnly, setLocalOnly] = useState(false);
+  const [hint, setHint] = useState<ReturnType<typeof controlUiOpenWarning>>(null);
   useEffect(() => {
-    setExposes(controlUiExposesSession(window.location.protocol, window.location.hostname));
-    setLocalOnly(controlUiPortLocalOnly(hostIp, window.location.hostname));
-  }, [hostIp]);
+    setHint(controlUiOpenWarning(publicUrl, hostIp, window.location.protocol, window.location.hostname));
+    setWarning(null);
+  }, [hostIp, publicUrl]);
+  useEffect(() => {
+    setBusyAction(null);
+    return () => {
+      lookupRef.current?.abort();
+      lookupRef.current = null;
+    };
+  }, [agentId, jobId, disabled, starting]);
 
-  const starting = gateway === 'starting' && blocksOpen === true;
   return (
     <>
     <Button
       variant={variant}
       size="sm"
       onClick={open}
-      disabled={starting || disabled || !validJob}
+      loading={busyAction === 'lookup'}
+      disabled={starting || disabled || !validJob || busyAction !== null}
       title={!validJob ? 'Invalid automation job id' : starting ? "The agent's Gateway is still starting"
         : gateway === 'starting' ? 'The Gateway may still be starting — the Control UI might not answer yet'
         : gateway === 'not_ready' ? 'The Gateway has not finished starting after 10 minutes — it may not answer'
-        : localOnly ? 'The agent port is open only on the server: opens the SSH tunnel steps'
-        : exposes ? 'Plain HTTP: opens with a warning'
+        : !publicUrl && hint === 'local-only' ? 'The agent port is open only on the server: opens the SSH tunnel steps'
+        : !publicUrl && hint === 'session-exposure' ? 'Plain HTTP: opens with a warning'
         : 'Open the agent Control UI'}
     >
-      {starting ? 'Starting…' : label}
+      {starting ? 'Starting…' : busyAction === 'lookup' ? 'Opening…' : label}
     </Button>
     {/* Rendered in the click's own subtree: a click inside the modal must not reach a clickable row. */}
     <span onClick={(e) => e.stopPropagation()} style={{ display: 'contents' }}>
       <ControlUiExposureModal
-        open={warning}
+        open={!publicUrl && warning !== null}
         agentId={agentId}
         jobId={jobId}
         hostIp={hostIp}
-        localOnly={localOnly}
-        onClose={() => setWarning(false)}
-        onOpenAnyway={() => { setWarning(false); openTab(); }}
+        localOnly={warning === 'local-only'}
+        onClose={() => setWarning(null)}
+        onOpenAnyway={() => { setWarning(null); openTab(); }}
       />
     </span>
     </>
   );
+}
+
+type ControlUiAgent = { agentId: string; publicUrl?: string | null; domainConfigured?: boolean };
+
+async function lookupControlUiAgent(agentId: string, signal: AbortSignal): Promise<ControlUiAgent | undefined> {
+  try {
+    const response = await fetch('/api/agents', { signal, cache: 'no-store' });
+    if (response.ok) {
+      const agents: ControlUiAgent[] = await response.json();
+      return agents.find((agent) => agent.agentId === agentId);
+    }
+  } catch {
+    // Use the regular Open decision if the list could not be read.
+  }
+}
+
+/** The create and crons pages have an agent ID but do not render the agent list. */
+export function useControlUiPublicUrl(agentId?: string): string | null | undefined {
+  const [result, setResult] = useState<ControlUiAgent | null>(null);
+  useEffect(() => {
+    if (!agentId) { setResult(null); return; }
+    const controller = new AbortController();
+    setResult(null);
+    void lookupControlUiAgent(agentId, controller.signal).then((agent) => {
+      if (!controller.signal.aborted) setResult(agent ?? { agentId });
+    });
+    return () => controller.abort();
+  }, [agentId]);
+  if (!result || result.agentId !== agentId) return undefined;
+  return result.publicUrl ?? (result.domainConfigured === false ? undefined : null);
 }
 
 export default function BrowserAccessSection({

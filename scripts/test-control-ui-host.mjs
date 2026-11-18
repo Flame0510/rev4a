@@ -34,7 +34,7 @@ const gateway = 'ws://127.0.0.1:3000/socket?mode=control&encoded=%2B';
 const fragment = new URLSearchParams({ bootstrapToken: bootstrap, token, gatewayUrl: gateway, theme: 'dark mode' });
 const browserUrl = `http://127.0.0.1:3000/prefix/control?lang=en&encoded=%2B#${fragment}`;
 
-function devicesFixture(mode = 'one-time') {
+function devicesFixture(mode = 'one-time', issuedUrl = browserUrl) {
   const calls = [];
   const devices = load('lib/agent-devices.ts', {
     '@/lib/docker-exec': {
@@ -43,7 +43,7 @@ function devicesFixture(mode = 'one-time') {
         calls.push(args);
         if (args[0] === 'dashboard') {
           if (mode === 'failed-link') throw new Error('Fixture CLI failure');
-          return JSON.stringify({ ok: true, browserUrl, browserBootstrapExpiresAtMs: 123456 });
+          return JSON.stringify({ ok: true, browserUrl: issuedUrl, browserBootstrapExpiresAtMs: 123456 });
         }
         assert.equal(args[0], 'sh');
         return token;
@@ -127,6 +127,52 @@ for (const mode of ['one-time', 'old-agent', 'failed-link']) {
   });
 }
 
+const publicUrl = 'https://atlas.rev4a.example.com';
+for (const mode of ['one-time', 'old-agent', 'failed-link']) {
+  await test(`${mode}: public links use HTTPS and WSS on the same default-port origin`, async () => {
+    const { devices } = devicesFixture(mode);
+    const result = await devices.linkForPublicHost('fixture-agent', publicUrl);
+    const actual = new URL(result.url);
+    assert.equal(actual.origin, publicUrl);
+    assert.equal(actual.port, '');
+    if (mode === 'one-time') {
+      assert.equal(result.kind, 'one-time');
+      assert.equal(actual.pathname, '/prefix/control');
+      assert.equal(actual.search, '?lang=en&encoded=%2B');
+      const params = new URLSearchParams(actual.hash.slice(1));
+      assert.equal(params.get('gatewayUrl'), 'wss://atlas.rev4a.example.com/socket?mode=control&encoded=%2B');
+      assert.equal(params.get('bootstrapToken'), bootstrap);
+      assert.equal(params.get('theme'), 'dark mode');
+    } else {
+      assert.deepEqual([result.kind, result.url], ['token', `${publicUrl}/#token=${encodeURIComponent(token)}`]);
+    }
+  });
+}
+
+await test('the public Gateway link preserves explicit paths and queries and omits the bare root slash', async () => {
+  const host = 'atlas.rev4a.example.com';
+  for (const [suffix, expected] of [['', ''], ['/socket/', '/socket/'], ['/?next=/', '/?next=/']]) {
+    const fragment = new URLSearchParams({ gatewayUrl: `ws://127.0.0.1:3000${suffix}` });
+    const { devices } = devicesFixture('one-time', `http://127.0.0.1:3000/#${fragment}`);
+    const result = await devices.linkForPublicHost('fixture-agent', publicUrl);
+    assert.equal(new URLSearchParams(new URL(result.url).hash.slice(1)).get('gatewayUrl'), `wss://${host}${expected}`);
+  }
+});
+
+await test('custom browser or Gateway schemes use the HTTPS token fallback', async () => {
+  for (const [source, issuedUrl] of [
+    ['browserUrl', `custom://upstream.invalid/#${fragment}`],
+    ['gatewayUrl', `http://127.0.0.1:3000/#${new URLSearchParams({ gatewayUrl: 'custom://upstream.invalid/socket' })}`],
+  ]) {
+    const { devices, calls } = devicesFixture('one-time', issuedUrl);
+    const result = await devices.linkForPublicHost('fixture-agent', publicUrl);
+    assert.equal(result.kind, 'token');
+    assert.equal(result.url, `${publicUrl}/#token=${encodeURIComponent(token)}`);
+    assert.deepEqual(calls.map((args) => args[0]), ['dashboard', 'sh']);
+    console.log(`     custom ${source} → ${result.kind}, ${new URL(result.url).origin}`);
+  }
+});
+
 class Reply {
   constructor(body, options = {}) {
     this.body = body;
@@ -143,23 +189,108 @@ const navigation = load('lib/control-ui-navigation.ts', { './cron-ids': ids });
 function routeFixture(options = {}) {
   const { mode = 'one-time', denied = null } = options;
   const warnings = [];
+  const syncs = [];
+  const lookups = [];
   const { devices, calls } = devicesFixture(mode);
+  const publicRoutes = options.publicRoutes?.(syncs) ?? {
+    domainIsConfigured: () => Boolean(options.publicUrl),
+    requestDomainRouteSync: () => syncs.push('sync'),
+    agentPublicUrl: async (container, containerPort) => {
+      assert.equal(container, 'fixture-agent');
+      assert.equal(containerPort, 3000);
+      lookups.push(containerPort);
+      return options.publicUrl ?? null;
+    },
+  };
   const route = load('app/api/agents/[id]/open-control-ui/route.ts', {
     'next/server': { NextResponse: Reply },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => denied },
     '@/lib/agent-readiness': { probeGateway: async () => { throw new Error('Unexpected probe'); } },
     '@/lib/gateway-state': {},
-    '@/lib/docker-socket': { dockerFetch: async () => ({}) },
+    '@/lib/docker-socket': { dockerFetch: async () => ({
+      HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: options.hostIp }] } },
+    }) },
     '@/lib/agent-devices': devices,
+    '@/lib/domain-urls': publicRoutes,
     '@/lib/cron-ids': ids,
     '@/lib/control-ui-navigation': navigation,
-  }, { process: { env: { REV4A_FORCE_INSECURE_COOKIE: '1' } }, console: { warn: (...args) => warnings.push(args) } });
+  }, { process: { env: { REV4A_FORCE_INSECURE_COOKIE: '1', REV4A_DOMAIN: options.publicUrl ? 'rev4a.example.com' : undefined } }, console: { warn: (...args) => warnings.push(args) } });
   const open = (host = 'rev4a.example.com', protocol = 'http:', extraHeaders = {}, query = '') => route.GET({
     url: `${protocol}//${urlHost(host)}:3740/api/agents/fixture-agent/open-control-ui${query}`,
     headers: new Headers({ host: `${urlHost(host)}:3740`, ...extraHeaders }),
   }, { params: Promise.resolve({ id: 'fixture-agent' }) });
-  return { open, warnings, calls };
+  return { open, warnings, calls, syncs, lookups };
 }
+
+await test('public route wins over a local bind and the request host, and keeps the automation destination', async () => {
+  for (const host of ['', 'wrong.example.com']) {
+    const f = routeFixture({ publicUrl, hostIp: '127.0.0.1' });
+    const result = await f.open('rev4a.example.com', 'https:', { host }, `?job=${job}&host=evil.example&url=http://evil.example`);
+    assert.equal(result.status, 302);
+    const link = new URL(result.headers.Location);
+    assert.equal(link.origin, publicUrl);
+    assert.equal(link.pathname, '/prefix/control/automations');
+    assert.equal(link.searchParams.get('job'), job);
+    assert.equal(result.headers['Referrer-Policy'], 'no-referrer');
+    console.log(`     Host=${JSON.stringify(host)}: ${result.status} ${link.origin}${link.pathname}`);
+  }
+  const f = routeFixture({ hostIp: '127.0.0.1' });
+  assert.equal((await f.open()).status, 409);
+  assert.equal((await f.open('rev4a.example.com', 'http:', {}, '?tunnel=1')).status, 200);
+  assert.equal((await f.open('rev4a.example.com', 'http:', { host: '' })).status, 400);
+});
+
+await test('stale and pending managed routes return 503 without issuing a link, and request sync without waiting', async () => {
+  const domain = require('../lib/domain.js');
+  const env = { REV4A_DOMAIN: 'rev4a.example.com' };
+  const bindings = (port) => ({ '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: String(port) }] });
+  const table = domain.buildNameTable([{ containerName: 'fixture-agent', displayName: 'Atlas', running: true, activeBindings: bindings(4300) }]);
+  const file = domain.renderCaddyfile(domain.domainConfig(env), table);
+  for (const [name, content, port] of [['stale 4300 → 5300', file, 5300], ['reload pending', domain.PENDING + file, 4300], ['missing file', null, 4300]]) {
+    let finishSync;
+    const f = routeFixture({ publicRoutes: (syncs) => load('lib/domain-urls.ts', {
+      'server-only': {}, './domain.js': domain,
+      'node:fs/promises': { readFile: async () => {
+        if (content === null) throw new Error('Missing file');
+        return content;
+      } },
+      './docker-socket-path.js': { dockerRequestJson: async () => ({ Name: '/fixture-agent', Config: { Labels: { AGENT_ID: 'fixture-agent' } },
+        State: { Running: true }, NetworkSettings: { Ports: bindings(port) } }) },
+      './domain-sync': { syncDomainRoutes: () => {
+        syncs.push('sync');
+        return new Promise((resolve) => { finishSync = resolve; });
+      } },
+    }, { AbortSignal, process: { env } }) });
+    const result = await f.open('dashboard.example.test');
+    assert.equal(result.status, 503);
+    assert.equal(result.body.trim(), "This agent's address is being updated. Try again in a moment.");
+    assert.equal(result.headers.Location, undefined);
+    assert.deepEqual(f.calls, []);
+    assert.equal((await f.open('dashboard.example.test')).status, 503);
+    assert.deepEqual(f.syncs, ['sync']);
+    finishSync();
+    console.log(`     ${name}: ${result.status}, Location=${result.headers.Location}, links=${f.calls.length}, syncs=${f.syncs.length}; ${result.body.trim()}`);
+  }
+});
+
+await test('tunnel queries stay JSON after the public route becomes available', async () => {
+  const f = routeFixture({ publicUrl, hostIp: '127.0.0.1' });
+  const portOnly = await f.open('dashboard.example.test', 'http:', {}, '?tunnel=port');
+  assert.equal(portOnly.status, 200);
+  assert.deepEqual(JSON.parse(portOnly.body), { port });
+  assert.equal(portOnly.headers.Location, undefined);
+  assert.deepEqual(f.calls, []);
+  console.log(`     tunnel=port: ${portOnly.status} ${portOnly.body}, links=${f.calls.length}`);
+  const tunnel = await f.open('dashboard.example.test', 'http:', {}, `?tunnel=1&job=${job}`);
+  assert.equal(tunnel.status, 200);
+  assert.equal(tunnel.headers.Location, undefined);
+  const url = new URL(JSON.parse(tunnel.body).url);
+  assert.equal(url.origin, `http://localhost:${port}`);
+  assert.equal(url.searchParams.get('job'), job);
+  assert.deepEqual(f.lookups, []);
+  assert.equal(f.calls.length, 1);
+  console.log(`     tunnel=1: ${tunnel.status} JSON, origin=${url.origin}, links=${f.calls.length}`);
+});
 
 await test('actual route uses both isolated link kinds without warning or redirect additions', async () => {
   for (const mode of ['one-time', 'old-agent']) {
