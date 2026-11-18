@@ -28,8 +28,9 @@ export interface DomainNameTable {
   routes: { name: string; hostPort: number; dev: boolean }[];
 }
 export function isGenerated(content: string): boolean;
-export function normalizeDomain(value?: string): string;
+export { normalizeDomain } from './domain-name.js';
 export function domainConfig(env: DomainEnv): DomainConfig | null;
+export function parsePort(value: string | undefined): number | null;
 export function agentBase(agent: DomainAgent): string;
 export function agentHostPort(agent: DomainAgent, containerPort: number): number | null;
 export function buildNameTable(

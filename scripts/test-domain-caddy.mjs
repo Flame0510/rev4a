@@ -674,7 +674,7 @@ test('lifecycle start, stop and both restart routes request a sync after the Doc
   }
 });
 
-test('non-root and non-Linux are refused and dry-run does no writes or commands', async () => {
+test('non-root and non-Linux are refused and dry-run uses the service directory and port without writes or commands', async t => {
   const m = mockRuntime({ initial: { [config.main]: previous } });
   await assert.rejects(setupDomain({ ...m.options, ...root, args, uid: 1000 }), /requires root/);
   await assert.rejects(setupDomain({ ...m.options, ...root, args, platform: 'darwin' }), /requires Linux/);
@@ -684,6 +684,17 @@ test('non-root and non-Linux are refused and dry-run does no writes or commands'
   assert.equal(m.dockerReads(), 0);
   assert.equal(m.files.get(config.main).text, previous);
   assert.ok(m.messages.some(message => message.includes('Comment out and preserve')));
+  const customDir = '/service/rev4a';
+  const custom = mockRuntime({ agents: [], initial: { [config.main]: previous, [`${customDir}/.env`]: 'PORT=3740\n' } });
+  const customEnv = { ...env, PORT: '8080', REV4A_DATA_DIR: customDir };
+  await setupDomain({ ...custom.options, ...root, args: [...args, '--dry-run'], dataDir: customDir, env: customEnv });
+  assert.deepEqual([custom.commands, custom.operations, custom.dockerReads()], [[], [], 0]);
+  assert.ok(custom.messages.includes(`Set REV4A_DOMAIN in ${customDir}/.env.`));
+  assert.deepEqual(await setupDomain({ ...custom.options, ...root, args, dataDir: customDir, env: customEnv }), { changed: true });
+  assert.ok(custom.files.get(`${customDir}/.env`).text.includes(`REV4A_DOMAIN=${config.domain}`));
+  assert.match(custom.files.get(config.main).text, /ask http:\/\/127\.0\.0\.1:8080\/api\/domain\/ask/);
+  assert.match(custom.files.get(config.file).text, /reverse_proxy 127\.0\.0\.1:8080/);
+  t.diagnostic('Service-matched dry run: /service/rev4a/.env, subprocesses=0, writes=0. Mock setup: callback and dashboard upstream 127.0.0.1:8080.');
 });
 
 test('missing Caddy uses the official apt repository and adopts the packaged main file', async () => {

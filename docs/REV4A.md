@@ -15,6 +15,8 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 On Linux, `sudo rev4a domain setup <domain>` configures a dashboard hostname and agent subdomains on the system Caddy instance.
 
+**Approval on a subdomain.** Open's one-time link pairs a new browser with no approval (OpenClaw accepts it only when the Control UI connects with that bootstrap token). A browser that already keeps a gateway token for that agent's subdomain (from an earlier token or invite link) connects with it instead and is asked for approval once; approve it, or clear the site data for that subdomain. The invite link in Domain mode is `https://<agent>.<domain>/#token=…` and always needs approval, as before.
+
 **Forwarded headers.** Every route to an agent removes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`: the OpenClaw gateway answers 403 `proxy_attribution_required` to any request carrying them unless `gateway.trustedProxies` is set inside the agent (seen live on 2026.10.10). The Control UI keeps its own token and device pairing; dev ports also drop the `Authorization` header Caddy checked.
 
 **Known limits of Domain mode (1.30.0).** Do not edit Rev4a's configuration (`.env`, Config page) while `rev4a domain setup` runs: if setup fails it rolls back only the keys it changed, and an edit made in those seconds can stop that rollback (the error then names the keys to fix by hand). A stopped agent loses its route at the next successful Caddy reload; if that reload fails, Caddy keeps serving the last accepted configuration (Rev4a keeps each agent's host ports reserved while it exists, so no other agent takes them). A failed first sync leaves an empty managed file, so an `import` already in the Caddyfile always has a valid target.
@@ -27,6 +29,24 @@ Stopping the agent removes its routes on the next sync. Starting it restores the
 OpenClaw token and pairing protect Control UI. Dev ports use HTTP Basic authentication as `rev4a` with the password
 in `<REV4A_DATA_DIR>/domain-auth.json`. An invalid or incorrectly protected credential file is replaced during sync.
 The dashboard session cookie is host-only.
+
+On **Remote access**, the **Domain mode** wizard validates the dashboard hostname as you type and lists
+the A and AAAA records for that name and its wildcard. Create one record per expected public server
+address. If Rev4a finds no public addresses on the host, use the server's public IP.
+**Check** refreshes Domain mode status and compares the expected records with answers from the server's
+DNS resolver. Copy the dry run, then run the setup command on the server. Both commands include the
+running service’s non-default port and data directory. Setup installs Caddy if needed and backs up
+and adopts the Caddyfile when changes are needed. After setup and restart, open the dashboard URL
+and select **Check** to confirm status and DNS.
+
+With Domain mode on, **Remote access** shows the HTTPS dashboard link, Caddy installation, managed
+file, import, on-demand TLS ask, count of agent routes in the applied file, and whether a restart is
+pending. DNS is checked automatically when you open the page with Domain mode active. If the Caddy
+callback points to an old Rev4a port, run the setup command again. A generated file missing either
+site is marked **Incomplete**. Current setup shows **Domain (Caddy, managed by Rev4a)** when the
+managed file is ready. Under **Dev-port credential**, the username
+is `rev4a`. Select **Show** to fetch the password, then **Copy** or **Hide**. The password is available
+once Caddy has accepted a dev-port route and Rev4a has saved the credential.
 
 With an active managed route, **Open** on the agent card or in the panel goes directly
 to the agent's HTTPS subdomain through a one-time link, with a token link as fallback.
@@ -50,7 +70,8 @@ The dedicated **Remote access** page (`/remote-access`, Setup sidebar group next
 all keys and values in a compact PropertyList, with accent values and unchanged pills, then saves through Config's shared `lib/env-edit.ts` writer.
 The current preset is labelled Current and disabled; Apply reads Already applied and is disabled when no values change. Preset icons are shared with the wizard; running agents use ItemList rows with keyed Recreating feedback.
 No other environment lines or existing proxy entries are removed. The guide is
-[Remote access](https://rev4a.app/en/docs/remote-access); proxy installation is separate.
+[Remote access](https://rev4a.app/en/docs/remote-access). Use this preset for nginx, Traefik, or Tailscale serve in front of Rev4a.
+For managed Caddy setup, use the **Domain mode** section.
 
 Only localhost, localhost., 127.0.0.1 and ::1 browser URLs can choose This computer only.
 Other 127.x loopback URLs show the canonical `http://127.0.0.1:<port>` to open first.

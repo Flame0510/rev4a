@@ -386,6 +386,21 @@ async function linkForHost(
  * A Control UI link for someone else: the plain token link. On an agent that requires
  * browser approval it gets past gateway auth only; the browser then waits for approval.
  */
+/**
+ * The invite link for an agent served on its own HTTPS subdomain (Domain mode): the same token link,
+ * on the public origin. `publicUrl` comes from the managed Caddy file (agentPublicUrl), never from a request.
+ */
+export async function buildPublicInviteLink(container: string, publicUrl: string): Promise<string> {
+  const token = await readGatewayToken(container);
+  if (!token) throw new Error('The agent has no readable gateway token');
+  const url = new URL(publicUrl);
+  if (url.protocol !== 'https:') throw new Error('The agent public address is not HTTPS');
+  url.pathname = '/';
+  url.search = '';
+  url.hash = new URLSearchParams({ token }).toString();
+  return url.toString();
+}
+
 export async function buildInviteLink(container: string, hostname: string, port: string): Promise<string> {
   const token = await readGatewayToken(container);
   if (!token) throw new Error('The agent has no readable gateway token');

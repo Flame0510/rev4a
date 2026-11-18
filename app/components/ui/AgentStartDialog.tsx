@@ -84,11 +84,18 @@ export function AgentStartDialog({ prompt, onClose, onStarted, onComplete }: {
   };
 
   return <Modal open title={`Start ${prompt.name}`} onClose={close} maxWidth={560}>
-    <p>Its ports still listen on {agentPortsLabel(prompt.hostIp)}; Remote access is set to {setting}.</p>
-    <p><a className="ui-link" href="/remote-access">Remote access</a></p>
-    {progress && <p role="status">{progress}</p>}
-    {error && <p role="alert">{error}</p>}
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+    <div style={{ display: 'grid', gap: 14 }}>
+      <p style={{ margin: 0 }}>
+        Its ports still listen on <strong>{agentPortsLabel(prompt.hostIp)}</strong>; <a className="ui-link" href="/remote-access">Remote access</a> is set to <strong>{setting}</strong>.
+      </p>
+      <ul className="ui-muted ui-text-small" style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
+        <li><strong>Move and start</strong>: a Recreate with a backup first (a few minutes), then the agent runs with the Remote access setting.</li>
+        <li><strong>Start as is</strong>: starts it now with its current ports.</li>
+      </ul>
+      {progress && <p role="status" style={{ margin: 0 }}>{progress}</p>}
+      {error && <p role="alert" style={{ margin: 0, color: 'var(--red)' }}>{error}</p>}
+    </div>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
       <Button type="button" variant="primary" disabled={!!busy} loading={busy === 'move'} onClick={() => { void choose('move'); }}>
         {busy === 'move' ? 'Moving…' : 'Move and start'}
       </Button>

@@ -248,7 +248,18 @@ Point the dashboard host and its wildcard subdomain at the server and allow port
 Setup configures Caddy, preserves any existing dashboard site as comments, and sets the dashboard and agent
 listen settings to local. Restart Rev4a and Recreate running agents to apply those settings.
 Running agents use `https://<agent>.<domain>` for Control UI. Published dev ports use `https://<agent>-<3001..3009>.<domain>`
-and require Basic auth as `rev4a`. The password is in the host-side `domain-auth.json` file in the Rev4a data directory.
+and require Basic auth as `rev4a`. On **Remote access → Domain mode**, select **Show** under
+**Dev-port credential**, then **Copy**. The password is read from the protected `domain-auth.json`
+in the Rev4a data directory only after Show is clicked.
+
+When Domain mode is off, **Remote access → Domain mode** validates the dashboard hostname, lists the
+dashboard and wildcard A/AAAA records, and offers **Check** to refresh status and compare expected and found addresses.
+If the host has no public interface addresses, use the server's public IP. Copy the dry-run command
+and then the setup command to run on the server. These commands include non-default service settings.
+After restart, use **Check**. With Domain mode on,
+the section shows the dashboard HTTPS link, Caddy and import readiness, on-demand TLS ask,
+applied agent route count and restart state. DNS is checked once on open. A stale Caddy callback
+shows the setup command again. Current setup identifies an active managed file as **Domain (Caddy, managed by Rev4a)**.
 Never disclose or copy its contents into chat. Control UI still uses OpenClaw token and pairing.
 Caddy issues agent certificates on first use for hostnames in the generated route file with an active Docker binding.
 Stopping an agent removes those routes on sync. Starting it brings back the same hostnames.

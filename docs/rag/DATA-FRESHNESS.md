@@ -4,6 +4,13 @@
 
 Understanding how current the data in Rev4a is — and what is truly real-time vs. periodically updated.
 
+## Domain mode
+
+Since 1.30.0, **Remote access** reads the local Caddy configuration on opening. With Domain mode
+active it also checks DNS once. **Check** refreshes both status and DNS for a valid dashboard
+hostname. The server queries the dashboard and a fresh wildcard probe and reuses results for ten seconds.
+The route count reflects the applied managed file. It follows the Caddy sync and reload.
+
 ## Agent ports
 
 Since 1.30.0, the agent panel's **Ports** list samples the container's TCP listeners when

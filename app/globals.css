@@ -2220,3 +2220,46 @@ html, body { height: 100%; height: 100dvh; background: var(--bg); color: var(--t
   .ui-property-list--wrap .ui-property-value + .ui-property-label { margin-top: 6px; }
   .ui-property-list--wrap .ui-property-label { white-space: normal; overflow-wrap: anywhere; }
 }
+.domain-section {
+  display: grid;
+  gap: 12px;
+}
+
+.domain-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.domain-inline code {
+  overflow-wrap: anywhere;
+}
+
+.ui-data-table-scroll {
+  overflow-x: auto;
+}
+
+.ui-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.ui-data-table th,
+.ui-data-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.ui-data-table th {
+  font-weight: 500;
+}
+
+.domain-clipboard-field {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+}

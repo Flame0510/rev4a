@@ -1073,6 +1073,14 @@ Dev handles enforce Basic authentication and remove its Authorization header bef
 bcrypt hash. The password is stored in the data directory with mode 0600. Sync rotates an invalid credential or one with an
 incorrect mode and logs the repair without credential content.
 
+Remote access reads Domain status from the running and saved settings, the local Caddy
+configuration, and host interfaces. The Caddy binary check runs only `caddy version`.
+The status check requires both managed site blocks and reports outdated Caddy callbacks separately
+from changes to saved Rev4a settings. Authenticated DNS checks query the system resolver with a
+fresh name under the wildcard and a five-second deadline. One lookup runs per process at a time.
+Requests for the same hostname share the in-flight lookup and its result for ten seconds. The authenticated credential read returns only the
+username and password from the protected file. It never invokes sync. Setup stays in the root CLI.
+
 The dashboard requests sync on startup and after create, start, stop, restart, Recreate, Update (including rollback), Edit or
 delete. The daemon repeats it every five minutes to detect changes made outside the dashboard.
 The processes share an advisory lock on the generated file’s directory. Changed content is renamed atomically into place, validated

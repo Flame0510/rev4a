@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Execute the real Remote access page and System summary with hooks and requests mocked, entirely offline. */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -17,13 +18,43 @@ function load(file, dependencies, globals = {}, source = fs.readFileSync(path.jo
 }
 const navigation = load('lib/control-ui-navigation.ts', { './cron-ids': { isValidCronJobId: () => true } });
 const access = load('lib/remote-access.ts', { './control-ui-navigation': navigation });
-const ui = Object.fromEntries(['Button', 'Switch', 'Modal', 'Surface', 'TemplateOption', 'Page', 'PageHeader', 'Pill', 'PropertyList', 'ItemList'].map((name) => [name, function primitive() {}]));
+const ui = Object.fromEntries(['Button', 'Input', 'Switch', 'Modal', 'Surface', 'TemplateOption', 'Page', 'PageHeader', 'Pill', 'PropertyList', 'ItemList'].map((name) => [name, function primitive() {}]));
 const flush = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(); };
+const domainHost = 'rev4a.example.com';
+const domainDnsUrl = `/api/domain/dns?domain=${domainHost}`;
+const domainStatus = {
+  domain: null, enabled: false, port: 3740, dataDir: '/root/.config/rev4a',
+  caddy: { installed: false, managedFile: 'missing', imported: false, onDemandAsk: false, askTarget: 'missing' },
+  listen: { panel: 'all', agents: 'keep' }, routes: 0, restartPending: false, serverAddresses: { ipv4: ['1.1.1.1'], ipv6: ['2606:4700::1111'] },
+};
+const activeDomain = { ...domainStatus, domain: domainHost, enabled: true, routes: 4,
+  caddy: { installed: true, managedFile: 'ok', imported: true, onDemandAsk: true, askTarget: 'ok' } };
+const samplePassword = 'fixture_password_value';
+const dnsResult = { records: [
+  { name: domainHost, type: 'A', expected: ['1.1.1.1'], found: ['1.1.1.1'], ok: true },
+  { name: domainHost, type: 'AAAA', expected: ['2606:4700::1111'], found: [], ok: false },
+  { name: `*.${domainHost}`, type: 'A', expected: ['1.1.1.2'], found: ['1.1.1.3'], ok: false },
+  { name: `*.${domainHost}`, type: 'AAAA', expected: ['2606:4700::1111'], found: ['2606:4700::1111'], ok: true },
+] };
 function harness(hostname, protocol = 'http:', initial = {}, summary = false) {
   const hooks = []; const effects = []; let index = 0;
   const calls = []; const timers = new Map(); let nextTimer = 1;
   const failures = new Map();
   let panelMode = initial.panelMode || 'all'; let startedAtMs = 1; let settings = initial.settings || {}; let startupSettings = initial.startupSettings || {}; let running = true; let jobStatus = 'done'; let held = null; let release;
+  let currentDomain = initial.domain || domainStatus;
+  const copied = [];
+  let clipboardFields = 0;
+  const globalsClipboard = initial.clipboardFallback ? {
+    navigator: { clipboard: { writeText: async () => { throw new Error('Denied'); } } },
+    HTMLElement: class {},
+    document: {
+      body: { appendChild() { clipboardFields++; } },
+      createElement() { return {
+        setAttribute() {}, select() { copied.push(this.value); }, remove() { clipboardFields--; },
+      }; },
+      execCommand: () => initial.clipboardFallback === 'success',
+    },
+  } : { navigator: { clipboard: { writeText: async (value) => copied.push(value) } } };
   const react = {
     useState: (initial) => { const slot = index++; if (!(slot in hooks)) hooks[slot] = initial;
       return [hooks[slot], (value) => { hooks[slot] = typeof value === 'function' ? value(hooks[slot]) : value; }]; },
@@ -36,17 +67,23 @@ function harness(hostname, protocol = 'http:', initial = {}, summary = false) {
   const listen = () => ({ startedAtMs, panel: { mode: panelMode, port: 3740, addresses: [] }, agents: { mode: 'local', differing: 1, stoppedDiffering: 2, runningDiffering: running ? [{ id: 'running-agent', name: 'Running agent' }] : [] } });
   const globals = {
     AbortController, window: { location: { hostname, protocol, port: '3740' } },
+    ...globalsClipboard,
     setTimeout: (fn, delay) => { const id = nextTimer++; timers.set(id, { fn, delay }); return id; }, clearTimeout: (id) => timers.delete(id),
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
       const failure = failures.get(`${options.method || 'GET'} ${url}`);
-      if (failure) return { ok: false, json: async () => ({ error: failure }) };
-      if (held === url && options.method === 'PUT') await new Promise((resolve) => { release = resolve; });
+      if (failure) return { ok: false, status: failure.status || 500, json: async () => ({ error: failure.message || failure }) };
+      if (held === url && (url.startsWith('/api/domain/') || options.method === 'PUT')) {
+        await new Promise((resolve) => { release = resolve; });
+      }
       let body;
       if (url === '/api/system/listen') body = listen();
       else if (url === '/api/system/remote-access' && options.method === 'PUT') { settings = JSON.parse(options.body).edits; body = { status: 'ok' }; }
       else if (url === '/api/system/remote-access') body = { settings, startupSettings };
       else if (url === '/api/config/restart') { panelMode = settings.REV4A_LISTEN; body = { status: 'ok', restarting: true, mode: 'supervisor' }; }
+      else if (url === '/api/domain/status') body = currentDomain;
+      else if (url === domainDnsUrl) body = dnsResult;
+      else if (url === '/api/domain/credential') body = { user: 'rev4a', password: samplePassword };
       else if (url.endsWith('/recreate')) body = options.method === 'POST' ? { id: 7, started: true } : { recreate: { id: 7, status: jobStatus } };
       else assert.fail(url);
       return { ok: true, json: async () => body };
@@ -57,10 +94,11 @@ function harness(hostname, protocol = 'http:', initial = {}, summary = false) {
     if (cache[file]) return cache[file];
     const source = fs.readFileSync(path.join(root, file), 'utf8');
     const dependencies = { react, 'react/jsx-runtime': require('react/jsx-runtime'), '@/lib/remote-access': access,
+      '@/lib/domain-name': require('../lib/domain-name.js'),
       'next/link': { default: function Link() {} } };
     for (const [, name] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
       if (name in dependencies) continue;
-      if (name.endsWith('/components/ui')) dependencies[name] = ui;
+      if (name.endsWith('/components/ui')) dependencies[name] = { ...ui, ...localLoad('app/components/ui/DataTable.tsx') };
       else if (name.endsWith('/components/Skeleton')) dependencies[name] = { SkeletonLines: function SkeletonLines() {} };
       else if (name.endsWith('/components/Icons')) dependencies[name] = Object.fromEntries(['GlobeIcon', 'MonitorIcon', 'ShieldIcon'].map((key) => [key, function Icon() {}]));
       else if (name.startsWith('.')) {
@@ -87,7 +125,8 @@ function harness(hostname, protocol = 'http:', initial = {}, summary = false) {
     walk(summary ? client.RemoteAccessSummary() : client.default()); effects.splice(0).forEach((fn) => fn()); return nodes;
   }
   const button = (text) => render().find((node) => node.type === ui.Button && node.props.children === text);
-  return { render, calls, button, hold: (url) => { held = url; }, release: () => { held = null; release(); },
+  return { render, calls, button, copied, clipboardFields: () => clipboardFields, setDomain: (next) => { currentDomain = next; },
+    hold: (url) => { held = url; }, release: () => { held = null; release(); },
     fail: (url, message, method = 'GET') => { if (message) failures.set(`${method} ${url}`, message); else failures.delete(`${method} ${url}`); },
     option: (id) => render().find((node) => node.type === ui.TemplateOption && node.props.id === id),
     modal: () => render().find((node) => node.type === ui.Modal),
@@ -316,4 +355,150 @@ const systemSource = fs.readFileSync(path.join(root, 'app/system/PageClient.tsx'
 assert.ok(systemSource.indexOf('<RemoteAccessSummary />') > systemSource.indexOf('className="system-charts"'), 'access summary follows host metrics and charts');
 assert.doesNotMatch(systemSource, /RemoteAccessSection/);
 console.log('ok   Current preset is inert, unchanged edits cannot submit, page title and sidebar route, compact System placement');
+
+{
+  const h = harness('localhost');
+  const input = () => h.render().find((node) => node.type === ui.Input && node.props.label === 'Dashboard domain');
+  const text = (value) => h.render().some((node) => node.props?.children === value);
+  h.render();
+  assert.equal(h.button('Checking…').props.loading, true);
+  await flush();
+  assert.ok(input());
+  assert.equal(h.button('Copy dry run').props.disabled, true);
+  assert.equal(h.button('Copy setup command').props.disabled, true);
+  assert.equal(h.calls.filter(({ url }) => url.startsWith('/api/domain/dns?')).length, 0);
+  input().props.onChange({ target: { value: 'https://rev4a.example.com' } });
+  assert.ok(input().props.error);
+  input().props.onChange({ target: { value: ' REV4A.EXAMPLE.COM ' } });
+  assert.ok(!input().props.error);
+  assert.equal(h.button('Copy setup command').props.disabled, false);
+  assert.ok(text(domainHost) && text(`*.${domainHost}`) && text('1.1.1.1') && text('2606:4700::1111'));
+  h.button('Copy dry run').props.onClick();
+  await flush();
+  h.button('Copy setup command').props.onClick();
+  await flush();
+  assert.deepEqual(h.copied, [`sudo rev4a domain setup ${domainHost} --dry-run`, `sudo rev4a domain setup ${domainHost}`]);
+  h.hold(domainDnsUrl);
+  h.button('Check').props.onClick();
+  await flush();
+  assert.equal(h.button('Checking…').props.loading, true);
+  assert.equal(h.button('Copy setup command').props.disabled, true);
+  assert.deepEqual(h.calls.slice(-2).map(({ url }) => url), ['/api/domain/status', domainDnsUrl]);
+  const dnsRequest = h.calls.at(-1);
+  input().props.onChange({ target: { value: 'other.example.com' } });
+  assert.equal(dnsRequest.options.signal.aborted, true);
+  h.release();
+  await flush();
+  assert.ok(!text('1.1.1.3'), 'an aborted DNS result cannot populate another hostname');
+  input().props.onChange({ target: { value: domainHost } });
+  h.button('Check').props.onClick();
+  await flush();
+  for (const value of ['OK', 'Missing', 'Wrong', '1.1.1.2', '1.1.1.3']) assert.ok(text(value), value);
+  h.setDomain({ ...activeDomain, enabled: false, restartPending: true });
+  h.button('Check').props.onClick();
+  await flush();
+  assert.ok(input());
+  assert.ok(text('Restart Rev4a to load the saved Domain settings, then check again.'));
+  h.setDomain(activeDomain);
+  h.button('Check').props.onClick();
+  await flush();
+  assert.equal(input(), undefined);
+  assert.ok(h.render().some((node) => node.props?.href === `https://${domainHost}` && node.props.className === 'ui-link'));
+  const rows = h.render().find((node) => node.type === ui.PropertyList && node.props.rows.some((row) => row.label === 'Caddy installed')).props.rows;
+  for (const label of ['Agent routes', 'Restart pending', 'Dev-port credential']) assert.ok(rows.some((row) => row.label === label));
+  assert.equal(rows.find((row) => row.label === 'Agent routes').value, 4);
+  assert.ok(text('••••••••'));
+  assert.ok(!text(samplePassword));
+  assert.ok(!h.calls.some(({ url }) => url === '/api/domain/credential'));
+  h.fail('/api/domain/credential', { status: 404, message: 'Fixture unavailable' });
+  h.button('Show').props.onClick();
+  await flush();
+  assert.ok(h.render().some((node) => node.props?.role === 'alert' && node.props.children.includes('No dev-port credential')));
+  h.fail('/api/domain/credential', null);
+  h.hold('/api/domain/credential');
+  h.button('Show').props.onClick();
+  assert.equal(h.button('Showing…').props.loading, true);
+  assert.ok(!text(samplePassword));
+  assert.equal(h.calls.at(-1).options.referrerPolicy, 'no-referrer');
+  h.release();
+  await flush();
+  assert.ok(text(samplePassword));
+  h.button('Copy').props.onClick();
+  await flush();
+  assert.equal(h.copied.at(-1), samplePassword);
+  h.button('Hide').props.onClick();
+  assert.ok(text('••••••••'));
+  assert.ok(!text(samplePassword));
+  h.hold('/api/domain/credential');
+  h.button('Show').props.onClick();
+  const credentialRequest = h.calls.at(-1);
+  h.dispose();
+  assert.equal(credentialRequest.options.signal.aborted, true);
+  h.release();
+  await flush();
+}
+{
+  const h = harness('localhost', 'http:', { domain: { ...domainStatus, serverAddresses: { ipv4: [], ipv6: [] } } });
+  h.fail('/api/domain/status', 'Status fixture unavailable');
+  h.render();
+  await flush();
+  assert.ok(h.render().some((node) => node.props?.role === 'alert' && node.props.children === 'Status fixture unavailable'));
+  h.fail('/api/domain/status', null);
+  h.button('Check').props.onClick();
+  await flush();
+  const input = h.render().find((node) => node.type === ui.Input);
+  input.props.onChange({ target: { value: domainHost } });
+  assert.ok(h.render().some((node) => typeof node.props?.children === 'string' && node.props.children.includes('Use the server’s public IP')));
+  h.dispose();
+}
+console.log('ok   Domain wizard, DNS mismatch states and aborts, status transition, credential reveal only on Show and clipboard feedback');
+
+{
+  const localSettings = { REV4A_LISTEN: 'local', REV4A_AGENT_PORTS_LISTEN: 'local', REV4A_TRUSTED_PROXIES: '127.0.0.1,::1' };
+  const h = harness(domainHost, 'https:', { domain: activeDomain, panelMode: 'local', settings: localSettings, startupSettings: localSettings });
+  h.render();
+  await flush();
+  const text = (value) => h.render().some((node) => node.props?.children === value);
+  assert.ok(text('Domain (Caddy, managed by Rev4a)'));
+  assert.equal(h.option('Domain (your own proxy)').props.current, false);
+  assert.match(h.option('Domain (your own proxy)').props.description, /nginx, Traefik, or Tailscale serve/);
+  assert.equal(h.calls.filter(({ url }) => url === domainDnsUrl).length, 1);
+  assert.equal(h.render().filter((node) => node.type === ui.Button && /^Check/.test(node.props.children)).length, 1);
+  assert.ok(h.render().some(({ type, props }) => type === 'table' && props['aria-label'] === 'Required DNS records'));
+  assert.ok(!text('Not checked'));
+  assert.equal(h.calls.filter(({ url }) => url === '/api/domain/credential').length, 0);
+  h.setDomain({ ...activeDomain, port: 7000, dataDir: '/service/rev4a',
+    caddy: { ...activeDomain.caddy, onDemandAsk: false, askTarget: 'stale' } });
+  h.button('Check').props.onClick();
+  await flush();
+  assert.equal(h.calls.filter(({ url }) => url === domainDnsUrl).length, 2);
+  assert.ok(text('Caddy points to an old Rev4a address: run the setup command again.'));
+  assert.ok(!text('Restart Rev4a to load the saved Domain settings, then check again.'));
+  h.button('Copy setup command').props.onClick();
+  await flush();
+  assert.deepEqual(h.copied, [`sudo PORT=7000 REV4A_DATA_DIR=/service/rev4a rev4a domain setup ${domainHost}`]);
+  h.dispose();
+  console.log('ok   Managed Mode pill; own-proxy preset Current=false; one DNS check on open; Check refreshes both; stale callback shows setup without a restart instruction');
+}
+
+for (const [dataDir, fallback] of [['/service/rev4a', 'success'], ["/service/Rev4a's \$HOME", 'failure']]) {
+  const h = harness('localhost', 'http:', { domain: { ...domainStatus, port: 8080, dataDir }, clipboardFallback: fallback });
+  h.render();
+  await flush();
+  h.render().find((node) => node.type === ui.Input).props.onChange({ target: { value: domainHost } });
+  for (const label of ['Copy dry run', 'Copy setup command']) {
+    h.button(label).props.onClick();
+    await flush();
+    assert.equal(h.clipboardFields(), 0, 'temporary field removed on clipboard success and failure');
+  }
+  for (const [index, command] of h.copied.entries()) {
+    // Capture only argument parsing. Neither sudo nor the Rev4a launcher runs.
+    const received = execFileSync('sh', ['-c', `sudo() { printf '%s\\n' "$@"; }\n${command}`], { encoding: 'utf8' }).trimEnd().split('\n');
+    assert.deepEqual(received, ['PORT=8080', `REV4A_DATA_DIR=${dataDir}`, 'rev4a', 'domain', 'setup', domainHost,
+      ...(index === 0 ? ['--dry-run'] : [])]);
+  }
+  assert.equal(h.copied.length, 2);
+  console.log(`ok   Copied dry run and setup: shell receives PORT=8080 and REV4A_DATA_DIR=${dataDir}; clipboard fallback ${fallback} cleans up`);
+  h.dispose();
+}
 console.log('\nRemote access UI checks passed');

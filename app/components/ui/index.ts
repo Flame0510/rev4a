@@ -2,6 +2,7 @@ export * from './Accordion';
 export * from './ConfirmModal';
 export * from './Badge';
 export * from './Button';
+export * from './DataTable';
 export * from './RemoveButton';
 export * from './FilterBar';
 export * from './Input';

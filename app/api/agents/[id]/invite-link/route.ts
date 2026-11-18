@@ -11,7 +11,8 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
-import { buildInviteLink, findAgentContainer, hostnameFromHostHeader, requiresBrowserApproval } from '@/lib/agent-devices';
+import { buildInviteLink, buildPublicInviteLink, findAgentContainer, hostnameFromHostHeader, requiresBrowserApproval } from '@/lib/agent-devices';
+import { agentPublicUrl, domainIsConfigured, requestDomainRouteSync } from '@/lib/domain-urls';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,19 @@ export async function GET(
   if (requiresApproval === null) return fail(502, 'Could not tell whether this agent requires browser approval');
   if (!requiresApproval) return fail(409, 'This agent does not require browser approval: anyone with the link would get in');
 
+  // Domain mode: the invite goes to the agent's HTTPS subdomain, never to <host>:<port> (closed to the internet).
+  if (domainIsConfigured()) {
+    const publicUrl = await agentPublicUrl(agent.name, 3000);
+    if (!publicUrl) {
+      requestDomainRouteSync();
+      return fail(503, "This agent's address is being updated. Try again in a moment.");
+    }
+    try {
+      return NextResponse.json({ url: await buildPublicInviteLink(agent.name, publicUrl), loopbackHost: false }, { headers: noStore });
+    } catch (e) {
+      return fail(502, (e as Error).message);
+    }
+  }
   try {
     const url = await buildInviteLink(agent.name, hostname, agent.controlPort);
     return NextResponse.json({ url, loopbackHost: isLoopback(hostname) }, { headers: noStore });

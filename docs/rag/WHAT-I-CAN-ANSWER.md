@@ -64,6 +64,8 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I see the session lineage?"
 - "How do I log in to an agent's control UI?"
 - "Where can I see if my dev server is listening and find its public URL?" — In 1.30.0, open the agent panel's Ports section and press Refresh for a new sample.
+- "How do I set up Domain mode or check its DNS?" — Open **Remote access → Domain mode** for the required records, **Check**, the server setup commands and Caddy status.
+- "Where is the password for agent dev ports?" — In Domain mode, open **Remote access → Domain mode** and select **Show** under **Dev-port credential**. The username is `rev4a`.
 - "Why does the Control UI ask me to approve this browser?"
 - "How do I approve or revoke a browser for an agent?"
 - "How do I give someone else access to an agent's Control UI?"

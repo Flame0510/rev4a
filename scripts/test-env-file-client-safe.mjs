@@ -13,6 +13,8 @@ const source = fs.readFileSync(path.join(root, 'lib/env-file.js'), 'utf8');
 const requires = [...source.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
 assert.deepEqual(requires, [], `lib/env-file.js must not require anything (browser bundle): ${requires.join(', ')}`);
 assert.doesNotMatch(source, /\bimport\s.+from\s/, 'no ES imports either');
+const domainName = fs.readFileSync(path.join(root, 'lib/domain-name.js'), 'utf8');
+assert.doesNotMatch(domainName, /\brequire\s*\(|\bimport\s.+from\s/, 'the shared hostname validator must stay browser-safe');
 
 // Every client component that imports env-file still gets only pure helpers.
 const clientFiles = [];
@@ -20,10 +22,10 @@ const walk = (dir) => {
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
     const rel = path.join(dir, entry.name);
     if (entry.isDirectory()) { if (entry.name !== 'api') walk(rel); }
-    else if (/\.tsx$/.test(entry.name)) {
+    else if (/\.tsx?$/.test(entry.name)) {
       const text = fs.readFileSync(path.join(root, rel), 'utf8');
       const serverImport = text.split('\n').some((line) => !/^\s*import type\b/.test(line)
-        && /from ['"]@\/lib\/(file-lock|caddy|env-edit|domain-urls|agent-ports-status)['"]/.test(line));
+        && /from ['"]@\/lib\/(file-lock|caddy|env-edit|domain|domain-status(?:-addresses)?|domain-urls|agent-ports-status)['"]/.test(line));
       if (/^['"]use client['"]/m.test(text) && serverImport) clientFiles.push(rel);
     }
   }

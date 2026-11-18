@@ -75,6 +75,56 @@ For Control UI deep links, prefer `#token=<token>` instead of `?token=<token>`. 
 
 ## Domain mode
 
+### `GET /api/domain/status` (1.30.0)
+
+Requires a dashboard session cookie or bearer token. The response uses `Cache-Control: no-store`.
+Reports read-only local configuration, without looking up DNS or contacting Docker.
+
+```json
+{
+  "domain": "rev4a.example.com",
+  "enabled": true,
+  "port": 3740,
+  "dataDir": "/root/.config/rev4a",
+  "caddy": { "installed": true, "managedFile": "ok", "imported": true, "onDemandAsk": true, "askTarget": "ok" },
+  "listen": { "panel": "local", "agents": "local" },
+  "routes": 2,
+  "restartPending": false,
+  "serverAddresses": { "ipv4": [], "ipv6": [] }
+}
+```
+
+`domain` is the active hostname, the saved hostname if activation is pending, or `null`.
+`enabled` reflects the current process. `port` and `dataDir` are the running service’s dashboard port
+and absolute data directory. Listen modes are `all`, `local` or `address`, with `keep` also available
+for agents. `managedFile` is `ok`, `missing`, `pending` (a generated file awaiting activation
+for this domain), `unmanaged` (unrecognized or unreadable), or `incomplete` (a generated file
+for this domain without both site blocks). `routes` counts agent routes in the applied file.
+`askTarget` is `ok`, `missing` (including unreadable main Caddyfiles), `invalid`, or `stale`
+(a Rev4a loopback callback on a different valid port). `restartPending` reports changes to saved
+Rev4a runtime settings. The interface lists contain only global IPs and exclude reserved ranges.
+
+### `GET /api/domain/dns?domain=<hostname>` (1.30.0)
+
+Requires a dashboard session cookie or bearer token. Responses use `Cache-Control: no-store`.
+The server's DNS resolver looks up A and AAAA records for the dashboard name and a fresh
+`rev4a-check-<random>` name under the wildcard. Each entry in
+`{ records: [{ name, type, expected, found, ok }] }` uses the dashboard or wildcard name.
+Expected addresses come from the host's global interfaces. Exact address sets match, including absent
+records for an unused address family. With no detected global IPs, `ok` is false and the answers
+can be compared manually. The process runs one check at a time. Requests for the same normalized
+hostname share the pending check and reuse its result for ten seconds. A different hostname can
+be checked after the active lookup finishes. Returns `400` for invalid or repeated hostnames, `429`
+when a lookup for another hostname is active and no recent result is available, `504` after a
+five-second timeout, and `502` for other resolver failures.
+
+### `GET /api/domain/credential` (1.30.0)
+
+Requires a dashboard session cookie or bearer token. All responses use `Cache-Control: no-store`
+and `Referrer-Policy: no-referrer`. Returns `{ user, password }` from the protected credential file
+when Domain mode is active. The bcrypt hash is kept on the server. Returns `404` when Domain mode
+is off or the credential is unavailable. The UI requests it only after **Show**.
+
 ### `GET /api/domain/ask?domain=<hostname>`
 
 Caddy certificate permission callback (1.30.0). This route requires no session. Call it directly from

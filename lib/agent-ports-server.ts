@@ -82,28 +82,33 @@ export function describeHolder(holder: HostPortHolder): string {
   return holder.displayName ? `${holder.displayName} (${holder.name})` : holder.name;
 }
 
+interface AgentPortsListenSnapshot {
+  env: Readonly<Record<string, string | undefined>>;
+  saved: string | undefined;
+}
+
 /**
- * REV4A_AGENT_PORTS_LISTEN as it stands now: the .env entry first (a change on the Config page
- * counts at the next create or Recreate, without restarting Rev4a), else the process
- * environment. Unreadable file: the environment.
+ * Prefer the saved .env entry, including when given the snapshot from a settings read.
+ * Otherwise use the service's environment, excluding stale values loaded from .env at boot.
  */
-export function readAgentPortsListenSetting(): string | undefined {
-  try {
-    const fromFile = readEnvValue(fs.readFileSync(ENV_FILE, 'utf8'), 'REV4A_AGENT_PORTS_LISTEN');
-    if (fromFile !== undefined && fromFile.trim() !== '') return fromFile;
-  } catch {
-    // No .env yet: fall back to the environment.
+export function readAgentPortsListenSetting(snapshot?: AgentPortsListenSnapshot): string | undefined {
+  let fromFile = snapshot?.saved;
+  if (!snapshot) {
+    try { fromFile = readEnvValue(fs.readFileSync(ENV_FILE, 'utf8'), 'REV4A_AGENT_PORTS_LISTEN'); }
+    catch { /* No readable .env: fall back to the environment. */ }
   }
+  if (fromFile !== undefined && fromFile.trim() !== '') return fromFile;
   // The launcher copied .env into the environment at start-up and named the keys it copied
   // (REV4A_DOTENV_KEYS). Such a value is stale once the entry is cleared in .env, so only a value that
   // came from the service itself counts here.
-  const loadedFromDotenv = (process.env.REV4A_DOTENV_KEYS || '').split(',').includes('REV4A_AGENT_PORTS_LISTEN');
-  return loadedFromDotenv ? undefined : process.env.REV4A_AGENT_PORTS_LISTEN;
+  const env = snapshot?.env ?? process.env;
+  const loadedFromDotenv = (env.REV4A_DOTENV_KEYS || '').split(',').includes('REV4A_AGENT_PORTS_LISTEN');
+  return loadedFromDotenv ? undefined : env.REV4A_AGENT_PORTS_LISTEN;
 }
 
 /** The setting as it applies now: an address this host lacks degrades to `local` (the IP is checked against the host's interfaces). */
-export function currentAgentPortsListen(): AgentPortsListen {
-  return agentPortsListen(readAgentPortsListenSetting(), hostAddressList(os.networkInterfaces()));
+export function currentAgentPortsListen(hostAddresses = hostAddressList(os.networkInterfaces()), snapshot?: AgentPortsListenSnapshot): AgentPortsListen {
+  return agentPortsListen(readAgentPortsListenSetting(snapshot), hostAddresses);
 }
 
 /**
