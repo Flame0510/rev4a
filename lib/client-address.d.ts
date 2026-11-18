@@ -1,6 +1,10 @@
 /** Types for the CommonJS client address helper shared by server.js and the login route. */
 
 export const CLIENT_IP_HEADER: 'x-rev4a-client-ip';
+export const SOCKET_PEER_HEADER: 'x-rev4a-socket-peer';
+export function setClientAddressHeaders(
+  headers: import('node:http').IncomingHttpHeaders, remoteAddress: string | undefined, trusted?: (ip: string) => boolean,
+): void;
 export function normaliseIp(value: unknown): string;
 export function isPrivateOrLoopback(value: unknown): boolean;
 export function isLoopback(value: unknown): boolean;

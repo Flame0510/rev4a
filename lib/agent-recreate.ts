@@ -238,7 +238,13 @@ export async function startAgentRecreate(agentId: string): Promise<number> {
     // Persisted in the same INSERT as the active row: a Rev4a restart mid-job must know whether
     // to start the old container, and there is no moment where the row exists without it.
     const id = insertRecreate(agentId, image, wasRunning);
-    void runRecreate(id, agentId, image, wasRunning, container.Id).finally(() => running.delete(agentId));
+    void runRecreate(id, agentId, image, wasRunning, container.Id).finally(() => {
+      running.delete(agentId);
+      if (process.env.REV4A_DOMAIN?.trim()) {
+        void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+          .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+      }
+    });
     return id;
   } catch (e) {
     running.delete(agentId);

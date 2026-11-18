@@ -845,6 +845,7 @@ USAGE:
   rev4a build                   Build the Next.js app
   rev4a update                  Check for updates and install latest
   rev4a restart                 Signal a running rev4a to restart
+  rev4a domain setup <domain> [--dry-run]  Configure Caddy on Linux (root)
   rev4a --help / --version      Show help or version
 
 EXAMPLES:
@@ -923,6 +924,15 @@ if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
 if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   console.log(`rev4a v${pkg.version}`);
   process.exit(0);
+}
+
+if (cmd === 'domain') {
+  const { setupDomain } = require('../lib/caddy-setup.js');
+  setupDomain({ args: args.slice(1), dataDir: CONFIG_DIR }).catch((error) => {
+    console.error(`Domain setup failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+  return;
 }
 
 if (cmd === 'build') {

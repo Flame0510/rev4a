@@ -10,6 +10,7 @@ import { currentUpdate } from '@/lib/update-state';
 /*  Public routes — no auth required                                  */
 /* ------------------------------------------------------------------ */
 const PUBLIC_PREFIXES = ['/login', '/setup'];
+const PUBLIC_PATHS = new Set(['/api/domain/ask']);
 
 /* ------------------------------------------------------------------ */
 /*  Bypass — static assets and APIs have their own auth               */
@@ -116,7 +117,7 @@ export async function proxy(request: NextRequest) {
   if (crossSite) return crossSite;
 
   // Public routes
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 

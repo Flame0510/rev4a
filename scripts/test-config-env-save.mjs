@@ -60,6 +60,7 @@ function harness(initial, inherited = {}, readError = null) {
     '@/lib/rev4a-paths': { ENV_FILE },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => authenticated ? null : denied },
     '@/lib/env-file': envFile,
+    '@/lib/file-lock': require('../lib/file-lock.js'),
     '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
   }, { process: { env: inherited }, console: { warn: () => {} } });
   return { get content() { return content; }, get mode() { return mode; }, effects,
@@ -411,6 +412,7 @@ function clientHarness() {
     react, 'react/jsx-runtime': require('react/jsx-runtime'),
     '@/lib/timezone': { updateCachedRev4aTimezone: () => {} }, '@/lib/apiFetch': { apiFetch: () => {} },
     '@/lib/env-file': envFile,
+    '@/lib/file-lock': require('../lib/file-lock.js'),
     '../components/ui': { Button, Modal, Input: () => {}, Page: () => {}, PageHeader: () => {},
       Surface: () => {}, Pill: () => {} }, '../components/PasswordInput': PasswordInput,
   }, { AbortController, setTimeout: () => {}, fetch: async (url, options) => {

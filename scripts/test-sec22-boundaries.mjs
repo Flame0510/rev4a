@@ -307,7 +307,7 @@ try {
       'next/server': next, fs,
       child_process: { execSync: () => {} },
       '@/lib/rev4a-paths': { ENV_FILE }, '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
-      '@/lib/env-file': envFile, '@/lib/listen-addresses': (await import('node:module')).createRequire(import.meta.url)('../lib/listen-addresses.js'),
+      '@/lib/env-file': envFile, '@/lib/file-lock': (await import('node:module')).createRequire(import.meta.url)('../lib/file-lock.js'), '@/lib/listen-addresses': (await import('node:module')).createRequire(import.meta.url)('../lib/listen-addresses.js'),
     }, { process: { env: {} } });
     resets();
     assert.equal((await route.PUT(request({ env: { REV4A_TEST: 'new' } }))).status, 200);
@@ -338,7 +338,7 @@ try {
         'next/server': next, fs, path, crypto: require('node:crypto'),
         '@/lib/rev4a-paths': { ENV_FILE },
         '@/lib/rev4a-auth': { isConfigured: () => false, requireAuthIfConfigured: async () => null },
-        '@/lib/env-file': envFile,
+        '@/lib/env-file': envFile, '@/lib/file-lock': (await import('node:module')).createRequire(import.meta.url)('../lib/file-lock.js'),
       }, { process: { env: {} } });
       assert.equal((await route.POST(request({ password: 'fixture-password' }))).status, 200); // secret-ok
       assert.equal(mode(), 0o600);

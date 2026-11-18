@@ -42,7 +42,7 @@ function rollbackStarter(row, backup, onRun = () => {}) {
   }).outputText;
   const module = { exports: {} }; const running = new Set();
   class UpdateRefusedError extends Error {}
-  vm.runInNewContext(code, { module, exports: module.exports, running, UpdateRefusedError, isValidAgentId: () => true,
+  vm.runInNewContext(code, { module, exports: module.exports, process: { env: {} }, running, UpdateRefusedError, isValidAgentId: () => true,
     agentBusyReason: async () => null, latestUpdate: () => row,
     ROLLBACK_FROM: ['done', 'failed', 'interrupted', 'rollback_failed'], isSupportedVersion: () => true,
     backupFileExists: backup, forgetBackupAvailability() {}, inspectAgentContainer: async () => ({}),

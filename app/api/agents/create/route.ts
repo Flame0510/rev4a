@@ -444,6 +444,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     finished = true;
+    if (process.env.REV4A_DOMAIN?.trim()) {
+      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+    }
     return NextResponse.json({
       success: true,
       containerId,

@@ -1739,6 +1739,10 @@ function sampleSandboxEnv() {
 let sandboxEnvTimer = null;
 const firstSandboxEnv = setTimeout(() => { sampleSandboxEnv(); sandboxEnvTimer = setInterval(sampleSandboxEnv, SANDBOX_ENV_INTERVAL_MS); }, SANDBOX_ENV_FIRST_DELAY_MS);
 
+const caddySyncTimer = process.env.REV4A_DOMAIN?.trim()
+  ? setInterval(() => { void require('./lib/caddy.js').syncCaddy({ dataDir: DATA_DIR }); }, 5 * 60_000)
+  : null;
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log('SIGTERM received, shutting down...');
@@ -1757,6 +1761,7 @@ process.on('SIGTERM', () => {
   clearInterval(packagesTimer);
   clearTimeout(firstSandboxEnv);
   clearInterval(sandboxEnvTimer);
+  clearInterval(caddySyncTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();
@@ -1780,6 +1785,7 @@ process.on('SIGINT', () => {
   clearInterval(packagesTimer);
   clearTimeout(firstSandboxEnv);
   clearInterval(sandboxEnvTimer);
+  clearInterval(caddySyncTimer);
   db.close();
   metrics?.db.close();
   costs?.db.close();

@@ -15,7 +15,7 @@ function load(file, dependencies, globals = {}) {
   }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(code, {
-    module, exports: module.exports, Buffer, console, setTimeout, clearTimeout,
+    module, exports: module.exports, Buffer, console, setTimeout, clearTimeout, process: { env: {} },
     fetch: () => assert.fail('No network access'),
     require: (name) => {
       assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency in ${file}: ${name}`);

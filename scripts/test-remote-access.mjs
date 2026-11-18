@@ -88,7 +88,7 @@ function harness(initial = '# keep\nUNRELATED=keep\nPORT=3740\n', inherited = {}
     fs: { readFileSync: () => content, writeFileSync: (_file, next, options) => { assert.equal(options.mode, 0o600); content = next; effects.push('write'); },
       chmodSync: () => effects.push('chmod'), statSync: () => ({ mode: 0o600 }) },
     child_process: { execSync: () => effects.push('reload') }, '@/lib/rev4a-paths': { ENV_FILE: '/mock/.env' },
-    '@/lib/rev4a-auth': { requireAuthJWT: async () => denied }, '@/lib/env-file': require('../lib/env-file.js'),
+    '@/lib/rev4a-auth': { requireAuthJWT: async () => denied }, '@/lib/env-file': require('../lib/env-file.js'), '@/lib/file-lock': require('../lib/file-lock.js'),
     '@/lib/listen-addresses': require('../lib/listen-addresses.js'), '@/lib/remote-access': access };
   const globals = { process: { env: inherited } };
   dependencies['@/lib/env-edit'] = load('lib/env-edit.ts', dependencies, globals);

@@ -232,7 +232,14 @@ async function runUpdateStart(agentId: string, requestedVersion?: string): Promi
   } catch (e) { throw new UpdateRefusedError((e as Error).message); }
   try {
     const id = insertUpdate(agentId, fromVersion, toVersion, name);
-    void runUpdate(id, agentId, name, fromVersion, toVersion).finally(() => { releaseResources(); running.delete(agentId); });
+    void runUpdate(id, agentId, name, fromVersion, toVersion).finally(() => {
+      releaseResources();
+      running.delete(agentId);
+      if (process.env.REV4A_DOMAIN?.trim()) {
+        void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+          .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+      }
+    });
     return id;
   } catch (e) { releaseResources(); throw e; }
 }
@@ -469,7 +476,13 @@ async function runRollbackStart(agentId: string): Promise<number> {
 
   // A rollback clears any earlier resolution: if it is cut off, the row is red again with Roll back.
   claimRollbackUpdate(row);
-  void runRollback(row, container).finally(() => running.delete(agentId));
+  void runRollback(row, container).finally(() => {
+    running.delete(agentId);
+    if (process.env.REV4A_DOMAIN?.trim()) {
+      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+    }
+  });
   return row.id;
 }
 

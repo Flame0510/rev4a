@@ -73,6 +73,16 @@ For Control UI deep links, prefer `#token=<token>` instead of `?token=<token>`. 
 
 ---
 
+## Domain mode
+
+### `GET /api/domain/ask?domain=<hostname>`
+
+Caddy certificate permission callback (1.30.0). This route requires no session. Call it directly from
+`127.0.0.1` using the dashboard’s loopback HTTP address. It checks the socket peer and client address set by Rev4a’s
+production HTTP server and the local callback Host. It returns an empty `200` for the configured dashboard hostname or
+a generated name for a running agent with a matching active Docker binding. Other requests get an empty `404`,
+including requests from non-loopback proxy peers and requests for stopped agents.
+
 ## Auth
 
 ### `POST /api/auth/login`

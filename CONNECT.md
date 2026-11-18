@@ -90,6 +90,37 @@ reach 3740 (`ufw allow from 172.17.0.0/16 to any port 3740`). Rolling back to 1.
 opens 3740 on every interface again.
 On Linux, hosts on the same network segment could route to the Docker bridge gateway even in local mode; firewall port 3740 on the public interface.
 
+### Caddy Domain mode (1.30.0)
+
+1. Point DNS for `rev4a.example.com` and `*.rev4a.example.com` at the Rev4a host. Allow public HTTP and HTTPS on ports 80 and 443.
+2. On the Linux host, preview and apply the root setup using the same `REV4A_DATA_DIR` and dashboard `PORT` as the service. The default dashboard port is 3740. For a service launched with `--port 8080`, pass `PORT=8080` in the setup command environment.
+
+   ```bash
+   sudo rev4a domain setup rev4a.example.com --dry-run
+   sudo rev4a domain setup rev4a.example.com
+   ```
+
+3. Restart Rev4a (`sudo systemctl restart rev4a` on a systemd install), then Recreate running agents so Docker republishes their ports on loopback.
+   For a stopped agent with wide bindings, choose **Move and start** when you next start it.
+4. Open the dashboard at `https://rev4a.example.com`. For an agent named Atlas, use `https://atlas.rev4a.example.com` for its Control UI and
+   `https://atlas-3001.rev4a.example.com` for its published container port 3001. Control UI uses the existing OpenClaw token and device pairing.
+   Sign in to dev ports as `rev4a` with the password in `<REV4A_DATA_DIR>/domain-auth.json`. This is a private file (0600).
+
+Setup installs Caddy from its official apt repository if needed, backs up the main Caddyfile, comments out an existing dashboard site,
+and adds the Rev4a import and the global certificate permission callback. Rev4a must be able to write the generated file and reload
+the system Caddy instance. Caddy must be able to read the import. If you override the main file path, configure the service to use that file as well.
+Routes are added for running agents with active port bindings. The dashboard requests a sync after start, stop and restart,
+and the daemon checks changes made outside the dashboard every five minutes. Keep agent ports reserved until the new
+Caddy configuration has loaded.
+The local listen settings take effect after the restart and each agent rebuild. During the transition, original wildcard publishes still accept direct connections.
+
+**Rollback or disable Domain mode:** Rolling back to 1.29.0 leaves Caddy serving the last imported file. To restore your earlier
+configuration, remove the Rev4a import (or exclude its file from an existing import glob) and undo the Rev4a ask change and
+dashboard adoption in the main Caddyfile, or restore the
+timestamped backup if it contains all the settings you want to keep. Validate and reload the main Caddyfile, clear `REV4A_DOMAIN`
+in its configured environment, and restart Rev4a. Review the two local listen settings before changing how you connect.
+Agents keep their existing Docker bindings until rebuilt.
+
 ### Open the dashboard and complete setup
 
 Open `http://<server>:3740` in your browser, replacing `<server>` with your VPS IP,
@@ -179,6 +210,9 @@ Rev4a reads environment variables from `~/.config/rev4a/.env`
 | `REV4A_JWT_SECRET` | — | JWT signing secret (auto-generated) |
 | `REV4A_LISTEN` | `all` | Where the panel listens: `all`, `local` or one IP (restart Rev4a) |
 | `REV4A_AGENT_PORTS_LISTEN` | unset (keep current) | Where agents' ports listen: `all`, `local` or one IP (applies at create, Recreate, Update or Edit; unset keeps each agent's address, new agents use every interface; `all` moves agents back to every interface) |
+| `REV4A_DOMAIN` | unset | Dashboard hostname for Caddy Domain mode |
+| `REV4A_CADDY_FILE` | `/etc/caddy/rev4a.caddy` | Generated Caddy import |
+| `REV4A_CADDY_MAIN` | `/etc/caddy/Caddyfile` | Main Caddyfile used for setup, validation and reload |
 
 Set them inline or via `.env`:
 

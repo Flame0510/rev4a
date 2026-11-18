@@ -43,6 +43,11 @@ export async function DELETE(request: Request,
       timeout: 30000,
     });
 
+    if (process.env.REV4A_DOMAIN?.trim()) {
+      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes(containerName))
+        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+    }
+
     // Destructive delete: also remove the persistent volume and all backups.
     // The container is already gone, so the volume is no longer in use.
     // Best-effort — a missing volume or absent backups must not fail the delete.

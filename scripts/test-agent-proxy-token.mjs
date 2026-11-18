@@ -24,7 +24,7 @@ function load(file, dependencies, globals = {}) {
     fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, Buffer, Response, Headers, console,
+  vm.runInNewContext(code, { module, exports: module.exports, Buffer, Response, Headers, console, process: { env: {} },
     require: (name) => {
       assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`);
       return dependencies[name];

@@ -36,7 +36,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const next = require('next');
-const { CLIENT_IP_HEADER, clientAddress, parseTrustedProxies } = require('./lib/client-address.js');
+const { parseTrustedProxies, setClientAddressHeaders } = require('./lib/client-address.js');
 const { passwordFingerprint, fingerprintEquals } = require('./lib/session-fingerprint.js');
 const { readEnvValue } = require('./lib/env-file.js');
 const { listenAddresses, gatewayFromBridge, docker0Address, hostAddressList, parseSetting, formatHostPort } = require('./lib/listen-addresses.js');
@@ -191,14 +191,29 @@ async function onUpgrade(req, socket, head) {
  * Address of the Docker default bridge gateway (host.docker.internal on Linux), or null. Never throws.
  * Docker's answer first; when it gives none, the docker0 interface's own address.
  */
+/** docker0's IPv4 from `ip`: Node lists only interfaces that are up, and docker0 is down (NO-CARRIER) while no
+ * container uses the default bridge, which is the normal case for Rev4a agents on rev4a-network. */
+function ipDocker0Address() {
+  return new Promise((resolve) => {
+    require('node:child_process').execFile('ip', ['-4', '-o', 'addr', 'show', 'dev', 'docker0'], { timeout: 3000 }, (err, stdout) => {
+      const match = !err && /\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\//.exec(String(stdout));
+      resolve(match ? match[1] : null);
+    });
+  });
+}
+
 async function dockerGateway(interfaces) {
-  try {
-    const gateway = gatewayFromBridge(await dockerRequestJson('GET', '/networks/bridge', 3000));
-    if (gateway) return gateway;
-  } catch {
-    // Docker unreachable: try the interface.
+  // The Docker API answers in milliseconds, but not always right after an install or under load: retry briefly.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const gateway = gatewayFromBridge(await dockerRequestJson('GET', '/networks/bridge', 3000));
+      if (gateway) return gateway;
+    } catch {
+      // Docker slow or unreachable: retry, then fall back to the interface.
+    }
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  return docker0Address(interfaces);
+  return (await ipDocker0Address()) || docker0Address(interfaces);
 }
 
 function listenOn(server, address) {
@@ -220,10 +235,12 @@ async function startListeners(first, makeServer) {
   const raw = process.env.REV4A_LISTEN;
   const interfaces = os.networkInterfaces();
   const hostAddresses = hostAddressList(interfaces);
+  const wantsGateway = process.platform === 'linux' && !(parseSetting(raw).kind === 'all');
+  const gateway = wantsGateway ? await dockerGateway(interfaces) : null;
   const plan = listenAddresses(raw, {
     platform: process.platform,
     // Only asked when the setting is not `all`: the default path never touches Docker here.
-    gateway: parseSetting(raw).kind === 'all' || process.platform !== 'linux' ? null : await dockerGateway(interfaces),
+    gateway,
     hasIpv6: hostAddresses.includes('::1'),
     hostAddresses,
   });
@@ -257,6 +274,26 @@ async function startListeners(first, makeServer) {
     console.log(`[rev4a] Ready on port ${PORT} (terminal on ${TERMINAL_PATH} → 127.0.0.1:${TERMINAL_WS_PORT})`);
   }
   if (!TERMINAL_SECRET) console.log('[rev4a] REV4A_TERMINAL_SECRET is not set: the terminal is disabled (start with `rev4a serve`).');
+  // Never stay without the bridge listener because of one unlucky lookup: agents reach their model through it.
+  // Retry in the background and add the listener when the address appears; no restart needed.
+  if (wantsGateway && !gateway && plan.mode !== 'all') {
+    const retry = setInterval(async () => {
+      const found = await dockerGateway(os.networkInterfaces());
+      if (!found || bound.includes(found)) return;
+      const srv = makeServer();
+      try {
+        await listenOn(srv, found);
+        servers.push(srv);
+        bound.push(found);
+        process.env.REV4A_LISTEN_STATE = JSON.stringify({ mode, addresses: bound });
+        console.log(`[rev4a] Docker host-gateway found: now also listening on ${formatHostPort(found, PORT)} (agents can reach their model)`);
+        clearInterval(retry);
+      } catch (err) {
+        console.warn(`[rev4a] could not listen on ${formatHostPort(found, PORT)} (${err.code || err.message}); will retry`);
+      }
+    }, 30_000);
+    retry.unref();
+  }
   return servers;
 }
 
@@ -277,9 +314,7 @@ async function main() {
   // One server per listening address, all with the same handlers (the terminal upgrade included).
   const makeServer = () => {
     const created = http.createServer((req, res) => {
-      // The login throttle keys on this header: a client must never be able to set it itself.
-      delete req.headers[CLIENT_IP_HEADER];
-      req.headers[CLIENT_IP_HEADER] = clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], trustedProxies);
+      setClientAddressHeaders(req.headers, req.socket.remoteAddress, trustedProxies);
       handle(req, res);
     });
     created.on('upgrade', (req, socket, head) => {

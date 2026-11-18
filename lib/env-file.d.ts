@@ -30,6 +30,8 @@ export function isPlainEnvFile(content: string): boolean;
 /** Text after KEY= that every reader reads back as `value`; throws code UNSAFE_ENV_VALUE otherwise. */
 export function serializeEnvValue(key: string, value: string): string;
 /** Edits on a plain .env (codes NOT_PLAIN_ENV / UNSAFE_ENV_VALUE on refusal). */
-export function applyEnvEdits(content: string, edits: Array<[string, string]>): { content: string; updated: string[] };
+export function applyEnvEdits(
+  content: string, edits: Array<[string, string | undefined]>, options?: { keepEmpty?: boolean },
+): { content: string; updated: string[] };
 export function unquoteEnvValue(raw: string): string;
 export function hasEnvAssignment(content: string, key: string): boolean;

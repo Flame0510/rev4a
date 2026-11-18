@@ -1,7 +1,7 @@
 # Rev4a Architecture — Design & Vision
 
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 > **Goal:** Transform Rev4a from a monitoring dashboard into a central orchestrator for a distributed multi-container agency.
 
 ---
@@ -306,8 +306,11 @@ The central container, running the Next.js dashboard + orchestration API.
   address, all with the same request and `upgrade` handlers, so the terminal WebSocket works on each; the addresses are
   127.0.0.1, ::1 (when the host has it), the requested IP, and on Linux the Docker default-bridge gateway (`GET /networks/bridge`
   → `IPAM.Config[0].Gateway`, what `host.docker.internal:host-gateway` resolves to) because agents reach the model at
-  `host.docker.internal:3740`. Docker Desktop reaches the host's loopback, so no gateway there. Docker unreachable: loopback
-  only and one warning. An address the host lacks, or an invalid value, falls back to `local`; loopback v4 is always bound.
+  `host.docker.internal:3740`. Docker Desktop reaches the host's loopback, so no gateway there. The lookup retries the Docker
+  API three times, then reads docker0 with `ip -4 addr show dev docker0` (Node lists only interfaces that are up, and docker0
+  is down while no container uses the default bridge). Still not found: loopback only, one warning, and a background retry
+  every 30 s that adds the bridge listener as soon as it is found, without a restart (seen live 2026-11-18: one start under
+  load missed it and agents lost their model until the next restart). An address the host lacks, or an invalid value, falls back to `local`; loopback v4 is always bound.
   Explicit wildcard IP spellings (including expanded and IPv4-mapped IPv6) are invalid; a wildcard gateway is never added.
   The effective result is published in `REV4A_LISTEN_STATE` for `GET /api/system/listen`; agent mode `keep`
   distinguishes an unset setting from explicit `all` on the System Remote access section. The terminal server stays on
@@ -1032,6 +1035,37 @@ networks:
 - Browser → Agent Control UI: the container's published host port, `http://<host>:<port>`. Rev4a sets no reverse-proxy labels
 
 ---
+
+### Caddy Domain mode (1.30.0)
+
+The operator Caddyfile imports `REV4A_CADDY_FILE`. Rev4a synchronizes only the generated import, so a Debian Caddy service reload
+from its main file retains all routes. The root setup command is the one operation that edits `REV4A_CADDY_MAIN`.
+It backs up the original, adopts the dashboard site as comments, and installs the global on-demand TLS permission callback.
+The three domain settings are managed on the host. Setup and Config share a lock for `.env` edits on Linux. A failed setup
+restores only the settings it wrote that still have their setup values. If the main Caddyfile was edited after setup wrote it,
+setup keeps the current file and reports the edit.
+
+The generated import contains a dashboard site and a wildcard site with explicit host matchers and a final 404.
+On-demand TLS issues a certificate only when Caddy needs it for a named route. Eager certificates would exceed the
+Let’s Encrypt limit of 50 new certificates per registered domain per week with 13 agents publishing ten names each.
+Caddy asks the dashboard over IPv4 loopback. The API requires a loopback socket peer, a loopback resolved client address, and
+the local callback Host. The HTTP server overwrites both internal address headers. The callback checks the last committed
+generated file and confirms that the container is running and still owns the active Docker binding. Unknown hosts and unmapped ports get 404.
+
+The sync inspects running and stopped containers. The name table allocates collision suffixes by parsed Docker creation time
+and breaks ties by container ID. It reserves each label’s dev-port variants, and records assignments by container name in the
+import so Recreate preserves them. Routes require a running container with an active host TCP mapping reachable at 127.0.0.1.
+After a successful sync, requests for stopped agents fall through to the wildcard 404 handler.
+Dev handles enforce Basic authentication and remove its Authorization header before proxying. The generated import contains only the
+bcrypt hash. The password is stored in the data directory with mode 0600. Sync rotates an invalid credential or one with an
+incorrect mode and logs the repair without credential content.
+
+The dashboard requests sync on startup and after create, start, stop, restart, Recreate, Update (including rollback), Edit or
+delete. The daemon repeats it every five minutes to detect changes made outside the dashboard.
+The processes share an advisory lock on the generated file’s directory. Changed content is renamed atomically into place, validated
+through the main Caddyfile, checked for an explicit or matching glob import, then reloaded. Failure restores the previous import.
+A temporary comment marks an interrupted reload for retry on the next sync. If setup changes the domain, dashboard port or
+callback URL, the older process pauses synchronization until restart. An unset domain disables all sync work.
 
 ## 8. Daemon & Data Pipeline
 

@@ -142,6 +142,10 @@ export async function register() {
     import('./lib/claude-lean-tools')
       .then(({ repairLeanClaudeToolsAtStartup }) => repairLeanClaudeToolsAtStartup())
       .catch((e) => console.warn(`[rev4a] Could not check Claude tools on startup: ${(e as Error)?.message ?? e}`));
+    if (process.env.REV4A_SUPERVISED === '1' && process.env.REV4A_DOMAIN?.trim()) {
+      void import('./lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+        .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+    }
     // Retention for the lifecycle job tables: the panel reads the latest row of each
     // agent, so the history is trimmed to the newest rows per agent. Best-effort.
     try {

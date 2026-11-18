@@ -72,6 +72,10 @@ export async function POST(request: Request,
     }
 
     await runAgentOperation(id, () => execSync(`docker restart ${containerName}`, { timeout: 30000 }));
+    if (process.env.REV4A_DOMAIN?.trim()) {
+      void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+        .catch(() => console.warn('[restart] Could not start the Caddy sync'));
+    }
     void reapplyWhenReady(containerName).catch((e) => console.warn(`[restart] credential re-apply failed on ${containerName}:`, (e as Error).message));
 
     return NextResponse.json({ success: true });

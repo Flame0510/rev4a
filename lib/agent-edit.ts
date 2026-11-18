@@ -81,7 +81,13 @@ export async function startAgentEdit(agentId: string, opts: EditOptions): Promis
     const portArgs = opts.portRange ? await parsePortArgs(opts.portRange, container) : undefined;
 
     const id = insertEdit(agentId, displayName ?? null, portRange, !!opts.removeMemoryLimit);
-    void runEdit(id, agentId, container, displayName ?? null, portArgs, !!opts.removeMemoryLimit).finally(() => running.delete(agentId));
+    void runEdit(id, agentId, container, displayName ?? null, portArgs, !!opts.removeMemoryLimit).finally(() => {
+      running.delete(agentId);
+      if (process.env.REV4A_DOMAIN?.trim()) {
+        void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+          .catch(() => console.warn('[domain] Could not load Caddy sync.'));
+      }
+    });
     return id;
   } catch (e) {
     running.delete(agentId);

@@ -73,7 +73,9 @@ function harness(env = { REV4A_SETUP_CODE: CODE }, content = '', readError = nul
     '@/lib/rev4a-restart': { prepareRestart: () => ({ mode: 'supervisor', run: () => effects.push(['restart']) }), RestartUnavailable: class extends Error {} }, fs: mockFs, 'node:fs': mockFs,
     path, 'node:path': path, crypto, 'node:os': { homedir: () => '/mock' },
     '@/lib/rev4a-paths': { ENV_FILE, REV4A_DATA: '/mock' },
-    '@/lib/env-file': validator, './env-file.js': validator, '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
+    '@/lib/env-file': validator,
+    '@/lib/file-lock': { withFileDirectoryLock: async (_file, edit) => edit() },
+    './env-file.js': validator, '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
     './session-fingerprint.js': fingerprint,
     jose: { jwtVerify: async (token) => {
       if (token !== 'valid-cookie') throw new Error('Invalid JWT');

@@ -126,6 +126,11 @@ export async function POST(
         execSync(`docker ${action} ${containerName}`, { timeout: 30000 });
       }
 
+      if (process.env.REV4A_DOMAIN?.trim()) {
+        void import('@/lib/domain-sync').then(({ syncDomainRoutes }) => syncDomainRoutes())
+          .catch(() => console.warn('[lifecycle] Could not start the Caddy sync'));
+      }
+
       // A plain start or restart does not go through applyRuntimeConfig, so the agent's
       // credentials are brought in line here, in the background once its Gateway is ready:
       // a secret edited while it was stopped and a removal left pending both land now.

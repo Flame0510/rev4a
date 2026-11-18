@@ -11,6 +11,24 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
+## 1.30.0 — Caddy Domain mode (NET-1b1)
+
+On Linux, `sudo rev4a domain setup <domain>` configures a dashboard hostname and agent subdomains on the system Caddy instance.
+
+**Forwarded headers.** Every route to an agent removes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`: the OpenClaw gateway answers 403 `proxy_attribution_required` to any request carrying them unless `gateway.trustedProxies` is set inside the agent (seen live on 2026.10.10). The Control UI keeps its own token and device pairing; dev ports also drop the `Authorization` header Caddy checked.
+
+**Known limits of Domain mode (1.30.0).** Do not edit Rev4a's configuration (`.env`, Config page) while `rev4a domain setup` runs: if setup fails it rolls back only the keys it changed, and an edit made in those seconds can stop that rollback (the error then names the keys to fix by hand). A stopped agent loses its route at the next successful Caddy reload; if that reload fails, Caddy keeps serving the last accepted configuration (Rev4a keeps each agent's host ports reserved while it exists, so no other agent takes them). A failed first sync leaves an empty managed file, so an `import` already in the Caddyfile always has a valid target.
+Add `--dry-run` to preview the Caddyfile and environment changes. Setup backs up the main Caddyfile and preserves any adopted
+dashboard site as comments. Restart Rev4a and Recreate running agents to use the local listen settings.
+
+The dashboard is at `https://<domain>`. A running agent named Atlas uses `https://atlas.<domain>` for Control UI
+and `https://atlas-3001.<domain>` through `https://atlas-3009.<domain>` for its published dev ports.
+Stopping the agent removes its routes on the next sync. Starting it restores the routes under the same names.
+OpenClaw token and pairing protect Control UI. Dev ports use HTTP Basic authentication as `rev4a` with the password
+in `<REV4A_DATA_DIR>/domain-auth.json`. An invalid or incorrectly protected credential file is replaced during sync.
+The dashboard session cookie is host-only.
+See [Domain mode setup](../CONNECT.md#caddy-domain-mode-1300) for DNS, setup and rollback steps.
+
 ## 1.29.0 — Remote access presets (NET-1a)
 
 The dedicated **Remote access** page (`/remote-access`, Setup sidebar group next to Config) offers three choices:
@@ -144,6 +162,9 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_DB` | No | Path to the events database (default: `<data dir>/data/events.db`) |
 | `REV4A_CREDENTIALS_DB` | No | Path to the credentials vault database |
 | `REV4A_ROOT` | No | Installation root, used by `rev4a update` to detect a git checkout |
+| `REV4A_DOMAIN` | No | Enables domain syncing for this dashboard DNS hostname. Unset leaves domain syncing inactive |
+| `REV4A_CADDY_FILE` | No | Rev4a-generated Caddy import (default `/etc/caddy/rev4a.caddy`) |
+| `REV4A_CADDY_MAIN` | No | Main Caddyfile passed to setup, validation and reload (default `/etc/caddy/Caddyfile`) |
 | `REV4A_LISTEN` | No | Where the panel listens (1.28.0): `all` (default, every interface), `local` (127.0.0.1, ::1 and, on Linux, the Docker host-gateway address) or one IP of this host. Read at start-up: restart Rev4a. Editable on the Config page |
 | `REV4A_AGENT_PORTS_LISTEN` | No | Where agents' published ports listen (1.28.0): `all`, `local` (127.0.0.1) or one IP; unset keeps each agent's current address (new agents use every interface). Read at each create, Recreate, Update and port edit, so a change needs only a Recreate. Left empty, a Recreate or port edit keeps the address each agent already has; write `all` to move agents back to every interface. A value that is not empty, `all`, `local` or an IP is refused by the Config page; an IP this host lacks is treated as `local`, and a Recreate whose existing binding is on a missing address is refused before the old container is removed. Remote access distinguishes keeping each agent's address from publishing on every interface and shows how many running agents are still on a different address. Editable on the Config page |
 | `REV4A_TIMEZONE` | No | Default dashboard time zone (IANA name), used only while none is saved in *Config > Time zone*; a saved zone wins, and with neither the server's own zone is used |

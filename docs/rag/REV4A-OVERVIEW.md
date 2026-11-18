@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-18
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -240,6 +240,18 @@ A session is one unit of agent work. It starts when an agent receives a task and
 - Status (working, idle, done, error, aborted)
 
 Sessions can have parent-child relationships (lineage): one agent spawns another to delegate work. Rev4a reads them from each agent's container; nothing needs to be registered.
+
+## Caddy Domain mode (1.30.0)
+
+On a Linux host, root can preview `rev4a domain setup <domain> --dry-run` and then run it without the flag.
+Point the dashboard host and its wildcard subdomain at the server and allow ports 80 and 443.
+Setup configures Caddy, preserves any existing dashboard site as comments, and sets the dashboard and agent
+listen settings to local. Restart Rev4a and Recreate running agents to apply those settings.
+Running agents use `https://<agent>.<domain>` for Control UI. Published dev ports use `https://<agent>-<3001..3009>.<domain>`
+and require Basic auth as `rev4a`. The password is in the host-side `domain-auth.json` file in the Rev4a data directory.
+Never disclose or copy its contents into chat. Control UI still uses OpenClaw token and pairing.
+Caddy issues agent certificates on first use for hostnames in the generated route file with an active Docker binding.
+Stopping an agent removes those routes on sync. Starting it brings back the same hostnames.
 
 ## Remote access presets and restart (1.29.0)
 
