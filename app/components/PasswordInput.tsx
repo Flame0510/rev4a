@@ -36,6 +36,13 @@ export default function PasswordInput({
     <div style={{ position: 'relative', ...style }}>
       <Input
         type={visible ? 'text' : 'password'}
+        // These fields hold secrets (gateway token, provider keys, .env values), never the dashboard login:
+        // without this the browser fills the saved dashboard password into them, and a Save would store it.
+        autoComplete="new-password"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
+        spellCheck={false}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}

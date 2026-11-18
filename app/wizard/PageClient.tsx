@@ -186,6 +186,10 @@ function ProvidersStep({
             </div>
             <input
               type="password"
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-lpignore="true"
+              data-bwignore="true"
               placeholder={p.placeholder}
               value={keys[p.key]}
               onChange={(e) => onChange((prev) => ({ ...prev, [p.key]: e.target.value }))}

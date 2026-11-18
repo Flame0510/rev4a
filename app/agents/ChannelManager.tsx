@@ -377,6 +377,10 @@ function TelegramTab({
       <Input
         label="Bot Token"
         type="password"
+        autoComplete="new-password"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
         value={tgToken}
         onChange={(e) => setTgToken(e.target.value)}
         placeholder="1234567890:ABCdef..."

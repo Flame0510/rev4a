@@ -155,6 +155,7 @@ export default function LoginPage() {
           <div style={{ position: 'relative', marginBottom: 12 }}>
             <Input
               type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={handleKeyDown}
