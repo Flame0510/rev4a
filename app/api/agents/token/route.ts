@@ -6,7 +6,7 @@ import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { agentBusyReason } from '@/lib/agent-busy';
 import { redactedMessage } from '@/lib/redact-secret';
-import { writeTokenToContainer, restartArgv } from '@/lib/agent-token';
+import { isValidAgentsToken, writeTokenToContainer, writeTokenToStoppedContainer, restartArgv } from '@/lib/agent-token';
 import { acquireTokenLock } from '@/lib/agent-token-lock';
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +37,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json(readTokenFile());
 }
 
+async function currentState(name: string): Promise<string> {
+  const { stdout } = await execFileAsync('docker', ['inspect', '-f', '{{.State.Status}}', name], { encoding: 'utf-8', timeout: 5000 });
+  return stdout.trim();
+}
+
 export async function PUT(request: NextRequest): Promise<NextResponse> {
   const denied = await requireAuthJWT(request);
   if (denied) return denied;
@@ -48,9 +53,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const token = typeof body?.token === 'string' ? body.token : null;
     redactToken = token ?? '';
 
-    if (token === null) {
+    if (token === null || !isValidAgentsToken(token)) {
       return NextResponse.json(
-        { success: false, error: 'Invalid token payload' },
+        { success: false, error: 'Invalid token: 1 to 4096 characters, no spaces or control characters' },
         { status: 400 },
       );
     }
@@ -67,23 +72,26 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     fs.chmodSync(AGENTS_TOKEN_FILE, 0o600);
 
     let containersUpdated = 0;
+    /** Agents not running: the token file was written on their volume, read at their next start. */
+    const stopped: string[] = [];
     /** Containers left alone because an operation is running on them. */
     const skipped: string[] = [];
     /** Containers that could not be updated, with the reason. */
     const failed: { container: string; error: string }[] = [];
-    let containers: { name: string; agentId: string }[] = [];
+    let containers: { name: string; agentId: string; state: string }[] = [];
 
     try {
       const { stdout } = await execFileAsync(
         'docker',
-        ['ps', '--filter', 'label=AGENT_ID', '--format', '{{.Names}} {{.Label "AGENT_ID"}}'],
+        ['ps', '-a', '--filter', 'label=AGENT_ID', '--format', '{{.Names}}\t{{.Label "AGENT_ID"}}\t{{.State}}'],
         { encoding: 'utf-8', timeout: 5000 },
       );
       const raw = stdout.trim();
       containers = raw
         ? raw.split('\n').map((line) => {
-          const [name, agentId] = line.trim().split(/\s+/);
-          return { name: (name ?? '').trim(), agentId: (agentId ?? '').trim() };
+          // Tab-separated: an AGENT_ID with spaces, or an empty one, cannot shift the state column.
+          const [name, agentId, state] = line.split('\t');
+          return { name: (name ?? '').trim(), agentId: (agentId ?? '').trim(), state: (state ?? '').trim() };
         }).filter((c) => c.name)
         : [];
     } catch {
@@ -93,13 +101,28 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    for (const { name, agentId } of containers) {
+    for (const { name, agentId, state } of containers) {
       try {
         // Restarting an agent mid-update, mid-recreate, mid-restore or mid-edit would cut
         // the operation in half: leave it and say so.
         if (agentId && (await agentBusyReason(agentId))) {
           skipped.push(name);
           continue;
+        }
+        // A paused gateway keeps the old token in memory and cannot be exec-ed or restarted: leave it, listed.
+        if (state === 'paused') {
+          skipped.push(name);
+          continue;
+        }
+        // Not running: `docker exec` cannot reach it. Write the file on its volume; the entrypoint reads it
+        // at the next start. Without this a stopped agent kept the old token, even across Recreate.
+        if (state !== 'running' && state !== 'restarting') {
+          await writeTokenToStoppedContainer(name, token);
+          // Started between the listing and the write: its gateway already runs on the old token.
+          if (await currentState(name) !== 'running') {
+            stopped.push(name);
+            continue;
+          }
         }
         // Write token to /root/.agent-token (entrypoint reads this, overrides env var).
         // The token goes on stdin: never in argv, never in a shell string.
@@ -120,6 +143,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         ? { error: `The token was saved but ${failed.length} agent(s) were not updated: ${failed.map((f) => f.container).join(', ')}.` }
         : {}),
       containersUpdated,
+      stoppedUpdated: stopped.length,
+      ...(stopped.length ? { stopped } : {}),
       ...(skipped.length ? { skipped } : {}),
       ...(failed.length ? { failed } : {}),
     });

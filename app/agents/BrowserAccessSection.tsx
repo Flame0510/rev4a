@@ -594,7 +594,7 @@ export default function BrowserAccessSection({
               </div>
               <div style={metaStyle}>
                 The link carries the gateway token that every agent shares. To stop all links sent so far, change the
-                agents token: running agents restart with the new one.
+                agents token on this page: running agents restart with the new one, stopped agents get it at their next start. Busy or paused agents are listed and keep the old one until you save again.
               </div>
             </>
           )}

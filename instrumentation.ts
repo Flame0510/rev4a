@@ -136,6 +136,44 @@ export async function register() {
         if (changed) console.log(`[rev4a] Restricted the gateway token file on ${changed} agent(s)`);
       })
       .catch((e) => console.warn(`[rev4a] Could not check the agent token files on startup: ${(e as Error)?.message ?? e}`));
+    // Before 1.30.1 the agents token Save & Sync skipped stopped agents, which then kept the old token
+    // (even across Recreate: the volume file wins over the environment). Give every stopped agent that is
+    // not on the saved token the saved one, read at its next start. Idempotent, busy agents left for the
+    // next start, held under the token lock so a Save cannot interleave. Not awaited.
+    Promise.all([import('./lib/agent-token'), import('./lib/agent-token-lock'), import('./lib/agent-busy'), import('./lib/rev4a-paths')])
+      .then(async ([{ repairStoppedAgentTokens, isValidAgentsToken }, { withTokenLock }, { agentBusyReason }, { AGENTS_TOKEN_FILE }]) => {
+        const fs = await import('node:fs');
+        const { promisify } = await import('node:util');
+        const { execFile } = await import('node:child_process');
+        const run = promisify(execFile);
+        const repaired = await withTokenLock(async () => {
+          // Read under the lock: a Save that ran first is the token every agent must end on.
+          let current: unknown;
+          try { current = JSON.parse(fs.readFileSync(AGENTS_TOKEN_FILE, 'utf-8')).token; } catch { return []; }
+          if (!isValidAgentsToken(current)) return [];
+          return repairStoppedAgentTokens(current, async () => {
+            const { stdout } = await run('docker', ['ps', '-a', '--filter', 'label=AGENT_ID', '--filter', 'status=exited',
+              '--filter', 'status=created', '--format', '{{.Names}}\t{{.Label "AGENT_ID"}}'], { encoding: 'utf-8', timeout: 5000 });
+            return stdout.split('\n').filter(Boolean).map((line) => {
+              const [name = '', agentId = ''] = line.split('\t');
+              return { name: name.trim(), agentId: agentId.trim() };
+            }).filter((agent) => agent.name);
+          }, {
+            isBusy: async (agentId) => Boolean(await agentBusyReason(agentId)),
+            inspect: async (name) => {
+              const { stdout } = await run('docker', ['inspect', '-f', '{{.State.Status}}{{range .Config.Env}}\n{{.}}{{end}}', name],
+                { encoding: 'utf-8', timeout: 5000 });
+              const [state = '', ...env] = stdout.replace(/\n$/, '').split('\n');
+              const envLine = env.find((line) => line.startsWith('OPENCLAW_GATEWAY_TOKEN='));
+              // Verbatim, as the entrypoint uses it.
+              return { state: state.trim(), envToken: envLine ? envLine.slice('OPENCLAW_GATEWAY_TOKEN='.length) : '' };
+            },
+            warn: (m) => console.warn(`[rev4a] ${m}`),
+          });
+        });
+        if (repaired.length) console.log(`[rev4a] Gave the saved agents token to ${repaired.length} stopped agent(s): ${repaired.join(', ')}`);
+      })
+      .catch((e) => console.warn(`[rev4a] Could not check stopped agents' tokens on startup: ${(e as Error)?.message ?? e}`));
     // Agents already connected to Claude: switch off the tools no agent uses on Claude runs, only where
     // tools.byProvider.anthropic.deny is absent. One running agent at a time; not awaited, so it cannot
     // delay the server start. Runs here, not in the daemon: the config lock lives in this process.

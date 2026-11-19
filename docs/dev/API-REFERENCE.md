@@ -2235,9 +2235,11 @@ The token is stored in `data/agents-token.json`.
 ---
 
 ### `PUT /api/agents/token`
-Update the shared agents gateway token and push it to all running agent containers.
-Agents with a long operation in flight (update, recreate, restore, edit, backup) are
-skipped and listed, and a container that could not be updated is reported instead of
+Update the shared agents gateway token and push it to every agent container: running ones are
+restarted with it, stopped ones get it on their volume and use it at their next start (since 1.30.1;
+before, stopped agents kept the old token, even across Recreate, because the token file on the volume
+wins over the container environment). Agents with a long operation in flight (update, recreate,
+restore, edit, backup) and paused agents are skipped and listed, and a container that could not be updated is reported instead of
 being swallowed.
 
 **Auth:** browser cookie
@@ -2249,7 +2251,7 @@ being swallowed.
 
 **Response:**
 ```json
-{ "success": true, "containersUpdated": 2, "skipped": ["agent_9253eee3"], "failed": [{ "container": "agent_x", "error": "…" }] }
+{ "success": false, "error": "The token was saved but 1 agent(s) were not updated: agent_x.", "containersUpdated": 2, "stoppedUpdated": 3, "stopped": ["agent_a", "agent_b", "agent_c"], "skipped": ["agent_9253eee3"], "failed": [{ "container": "agent_x", "error": "…" }] }
 ```
 
 **Side effects:**
@@ -2258,6 +2260,7 @@ being swallowed.
 - If Docker cannot be reached the file is still written and the answer is `502 { success: false, error: "Docker is not reachable: …" }`; when some containers failed, `success` is `false` and `error` summarizes them (the page shows it)
 - Writes the token file (`/root/.agent-token`, mode 0600, replaced atomically) into every running container with `AGENT_ID` label. The token is sent on stdin to a constant script, so the write never puts it in host or container argv (the gateway process itself receives it in `OPENCLAW_GATEWAY_TOKEN` from the image entrypoint, `agent-templates/base-image/entrypoint.sh`, not as `--token`; images built before SEC-13 and agents whose `openclaw.json` sets `gateway.auth` still use `--token`); every `error` returned (per container and the outer one) has the token replaced with `***`
 - Restarts each container so the entrypoint picks up the new token via `OPENCLAW_GATEWAY_TOKEN` env
+- Stopped (exited, created) containers: writes `/root/.agent-token` (0600) with `docker cp` from a private host temp dir that is removed afterwards; the token never appears in argv. A directory or symlink at that path is reported as failed and never written through. An agent that started between the listing and the write is then updated like a running one (write + restart). `success` stays true when agents were only skipped; the page lists restarted, stopped, skipped and failed agents, says that agents not updated still accept the old token, and keeps that warning until the next save. At startup (since 1.30.1) Rev4a gives the saved token to every stopped agent still on another one (volume file, else environment), under the same token lock; idempotent, logged
 
 ---
 

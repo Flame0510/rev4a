@@ -605,8 +605,9 @@ export default function AgentsPageClient() {
   useEffect(() => { loadToken(); }, [loadToken]);
 
   // Auto-clear token status after 4 seconds
+  // A warning (agents left on the old token) stays until the next save.
   useEffect(() => {
-    if (!tokenStatus) return;
+    if (!tokenStatus || tokenStatus.type !== 'success') return;
     const t = setTimeout(() => setTokenStatus(null), 4000);
     return () => clearTimeout(t);
   }, [tokenStatus]);
@@ -660,8 +661,14 @@ export default function AgentsPageClient() {
         body: JSON.stringify({ token: gatewayToken }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
-      setTokenStatus({ type: 'success', message: `Saved and synced to ${data.containersUpdated} container(s)` });
+      // No per-agent outcome (Docker unreachable, bad payload): show the error alone.
+      if (typeof data.containersUpdated !== 'number') throw new Error(data.error || 'Save failed');
+      const parts = [`${data.containersUpdated} running agent(s) restarted`];
+      if (data.stoppedUpdated) parts.push(`${data.stoppedUpdated} stopped agent(s) updated, applied at their next start`);
+      if (data.skipped?.length) parts.push(`not updated (busy or paused, save again later): ${data.skipped.join(', ')}`);
+      if (data.failed?.length) parts.push(`failed: ${data.failed.map((f: { container: string }) => f.container).join(', ')}`);
+      const clean = data.success && !data.skipped?.length;
+      setTokenStatus({ type: clean ? 'success' : 'error', message: `Saved: ${parts.join('; ')}.${clean ? '' : ' Agents not updated still accept the old token.'}` });
     } catch (e: any) {
       setTokenStatus({ type: 'error', message: e.message || 'Save failed' });
     } finally {
