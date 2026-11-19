@@ -1,7 +1,7 @@
 export const ASK_PATH: '/api/domain/ask';
 export const DEV_USER: 'rev4a';
 export const BCRYPT: RegExp;
-export const PENDING: string;
+export const RELOAD_UNCONFIRMED: string;
 export type DomainEnv = Readonly<Record<string, string | undefined>>;
 export interface DomainConfig {
   domain: string;
@@ -13,6 +13,7 @@ export interface DomainConfig {
 type Bindings = Record<string, readonly { HostIp?: string; HostPort?: string }[] | null>;
 export interface DomainAgent {
   id?: string;
+  agentId?: string;
   containerName: string;
   displayName?: string;
   created?: string;
@@ -22,6 +23,7 @@ export interface DomainAgent {
 export interface DomainAssignment {
   base: string;
   name: string;
+  id?: string;
 }
 export interface DomainNameTable {
   assignments: Map<string, DomainAssignment>;
@@ -49,9 +51,7 @@ export function readManagedRoutes(content: string, domain: string): Map<string, 
 export function readRouteReservations(content: string): {
   routes: Map<string, number>;
   dashboardPort: number | null;
-  pendingPorts: Set<number>;
 };
-export function pendingCaddyfile(next: string, previous?: string): string;
 export function renderCaddyfile(config: DomainConfig, table: DomainNameTable, hash?: string): string;
 export interface DomainRouteCheck {
   container: string;

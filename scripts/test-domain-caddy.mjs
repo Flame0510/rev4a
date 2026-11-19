@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
@@ -8,7 +9,7 @@ import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const domain = require('../lib/domain.js');
-const { ASK_PATH, PENDING, agentBase, agentHostPort, buildNameTable, domainConfig, normalizeDomain, readAssignments, readManagedRoutes, renderCaddyfile } = domain;
+const { ASK_PATH, RELOAD_UNCONFIRMED, agentBase, agentHostPort, buildNameTable, domainConfig, normalizeDomain, readAssignments, readManagedRoutes, renderCaddyfile } = domain;
 const { CLIENT_IP_HEADER, SOCKET_PEER_HEADER, parseTrustedProxies, setClientAddressHeaders } = require('../lib/client-address.js');
 const envEditor = require('../lib/env-file.js');
 const { checkAgentRoute, syncCaddy } = require('../lib/caddy.js');
@@ -27,9 +28,9 @@ const bindings = (control, dev, HostIp) => ({
   '3001/tcp': [binding(dev, HostIp)],
 });
 const fleet = [
-  { containerName: 'atlas', displayName: 'Atlas', created: '2026-10-01T00:00:00Z', running: true, activeBindings: bindings('3700', '3701') },
-  { containerName: 'beacon', displayName: 'Beacon', created: '2026-10-02T00:00:00Z', running: true, activeBindings: { ...bindings('3710', '', '0.0.0.0'), '3009/tcp': [binding('3719', '0.0.0.0')] } },
-  { containerName: 'relay', displayName: 'Relay', created: '2026-10-03T00:00:00Z', running: true, activeBindings: bindings('3720', '') },
+  { containerName: 'atlas', agentId: 'atlas', displayName: 'Atlas', created: '2026-10-01T00:00:00Z', running: true, activeBindings: bindings('3700', '3701') },
+  { containerName: 'beacon', agentId: 'beacon', displayName: 'Beacon', created: '2026-10-02T00:00:00Z', running: true, activeBindings: { ...bindings('3710', '', '0.0.0.0'), '3009/tcp': [binding('3719', '0.0.0.0')] } },
+  { containerName: 'relay', agentId: 'relay', displayName: 'Relay', created: '2026-10-03T00:00:00Z', running: true, activeBindings: bindings('3720', '') },
 ];
 const goldenManifest = (label, name) => [
   `\t\t@${label}_manifest path /manifest.webmanifest`,
@@ -43,8 +44,8 @@ const goldenManifest = (label, name) => [
 const golden = n => [
   '# Managed by Rev4a; do not edit by hand. Configure with: rev4a domain setup',
   '# Rev4a domain: rev4a.example.com',
-  ...(n ? ['# Rev4a agent: atlas atlas atlas'] : []),
-  ...(n === 3 ? ['# Rev4a agent: beacon beacon beacon', '# Rev4a agent: relay relay relay'] : []),
+  ...(n ? ['# Rev4a agent: atlas atlas atlas', '# Rev4a agent id: atlas atlas'] : []),
+  ...(n === 3 ? ['# Rev4a agent: beacon beacon beacon', '# Rev4a agent id: beacon beacon', '# Rev4a agent: relay relay relay', '# Rev4a agent id: relay relay'] : []),
   '',
   'rev4a.example.com {',
   '\treverse_proxy 127.0.0.1:3740',
@@ -121,7 +122,7 @@ const golden = n => [
   '}',
   '',
 ].join('\n');
-const legacyCaddyfile = n => golden(n).replace(/^\t\t.*_manifest .*\n/gm, '');
+const legacyCaddyfile = n => golden(n).replace(/^(?:\t\t.*_manifest .*|# Rev4a agent id: .*)\n/gm, '');
 
 test('slug normalization, fallbacks, length and collision namespaces', () => {
   const title = 'x'.repeat(45);
@@ -155,7 +156,7 @@ test('creation order is deterministic and both slots survive a Recreate and its 
   assert.deepEqual([...initial.assignments.values()].map(entry => entry.name), ['same', 'same-2', 'same-3']);
   const gap = buildNameTable([second, third], initial.assignments);
   assert.equal(gap.routes.some(route => route.name === 'same'), false);
-  const competing = buildNameTable([second, third, { ...fleet[0], containerName: 'newcomer', displayName: 'Same' }], gap.assignments);
+  const competing = buildNameTable([second, third, { ...fleet[0], containerName: 'newcomer', agentId: 'newcomer', displayName: 'Same' }], gap.assignments);
   assert.equal(competing.assignments.get('newcomer').name, 'same-4');
   const remembered = readAssignments(renderCaddyfile(config, gap, hash), config.domain);
   const recreated = buildNameTable([second, third, { ...first, created: '2026-10-04' }], remembered);
@@ -267,7 +268,7 @@ function inspectAgent(agent) {
   return {
     Id: agent.id ?? agent.containerName,
     Name: '/' + agent.containerName,
-    Config: { Labels: { AGENT_ID: agent.containerName }, Env: ['OTHER=fake', 'AGENT_NAME=' + agent.displayName] },
+    Config: { Labels: { AGENT_ID: agent.agentId ?? agent.containerName }, Env: ['OTHER=fake', 'AGENT_NAME=' + (agent.displayName ?? '')] },
     Created: agent.created,
     State: { Running: agent.running, Paused: agent.paused, Restarting: agent.restarting },
     HostConfig: { PortBindings: agent.bindings ?? agent.activeBindings },
@@ -348,8 +349,8 @@ function mockRuntime({ initial = {}, agents = fleet, failure, missing = false, l
     return inspectAgent(agent);
   };
   const queues = new Map();
-  const withLock = (file, callback, fs = io) => {
-    assert.equal(fs, io);
+  const withLock = (file, callback, options = {}) => {
+    assert.equal(options.io ?? io, io);
     const directory = dirname(file);
     const job = (queues.get(directory) ?? Promise.resolve()).then(callback);
     queues.set(directory, job.catch(() => {}));
@@ -388,7 +389,8 @@ test('sync writes atomically, validates before reload, stores a 0600 password se
   assert.deepEqual(m.operations, []);
   assert.deepEqual(m.messages, []);
 
-  m.files.get(config.file).text = PENDING + golden(3);
+  // An interrupted sync from an earlier build may have left the old marker format.
+  m.files.get(config.file).text = '# Rev4a reload pending\n' + golden(3) + '# Rev4a pending port: 4600\n';
   assert.equal((await syncCaddy(m.options)).changed, true);
   assert.equal(m.files.get(config.file).text, golden(3));
   assert.deepEqual(m.commands.map(command => command.args[0]), ['version', 'version', 'validate', 'reload']);
@@ -482,7 +484,7 @@ test('reload sees the saved credential, and a retry reuses it after reload fails
     return result;
   };
   assert.match((await syncCaddy(m.options)).error, /Mock reload failed/);
-  assert.equal(m.files.get(config.file).text, golden(1));
+  assert.equal(m.files.get(config.file).text, golden(3) + RELOAD_UNCONFIRMED);
   const saved = m.files.get(authFile).text;
   rejectReload = false;
   assert.equal((await syncCaddy(m.options)).ok, true);
@@ -543,84 +545,268 @@ test('sync checks actual import coverage after validation, including on unchange
 function loadRoute(file, globals, dependencies) {
   const source = readFileSync(file, 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } });
-  const exports = {};
-  vm.runInNewContext(outputText, { exports, ...globals, require: name => {
+  const module = { exports: {} };
+  vm.runInNewContext(outputText, { module, exports: module.exports, ...globals, require: name => {
     assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`);
     return dependencies[name];
   } });
-  return exports;
+  return module.exports;
 }
 
-test('allocator reserves previous and candidate Caddy ports during reload and releases removed ports on success', async () => {
-  const activeBindings = { ...fleet[1].activeBindings };
-  delete activeBindings['3001/tcp']; // The golden fixture represents an absent dev publish with an empty port.
-  const replacement = { ...fleet[1], displayName: 'Atlas', activeBindings };
-  const m = mockRuntime({ initial: { [config.file]: golden(1) }, agents: [replacement] });
-  let failRead = false;
-  let dockerDown = false;
-  const dockerFetch = async (_method, path) => {
-    if (dockerDown) throw new Error('Docker unavailable');
-    if (path.includes('/containers/json?')) return [{ Id: 'beacon' }];
-    return inspectAgent(replacement);
-  };
-  const settings = { ...env };
-  const allocator = loadRoute('lib/agent-ports-server.ts', { process: { env: settings } }, {
-    fs: { promises: { ...m.options.io, readFile: async file => {
-      if (failRead) throw Object.assign(new Error('Permission denied'), { code: 'EACCES' });
-      return m.options.io.readFile(file);
-    } } },
+const ports = loadRoute('lib/agent-ports.ts', {}, {});
+function loadAllocator(m, { settings = env, io = m.options.io, dockerFetch = async () => [],
+  withLock = m.options.withLock } = {}) {
+  return loadRoute('lib/agent-ports-server.ts', { process: { env: settings } }, {
+    fs: { promises: io, readFileSync: file => m.files.get(file)?.text ?? '' },
     os: {},
     '@/lib/docker-socket': { dockerFetch },
-    '@/lib/rev4a-paths': {},
-    '@/lib/env-file': {},
+    '@/lib/rev4a-paths': { ENV_FILE: envFile },
+    '@/lib/env-file': envEditor,
+    './agent-ports': ports,
     './domain.js': domain,
-    './listen-addresses': {},
+    './file-lock': { withFileDirectoryLock: withLock },
+    './listen-addresses': require('../lib/listen-addresses.js'),
   });
+}
+
+test('double reload failure keeps the candidate and retries it even when the next render matches', async () => {
+  const agents = [{ ...fleet[0], activeBindings: bindings('3900', '3901') }];
+  const m = mockRuntime({ initial: { [config.file]: golden(1).trimEnd() }, agents });
+  const allocator = loadAllocator(m);
   const held = async (opts) => [...await allocator.getUsedHostPorts(opts)].sort((a, b) => a - b);
-  let failReload = true;
-  const run = m.options.run;
-  m.options.run = async (command, args, opts) => {
-    const result = await run(command, args, opts);
-    if (args[0] === 'reload') {
-      assert.deepEqual(await held(), [3700, 3701, 3710, 3719, 3740]);
-      assert.equal(readManagedRoutes(m.files.get(config.file).text, config.domain), null);
-      if (failReload) throw new Error('Mock reload failed');
-    }
+  let reloads = 0;
+  let active;
+  const run = async (command, args, opts) => {
+    const result = await m.options.run(command, args, opts);
+    if (args[0] !== 'reload') return result;
+    if (++reloads === 2) throw new Error('Rollback reload failed');
+    const text = m.files.get(config.file).text;
+    assert.ok(text.endsWith('\n' + RELOAD_UNCONFIRMED));
+    active = domain.readRouteReservations(text).routes;
+    if (reloads === 1) throw new Error('Candidate reload timed out after applying');
     return result;
   };
-  assert.equal((await syncCaddy({ ...m.options, forgetContainer: 'atlas' })).ok, false);
-  assert.deepEqual(await held(), [3700, 3701, 3710, 3719, 3740]);
-  failReload = false;
+  assert.match((await syncCaddy({ ...m.options, run })).error, /Candidate reload timed out/);
+  assert.equal(reloads, 2);
+  assert.equal(active.get('atlas'), 3900);
+  const candidate = golden(1).replaceAll('127.0.0.1:3700', '127.0.0.1:3900').replaceAll('127.0.0.1:3701', '127.0.0.1:3901');
+  assert.equal(m.files.get(config.file).text, candidate + RELOAD_UNCONFIRMED);
+  assert.ok(m.messages.some(message => message.includes('CADDY ROLLBACK UNCONFIRMED')));
+  assert.deepEqual(await held(), [3740, 3900, 3901]);
+  assert.deepEqual(await syncCaddy({ ...m.options, run }), { ok: true, changed: true, routes: 2 });
+  assert.equal(reloads, 3);
+  assert.equal(active.get('atlas'), 3900);
+  assert.equal(m.files.get(config.file).text, candidate);
+  assert.deepEqual(await held(), [3740, 3900, 3901]);
+  assert.equal((await syncCaddy(m.options)).changed, false);
+});
+
+test('a confirmed rollback clears an earlier unconfirmed marker and restores published routes', async () => {
+  const agents = [{ ...fleet[0], activeBindings: bindings('3900', '3901') }];
+  const m = mockRuntime({ initial: { [config.file]: golden(1) + RELOAD_UNCONFIRMED }, agents });
+  let reloads = 0;
+  const run = async (command, args, opts) => {
+    if (args[0] !== 'reload') return m.options.run(command, args, opts);
+    const { routes } = domain.readRouteReservations(m.files.get(config.file).text);
+    if (++reloads === 1) {
+      assert.equal(routes.get('atlas'), 3900);
+      throw new Error('Candidate reload failed');
+    }
+    assert.equal(routes.get('atlas'), 3700);
+    return '';
+  };
+  assert.match((await syncCaddy({ ...m.options, run })).error, /Candidate reload failed/);
+  assert.equal(reloads, 2);
+  assert.equal(m.files.get(config.file).text, golden(1));
+  assert.equal(readManagedRoutes(m.files.get(config.file).text, config.domain).get('atlas'), 3700);
+  assert.deepEqual([...await loadAllocator(m).getUsedHostPorts()].sort((a, b) => a - b), [3700, 3701, 3740]);
+});
+
+test('allocator refuses unreadable files and lock failures; missing files and Domain off are allowed', async () => {
+  const m = mockRuntime({ initial: { [config.file]: golden(1) } });
+  const settings = { ...env };
+  let readError;
+  let regular = true;
+  let lockError;
+  let lockCalls = 0;
+  const io = {
+    lstat: async file => ({ ...await m.options.io.lstat(file), isFile: () => regular }),
+    readFile: async file => {
+      if (readError) throw Object.assign(new Error(readError), { code: readError });
+      return m.options.io.readFile(file);
+    },
+  };
+  const withLock = async (file, callback, opts) => {
+    assert.equal(file, config.file);
+    assert.equal(opts.timeoutSeconds, 10);
+    assert.equal(opts.allowMissingFlock, undefined);
+    lockCalls++;
+    if (lockError) throw new Error('Could not acquire the lock');
+    return callback();
+  };
+  const allocator = loadAllocator(m, { settings, io, withLock });
+  for (const code of ['EACCES', 'EIO']) {
+    readError = code;
+    await assert.rejects(allocator.getUsedHostPorts(), new RegExp(`Cannot read the managed Caddy file.*port allocation is paused.*${code}`));
+  }
+  readError = undefined;
+  regular = false;
+  await assert.rejects(allocator.getUsedHostPorts(), /port allocation is paused.*regular file/);
+  lockError = true;
+  await assert.rejects(allocator.getUsedHostPorts(), /port allocation is paused.*Could not acquire the lock/);
+  lockError = false;
+  m.files.delete(config.file);
+  assert.deepEqual([...await allocator.getUsedHostPorts()], []);
+  const before = lockCalls;
+  lockError = true;
+  delete settings.REV4A_DOMAIN;
+  assert.deepEqual([...await allocator.getUsedHostPorts()], []);
+  assert.equal(lockCalls, before);
+});
+
+test('allocator waits for a sync with a pre-delete snapshot to publish its reservations', async () => {
+  const m = mockRuntime({ agents: [fleet[0]] });
+  const inspectStarted = Promise.withResolvers();
+  const releaseInspect = Promise.withResolvers();
+  const lockRequested = Promise.withResolvers();
+  let read = false;
+  const allocator = loadAllocator(m, {
+    io: { ...m.options.io, readFile: async file => { read = true; return m.options.io.readFile(file); } },
+    withLock: (...args) => { lockRequested.resolve(); return m.options.withLock(...args); },
+  });
+  const sync = syncCaddy({ ...m.options, dockerFetch: async (method, path, ...args) => {
+    const snapshot = await m.options.dockerFetch(method, path, ...args);
+    if (!path.startsWith('/containers/json?')) {
+      inspectStarted.resolve();
+      await releaseInspect.promise;
+    }
+    return snapshot;
+  } });
+  await inspectStarted.promise;
+  // The allocator sees an empty Docker inventory after the delete.
+  const allocation = allocator.getUsedHostPorts();
+  await lockRequested.promise;
+  assert.equal(read, false);
+  releaseInspect.resolve();
+  assert.equal((await sync).ok, true);
+  assert.deepEqual([...await allocation].sort((a, b) => a - b), [3700, 3701, 3740]);
+  assert.equal(read, true);
+});
+
+test('allocator exempts a routed host port only for its existing TCP container port', async () => {
+  const m = mockRuntime({ initial: { [config.file]: golden(1) } });
+  const allocator = loadAllocator(m, { dockerFetch: async (_method, path) =>
+    path.startsWith('/containers/json?') ? [{ Id: 'atlas' }] : inspectAgent(fleet[0]) });
+  const held = async mapping => [...await allocator.getUsedHostPorts({
+    excludeContainerId: 'atlas', portArgs: ['-p', mapping],
+  })].sort((a, b) => a - b);
+  assert.deepEqual(await held('127.0.0.1:3700-3701:3000-3001'), [3740]);
+  assert.deepEqual(await held('127.0.0.1:3699-3700:3000-3001'), [3700, 3701, 3740]);
+  assert.deepEqual(await held('127.0.0.1:3700:3000/udp'), [3700, 3701, 3740]);
+  const edit = loadRoute('lib/agent-edit.ts', {}, {
+    '@/lib/container': { isValidAgentId: () => true },
+    '@/lib/agent-ports': ports,
+    '@/lib/agent-ports-server': { ...allocator, agentPortsHostIp: () => '127.0.0.1' },
+    '@/lib/agent-images': {},
+    '@/lib/agent-recreate': { inspectAgentContainer: async () => inspectAgent(fleet[0]) },
+    '@/lib/agent-busy': { agentBusyReason: async () => null },
+    '@/lib/agent-readiness': {},
+    '@/lib/agent-setup': {},
+    '@/app/api/gateway/sync': {},
+    '@/lib/agent-edit-state': { isEditActive: () => false, insertEdit: () => assert.fail('Unsafe edit was recorded') },
+  });
+  await assert.rejects(edit.startAgentEdit('atlas', { portRange: '3699-3700' }), /Ports already in use: 3700/);
+});
+
+test('unchanged Recreate and Update can reuse a routed binding through a legacy container rename', async () => {
+  const legacy = { ...fleet[0], containerName: 'legacy-atlas', agentId: 'atlas-id', activeBindings: bindings('4600', '') };
+  const m = mockRuntime({ agents: [legacy] });
+  assert.equal((await syncCaddy(m.options)).ok, true);
+  let agent = legacy;
+  const allocator = loadAllocator(m, { dockerFetch: async (_method, path) =>
+    path.startsWith('/containers/json?') ? [{ Id: agent.containerName }] : inspectAgent(agent) });
+  const calls = [];
+  const recreate = loadRoute('lib/agent-recreate.ts', {}, {
+    '@/lib/docker-socket': {},
+    '@/lib/agent-images': { runDocker: async args => calls.push([...args]) },
+    '@/lib/agent-ports': ports,
+    '@/lib/agent-ports-server': { ...allocator, agentPortsHostIp: () => '127.0.0.1', assertPortArgsHostIps: () => {} },
+    '@/lib/agent-setup': { getMountFlags: () => [] },
+    '@/lib/container': {},
+    '@/lib/backups-volume': {},
+    '@/lib/cold-backup': {},
+    '@/lib/agent-readiness': {},
+    '@/lib/agent-recreate-state': {},
+    '@/lib/agent-busy': {},
+    '@/app/api/gateway/sync': {},
+    '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
+    '@/lib/agent-stop': { removeAgentContainer: async () => calls.push(['rm']) },
+  });
+  const rebuild = (opts) => {
+    const container = inspectAgent(agent);
+    container.HostConfig.NetworkMode = 'bridge';
+    return recreate.recreateAgentContainer('atlas-id', container, 'image', opts);
+  };
+  await rebuild({ gracefulStop: true });
+  agent = { ...legacy, containerName: 'atlas-id' };
+  await rebuild();
+  assert.deepEqual(calls.map(args => args[0]), ['rm', 'run', 'rm', 'run']);
+  for (const args of calls.filter(row => row[0] === 'run')) {
+    assert.equal(args[args.indexOf('-p') + 1], '127.0.0.1:4600:3000');
+  }
+  assert.match(m.files.get(config.file).text, /# Rev4a agent id: legacy-atlas atlas-id/);
+  agent.agentId = 'another-id';
+  await assert.rejects(rebuild(), /Port 4600 is already published by managed Caddy routes/);
+  assert.equal(calls.length, 4);
+});
+
+test('a successful sync releases removed ports and retains a deleted container label', async () => {
+  const replacement = { ...fleet[1], displayName: 'Atlas' };
+  const m = mockRuntime({ initial: { [config.file]: golden(1) }, agents: [replacement] });
+  const allocator = loadAllocator(m);
   assert.equal((await syncCaddy({ ...m.options, forgetContainer: 'atlas' })).ok, true);
-  assert.deepEqual(await held(), [3710, 3719, 3740]);
-  assert.deepEqual(await held({ excludeContainerId: 'beacon' }), [3740]);
   const final = m.files.get(config.file).text;
   assert.match(final, /^# Rev4a retired: atlas$/m);
   assert.match(final, /@atlas-2 host/);
-  assert.equal((await syncCaddy(m.options)).changed, false, 'later sync preserves retirement');
-  dockerDown = true;
-  assert.deepEqual(await held(), [3710, 3719, 3740]);
-  failRead = true;
-  assert.deepEqual(await held(), []);
-  failRead = false;
-  m.files.delete(config.file);
-  assert.deepEqual(await held(), []);
-  m.files.set(config.file, { text: final.replace('reverse_proxy 127.0.0.1:3740', 'reverse_proxy 127.0.0.1:8080') });
-  assert.deepEqual(await held(), [3710, 3719, 8080]);
-  delete settings.REV4A_DOMAIN;
-  assert.deepEqual(await held(), []);
+  assert.equal((await syncCaddy(m.options)).changed, false);
+  assert.deepEqual([...await allocator.getUsedHostPorts()].sort((a, b) => a - b), [3710, 3719, 3740]);
 });
 
-test('an interrupted reload preserves reservations through another pending write', () => {
-  const previous = golden(3);
-  const firstPending = domain.pendingCaddyfile(golden(1), previous);
-  const secondPending = domain.pendingCaddyfile(golden(0), firstPending);
-  const first = domain.readRouteReservations(firstPending);
-  const second = domain.readRouteReservations(secondPending);
-  assert.deepEqual([...first.routes.values()], [3700, 3701]);
-  assert.deepEqual([...first.pendingPorts], [3710, 3719, 3720]);
-  assert.deepEqual([...second.pendingPorts], [3700, 3701, 3710, 3719, 3720]);
-  assert.equal(readManagedRoutes(secondPending, config.domain), null);
+test('a first sync adds IDs to legacy assignments, and a container rename keeps atlas', async () => {
+  const legacy = { ...fleet[0], containerName: 'atlas', agentId: 'agent_123', displayName: undefined };
+  const agents = [legacy];
+  const m = mockRuntime({ agents, initial: { [config.file]: legacyCaddyfile(1) } });
+  assert.deepEqual(readAssignments(legacyCaddyfile(1), config.domain).get('atlas'), { base: 'atlas', name: 'atlas' });
+  assert.equal((await syncCaddy(m.options)).changed, true);
+  assert.match(m.files.get(config.file).text, /^# Rev4a agent id: atlas agent_123$/m);
+  agents.length = 0;
+  assert.equal((await syncCaddy(m.options)).changed, true);
+  agents.push({ ...legacy, id: 'replacement', containerName: 'agent_123' });
+  assert.deepEqual(await syncCaddy(m.options), { ok: true, changed: true, routes: 2 });
+  const text = m.files.get(config.file).text;
+  assert.deepEqual([...readAssignments(text, config.domain)], [['agent_123', { base: 'agent-123', name: 'atlas', id: 'agent_123' }]]);
+  assert.deepEqual([...readManagedRoutes(text, config.domain)], [['atlas', 3700], ['atlas-3001', 3701]]);
+  assert.equal((await syncCaddy(m.options)).changed, false);
+});
+
+test('reusing the legacy Docker name cannot take the original agent hostname', async () => {
+  const original = { ...fleet[0], containerName: 'legacy-atlas', agentId: 'atlas-id', displayName: undefined };
+  const agents = [original];
+  const m = mockRuntime({ agents });
+  assert.equal((await syncCaddy(m.options)).ok, true);
+  assert.equal(readManagedRoutes(m.files.get(config.file).text, config.domain).get('legacy-atlas'), 3700);
+  agents.splice(0, 1,
+    { ...original, containerName: 'atlas-id' },
+    { ...original, containerName: 'legacy-atlas', agentId: 'another-id', activeBindings: bindings('4605', '') });
+  assert.equal((await syncCaddy(m.options)).ok, true);
+  const text = m.files.get(config.file).text;
+  const assignments = readAssignments(text, config.domain);
+  const routes = readManagedRoutes(text, config.domain);
+  assert.deepEqual(assignments.get('atlas-id'), { base: 'atlas-id', name: 'legacy-atlas', id: 'atlas-id' });
+  assert.deepEqual(assignments.get('legacy-atlas'), { base: 'legacy-atlas', name: 'legacy-atlas-2', id: 'another-id' });
+  assert.equal(routes.get('legacy-atlas'), 3700);
+  assert.equal(routes.get('legacy-atlas-2'), 4605);
+  assert.equal((await syncCaddy(m.options)).changed, false);
 });
 
 test('DELETE awaits route removal after Docker removal and continues on failure or timeout', async () => {
@@ -742,7 +928,7 @@ test('the public ask route needs no session and accepts only routed names from a
   currentFleet = fleet;
   content = legacyCaddyfile(3);
   assert.equal(await request('atlas.rev4a.example.com'), 200);
-  content = PENDING + golden(3);
+  content = golden(3) + RELOAD_UNCONFIRMED;
   assert.equal(await request('atlas.rev4a.example.com'), 404);
   runtimeEnv.REV4A_SUPERVISED = '';
   assert.equal(await request(config.domain), 404);
@@ -799,15 +985,112 @@ test('root setup backs up the original, edits .env through its shared editor, an
   assert.deepEqual(m.commands.map(command => command.args[0]), ['version']);
 });
 
-test('failed setup preserves the original main and environment and keeps the backup', async () => {
-  for (const failure of ['validate', 'reload']) {
-    const m = mockRuntime({ initial: { [config.main]: previous, [envFile]: { text: 'EXAMPLE=value\n', mode: 0o600 } }, failure });
-    await assert.rejects(setupDomain({ ...m.options, ...root, args }), new RegExp(failure));
-    assert.equal(m.files.get(config.main).text, previous);
-    assert.equal(m.files.get(envFile).text, 'EXAMPLE=value\n');
-    assert.equal(m.files.get(config.file)?.text, '# Managed by Rev4a; do not edit by hand. Configure with: rev4a domain setup\n');
-    assert.ok([...m.files.keys()].some(file => file.includes('.bak-')));
+test('failed setup validation preserves the original main and environment and keeps the backup', async () => {
+  const m = mockRuntime({ initial: { [config.main]: previous, [envFile]: { text: 'EXAMPLE=value\n', mode: 0o600 } }, failure: 'validate' });
+  await assert.rejects(setupDomain({ ...m.options, ...root, args }), /validate/);
+  assert.equal(m.files.get(config.main).text, previous);
+  assert.equal(m.files.get(envFile).text, 'EXAMPLE=value\n');
+  assert.equal(m.files.get(config.file).text, domain.emptyCaddyfile());
+  assert.ok([...m.files.keys()].some(file => file.includes('.bak-')));
+});
+
+test('setup reload failure restores the managed import and adopted main site before one rollback reload', async () => {
+  const originalMain = previous.replace('3740', '8080') + mainImport;
+  const originalManaged = domain.emptyCaddyfile();
+  const m = mockRuntime({ agents: [], initial: { [config.main]: originalMain, [config.file]: originalManaged,
+    [envFile]: { text: 'EXAMPLE=value\n', mode: 0o600 } } });
+  const reloads = [];
+  let activeUpstream = 8080;
+  const run = async (program, argv, options) => {
+    const result = await m.options.run(program, argv, options);
+    if (argv[0] !== 'reload') return result;
+    const main = m.files.get(config.main).text;
+    const managed = m.files.get(config.file).text;
+    reloads.push({ main, managed });
+    const site = /^rev4a\.example\.com \{\s*reverse_proxy 127\.0\.0\.1:(\d+)/m;
+    activeUpstream = Number(site.exec(main)?.[1] ?? site.exec(managed)?.[1]);
+    if (reloads.length === 1) {
+      assert.equal(activeUpstream, 3740);
+      throw new Error('Candidate reload timed out after applying');
+    }
+    return result;
+  };
+  await assert.rejects(setupDomain({ ...m.options, ...root, args, run }), /Candidate reload timed out/);
+  assert.equal(reloads.length, 2);
+  assert.equal(reloads[1].main, originalMain);
+  assert.equal(reloads[1].managed, originalManaged);
+  assert.equal(activeUpstream, 8080);
+  assert.equal(m.files.get(config.file).text, originalManaged);
+  assert.equal(m.files.get(envFile).text, 'EXAMPLE=value\n');
+});
+
+test('unconfirmed first setup keeps Domain keys and reserves the candidate before Rev4a restarts', async () => {
+  const agents = [{ ...fleet[0], activeBindings: bindings('4600', '') }];
+  const main = '/custom/Caddyfile';
+  const file = '/custom/rev4a.caddy';
+  const setupEnv = { REV4A_CADDY_MAIN: main, REV4A_CADDY_FILE: file, PORT: '3740' };
+  const m = mockRuntime({ agents, initial: { [main]: previous, [envFile]: 'EXAMPLE=value\n' } });
+  let reloads = 0;
+  let live;
+  const run = async (program, argv) => {
+    assert.equal(program, 'caddy');
+    if (argv[0] === 'reload') {
+      assert.deepEqual(argv.slice(1), ['--config', main, '--adapter', 'caddyfile']);
+      if (++reloads === 1) {
+        live = domain.readRouteReservations(m.files.get(file).text);
+        throw new Error('Candidate reload timed out after applying');
+      }
+      assert.equal(m.files.get(main).text, previous);
+      assert.equal(m.files.get(file).text, domain.emptyCaddyfile());
+      throw new Error('Rollback reload failed');
+    }
+    assert.ok(['version', 'validate'].includes(argv[0]));
+    return '';
+  };
+  await assert.rejects(setupDomain({ ...m.options, ...root, args, run, env: setupEnv }), error => {
+    assert.match(error.message, /Domain settings were kept/);
+    assert.ok(error.message.includes(`sudo caddy reload --config ${main} --adapter caddyfile`));
+    assert.ok(error.message.includes(`remove the import of ${file}`));
+    return true;
+  });
+  assert.equal(reloads, 2);
+  assert.equal(live.routes.get('atlas'), 4600);
+  const content = m.files.get(file).text;
+  assert.ok(content.endsWith('\n' + RELOAD_UNCONFIRMED));
+  assert.deepEqual(domain.readRouteReservations(content), live);
+  const saved = envEditor.parseEnvValues(m.files.get(envFile).text);
+  assert.equal(saved.REV4A_DOMAIN, config.domain);
+  assert.equal(saved.REV4A_CADDY_MAIN, main);
+  assert.equal(saved.REV4A_CADDY_FILE, file);
+  assert.equal(saved.EXAMPLE, 'value');
+  // The allocator's Docker inventory is empty, as it would be after deleting the agent.
+  for (const settings of [{}, saved]) {
+    assert.deepEqual([...await loadAllocator(m, { settings }).getUsedHostPorts()].sort((a, b) => a - b), [3740, 4600]);
   }
+});
+
+test('sync and setup refuse to run unlocked when flock is missing', async () => {
+  const m = mockRuntime({ initial: { [config.main]: previous } });
+  const { withFileDirectoryLock } = loadRoute('lib/file-lock.js', {}, {
+    'node:fs/promises': {},
+    'node:path': require('node:path'),
+    'node:child_process': { spawn: command => {
+      assert.equal(command, 'flock');
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('Missing flock'), { code: 'ENOENT' })));
+      return child;
+    } },
+  });
+  const io = { ...m.options.io, open: async (file, flags) => {
+    assert.equal(file, dirname(config.file));
+    assert.equal(flags, 'r');
+    return { fd: 3, close: async () => {} };
+  } };
+  const options = { ...m.options, io, withLock: withFileDirectoryLock };
+  assert.match((await syncCaddy(options)).error, /flock is required/);
+  await assert.rejects(setupDomain({ ...options, ...root, args }), /flock is required/);
+  assert.deepEqual(m.operations, []);
+  assert.equal(m.dockerReads(), 0);
 });
 
 test('failed setup preserves a concurrent Config save and operator Caddyfile edit', async t => {
@@ -836,13 +1119,17 @@ test('failed setup preserves a concurrent Config save and operator Caddyfile edi
     }
     return m.options.run(program, argv, options);
   };
-  await assert.rejects(setupDomain({ ...m.options, ...root, args, run }), /rejected by mock reload/);
-  assert.equal(m.files.get(envFile).text, original.replace('LISTEN=all', 'LISTEN=127.0.0.1')
-    + 'REV4A_OPERATOR_SETTING=1\nNEW_OPERATOR_SETTING=1\n');
+  await assert.rejects(setupDomain({ ...m.options, ...root, args, run }), /CADDY ROLLBACK UNCONFIRMED.*Domain settings were kept/);
+  const saved = envEditor.parseEnvValues(m.files.get(envFile).text);
+  assert.equal(saved.REV4A_LISTEN, '127.0.0.1');
+  assert.equal(saved.REV4A_DOMAIN, config.domain);
+  assert.equal(saved.REV4A_OPERATOR_SETTING, '1');
+  assert.equal(saved.NEW_OPERATOR_SETTING, '1');
   assert.equal(m.files.get(config.main).text, planCaddyfile(previous, config).content + '# operator change during reload\n');
-  assert.equal(m.files.get(config.file)?.text, '# Managed by Rev4a; do not edit by hand. Configure with: rev4a domain setup\n');
+  assert.equal(m.files.get(config.file).text, golden(3) + RELOAD_UNCONFIRMED);
+  assert.equal(reloads, 1);
   assert.ok(m.messages.some(message => message.includes('The main Caddyfile changed during setup')));
-  t.diagnostic('Config save: 200; NEW_OPERATOR_SETTING=1 survived; later REV4A_LISTEN=127.0.0.1 survived; other setup keys rolled back; main Caddyfile edit kept');
+  t.diagnostic('Config save: 200. The later Config values, Domain settings and the operator Caddyfile edit survived.');
 });
 
 test('the running process waits for restart after same-domain setup moves the dashboard port', async t => {
@@ -932,7 +1219,25 @@ test('missing Caddy uses the official apt repository and adopts the packaged mai
   assert.equal(m.files.get(config.file).text, golden(0));
 });
 
-test('a failed reload reloads the restored file so Caddy never keeps the candidate routes', async () => {
+test('setup prefers explicit service paths and port over the saved environment', async () => {
+  const caddyMain = '/service/caddy/Caddyfile';
+  const caddyFile = '/service/caddy/rev4a.caddy';
+  const m = mockRuntime({ agents: [], initial: { [caddyMain]: previous, [envFile]:
+    'PORT=9000\nREV4A_CADDY_MAIN=/saved/Caddyfile\nREV4A_CADDY_FILE=/saved/rev4a.caddy\n' } });
+  const service = { ...env, PORT: '3740', REV4A_CADDY_MAIN: caddyMain, REV4A_CADDY_FILE: caddyFile };
+  await setupDomain({ ...m.options, ...root, env: service, args: [...args, '--dry-run'] });
+  assert.ok(m.messages.includes(`Back up ${caddyMain} before editing it.`));
+  assert.ok(m.messages.includes(`Sync ${caddyFile} and validate ${caddyMain} before any reload.`));
+  const run = async (_command, [action, ...argv]) => {
+    if (action !== 'version') assert.deepEqual(argv, ['--config', caddyMain, '--adapter', 'caddyfile']);
+    return '';
+  };
+  await setupDomain({ ...m.options, ...root, env: service, args, run });
+  assert.match(m.files.get(caddyMain).text, /ask http:\/\/127\.0\.0\.1:3740\/api\/domain\/ask/);
+  assert.equal(m.files.get(caddyFile).text, golden(0));
+});
+
+test('a failed first sync attempts a rollback reload with an empty import', async () => {
   const m = mockRuntime({ failure: 'reload' });
   const reloads = [];
   const run = async (program, argv, options) => {
@@ -942,6 +1247,7 @@ test('a failed reload reloads the restored file so Caddy never keeps the candida
   const result = await syncCaddy({ ...m.options, run });
   assert.equal(result.ok, false);
   assert.equal(reloads.length, 2);
-  assert.notEqual(reloads[0], reloads[1]);
-  assert.ok(m.messages.some(message => message.includes('Could not reload the restored Caddy file')));
+  assert.deepEqual(reloads, [golden(3) + RELOAD_UNCONFIRMED, domain.emptyCaddyfile()]);
+  assert.equal(m.files.get(config.file).text, reloads[0]);
+  assert.ok(m.messages.some(message => message.includes('CADDY ROLLBACK UNCONFIRMED')));
 });

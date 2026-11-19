@@ -1041,8 +1041,9 @@ networks:
 The operator Caddyfile imports `REV4A_CADDY_FILE`. Rev4a synchronizes only the generated import, so a Debian Caddy service reload
 from its main file retains all routes. The root setup command is the one operation that edits `REV4A_CADDY_MAIN`.
 It backs up the original, adopts the dashboard site as comments, and installs the global on-demand TLS permission callback.
-The three domain settings are managed on the host. Setup and Config share a lock for `.env` edits on Linux when `flock` is available. A failed setup
-restores only the settings it wrote that still have their setup values. If the main Caddyfile was edited after setup wrote it,
+The three domain settings are managed on the host. Domain setup and Caddy sync require `flock` from util-linux. Setup and Config share a lock
+for `.env` edits on Linux. Config can save with a warning if `flock` is missing. When setup rolls back its environment changes,
+it restores only the settings that still have their setup values. If the main Caddyfile was edited after setup wrote it,
 setup keeps the current file and reports the edit.
 
 The generated import contains a dashboard site and a wildcard site with explicit host matchers and a final 404.
@@ -1054,8 +1055,11 @@ generated file and confirms that the container is running and still owns the act
 
 The sync inspects running and stopped containers. The name table allocates collision suffixes by parsed Docker creation time
 and breaks ties by container ID. Control UI names ending in a dev-port suffix receive an `-agent` suffix before numbering.
-Control UI and dev-port names share a namespace. The import records assignments by container name for Recreate and reserves
-retired labels after Delete. Routes require a running, unpaused container with an active host TCP mapping reachable at 127.0.0.1.
+Control UI and dev-port names share a namespace. The import records assignments by container name and adds the stable Docker
+`AGENT_ID` label as a comment. A container-name match must also match the stored ID when present. Recreate can recover the
+hostname by ID when a legacy container is renamed, even if another agent has taken the former Docker name. The first sync
+adds IDs to assignments for containers it sees. Delete reserves retired labels.
+Routes require a running, unpaused container with an active host TCP mapping reachable at 127.0.0.1.
 After a successful sync, requests for stopped or paused agents fall through to the wildcard 404 handler.
 Each Control UI handle serves its own `/manifest.webmanifest` as `application/manifest+json` with `Cache-Control: no-cache`.
 The manifest uses the agent's display name (falling back to the assigned host label), an app ID derived from the label,
@@ -1089,11 +1093,25 @@ username and password from the protected file. It never invokes sync. Setup stay
 
 The dashboard requests sync on startup and after create, start, stop, restart, Recreate, Update (including rollback), Edit, Restore or
 Delete. Delete waits up to 20 seconds for sync after removing the container. The daemon repeats sync every five minutes to detect
-changes made outside the dashboard. The processes share an advisory lock on the generated file’s directory when `flock` is available.
+changes made outside the dashboard. The processes share an advisory lock on the generated file’s directory.
 Changed content is renamed atomically into place and validated through the main Caddyfile. Sync checks for an explicit or matching
-glob import and saves any new dev-port credential before reloading. Failure restores the previous import.
-Pending metadata preserves the previous host-port reservations while the new file awaits reload. The allocator also reserves
-the ports listed in the candidate file. The next sync retries an interrupted reload. If setup changes the domain, dashboard port or
+glob import and saves any new dev-port credential before reloading. When a reload fails, sync restores the previous managed
+content and setup also restores the main Caddyfile before attempting one rollback reload. A confirmed rollback clears any
+earlier reload marker from the restored file. If rollback is unconfirmed, Rev4a logs the unknown live state and keeps the
+candidate with a `# Rev4a reload unconfirmed` comment. Sync rewrites the marked file and retries the reload when the import is
+in place. Setup keeps its Domain settings in `.env` and prints the manual reload command and import removal instructions.
+
+In Domain mode, including first setup before the service restarts, the allocator waits up to 10 seconds for the same directory
+lock before reading reservations. A sync using
+a Docker snapshot from before a delete finishes publishing or rolling back its file before the allocator reads it. A missing managed file
+contributes no reservations. An unreadable or non-regular file, or a lock acquisition failure, pauses allocation.
+Reservations cover the dashboard upstream and agent routes in the file, including those in an unconfirmed candidate. A rebuild
+can retain its own routed host port when it keeps the same TCP container port. It can match ownership by agent ID during a
+legacy Docker rename. A range edit that would move a routed host port to another container port is
+refused while the old route exists. The allocator releases the lock before Docker publishes. A create can still race with
+a sync over a port if its `docker run` lands between its allocation read and the next sync.
+
+If setup changes the domain, dashboard port or
 callback URL, the older process pauses synchronization until restart. An unset domain disables all sync work.
 
 ## 8. Daemon & Data Pipeline

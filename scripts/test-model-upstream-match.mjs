@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /** Offline regression tests for OpenRouter model IDs and scheduled prices. */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { matchUpstream, peakOpenRouterPricing } from './lib/model-upstream.mjs';
 
 const index = (rows) => new Map(rows.map((row) => [row.id, row]));
@@ -64,3 +66,29 @@ const contextOnly = { ...offPeak, overrides: [{ ...peak, min_prompt_tokens: 2000
 assert.equal(peakOpenRouterPricing(contextOnly), contextOnly);
 
 console.log('OpenRouter model matching and peak pricing fixtures passed.');
+
+const skill = readFileSync(new URL('../skills/rev4a-models-update/SKILL.md', import.meta.url), 'utf8');
+const approvalCheck = /const previousById = [\s\S]*?(?=\nfor \(const \[id, row\])/.exec(skill)?.[0];
+assert.ok(approvalCheck, 'The documented verification must check release approvals');
+const model = (id, enabled = true) => ({ id, enabled });
+const removed = 'openrouter/vendor/removed';
+const disabled = 'openrouter/vendor/disabled';
+const retained = 'openrouter/vendor/retained';
+const previous = { models: [model(removed), model(disabled), model(retained)] };
+const changed = [model(disabled, false), model(retained)];
+function verifyApprovals(models, approved) {
+  runInNewContext(approvalCheck, {
+    assert: { ...assert, deepEqual: (actual, expected, message) => assert.deepEqual([...actual], [...expected], message) },
+    console: { log() {} },
+    process: { env: { REV4A_APPROVED_DEFAULT_CHANGES: JSON.stringify(approved) } },
+    isObject: (value) => value !== null && typeof value === 'object' && !Array.isArray(value),
+    previous, models, ids: new Set(models.map(({ id }) => id)), base: 'fixture',
+  });
+}
+verifyApprovals(previous.models);
+verifyApprovals(changed, { removed: [removed], disabled: [disabled] });
+assert.throws(() => verifyApprovals(changed), /removed.*differ from release approvals/);
+assert.throws(() => verifyApprovals(changed, { removed: [removed] }), /disabled.*differ from release approvals/);
+assert.throws(() => verifyApprovals(changed, { removed: [disabled], disabled: [removed] }), /removed.*differ from release approvals/);
+assert.throws(() => verifyApprovals(previous.models, { removed: [removed] }), /removed.*differ from release approvals/);
+console.log('Documented catalogue verification accepts exactly the release-approved removed and disabled IDs.');

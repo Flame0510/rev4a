@@ -79,12 +79,13 @@ function fixture() {
     fs: { readFileSync: (file) => { const entry = getFile(file); if (entry.error) throw entry.error; return entry.text; } },
     os: { networkInterfaces: () => interfaces }, '@/lib/docker-socket': { dockerFetch: forbidden },
     '@/lib/rev4a-paths': { ENV_FILE: `${dataDir}/.env` }, '@/lib/env-file': envFile, './listen-addresses': listen, './domain.js': domain,
+    './agent-ports': {}, './file-lock': { withFileDirectoryLock: forbidden },
   }, globals);
   const navigation = load('lib/control-ui-navigation.ts', { './cron-ids': {} });
   const access = load('lib/remote-access.ts', { './control-ui-navigation': navigation });
   const status = load('lib/domain-status.ts', {
     'node:path': path, './agent-ports-server': agentPorts, './caddy': caddy, './caddyfile': caddyfile, './domain': domain,
-    './domain-status-addresses': addresses, './listen-addresses': listen, './remote-access': access,
+    './domain-name': require('../lib/domain-name.js'), './domain-status-addresses': addresses, './listen-addresses': listen, './remote-access': access,
   }, globals);
   const auth = load('lib/rev4a-auth.js', {
     'next/server': { NextResponse: Response }, jose, fs: { existsSync: () => false }, crypto: require('node:crypto'),
@@ -162,6 +163,7 @@ test('status returns the full shape off, saved-before-restart and enabled, using
   f.caddyError(noEntry());
   assert.deepEqual(await f.request('status'), { status: 200, body: {
     domain: null, enabled: false, port: 3740, dataDir,
+    caddyMain: config.main, caddyFile: config.file,
     caddy: { installed: false, managedFile: 'missing', imported: false, onDemandAsk: false, askTarget: 'missing' },
     listen: { panel: 'all', agents: 'keep' }, routes: 0, restartPending: false,
     serverAddresses: { ipv4: ['1.1.1.1'], ipv6: ['2606:4700::1111'] },
@@ -189,12 +191,54 @@ test('status returns the full shape off, saved-before-restart and enabled, using
   assert.ok(!f.reads.includes(credentialPath));
 });
 
+test('status reports the running Caddy paths even with Domain mode off or a pending path change', async () => {
+  const f = fixture();
+  const caddyMain = '/service/caddy/Caddyfile';
+  const caddyFile = '/service/caddy/rev4a.caddy';
+  Object.assign(f.env, { REV4A_CADDY_MAIN: caddyMain, REV4A_CADDY_FILE: caddyFile });
+  const off = (await f.request('status')).body;
+  assert.deepEqual([off.enabled, off.port, off.caddyMain, off.caddyFile], [false, 3740, caddyMain, caddyFile]);
+  assert.equal(off.savedSetup, undefined);
+  f.env.REV4A_DOMAIN = hostname;
+  f.file(`${dataDir}/.env`, 'PORT=7000\nREV4A_CADDY_MAIN=/next/Caddyfile\nREV4A_CADDY_FILE=/next/rev4a.caddy\n');
+  const active = (await f.request('status')).body;
+  assert.deepEqual([active.enabled, active.port, active.caddyMain, active.caddyFile, active.restartPending],
+    [true, 3740, caddyMain, caddyFile, true]);
+  assert.deepEqual(active.savedSetup, { port: 7000, caddyMain: '/next/Caddyfile', caddyFile: '/next/rev4a.caddy' });
+});
+
+test('status exposes saved setup values for the first setup before restart', async () => {
+  const f = fixture();
+  f.file(`${dataDir}/.env`, `REV4A_DOMAIN=${hostname}\nPORT=7000\nREV4A_CADDY_MAIN=/saved/Caddyfile\nREV4A_CADDY_FILE=/saved/managed.caddy\n`);
+  const { body } = await f.request('status');
+  assert.deepEqual([body.enabled, body.restartPending, body.port, body.caddyMain, body.caddyFile],
+    [false, true, 3740, config.main, config.file]);
+  assert.deepEqual(body.savedSetup, { port: 7000, caddyMain: '/saved/Caddyfile', caddyFile: '/saved/managed.caddy' });
+});
+
+test('Domain documentation describes reservations, upgrade behavior and the own-proxy guard', () => {
+  const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+  const ports = read('docs/dev/API-REFERENCE.md').split('### `GET /api/agents/ports`')[1].split('\n---')[0];
+  assert.match(ports, /dashboard upstream and routed agent ports/);
+  assert.match(ports, /unconfirmed reload/);
+  assert.match(ports, /503/);
+  const release = read('docs/REV4A.md').split('## 1.30.0')[1].split('\n## ')[0];
+  assert.match(release, /Domain setup and Caddy sync require `flock`/);
+  assert.match(release, /Recreate keeps a legacy agent's assigned hostname/);
+  assert.match(release, /Port allocation pauses if the managed file is unreadable/);
+  const assistant = read('app/api/assistant/route.ts');
+  assert.match(assistant, /Domain \(your own proxy\) preset requires a tested HTTPS proxy/);
+  assert.doesNotMatch(assistant, /Domain always requires a tested HTTPS proxy/);
+  const architecture = read('docs/ARCHITECTURE.md');
+  assert.match(architecture, /a port if its `docker run` lands between its allocation read and the next sync/);
+});
+
 test('status distinguishes bad, pending and missing files and reports absent import or ask', async () => {
   const f = fixture();
   f.env.REV4A_DOMAIN = hostname;
   f.caddyError(new Error('Could not execute'));
   f.file(config.main, ask);
-  for (const [content, expected] of [[domain.PENDING + generated, 'pending'], [domain.emptyCaddyfile(), 'pending'],
+  for (const [content, expected] of [[generated + domain.RELOAD_UNCONFIRMED, 'pending'], [domain.emptyCaddyfile(), 'pending'],
     ['# user-owned', 'unmanaged'], [null, 'missing']]) {
     if (content === null) f.files.delete(config.file);
     else f.file(config.file, content);

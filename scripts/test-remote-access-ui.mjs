@@ -24,6 +24,7 @@ const domainHost = 'rev4a.example.com';
 const domainDnsUrl = `/api/domain/dns?domain=${domainHost}`;
 const domainStatus = {
   domain: null, enabled: false, port: 3740, dataDir: '/root/.config/rev4a',
+  caddyMain: '/etc/caddy/Caddyfile', caddyFile: '/etc/caddy/rev4a.caddy',
   caddy: { installed: false, managedFile: 'missing', imported: false, onDemandAsk: false, askTarget: 'missing' },
   listen: { panel: 'all', agents: 'keep' }, routes: 0, restartPending: false, serverAddresses: { ipv4: ['1.1.1.1'], ipv6: ['2606:4700::1111'] },
 };
@@ -377,7 +378,7 @@ console.log('ok   Current preset is inert, unchanged edits cannot submit, page t
   await flush();
   h.button('Copy setup command').props.onClick();
   await flush();
-  assert.deepEqual(h.copied, [`sudo rev4a domain setup ${domainHost} --dry-run`, `sudo rev4a domain setup ${domainHost}`]);
+  assert.deepEqual(h.copied, [`sudo PORT=3740 rev4a domain setup ${domainHost} --dry-run`, `sudo PORT=3740 rev4a domain setup ${domainHost}`]);
   h.hold(domainDnsUrl);
   h.button('Check').props.onClick();
   await flush();
@@ -473,6 +474,7 @@ console.log('ok   Domain wizard, DNS mismatch states and aborts, status transiti
   assert.ok(!text('Not checked'));
   assert.equal(h.calls.filter(({ url }) => url === '/api/domain/credential').length, 0);
   h.setDomain({ ...activeDomain, port: 7000, dataDir: '/service/rev4a',
+    caddyMain: '/service/caddy/Caddyfile', caddyFile: '/service/caddy/rev4a.caddy',
     caddy: { ...activeDomain.caddy, onDemandAsk: false, askTarget: 'stale' } });
   h.button('Check').props.onClick();
   await flush();
@@ -481,9 +483,24 @@ console.log('ok   Domain wizard, DNS mismatch states and aborts, status transiti
   assert.ok(!text('Restart Rev4a to load the saved Domain settings, then check again.'));
   h.button('Copy setup command').props.onClick();
   await flush();
-  assert.deepEqual(h.copied, [`sudo PORT=7000 REV4A_DATA_DIR=/service/rev4a rev4a domain setup ${domainHost}`]);
+  assert.deepEqual(h.copied, [`sudo PORT=7000 REV4A_DATA_DIR=/service/rev4a REV4A_CADDY_MAIN=/service/caddy/Caddyfile REV4A_CADDY_FILE=/service/caddy/rev4a.caddy rev4a domain setup ${domainHost}`]);
   h.dispose();
   console.log('ok   Managed Mode pill; own-proxy preset Current=false; one DNS check on open; Check refreshes both; stale callback shows setup without a restart instruction');
+}
+
+{
+  const savedSetup = { port: 7000, caddyMain: '/saved/Caddyfile', caddyFile: '/saved/managed.caddy' };
+  const h = harness('localhost', 'http:', { domain: { ...domainStatus, domain: domainHost, restartPending: true, savedSetup } });
+  h.render();
+  await flush();
+  for (const label of ['Copy dry run', 'Copy setup command']) {
+    h.button(label).props.onClick();
+    await flush();
+  }
+  const command = `sudo PORT=7000 REV4A_CADDY_MAIN=/saved/Caddyfile REV4A_CADDY_FILE=/saved/managed.caddy rev4a domain setup ${domainHost}`;
+  assert.deepEqual(h.copied, [`${command} --dry-run`, command]);
+  h.dispose();
+  console.log('ok   Pending setup uses the saved port and both saved Caddyfile paths in each copied command');
 }
 
 for (const [dataDir, fallback] of [['/service/rev4a', 'success'], ["/service/Rev4a's \$HOME", 'failure']]) {

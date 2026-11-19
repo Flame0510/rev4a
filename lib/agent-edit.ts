@@ -10,7 +10,7 @@
  * cannot start on top of the first (lib/agent-busy.ts answers 409 while one runs).
  */
 import { isValidAgentId } from '@/lib/container';
-import { hostPortsFromBindings, portArgsFromBindings, validatePortInput } from '@/lib/agent-ports';
+import { portArgsFromBindings, validatePortInput } from '@/lib/agent-ports';
 import { agentPortsHostIp, getUsedHostPorts } from '@/lib/agent-ports-server';
 import { resolveRecreateImage } from '@/lib/agent-images';
 import { inspectAgentContainer, recreateAgentContainer, startAndVerifyContainer } from '@/lib/agent-recreate';
@@ -26,15 +26,10 @@ export class EditRefusedError extends Error {}
 
 /**
  * Port bindings for a range, validated with the same rules and messages as agent
- * creation. The agent's own published host ports are excluded from
- * the "already in use" check, so keeping or shifting its own block is not a conflict
- * with itself — while a conflict with another agent still fails **before** the container
- * is removed.
+ * creation. An existing Caddy route permits reuse only for the same TCP mapping.
  */
 async function parsePortArgs(portRange: string, container: NonNullable<Awaited<ReturnType<typeof inspectAgentContainer>>>): Promise<string[]> {
-  const used = await getUsedHostPorts();
-  for (const p of hostPortsFromBindings(container)) used.delete(p);
-  const result = validatePortInput(portRange, used);
+  const result = validatePortInput(portRange);
   if (!result.valid) throw new EditRefusedError(result.error);
   // A range replaces the ports, not their exposure: keep the Control UI's current addresses
   // unless the operator explicitly set REV4A_AGENT_PORTS_LISTEN. Reuse recreate's HostIp rules.
@@ -42,9 +37,13 @@ async function parsePortArgs(portRange: string, container: NonNullable<Awaited<R
   const hostPort = result.start === result.end ? String(result.start) : `${result.start}-${result.end}`;
   const containerPort = result.start === result.end ? '3000/tcp' : `3000-${3000 + result.end - result.start}/tcp`;
   const bindings = controlBindings ?? [];
-  return portArgsFromBindings({
+  const portArgs = portArgsFromBindings({
     [containerPort]: (bindings.length ? bindings : [{}]).map((b) => ({ HostIp: b.HostIp, HostPort: hostPort })),
   }, agentPortsHostIp());
+  const used = await getUsedHostPorts({ excludeContainerId: container.Id, portArgs });
+  const available = validatePortInput(portRange, used);
+  if (!available.valid) throw new EditRefusedError(available.error);
+  return portArgs;
 }
 
 /** Edit jobs running in this process, so a second start for the same agent is refused. */

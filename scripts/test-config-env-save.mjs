@@ -35,7 +35,7 @@ function load(file, dependencies, globals = {}) {
   return module.exports;
 }
 
-function harness(initial, inherited = {}, readError = null) {
+function harness(initial, inherited = {}, readError = null, lock) {
   let content = initial;
   let mode = 0o644;
   const effects = [];
@@ -61,9 +61,9 @@ function harness(initial, inherited = {}, readError = null) {
     '@/lib/rev4a-paths': { ENV_FILE },
     '@/lib/rev4a-auth': { requireAuthJWT: async () => authenticated ? null : denied },
     '@/lib/env-file': envFile,
-    '@/lib/file-lock': require('../lib/file-lock.js'),
+    '@/lib/file-lock': { withFileDirectoryLock: lock },
     '@/lib/listen-addresses': require('../lib/listen-addresses.js'),
-  }, { process: { env: inherited }, console: { warn: () => {} } });
+  }, { process: { env: inherited, platform: lock ? 'linux' : 'darwin' }, console: { warn: () => {} } });
   return { get content() { return content; }, get mode() { return mode; }, effects,
     put: (env) => route.PUT({ json: async () => ({ env }) }),
     get: () => route.GET({}),
@@ -639,17 +639,22 @@ await test('missing flock warns once and saves, while other acquisition errors f
     } },
   }, { console: { warn: message => warnings.push(message) } });
   const save = async () => ++writes;
-  assert.deepEqual(await Promise.all([withFileDirectoryLock(ENV_FILE, save), withFileDirectoryLock(ENV_FILE, save)]), [1, 2]);
+  const unlocked = { allowMissingFlock: true };
+  await assert.rejects(withFileDirectoryLock(ENV_FILE, save), /flock is required/);
+  const h = harness(fixture, {}, null, withFileDirectoryLock);
+  assert.equal((await h.put({ REV4A_LISTEN: 'local' })).status, 200);
+  assert.match(h.content, /^REV4A_LISTEN=local$/m);
+  assert.deepEqual(await Promise.all([withFileDirectoryLock(ENV_FILE, save, unlocked), withFileDirectoryLock(ENV_FILE, save, unlocked)]), [1, 2]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /flock is unavailable/);
   errorCode = 'EACCES';
-  await assert.rejects(withFileDirectoryLock(ENV_FILE, save), { code: 'EACCES' });
+  await assert.rejects(withFileDirectoryLock(ENV_FILE, save, unlocked), { code: 'EACCES' });
   errorCode = undefined;
   exitCode = 1;
   await assert.rejects(withFileDirectoryLock(ENV_FILE, save), /Could not acquire the lock/);
   exitCode = 0;
   assert.equal(await withFileDirectoryLock(ENV_FILE, save), 3);
-  assert.equal(closed, 5);
+  assert.equal(closed, 7);
   assert.equal(warnings.length, 1);
 });
 

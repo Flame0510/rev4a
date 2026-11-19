@@ -30,14 +30,15 @@ const portsServer = load('lib/agent-ports-server.ts', {
   fs: { readFileSync: () => '' }, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }], eth0: [{ address: '10.0.0.5' }, { address: '2001:db8::5' }] }) },
   '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
   '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': listen, './domain.js': require('../lib/domain.js'),
+  './agent-ports': ports, './file-lock': {},
 });
-function recreateHarness(hostIp) {
+function recreateHarness(hostIp, getHostPortHolders = async () => new Map()) {
   const calls = [];
   const dependencies = {
     '@/lib/docker-socket': {},
     '@/lib/agent-images': { runDocker: async (args) => calls.push(args) },
     '@/lib/agent-ports': ports,
-    '@/lib/agent-ports-server': { getHostPortHolders: async () => new Map(), describeHolder: () => '', agentPortsHostIp: () => hostIp, assertPortArgsHostIps: portsServer.assertPortArgsHostIps },
+    '@/lib/agent-ports-server': { getHostPortHolders, describeHolder: () => '', agentPortsHostIp: () => hostIp, assertPortArgsHostIps: portsServer.assertPortArgsHostIps },
     '@/lib/agent-setup': { getMountFlags: () => [] },
     '@/lib/agent-memory-limit': { rebuildLimitArgs: () => [] },
   };
@@ -81,6 +82,17 @@ await test('explicit portArgs (the range edit) are not rewritten by recreate', a
   assert.deepEqual(publishes(h), ['127.0.0.1:3800-3809:3000-3009']);
 });
 
+await test('rebuild passes the proposed mapping to the allocator and propagates allocation errors before removal', async () => {
+  const portArgs = ports.portMappingArgs(3699, 3700, '127.0.0.1');
+  const h = recreateHarness('127.0.0.1', async (opts) => {
+    assert.equal(opts.excludeContainerId, container.Id);
+    assert.equal(opts.portArgs, portArgs);
+    throw new Error('Cannot read the managed Caddy file. Host port allocation is paused.');
+  });
+  await assert.rejects(h.recreateAgentContainer('agent_x', container, 'image', { portArgs }), /port allocation is paused/);
+  assert.deepEqual(h.calls, []);
+});
+
 await test('HIGH: a HostIp the host does not have refuses the recreate and the old container is never removed', async () => {
   // Setting unset, but the old binding is on an address that is gone (e.g. a VPN is down).
   const gone = { Id: 'original', HostConfig: { NetworkMode: 'bridge', PortBindings: { '3000/tcp': [{ HostIp: '100.64.0.9', HostPort: '3700' }] } } };
@@ -107,7 +119,10 @@ async function editPorts(hostIp, controlBindings, range = '3710-3719', extraBind
   const edit = load('lib/agent-edit.ts', {
     '@/lib/container': { isValidAgentId: () => true },
     '@/lib/agent-ports': ports,
-    '@/lib/agent-ports-server': { getUsedHostPorts: async () => new Set(ports.hostPortsFromBindings(inspected)), agentPortsHostIp: () => hostIp },
+    '@/lib/agent-ports-server': { getUsedHostPorts: async ({ excludeContainerId }) => {
+      assert.equal(excludeContainerId, inspected.Id);
+      return new Set();
+    }, agentPortsHostIp: () => hostIp },
     '@/lib/agent-images': { resolveRecreateImage: async () => 'image' },
     '@/lib/agent-recreate': { inspectAgentContainer: async () => inspected, recreateAgentContainer: h.recreateAgentContainer },
     '@/lib/agent-busy': { agentBusyReason: async () => null },

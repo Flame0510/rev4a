@@ -58,7 +58,7 @@ export async function saveEnvironment(input: unknown, explicit = false): Promise
     }
 
     const save = () => editEnvironment(entries, explicit);
-    const result = await (process.platform === 'linux' ? withFileDirectoryLock(ENV_FILE, save) : save());
+    const result = await (process.platform === 'linux' ? withFileDirectoryLock(ENV_FILE, save, { allowMissingFlock: true }) : save());
     if (result.updated) {
       // The service already uses EnvironmentFile=. Reload outside the file lock.
       try {

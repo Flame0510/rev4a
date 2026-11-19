@@ -3,10 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DB_FILE, AGENTS_TOKEN_FILE, templatesDir } from '@/lib/rev4a-paths';
 import { REV4A_PORT } from '@/lib/agent-ports';
-import { getUsedHostPorts } from '@/lib/agent-ports-server';
+import { getUsedHostPorts, PortAllocationPausedError } from '@/lib/agent-ports-server';
 import { loadOfferedModels } from '@/lib/model-catalogue';
 import { readAgentDefaults } from '@/lib/agent-defaults';
 import { listLocalAgentImages, newestLocalSupportedVersion } from '@/lib/agent-images';
+import { Page, PageHeader } from '../../components/ui';
 import CreatePageClient from './PageClient';
 import type { Metadata } from 'next';
 
@@ -102,9 +103,18 @@ export default async function CreateAgentPage() {
     getTemplates(),
     getModels(),
     getUsedNames(),
-    getUsedPorts(),
+    getUsedPorts().catch((error: unknown) => {
+      if (!(error instanceof PortAllocationPausedError)) throw error;
+      return error.message;
+    }),
     getCreateTargetVersion(),
   ]);
+  if (typeof usedPorts === 'string') {
+    return <Page>
+      <PageHeader title="Create agent" />
+      <p role="alert">{usedPorts}</p>
+    </Page>;
+  }
 
   return (
     <CreatePageClient

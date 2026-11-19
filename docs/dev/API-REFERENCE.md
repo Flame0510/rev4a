@@ -86,6 +86,8 @@ Reports read-only local configuration, without looking up DNS or contacting Dock
   "enabled": true,
   "port": 3740,
   "dataDir": "/root/.config/rev4a",
+  "caddyMain": "/etc/caddy/Caddyfile",
+  "caddyFile": "/etc/caddy/rev4a.caddy",
   "caddy": { "installed": true, "managedFile": "ok", "imported": true, "onDemandAsk": true, "askTarget": "ok" },
   "listen": { "panel": "local", "agents": "local" },
   "routes": 2,
@@ -96,8 +98,11 @@ Reports read-only local configuration, without looking up DNS or contacting Dock
 
 `domain` is the active hostname, the saved hostname if activation is pending, or `null`.
 `enabled` reflects the current process. `port` and `dataDir` are the running service’s dashboard port
-and absolute data directory. Listen modes are `all`, `local` or `address`, with `keep` also available
-for agents. `managedFile` is `ok`, `missing`, `pending` (a generated file awaiting activation
+and absolute data directory. `caddyMain` and `caddyFile` report the running service's main and managed
+Caddyfile paths, including when Domain mode is off. If the saved setup values differ, `savedSetup` contains
+`port`, `caddyMain`, and `caddyFile` from the saved configuration for the setup commands.
+Listen modes are `all`, `local` or `address`, with `keep` also available
+for agents. `managedFile` is `ok`, `missing`, `pending` (a generated file awaiting activation or reload confirmation
 for this domain), `unmanaged` (unrecognized or unreadable), or `incomplete` (a generated file
 for this domain without both site blocks). `routes` counts agent routes in the managed file on disk
 when it is `ok`.
@@ -1050,7 +1055,10 @@ this one runs a readiness probe inside each running container.
 
 ### `GET /api/agents/ports`
 The host ports held by any container, running or stopped: the set the validators in
-`lib/agent-ports.ts` take, sorted ascending. Backed by the shared lookup
+`lib/agent-ports.ts` take, sorted ascending. In Domain mode the list also includes Caddy-reserved ports
+from the managed file, covering the dashboard upstream and routed agent ports. After an unconfirmed reload,
+the candidate file supplies the reservations.
+Backed by the shared lookup
 (`getUsedHostPorts()`, `lib/agent-ports-server.ts`), which reads every container's
 `HostConfig.PortBindings` — a stopped container keeps its block while `docker ps -a` and
 the API's container list report nothing for it.
@@ -1066,6 +1074,9 @@ The Edit panel fetches it when it opens and the create form refreshes it on moun
 page also receives it as a prop), so both validate a range as the operator types, against
 the same numbers and with the same messages, and both disable their action while the range
 is refused.
+
+In Domain mode, an unreadable managed file or a failure to acquire its directory lock returns HTTP `503`.
+The JSON `error` explains why host port allocation is paused.
 
 ---
 

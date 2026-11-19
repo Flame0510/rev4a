@@ -250,6 +250,7 @@ test('hostIpsFromPortArgs lists the addresses -p publishes on, none for wildcard
     const mod = load('lib/agent-ports-server.ts', {
       fs: fsMock, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }, { address: '::1' }], eth0: [{ address: '10.0.0.5' }] }) }, '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
       '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'), './domain.js': require('../lib/domain.js'),
+      './agent-ports': {}, './file-lock': {},
     });
     return mod;
   };
@@ -278,6 +279,7 @@ test('hostIpsFromPortArgs lists the addresses -p publishes on, none for wildcard
     fs: fsMock, os: { networkInterfaces: () => ({ lo: [{ address: '127.0.0.1' }], eth0: [{ address: '10.0.0.5' }] }) },
     '@/lib/docker-socket': {}, '@/lib/rev4a-paths': { ENV_FILE: '/virtual/.env' },
     '@/lib/env-file': require('../lib/env-file.js'), './listen-addresses': require('../lib/listen-addresses.js'), './domain.js': require('../lib/domain.js'),
+    './agent-ports': {}, './file-lock': {},
   });
   test('clearing REV4A_AGENT_PORTS_LISTEN in .env takes effect without a restart (the launcher\'s copy is stale)', () => {
     const saved = [process.env.REV4A_AGENT_PORTS_LISTEN, process.env.REV4A_DOTENV_KEYS];

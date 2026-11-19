@@ -13,7 +13,7 @@
 import { dockerFetch } from '@/lib/docker-socket';
 import { runDocker, resolveRecreateImage } from '@/lib/agent-images';
 import { hostPortsFromArgs, portArgsFromBindings } from '@/lib/agent-ports';
-import { getHostPortHolders, describeHolder, agentPortsHostIp, assertPortArgsHostIps, type HostPortHolder } from '@/lib/agent-ports-server';
+import { getHostPortHolders, describeHolder, agentPortsHostIp, assertPortArgsHostIps } from '@/lib/agent-ports-server';
 import { getMountFlags, applyRuntimeConfig } from '@/lib/agent-setup';
 import { isValidAgentId } from '@/lib/container';
 import { pruneBackups } from '@/lib/backups-volume';
@@ -134,8 +134,8 @@ export async function recreateAgentContainer(
   // fallback the caller restarts, so a recreate refused here leaves the agent up. A
   // clash cannot be recovered from by retrying, so it must not reach `docker run`.
   const wanted = hostPortsFromArgs(portArgs);
-  if (wanted.length && container.Id) {
-    const held = await getHostPortHolders({ excludeContainerId: container.Id }).catch(() => new Map<number, HostPortHolder>());
+  if (wanted.length) {
+    const held = await getHostPortHolders({ excludeContainerId: container.Id, portArgs });
     const conflicts = wanted.filter((p) => held.has(p));
     if (conflicts.length) {
       const holders = [...new Set(conflicts.map((p) => describeHolder(held.get(p)!)))];

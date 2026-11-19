@@ -21,7 +21,11 @@ On Linux, `sudo rev4a domain setup <domain>` configures a dashboard hostname and
 
 **Forwarded headers.** Every route to an agent removes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`: the OpenClaw gateway answers 403 `proxy_attribution_required` to any request carrying them unless `gateway.trustedProxies` is set inside the agent (seen live on 2026.10.10). The Control UI keeps its own token and device pairing; dev ports also drop the `Authorization` header Caddy checked.
 
-Avoid editing Rev4a's `.env` while `rev4a domain setup` runs. If setup fails after saving settings, it rolls back the keys it changed that still hold the values it wrote. Setup reports rollback errors. If validation, credential saving or reload fails after the first managed file is written, Rev4a replaces it with an empty managed file so the import still has a target. Failures before the write leave the file as it was.
+Domain setup and Caddy sync require `flock` from util-linux. Avoid editing Rev4a's `.env` while `rev4a domain setup` runs.
+When setup rolls back saved settings, it restores the keys that still hold the values it wrote. A failed reload restores
+the generated import and the main Caddyfile before retrying the reload. On first setup, an empty managed file preserves
+the import target during rollback. If the rollback reload is unconfirmed, setup keeps the Domain settings and prints manual
+recovery instructions. Rev4a logs the failure and reserves the candidate's routes until it can confirm a reload.
 Add `--dry-run` to preview the Caddyfile and environment changes. Setup backs up the main Caddyfile and preserves any adopted
 dashboard site as comments. Restart Rev4a and Recreate running agents to use the local listen settings.
 Setup reads `PORT` from the data directory's `.env`. If Rev4a runs on another port, pass it explicitly
@@ -32,8 +36,11 @@ and `https://atlas-3001.<domain>` through `https://atlas-3009.<domain>` for its 
 Stopping or pausing the agent removes its routes on the next successful sync. Starting or resuming it restores the routes
 under the same names. Newly assigned labels for agent names ending in `-3001` through `-3009` receive an `-agent` suffix before collision numbering.
 The next sync corrects Control UI names previously assigned a dev-port suffix. The managed file keeps deleted labels reserved.
-Delete waits up to 20 seconds for route sync. If a reload fails or is still pending, Rev4a
-reserves the routed host ports until a successful sync removes the routes. Restore requests a sync as soon as the restored agent is ready.
+Recreate keeps a legacy agent's assigned hostname when its Docker container name changes. The first sync records its stable agent ID.
+Delete waits up to 20 seconds for route sync. The managed Caddy file reserves its routed host ports.
+Restore requests a sync as soon as the restored agent is ready.
+Port allocation pauses if the managed file is unreadable or its directory lock cannot be acquired. The Create page shows the reason.
+An Edit can reuse a routed host port for the same TCP container port. It refuses a shift to another container port while the old route exists.
 OpenClaw token and pairing protect Control UI. Managed HTTPS dev-port names use HTTP Basic authentication as `rev4a`
 with the password in `<REV4A_DATA_DIR>/domain-auth.json`. Direct host-port access follows `REV4A_AGENT_PORTS_LISTEN`.
 With Domain mode's local setting, Recreate republishes the ports on loopback only.
@@ -51,8 +58,9 @@ On **Remote access**, the **Domain mode** wizard validates the dashboard hostnam
 the A and AAAA records for that name and its wildcard. Create one record per expected public server
 address. If Rev4a finds no public addresses on the host, use the server's public IP.
 **Check** refreshes Domain mode status and compares the expected records with answers from the server's
-DNS resolver. Copy the dry run, then run the setup command on the server. Both commands include the
-running service’s non-default port and data directory. Setup installs Caddy if needed and backs up
+DNS resolver. Copy the dry run, then run the setup command on the server. Both commands include the port, even when it is 3740,
+and any non-default data directory and Caddyfile paths. They use the running settings or the saved setup values when a change is pending.
+Setup saves custom Caddyfile paths for the restart, installs Caddy if needed, and backs up
 and adopts the Caddyfile when changes are needed. After setup and restart, open the dashboard URL
 and select **Check** to confirm status and DNS.
 

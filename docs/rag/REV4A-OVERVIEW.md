@@ -258,7 +258,8 @@ On iOS, **Add to Home Screen** may suggest **OpenClaw Control**. Rename it to th
 When Domain mode is off, **Remote access → Domain mode** validates the dashboard hostname, lists the
 dashboard and wildcard A/AAAA records, and offers **Check** to refresh status and compare expected and found addresses.
 If the host has no public interface addresses, use the server's public IP. Copy the dry-run command
-and then the setup command to run on the server. These commands include non-default service settings.
+and then the setup command to run on the server. Both commands include the running panel port, even at 3740,
+and any non-default data directory and Caddyfile paths. Setup and Caddy sync require `flock` from util-linux.
 After restart, use **Check**. With Domain mode on,
 the section shows the dashboard HTTPS link, Caddy and import readiness, on-demand TLS ask,
 applied agent route count and restart state. DNS is checked once on open. A stale Caddy callback
@@ -266,6 +267,7 @@ shows the setup command again. Current setup identifies an active managed file a
 Never disclose or copy its contents into chat. Control UI still uses OpenClaw token and pairing.
 Caddy issues agent certificates on first use for hostnames in the generated route file with an active Docker binding.
 Stopping or pausing an agent removes those routes on sync. Starting or resuming it brings back the same hostnames.
+Recreate keeps a legacy agent's hostname when its Docker container name changes. An unreadable managed file pauses port allocation.
 With the managed route active, **Open** goes directly to the agent's HTTPS subdomain, with a one-time
 link or token link. If the address is being updated, Rev4a requests a Caddy sync and the tab asks
 the operator to try again in a moment. The agent panel's **Ports** list shows TCP publishes in the range 3000–3009,

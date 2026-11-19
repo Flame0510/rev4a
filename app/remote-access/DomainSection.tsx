@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { normalizeDomain } from '@/lib/domain-name';
+import { DEFAULT_CADDY_FILE, DEFAULT_CADDY_MAIN, normalizeDomain } from '@/lib/domain-name';
 import type { DomainStatus } from '@/lib/domain-status';
 import type { DomainDnsRecord, ServerAddresses } from '@/lib/domain-status-addresses';
 import { Button, DataTable, Input, Pill, PropertyList, Surface } from '../components/ui';
@@ -74,17 +74,19 @@ function shellValue(value: string): string {
   return /^[a-zA-Z0-9_./-]+$/.test(value) ? value : "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
-function SetupCommands({ domain, port, dataDir, busy, copy }: {
-  domain: string; port: number; dataDir: string;
+function SetupCommands({ domain, status, busy, copy }: {
+  domain: string; status: DomainStatus;
   busy: Action | null; copy: (action: 'dry-run' | 'setup', value: string) => void;
 }) {
-  const portSetting = port === 3740 ? '' : ` PORT=${port}`;
+  const { port, caddyMain, caddyFile } = status.savedSetup ?? status;
+  const { dataDir } = status;
   // Setup runs under sudo, so the standard directory is the root CLI's default.
   const dirSetting = dataDir === '/root/.config/rev4a' ? '' : ` REV4A_DATA_DIR=${shellValue(dataDir)}`;
-  const command = `sudo${portSetting}${dirSetting} rev4a domain setup ${domain}`;
+  const mainSetting = caddyMain === DEFAULT_CADDY_MAIN ? '' : ` REV4A_CADDY_MAIN=${shellValue(caddyMain)}`;
+  const fileSetting = caddyFile === DEFAULT_CADDY_FILE ? '' : ` REV4A_CADDY_FILE=${shellValue(caddyFile)}`;
+  const command = `sudo PORT=${port}${dirSetting}${mainSetting}${fileSetting} rev4a domain setup ${domain}`;
   return <>
     <p className="ui-text-small">On the server, run the dry run first, then run setup. Setup installs Caddy if needed and backs up and adopts the existing Caddyfile when it needs changes.</p>
-    <p className="ui-text-small ui-muted">For a custom install, check that PORT and REV4A_DATA_DIR match the running Rev4a service.</p>
     {!domain && <p className="ui-text-small ui-muted">Enter a valid dashboard hostname to enable the copy buttons.</p>}
     <PropertyList wrap spacious rows={[
       { label: 'Dry run', value: <span className="domain-inline">
@@ -231,7 +233,7 @@ export function DomainSection({ data }: { data: ReturnType<typeof useDomainAcces
     </>}
     {staleAsk && <p className="ui-text-small" role="status">Caddy points to an old Rev4a address: run the setup command again.</p>}
     {status && (!status.enabled || staleAsk || (!healthy && !status.restartPending))
-      && <SetupCommands domain={domain} port={status.port} dataDir={status.dataDir} busy={busy} copy={copy} />}
+      && <SetupCommands domain={domain} status={status} busy={busy} copy={copy} />}
     {status?.restartPending && <p className="ui-text-small" role="status">Restart Rev4a to load the saved Domain settings, then check again.</p>}
     {status && !status.enabled && domain && <p className="ui-text-small ui-muted">
       After setup and restart, open <a className="ui-link" href={`https://${domain}`}>{`https://${domain}`}</a>.

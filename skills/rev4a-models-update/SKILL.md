@@ -169,7 +169,9 @@ openclaw_for_agent models list --provider anthropic --json
 
 ## Verify
 
-Run from the repo root after the refresh, with a writable temporary directory for the Gateway CLI fixture. Set `REV4A_OPENROUTER_SNAPSHOT` to the complete OpenRouter JSON captured for the refresh, or set `run_dir` to the folder containing it as `openrouter.models.json`. The check reads the original catalogue with `git show` using `REV4A_CATALOGUE_BASE`, which defaults to `origin/main`. Set it to the pre-update commit when the run uses another base. It fails if any previously enabled ID is removed or disabled or if an added ID matches the upstream snapshot and lacks a generated details row. It lists added IDs that lack both a details row and an upstream match. [URL test](../../scripts/test-provider-upstream-url.mjs), [matching and pricing test](../../scripts/test-model-upstream-match.mjs)
+Run from the repo root after the refresh, with a writable temporary directory for the Gateway CLI fixture. Set `REV4A_OPENROUTER_SNAPSHOT` to the complete OpenRouter JSON captured for the refresh, or set `run_dir` to the folder containing it as `openrouter.models.json`. The check reads the original catalogue with `git show` using `REV4A_CATALOGUE_BASE`, which defaults to `origin/main`. Set it to the pre-update commit when the run uses another base.
+
+Set `REV4A_APPROVED_DEFAULT_CHANGES` to a JSON object with the `removed` and `disabled` ID lists approved for this release after the assignment audit. Omitted lists default to empty. The check requires both actual lists to match their approvals exactly. It also fails if an added ID matches the upstream snapshot and lacks a generated details row, and lists added IDs that lack both a details row and an upstream match. [URL test](../../scripts/test-provider-upstream-url.mjs), [matching and pricing test](../../scripts/test-model-upstream-match.mjs)
 
 ```bash
 (
@@ -210,13 +212,18 @@ for (const model of models) {
   if (enabled) assert.ok(Object.hasOwn(prices, id), `Missing price for ${id}`);
 }
 const previousById = new Map(previous.models.map((model) => [model.id, model]));
+const approved = JSON.parse(process.env.REV4A_APPROVED_DEFAULT_CHANGES || '{}');
+assert.ok(isObject(approved), 'Expected a JSON object with the approved removed and disabled IDs');
 const removedDefaults = previous.models.filter(({ id, enabled }) => enabled && !ids.has(id)).map(({ id }) => id);
-assert.deepEqual(removedDefaults, [], `Enabled defaults removed since ${base}`);
 const disabledDefaults = models
   .filter(({ id, enabled }) => previousById.get(id)?.enabled === true && enabled === false)
   .map(({ id }) => id);
-assert.deepEqual(disabledDefaults, [], `Enabled defaults switched off since ${base}`);
-console.log(`Enabled defaults from ${base} are present and enabled.`);
+for (const [change, actual] of Object.entries({ removed: removedDefaults, disabled: disabledDefaults })) {
+  const expected = approved[change] ?? [];
+  assert.ok(Array.isArray(expected) && expected.every((id) => typeof id === 'string'), `Expected an approved ID list for ${change}`);
+  assert.deepEqual(actual.sort(), expected.sort(), `Defaults ${change} since ${base} differ from release approvals`);
+}
+console.log(`Default changes since ${base} match the release approvals.`);
 for (const [id, row] of Object.entries(details.models)) {
   assert.ok(isObject(row), `Invalid generated details row for ${id}`);
 }

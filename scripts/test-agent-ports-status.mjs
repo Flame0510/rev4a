@@ -18,7 +18,7 @@ function load(file, dependencies, env = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const context = {
-    exports: {}, URL, AbortSignal, process: { env }, require(name) {
+    exports: {}, URL, AbortSignal, process: { env, cwd: () => '/fixture' }, require(name) {
       assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`);
       return dependencies[name];
     },
@@ -67,7 +67,7 @@ test('agentPublicUrl uses only the configured managed file, assignment and exact
   const off = urlFixture(render(), {});
   assert.equal(await off.urls.agentPublicUrl('agent-atlas', 3000), null);
   assert.deepEqual(off.reads, []);
-  for (const file of [null, domain.PENDING + render(), 'unmanaged\n' + render(),
+  for (const file of [null, render() + domain.RELOAD_UNCONFIRMED, 'unmanaged\n' + render(),
     render().replace('# Rev4a domain: rev4a.example.test', '# Rev4a domain: other.example.test'),
     render().replace(/^# Rev4a agent: agent-atlas .*\n/m, ''),
     render().replace('\thandle @atlas {', '\thandle @unrelated {')]) {
@@ -208,11 +208,75 @@ test('Ports outside Domain mode links only to bindings reachable at the dashboar
 
 test('Ports withholds stale and pending URLs and recognizes an IPv6-only publish', async () => {
   const stale = portsFixture({ activeBindings: { ...bindings, '3000/tcp': [published(5300)] } });
-  const pending = portsFixture({ file: domain.PENDING + render() });
+  const pending = portsFixture({ file: render() + domain.RELOAD_UNCONFIRMED });
   const ipv6 = portsFixture({ settings: {}, activeBindings: { '3002/tcp': [published(4402, '::')] } });
   const results = await Promise.all([stale, pending, ipv6].map(async ({ get }) => (await (await get('192.0.2.5')).json()).ports[0]));
   assert.deepEqual(results.map(({ hostPort, url }) => [hostPort, url]), [[5300, null], [3700, null], [4402, null]]);
   console.log('Ports stale/pending/IPv6-only [hostPort, url]:', JSON.stringify(results.map(({ hostPort, url }) => [hostPort, url])));
+});
+
+test('allocation EIO renders Create feedback and returns authenticated JSON 503 from the Ports API', async () => {
+  let unreadable = true;
+  let reads = 0;
+  const allocator = load('lib/agent-ports-server.ts', {
+    fs: { promises: {
+      async lstat() { return { isFile: () => true }; },
+      async readFile() {
+        reads++;
+        if (unreadable) throw Object.assign(new Error('Fixture EIO'), { code: 'EIO' });
+        return render() + domain.RELOAD_UNCONFIRMED;
+      },
+    } },
+    os: {},
+    '@/lib/docker-socket': { dockerFetch: async () => [] },
+    '@/lib/rev4a-paths': {},
+    '@/lib/env-file': {},
+    './agent-ports': {},
+    './domain.js': domain,
+    './file-lock': { withFileDirectoryLock: async (_file, operation) => operation() },
+    './listen-addresses': {},
+  }, env);
+  const route = load('app/api/agents/ports/route.ts', {
+    'next/server': { NextResponse: Response },
+    '@/lib/rev4a-auth': { requireAuthJWT: async request => request.headers.has('authorization')
+      ? null : Response.json({ error: 'Unauthorized' }, { status: 401 }) },
+    '@/lib/agent-ports-server': allocator,
+  });
+  const request = (authenticated) => new Request('http://localhost/api/agents/ports', {
+    headers: authenticated ? { authorization: 'Bearer fixture' } : {},
+  });
+  assert.equal((await route.GET(request(false))).status, 401);
+  assert.equal(reads, 0);
+  const unavailable = await route.GET(request(true));
+  assert.equal(unavailable.status, 503);
+  assert.match(unavailable.headers.get('content-type'), /application\/json/);
+  const { error } = await unavailable.json();
+  assert.match(error, /Cannot read the managed Caddy file at \/fixture\/rev4a\.caddy\. Host port allocation is paused\. Fixture EIO/);
+
+  function CreateForm() {}
+  const page = load('app/agents/create/page.tsx', {
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    'child_process': { execSync: () => '' },
+    fs: { readdirSync: () => [] },
+    path: {},
+    '@/lib/rev4a-paths': { templatesDir: () => '/fixture/templates' },
+    '@/lib/agent-ports': { REV4A_PORT: 3740 },
+    '@/lib/agent-ports-server': allocator,
+    '@/lib/model-catalogue': { loadOfferedModels: () => [] },
+    '@/lib/agent-defaults': { readAgentDefaults: () => ({}) },
+    '@/lib/agent-images': { listLocalAgentImages: async () => [], newestLocalSupportedVersion: () => null },
+    '../../components/ui': { Page: 'section', PageHeader: 'header' },
+    './PageClient': CreateForm,
+  }, env, { setTimeout, clearTimeout });
+  const result = await page.default();
+  const alert = result.props.children.find(node => node.props.role === 'alert');
+  assert.equal(alert.props.children, error);
+
+  unreadable = false;
+  assert.deepEqual(await (await route.GET(request(true))).json(), { ports: [3700, 3705, 3740] });
+  const form = await page.default();
+  assert.equal(form.type, CreateForm);
+  assert.deepEqual([...form.props.usedPorts].sort((a, b) => a - b), [3700, 3705, 3740]);
 });
 
 test('stopped and paused agents have unknown listeners and no links even with a stale Caddy route', async () => {

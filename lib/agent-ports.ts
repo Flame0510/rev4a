@@ -138,16 +138,25 @@ export function hostPortsFromBindings(container: {
     .filter((n) => Number.isInteger(n));
 }
 
-/** The host ports a `docker run` argument list publishes: `3700:3000` or `3700-3709:3000-3009`. */
-export function hostPortsFromArgs(portArgs: readonly string[]): number[] {
+/** Published host ports, optionally limited to TCP mappings for one container port. */
+export function hostPortsFromArgs(portArgs: readonly string[], tcpContainerPort?: number): number[] {
   const ports: number[] = [];
   for (let i = 0; i < portArgs.length - 1; i++) {
     if (portArgs[i] !== '-p') continue;
     // The final pair is hostPort:containerPort, including an optional IPv4 or [IPv6] prefix.
-    const host = (portArgs[i + 1] ?? '').split(':').at(-2) ?? '';
+    const parts = portArgs[i + 1].split(':');
+    const host = parts.at(-2) ?? '';
     const [start, end] = host.split('-').map(Number);
     if (!Number.isInteger(start)) continue;
-    for (let p = start; p <= (Number.isInteger(end) ? end : start); p++) ports.push(p);
+    const last = Number.isInteger(end) ? end : start;
+    if (tcpContainerPort === undefined) {
+      for (let p = start; p <= last; p++) ports.push(p);
+    } else {
+      const [range, protocol = 'tcp'] = (parts.at(-1) ?? '').split('/');
+      const [first, lastContainerPort = first] = range.split('-').map(Number);
+      const mapped = start + tcpContainerPort - first;
+      if (protocol === 'tcp' && tcpContainerPort >= first && tcpContainerPort <= lastContainerPort && mapped <= last) ports.push(mapped);
+    }
   }
   return ports;
 }
