@@ -320,7 +320,7 @@ export default function GatewayPageClient() {
   async function handleSaveRev4aKey() {
     const key = apiKeyInputs['rev4a']?.trim();
     if (!key) return;
-    await withOverlay('Saving REV4A API KEY…', async () => {
+    await withOverlay('Saving the Gateway key…', async () => {
       setMessages((prev) => ({ ...prev, rev4a: null }));
       try {
         const res = await fetch('/api/gateway/provider', {
@@ -330,7 +330,7 @@ export default function GatewayPageClient() {
         });
         const json = await res.json();
         if (json.status === 'ok') {
-          setMessages((prev) => ({ ...prev, rev4a: savedMessage('REV4A API KEY saved.', json.sync) }));
+          setMessages((prev) => ({ ...prev, rev4a: savedMessage('Gateway key saved.', json.sync) }));
           setOriginalKeys((prev) => ({ ...prev, rev4a: key }));
           await loadAll();
         } else {
@@ -472,7 +472,7 @@ export default function GatewayPageClient() {
       </section>
 
       {/* =========================================================== */}
-      {/*  REV4A API KEY — special section                         */}
+      {/*  Gateway key — special section                           */}
       {/* =========================================================== */}
       <div style={{ marginBottom: 20 }}>
       <Surface variant="panel">
@@ -483,7 +483,7 @@ export default function GatewayPageClient() {
               background: rev4aKeyConfigured ? 'var(--green)' : 'var(--gray)',
               flexShrink: 0,
             }} />
-            <div style={{ fontWeight: 600, fontSize: 14 }}>REV4A API KEY</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>GATEWAY KEY</div>
             {rev4aKeyConfigured ? <Pill tone="success">Configured</Pill> : <Pill tone="warning">Not configured</Pill>}
           </div>
 
@@ -491,7 +491,7 @@ export default function GatewayPageClient() {
             <PasswordInput
               value={apiKeyInputs['rev4a'] ?? ''}
               onChange={(v) => setApiKeyInputs((prev) => ({ ...prev, rev4a: v }))}
-              placeholder="REV4A_API_KEY"
+              placeholder="Gateway key"
               style={{ flex: 1, minWidth: 200 }}
               showGenerate
             />

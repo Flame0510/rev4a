@@ -357,7 +357,7 @@ await test('sync: missing key still reports the same error with agents or unreac
       for (const unreachable of [false, true]) {
         dockerUnavailable = unreachable;
         const outcome = await sync.syncAllAgents();
-        const error = 'REV4A_API_KEY not found in provider-keys.json (add "rev4a" key)';
+        const error = 'Gateway key not found in provider-keys.json (add a "rev4a" entry)';
         assert.equal(outcome.ok, false);
         assert.equal(outcome.configError, error);
         assert.equal(outcome.summary, `Not applied to any agent: ${error}.`);

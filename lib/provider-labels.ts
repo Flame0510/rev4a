@@ -12,7 +12,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   kimi: 'Kimi',
   glm: 'GLM (Z.AI)',
   qwen: 'Qwen',
-  rev4a: 'REV4A API KEY',
+  rev4a: 'Gateway key',
 };
 
 /** The label for a provider key, falling back to the key itself. */

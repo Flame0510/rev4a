@@ -221,7 +221,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_PASSWORD` | Yes | Login password for the dashboard |
 | `REV4A_TOKEN` | Yes | Token used for programmatic API access |
 | `REV4A_JWT_SECRET` | Yes | Secret used to sign session JWT tokens |
-| `REV4A_API_KEY` | No | API key for the Gateway provider endpoint (auto-generated) |
+| `REV4A_API_KEY` | No | Legacy master key, still accepted by the Gateway provider endpoint (auto-generated). Agents use tokens derived from the Gateway key instead |
 | `GATEWAY_TOKEN` | No | Shared token handed to agent containers |
 | `REV4A_DATA_DIR` | No | Root of all persistent data (default: `~/.config/rev4a`) |
 | `REV4A_DB` | No | Path to the events database (default: `<data dir>/data/events.db`) |

@@ -29,7 +29,7 @@ const ENV_METADATA: Record<
   },
   REV4A_API_KEY: {
     label: 'Rev4a API Key',
-    description: 'Master key for provider gateway — agents use this to authenticate when calling Rev4a as an LLM provider. Synced to Gateway.',
+    description: 'Legacy master key for the provider gateway, still accepted from external scripts. Agents do not use it: their tokens come from the Gateway key on the Gateway page, which is a different key.',
     placeholder: 'Gateway master key',
     sensitive: true,
   },

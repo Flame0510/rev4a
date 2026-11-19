@@ -130,7 +130,7 @@ already filled in — you normally never set these by hand. See
 | `REV4A_PASSWORD` | — | Yes | Dashboard login password (set via the setup wizard) |
 | `REV4A_TOKEN` | auto-generated | Yes | Bearer token for API routes and agent calls |
 | `REV4A_JWT_SECRET` | auto-generated | Yes | Secret for auth cookies |
-| `REV4A_API_KEY` | auto-generated | No | API key for the Gateway provider endpoint |
+| `REV4A_API_KEY` | auto-generated | No | Legacy master key, still accepted by the Gateway provider endpoint. Agents use tokens derived from the Gateway key instead |
 | `GATEWAY_TOKEN` | auto-generated | No | Shared token handed to agent containers |
 | `REV4A_DATA_DIR` | `~/.config/rev4a` | No | Root of all persistent data |
 | `REV4A_DB` | `<data dir>/data/events.db` | No | SQLite database path |

@@ -396,7 +396,7 @@ export async function syncAllAgents(): Promise<SyncOutcome> {
       // Docker being unreachable cannot prove there are no agents: keep reporting
       // the missing key below, rather than replacing it with a Docker error.
     }
-    outcome.configError = 'REV4A_API_KEY not found in provider-keys.json (add "rev4a" key)';
+    outcome.configError = 'Gateway key not found in provider-keys.json (add a "rev4a" entry)';
     outcome.summary = `Not applied to any agent: ${outcome.configError}.`;
     return outcome;
   }
