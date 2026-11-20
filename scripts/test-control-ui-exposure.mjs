@@ -27,7 +27,7 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log(`ok   ${name}`); };
 
 const hosts = ['localhost', 'localhost.', 'LOCALHOST', '127.0.0.1', '127.1.2.3', '::1', '[::1]', '0.0.0.0',
-  '192.168.1.10', '203.0.113.20', 'rev4a.lan', 'example.com', 'localhost.example.com', '127.999.1.1', '2001:db8::1'];
+  '192.168.1.10', '203.0.113.5', 'rev4a.lan', 'example.com', 'localhost.example.com', '127.999.1.1', '2001:db8::1'];
 
 test('https never exposes, on any host', () => {
   for (const h of hosts) assert.equal(navigation.controlUiExposesSession('https:', h), false, h);
@@ -40,7 +40,7 @@ test('http exposes exactly the hosts controlUiHostFor does not isolate', () => {
   for (const h of ['localhost', 'localhost.', '127.0.0.1', '127.1.2.3', '::1', '[::1]']) {
     assert.equal(navigation.controlUiExposesSession('http:', h), false, h);
   }
-  for (const h of ['0.0.0.0', '192.168.1.10', '203.0.113.20', 'rev4a.lan', 'example.com']) {
+  for (const h of ['0.0.0.0', '192.168.1.10', '203.0.113.5', 'rev4a.lan', 'example.com']) {
     assert.equal(navigation.controlUiExposesSession('http:', h), true, h);
   }
 });
@@ -50,7 +50,7 @@ test('other protocols never expose', () => {
 });
 
 test('tunnel command writes IPv6 without brackets (OpenSSH user@host, zsh globs) and keeps user literal', () => {
-  assert.equal(navigation.controlUiTunnelCommand('4550', '203.0.113.20'), 'ssh -L 4550:127.0.0.1:4550 user@203.0.113.20');
+  assert.equal(navigation.controlUiTunnelCommand('4550', '203.0.113.5'), 'ssh -L 4550:127.0.0.1:4550 user@203.0.113.5');
   assert.equal(navigation.controlUiTunnelCommand('4550', 'rev4a.lan'), 'ssh -L 4550:127.0.0.1:4550 user@rev4a.lan');
   assert.equal(navigation.controlUiTunnelCommand('4550', '2001:db8::1'), 'ssh -L 4550:127.0.0.1:4550 user@2001:db8::1');
   assert.equal(navigation.controlUiTunnelCommand('4550', '[2001:db8::1]'), 'ssh -L 4550:127.0.0.1:4550 user@2001:db8::1');
@@ -93,12 +93,12 @@ test('a managed public URL skips both warnings while direct and tunnel decisions
 test('controlUiPortLocalOnly decision table', () => {
   const rows = [
     // [hostIp, dashboard host, local only?]
-    [null, '203.0.113.20', false], [undefined, 'rev4a.lan', false], ['', 'rev4a.lan', false],
-    ['0.0.0.0', '203.0.113.20', false], ['::', '203.0.113.20', false],
-    ['127.0.0.1', '203.0.113.20', true], ['127.0.0.1', 'rev4a.example.com', true], ['::1', '203.0.113.20', true],
+    [null, '203.0.113.5', false], [undefined, 'rev4a.lan', false], ['', 'rev4a.lan', false],
+    ['0.0.0.0', '203.0.113.5', false], ['::', '203.0.113.5', false],
+    ['127.0.0.1', '203.0.113.5', true], ['127.0.0.1', 'rev4a.example.com', true], ['::1', '203.0.113.5', true],
     ['127.0.0.1', '2001:db8::1', true], ['127.0.0.1', '[2001:db8::1]', true],
     ['127.0.0.1', 'localhost', false], ['127.0.0.1', '127.0.0.1', false], ['::1', '[::1]', false], ['127.0.0.1', '::1', false],
-    ['10.0.0.5', '10.0.0.5', false], ['10.0.0.5', '203.0.113.20', true], ['10.0.0.5', 'rev4a.lan', false],
+    ['10.0.0.5', '10.0.0.5', false], ['10.0.0.5', '203.0.113.5', true], ['10.0.0.5', 'rev4a.lan', false],
     ['2001:DB8::5', '[2001:db8::5]', false], ['2001:db8::5', '10.0.0.5', true], ['10.0.0.5', 'localhost', false],
   ];
   for (const [ip, host, expected] of rows) assert.equal(navigation.controlUiPortLocalOnly(ip, host), expected, `${ip} / ${host}`);

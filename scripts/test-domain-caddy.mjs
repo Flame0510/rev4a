@@ -945,7 +945,7 @@ test('setup planner creates a fresh config, adopts the existing site, and merges
   const adopted = planCaddyfile(previous, config);
   assert.ok(adopted.content.includes('# Operator comment\n# Rev4a adopted'));
   assert.ok(adopted.content.includes('# rev4a.example.com { reverse_proxy 127.0.0.1:3740 }'));
-  const deployedHost = 'rev4a.example.com';
+  const deployedHost = 'rev4a.example.net';
   const deployed = deployedHost + ' { reverse_proxy 127.0.0.1:3740 }\n# Existing comment\n';
   assert.ok(planCaddyfile(deployed, { ...config, domain: deployedHost }).content.includes('# ' + deployed));
   const existing = '{\n\tdebug # comment\n\tlog {\n\t\toutput stderr\n\t}\n}\n' +
