@@ -46,6 +46,32 @@ Older versions do not receive patches: update from the dashboard banner or with
 - Once the fixed release is out, the advisory is published, with credit to you if you
   want it.
 
+## What Rev4a protects, and what it does not
+
+Rev4a keeps its secrets on the host it runs on, in the clear, protected by file
+permissions. This is a design choice, not an oversight:
+
+- The provider keys, the credential vault (`credentials.db`), `.env` and the other
+  Rev4a files live in the data directory (`~/.config/rev4a` by default). The secret
+  files are readable only by the user that runs Rev4a (mode `0600`), but they are
+  **not encrypted**.
+- An agent receives the credentials assigned to it in the clear, inside its own
+  container: it needs them to use them.
+- A backup made with `scripts/backup.sh` holds every secret in the clear. Store it as
+  carefully as the host itself.
+
+Encrypting these files with a key kept on the same host would not stop anyone who can
+read the data directory, because they could read the key too, and Rev4a has to restart
+unattended. So: **anyone with root on the host, a shell as the Rev4a user, a copy of the
+data directory or of a backup, or access to the Docker socket has every secret.** Protect
+the host: SSH keys instead of passwords, only the ports you need open, and HTTPS in front
+of the dashboard (see the remote access guide on
+[rev4a.app](https://rev4a.app/en/docs/remote-access)).
+
+A report that only shows "a secret is readable by someone who already has one of these
+accesses" is expected behaviour. A way to *get* one of these accesses without
+authorization is in scope.
+
 ## Scope
 
 In scope: the Rev4a code in this repository and the npm package built from it. This
