@@ -53,6 +53,7 @@ const WORDS = [
   'stato', 'tipo', 'costo', 'costi', 'durata', 'inizio', 'aggiorn', 'azioni', 'recenti',
   'grafo', 'reimposta', 'periodo', 'agenti', 'agente', 'apri', 'soglia', 'coprire',
   'contenuti', 'allinea', 'allineare', 'campioni', 'consecutivi',
+  'attuale', 'attuali', 'attualmente',
 ];
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.md', '.json', '.sh', '.yml', '.yaml', '.css', '.html'];

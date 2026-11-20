@@ -131,16 +131,11 @@ source for recovery after navigating away or reloading. No new browser storage o
     is the `Modal` component's own close control. Do not build a third variant of
     either, and do not reuse one for the other.
 
-    *Outstanding:* four dialogs predate the shared `Modal` and roll their own close
+    *Outstanding:* three dialogs predate the shared `Modal` and roll their own close
     control — the edit dialog and the `openclaw.json` dialog in
-    `app/agents/PageClient.tsx` (both a `ghost` Button with `✕`), the drawer in
-    `app/components/SessionDrawer.tsx` (a bare `<button>`), and
-    `app/components/ModelPickerModal.tsx` (`model-picker__close`, which compounds
-    the problem by using `×`, the *remove* glyph, to dismiss, and omits
-    `type="button"`). The fix is to move them onto `Modal`, not to extract a
-    `CloseButton`: they also reimplement Escape-to-close and overlay behaviour.
-    `ModelPickerModal` has no importers at all, so deleting it is the cheaper fix
-    there.
+    `app/agents/PageClient.tsx` (both a `ghost` Button with `✕`) and the drawer in
+    `app/components/SessionDrawer.tsx` (a bare `<button>`). Moving them onto `Modal`
+    gives them the shared close control, Escape handling and overlay behaviour.
 
     Separately, `app/agents/PageClient.tsx` has a raw `×` delete-backup button with
     no accessible name that should be `RemoveButton`.

@@ -8,6 +8,9 @@ const extraDevOrigins = (process.env.REV4A_DEV_ORIGINS ?? '')
 
 const nextConfig = {
   reactStrictMode: true,
+  // Rev4a does not use next/image: disable the image optimizer endpoint, and with a zero disk
+  // cache Next never scans or writes .next/cache/images for it.
+  images: { unoptimized: true, maximumDiskCacheSize: 0 },
   serverExternalPackages: ['better-sqlite3'],
   allowedDevOrigins: ['127.0.0.1', 'localhost', ...extraDevOrigins],
   async headers() {

@@ -98,13 +98,16 @@
 dashboard pages and API responses. Same-origin framing remains available for the
 Workspace PDF preview. The workspace SVG response keeps its existing sandbox CSP.
 
-Next.js 16.2.6's `sendResponse` keeps an already configured CSP and skips a route's
+Next.js 16.4.6's `sendResponse` keeps an already configured CSP and skips a route's
 CSP, rather than combining the policies. A global framing-only CSP would therefore
 discard the SVG sandbox; CSP changes must preserve that route policy. This behavior
 was verified offline with Next's response sender, without opening a listener.
 
 `node scripts/test-security-headers.mjs` checks the configured header rule and the
 npm package's test/fixture exclusions without a running server or an npm subprocess.
+
+`next.config.mjs` sets `images.unoptimized` so the Next.js image optimizer endpoint
+returns HTTP 404. The dashboard does not use `next/image`.
 
 ### 3.1 Rev4a Control Plane
 

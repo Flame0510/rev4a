@@ -13,6 +13,8 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ## Unreleased — Gateway token rotation
 
+- Upgraded to Next.js 16.4.6 for security, disabled the image optimizer endpoint (`/_next/image` now answers 404), and removed two unused dependencies.
+
 On agents running OpenClaw 2026.10.x, credential switches, model sync, subscription changes and
 Telegram pairing work again after rotating the Agents Gateway token. At startup, Rev4a retries
 pending native credential removals and failed switch-ons that still show a token mismatch, once
