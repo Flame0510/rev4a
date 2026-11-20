@@ -646,25 +646,44 @@ function restoreCase({ archiveBackups = false, failMv = false, failStage = false
   fs.writeFileSync(path.join(shim, 'systemctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   if (failStage) fs.writeFileSync(path.join(shim, 'mv'), `#!/bin/sh\nfor a in "$@"; do case "$a" in *.rev4a-restore.*) exit 1;; esac; done\nexec ${realMv} "$@"\n`, { mode: 0o755 });
   else if (!failMv) fs.unlinkSync(path.join(shim, 'mv'));
-  const r = spawnSync('bash', [restoreSh, archive], {
-    env: { ...process.env, HOME: home, REV4A_DATA_DIR: data, PATH: shim + ':' + process.env.PATH },
-    encoding: 'utf8',
-  });
-  return { r, home, data, realBackups };
+  const logPath = path.join(home, 'restore.log');
+  const log = fs.openSync(logPath, 'w');
+  let r;
+  try {
+    // A descendant can keep a capture pipe open after bash exits. A file lets
+    // spawnSync return independently of descendants so we can clean up the group.
+    r = spawnSync('bash', [restoreSh, archive], {
+      env: { ...process.env, HOME: home, REV4A_DATA_DIR: data, PATH: shim + ':' + process.env.PATH },
+      stdio: ['ignore', log, log],
+      detached: true,
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+    });
+  } finally {
+    fs.closeSync(log);
+    if (r?.pid) {
+      try { process.kill(-r.pid, 'SIGKILL'); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+  }
+  const output = fs.readFileSync(logPath, 'utf8');
+  assert.ok(!r.error, `${r.error}\n${output}`);
+  assert.equal(r.signal, null, output);
+  return { status: r.status, output, home, data, realBackups };
 }
 const read = (p) => fs.readFileSync(p, 'utf8');
 const anywhere = (home, content) => execFileSync('grep', ['-rl', content, home, '--include=agent-*'], { encoding: 'utf8' });
 
 await test('restore.sh: a normal restore keeps the current backups', () => {
-  const { r, data } = restoreCase({});
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const { status, output, data } = restoreCase({});
+  assert.equal(status, 0, output);
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000001.tar.gz')), 'CURRENT');
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000002.tar.gz')), 'CURRENT2');
   assert.equal(read(path.join(data, 'data', 'x.db')), 'new');
 });
 await test('restore.sh: an archive that holds backups/ never overwrites or deletes the current ones', () => {
-  const { r, data } = restoreCase({ archiveBackups: true });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const { status, output, data } = restoreCase({ archiveBackups: true });
+  assert.equal(status, 0, output);
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000001.tar.gz')), 'CURRENT');
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000002.tar.gz')), 'CURRENT2');
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000003.tar.gz')), 'ONLY-IN-ARCHIVE');
@@ -672,40 +691,40 @@ await test('restore.sh: an archive that holds backups/ never overwrites or delet
   assert.deepEqual(leftovers, []);
 });
 await test('restore.sh: when moving the data directory fails, the backups still exist and the message says where', () => {
-  const { r, home, data } = restoreCase({ failMv: true });
-  assert.notEqual(r.status, 0);
+  const { status, output, home, data } = restoreCase({ failMv: true });
+  assert.notEqual(status, 0, output);
   const found = anywhere(home, 'CURRENT');
   assert.match(found, /agent-a1-cold-2026-10-24_000000001\.tar\.gz/);
   assert.match(found, /agent-a1-cold-2026-10-24_000000002\.tar\.gz/);
   // back in place, or reported in a kept folder
   const inPlace = fs.existsSync(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000001.tar.gz'));
-  assert.ok(inPlace || /NOT deleted: they are in /.test(r.stderr), r.stderr);
+  assert.ok(inPlace || /NOT deleted: they are in /.test(output), output);
 });
 
 await test('restore.sh: a backups folder that is a symbolic link stays a link to the same folder', () => {
-  const { r, data, realBackups } = restoreCase({ symlinkBackups: true });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const { status, output, data, realBackups } = restoreCase({ symlinkBackups: true });
+  assert.equal(status, 0, output);
   assert.ok(fs.lstatSync(path.join(data, 'backups')).isSymbolicLink());
   assert.equal(fs.realpathSync(path.join(data, 'backups')), fs.realpathSync(realBackups));
   assert.equal(read(path.join(realBackups, 'agent-a1-cold-2026-10-24_000000001.tar.gz')), 'CURRENT');
   assert.equal(read(path.join(realBackups, 'agent-a1-cold-2026-10-24_000000002.tar.gz')), 'CURRENT2');
 });
 await test('restore.sh: the archive file never takes a current name, and a taken aside name gets a number', () => {
-  const { r, data } = restoreCase({ archiveBackups: true, asideTaken: true });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const { status, output, data } = restoreCase({ archiveBackups: true, asideTaken: true });
+  assert.equal(status, 0, output);
   const dir = path.join(data, 'backups');
   assert.equal(read(path.join(dir, 'agent-a1-cold-2026-10-24_000000001.tar.gz')), 'CURRENT');
   const asides = fs.readdirSync(dir).filter((n) => n.includes('.from-restore-archive')).map((n) => read(path.join(dir, n))).sort();
   assert.deepEqual(asides, ['FROM-ARCHIVE', 'TAKEN']);
 });
 await test('restore.sh: a swap that fails between the two moves restores the old data and keeps the backups', () => {
-  const { r, home, data } = restoreCase({ failStage: true });
-  assert.notEqual(r.status, 0);
+  const { status, output, home, data } = restoreCase({ failStage: true });
+  assert.notEqual(status, 0, output);
   assert.equal(read(path.join(data, '.env')), 'A=0\n', 'the previous data is back in place');
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000001.tar.gz')), 'CURRENT');
   assert.equal(read(path.join(data, 'backups', 'agent-a1-cold-2026-10-24_000000002.tar.gz')), 'CURRENT2');
   assert.match(anywhere(home, 'CURRENT'), /agent-a1-cold/);
-  assert.match(r.stderr, /previous data directory|data directory is/);
+  assert.match(output, /previous data directory|data directory is/);
 });
 
 console.log(`\n${passed} passed`);

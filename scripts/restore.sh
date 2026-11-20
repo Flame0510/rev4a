@@ -45,14 +45,15 @@ DATA_DIR="$(cd "$DATA_DIR" && pwd -P)"
 
 # Refuse an archive that is not a backup.sh archive of a Rev4a data directory. The listing
 # is read whole: `grep -q` would stop reading early and, with pipefail, turn tar's SIGPIPE
-# into a false refusal on large archives.
+# into a false refusal on large archives. It is piped, not passed as a here-string: bash 5.2 on
+# macOS can block forever writing a large here-string into a pipe (seen in heredoc_write).
 LISTING="$(tar -tvzf "$ARCHIVE")"
-if ! grep -E '[[:space:]]\./(\.env|data/)' <<<"$LISTING" >/dev/null; then
+if ! printf '%s\n' "$LISTING" | grep -E '[[:space:]]\./(\.env|data/)' >/dev/null; then
   echo "Error: $ARCHIVE does not look like a Rev4a data backup (no .env or data/ inside)." >&2
   exit 1
 fi
 # backup.sh never stores links; a link in the archive could point outside the data directory.
-if grep -E '^[lh]' <<<"$LISTING" >/dev/null; then
+if printf '%s\n' "$LISTING" | grep -E '^[lh]' >/dev/null; then
   echo "Error: $ARCHIVE contains symbolic or hard links — refusing to restore it." >&2
   exit 1
 fi

@@ -138,6 +138,8 @@ and the per-agent `openclaw.json` write queue (`npm run test:agent-config-lock`)
 agent's `openclaw.json` must go through `withAgentConfigLock` (`lib/agent-config-lock.ts`).
 These gates do not replace a running-instance check for behavior changes.
 
+New API handlers must start with `requireAuthJWT` and return its denial before doing any work (`scripts/test-route-auth.mjs`, run by `npm test`, enforces it; `requireAuthIfConfigured` is allowed only in the first-run `setup` and `wizard` routes).
+
 `npm-shrinkwrap.json` is the published dependency lock for the globally installed app.
 `package-lock.json` cannot be published by npm, even if named in `package.json`'s
 `files`. Keep one lockfile: after changing dependencies, update the shrinkwrap with

@@ -25,6 +25,9 @@ credentials of one service are switched on or a failure falls outside startup re
 **Credentials** and switch on the one to keep or select **Retry removal**. Stopped agents retry
 when they next start.
 
+`scripts/restore.sh` no longer passes the archive listing to `grep` as a here-string: with bash 5.2 on macOS
+that write could block forever and leave the restore hanging.
+
 ## 1.30.1 — Agents token reaches stopped agents
 
 **Agents → Gateway Token → Save & Sync** now updates every agent. Running agents restart with the new token as before; stopped agents get it on their volume and use it at their next start. Before, a stopped agent kept the old token, and because the token file on the volume wins over the container environment it kept it even after a Recreate. Busy or paused agents are listed and keep the old token until you save again. After the update, Rev4a also gives the saved token, at its first start, to every stopped agent left on an older one by the old Save & Sync (logged).

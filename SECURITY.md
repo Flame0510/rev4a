@@ -73,6 +73,10 @@ the host: SSH keys instead of passwords, only the ports you need open, and HTTPS
 of the dashboard (see the remote access guide on
 [rev4a.app](https://rev4a.app/en/docs/remote-access)).
 
+All agents share one Gateway token, and by default they run on the same Docker network. If
+someone compromises one agent, they can use that token to reach the Gateways of the other
+agents on that network. Per-agent isolation is planned.
+
 A report that only shows "a secret is readable by someone who already has one of these
 accesses" is expected behaviour. A way to *get* one of these accesses without
 authorization is in scope.

@@ -223,6 +223,9 @@ The central container, running the Next.js dashboard + orchestration API.
   may contain `-`: every selection of an agent's backups compares the parsed id, never a `agent-<id>-` prefix.
   The write helper first checks it can write to the mounted folder and says so when it cannot (SELinux,
   user-namespace remapping).
+- **Host restore tests** run the shipped `scripts/restore.sh` against temporary data. Each
+  invocation has a 30-second timeout and a separate process group. The test records output
+  in a file and kills any remaining processes in that group before checking the result.
 - **Agent updates** are `lib/agent-update.ts`, with their state in the `agent_upgrades`
   table (`lib/agent-update-state.ts`). An update counts the agent's transcript events per
   session and its complete cron identity/ownership inventory, takes a cold pre-update backup, recreates the container on
@@ -626,6 +629,10 @@ not bypass the origin guard. The terminal WebSocket retains its independent Orig
 in `server.js`. No database, configuration or agent-volume migration is introduced.
 `scripts/test-csrf-origin.mjs` exercises the middleware with real `NextRequest` objects
 and an isolated update-state directory, without a server, Docker or real credentials.
+
+`scripts/test-route-auth.mjs` checks that each API handler calls its auth guard and returns
+the denial before doing work. The test records the exceptions for login and session
+bootstrap, Caddy certificate checks, and the provider gateway's own caller credentials.
 
 The unused gateway provider OAuth route was removed: its GET polled a caller-selected
 device flow and saved credentials, allowing login CSRF through navigation. Its device
