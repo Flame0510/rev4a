@@ -835,9 +835,13 @@ texts are stripped of the secret values (raw, trimmed and JSON-escaped forms).
 After startup sync, Rev4a checks the existing assignment errors in the background. Running
 agents with a token mismatch get up to two minutes for the Gateway to become ready before
 Rev4a retries pending removals for native providers, then eligible mismatched switch-ons.
+Each mismatch repair re-checks running state, ownership and the assignment error under the
+agent config lock. Busy agents and agents whose ownership cannot be verified are skipped.
 A pending removal clears without a container write when another enabled credential of the
-same provider has a recorded delivery. A mismatched switch-on is retried only if it is the
-sole failed switch-on for that provider. Stopped agents use their normal start-time re-apply.
+same provider has a recorded delivery. Successful container removals also attempt legacy
+cleanup. A mismatched switch-on is retried only if it is the sole enabled assignment of its
+provider. A timeout candidate of the same provider keeps its existing priority. Stopped agents
+use their normal start-time re-apply.
 Calls on one container are serialized on the agent's config lock (below): the patch rewrites openclaw.json. After a
 successful native delivery the files and TOOLS.md row an earlier release wrote for that
 provider on that agent are removed. `applyRuntimeConfig` starts, in the background and

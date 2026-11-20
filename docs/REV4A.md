@@ -14,9 +14,14 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 ## Unreleased — Gateway token rotation
 
 On agents running OpenClaw 2026.10.x, credential switches, model sync, subscription changes and
-Telegram pairing work again after rotating the Agents Gateway token. At Rev4a startup, failed
-credential switch-ons and pending removals caused by a token mismatch are retried automatically
-once running agents are ready. Stopped agents retry when they next start. Existing agents recover in place.
+Telegram pairing work again after rotating the Agents Gateway token. At startup, Rev4a retries
+pending native credential removals and failed switch-ons that still show a token mismatch, once
+the running agent's Gateway is ready and Rev4a can verify that no job owns the agent. A mismatch
+switch-on is retried only when it is the sole enabled credential for its service. The existing
+timeout repair still takes priority for a timed-out switch-on of the same service. If two
+credentials of one service are switched on or a failure falls outside startup repair, open
+**Credentials** and switch on the one to keep or select **Retry removal**. Stopped agents retry
+when they next start.
 
 ## 1.30.1 — Agents token reaches stopped agents
 
@@ -706,10 +711,13 @@ Store third-party service credentials and install them into agent containers.
   "exit 137", one agent at a time once its Gateway is ready, with a success/failure log per agent.
   Two such credentials of the same service on one agent are left for the user to choose. This never delays dashboard startup. A success clears the
   error, so later starts skip it. Stopped agents keep their start-time re-apply.
-  Token mismatches are also repaired at startup. If another enabled profile of the same service
-  was delivered, the retry clears the old profile's pending removal and preserves the delivered credential.
+  Token mismatches are also repaired at startup when Rev4a can verify that the running agent is free
+  under its config lock. A switch-on is retried only if it is still the sole enabled profile of its
+  service and still has the mismatch error. If another enabled profile of the same service was
+  delivered, the retry clears the old profile's pending removal and preserves the delivered credential.
+  A successful container removal also attempts to clean the old files and TOOLS.md row.
   Other failures and pending removals retain the lifecycle consistency pass and manual
-  **Redeliver** / **Retry removal**. This fix changes no stored format, values or version
+  **Redeliver** / **Retry removal**. This fix changes no stored format or version
   requirements and is safe to roll back to the preceding release.
 - **Failures and leftovers.** A switch-off tries every supported step; if one fails the row says "Removal failed — the token may still be on this agent" with **Retry removal**, the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. This includes a failed removal of a credential found in the agent with no prior Rev4a assignment. Rows for an agent that is stopped or busy show its display name (the container name as a small label) and a disabled switch with the reason ("Not running — start the agent to change its credentials" / "Busy: <reason> — try again when it finishes"); the server refuses a container write with 409, while an intent-only **Remove** can clear Rev4a's setting without touching a stopped or busy container. Re-apply runs in the background after create, recreate, update, edit, restore, rollback, start and restart once the Gateway is ready. The switch of a running agent is disabled while a job owns it. Rows for a deleted agent (**Forget**) stay listed; deleting an agent drops its rows. A row replaced by another profile of the same provider reads "replaced by <label>".
 - **Release note / rollback.** Writes to one agent's `openclaw.json` (credentials, subscriptions, the Rev4a provider block, the Control UI policy, channels, model changes) are queued per agent, so two of them never run at once: they only wait for each other when several happen together. Before rolling Rev4a back below this version, switch credentials off (or they stay in the agents): the older version knows neither the secret store nor the managed GitHub identity, and a replaced profile is never removed.
@@ -1034,7 +1042,7 @@ Only models whose provider has a key in `data/provider-keys.json` are synced.
 ## Key Gotchas
 
 1. **`auth.mode: "none"` + `0.0.0.0:3000`** → OpenClaw refuses to bind. Must be `auth.mode: "token"`.
-2. **Control UI password** is the `gateway.auth.token`, not an env var.
+2. **Control UI token** comes from `/root/.agent-token` when present. The entrypoint uses the container's `OPENCLAW_GATEWAY_TOKEN` when the file is absent and generates a token if it has no usable value. If `openclaw.json` sets `gateway.auth.token`, the entrypoint explicitly passes the resolved agent token so it takes precedence.
 3. **API routes need full build** — after editing `route.ts`, run `npm run build`. Server restart alone is not enough.
 4. **Container directory listing** uses `docker exec` with `ls -1Ap` (single line per entry, trailing `/` on directories). Do NOT use `ls -la` with regex parsing.
 5. **Subdirectory detection** for containers: `docker exec … test -d "$path" && echo YES || echo NO` before deciding to list or read.

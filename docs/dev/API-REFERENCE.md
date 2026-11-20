@@ -2259,7 +2259,7 @@ being swallowed.
 - Saves and agent creates are serialized by one process-wide lock (`lib/agent-token-lock.ts`): two saves end with the file and every container on the last token, and a save during a create waits for the new container to exist
 - If Docker cannot be reached the file is still written and the answer is `502 { success: false, error: "Docker is not reachable: …" }`; when some containers failed, `success` is `false` and `error` summarizes them (the page shows it)
 - Writes the token file (`/root/.agent-token`, mode 0600, replaced atomically) into every running container with `AGENT_ID` label. The token is sent on stdin to a constant script, so the write never puts it in host or container argv (the gateway process itself receives it in `OPENCLAW_GATEWAY_TOKEN` from the image entrypoint, `agent-templates/base-image/entrypoint.sh`, not as `--token`; images built before SEC-13 and agents whose `openclaw.json` sets `gateway.auth` still use `--token`); every `error` returned (per container and the outer one) has the token replaced with `***`
-- Restarts each container so the entrypoint picks up the new token via `OPENCLAW_GATEWAY_TOKEN` env
+- Restarts each container so the entrypoint reads the new token from `/root/.agent-token`, falling back to the container's `OPENCLAW_GATEWAY_TOKEN` when the file is absent. If the file write succeeds but the restart fails, the Agents page lists the agent as failed and Gateway CLI calls fail until it restarts because the Gateway still has the old token in memory while the file holds the new one.
 - Stopped (exited, created) containers: writes `/root/.agent-token` (0600) with `docker cp` from a private host temp dir that is removed afterwards; the token never appears in argv. A directory or symlink at that path is reported as failed and never written through. An agent that started between the listing and the write is then updated like a running one (write + restart). `success` stays true when agents were only skipped; the page lists restarted, stopped, skipped and failed agents, says that agents not updated still accept the old token, and keeps that warning until the next save. At startup (since 1.30.1) Rev4a gives the saved token to every stopped agent still on another one (volume file, else environment), under the same token lock; idempotent, logged
 
 ---
@@ -3321,20 +3321,45 @@ It never waits for delivery during dashboard startup. Success clears `last_error
 the next start skips the repaired assignment; stopped agents retain their usual
 start-time re-apply.
 
-The same pass repairs native credential assignments whose `last_error` contains "gateway token
-mismatch". OpenClaw 2026.10 refused CLI calls that used the old token from the container
+The same pass checks native credential assignments whose `last_error` contains "gateway token
+mismatch" (case-insensitive). OpenClaw 2026.10 refused CLI calls that used the old token from the container
 environment. Rev4a now reads the current token inside the container through `lib/gateway-cli.ts`.
-It retries pending removals under the agent lock before retrying mismatched switch-ons. If an
-enabled sibling of the same provider has a recorded delivery (`synced_at`), Rev4a clears the
-pending mark without removing the sibling's entries. An enabled mismatch is retried through the
-Switch's own path only when it is the sole failed switch-on for that provider on that agent.
-A same-provider mismatch leaves the legacy timeout retry eligible under its own rules.
-Rev4a logs when it skips an ambiguous mismatch. Busy agents are skipped. The outcome per agent is
-`[rev4a] Credentials repaired after a token mismatch: <agent>` or
-`[rev4a] Credentials after a token mismatch are still failing: <agent>`, never exception text.
-A retry that records a different failure falls out of the token-mismatch startup repair, while
-agent start, recreate or update and manual **Redeliver** or **Retry removal** can retry it again.
-Credential payloads, version floors, stdin transport and redaction are unchanged.
+Once the Gateway is ready, Rev4a checks ownership before taking the agent config lock and again
+under the lock before each mismatch repair. It logs a skip if the agent is busy or unavailable,
+or if ownership cannot be verified. Under the lock it re-reads each assignment and proceeds only
+if the row still has the mismatch error and is either switched off with a pending removal or
+switched on, respectively.
+
+Pending removals run before mismatched switch-ons. If another enabled credential of the same
+provider has a recorded delivery (`synced_at`), Rev4a clears the pending mark without touching
+the container. If another enabled credential of the same provider has no recorded delivery and
+failed for a reason other than the token mismatch, or the provider of an enabled sibling cannot be
+read, the removal is not retried and Rev4a logs `[rev4a] Credential removal not retried on <agent>:
+another credential of the same service is switched on; finish it in Credentials`. A sibling that
+failed on the same token mismatch does not block it: it is the switch-on this pass handles next.
+Otherwise, a successful removal also attempts to clean legacy files and the old
+TOOLS.md row. Cleanup warnings do not fail the removal. The lifecycle re-apply uses the same
+removal and cleanup steps.
+
+A mismatched switch-on uses the same delivery and recording steps as the Switch and runs only
+if it uses `env` mode and is the sole enabled assignment of its provider on that agent. Rev4a
+logs a skip if any same-provider sibling is switched on, regardless of its delivery state or error,
+or still has a pending removal (a switch-on would clear that removal's mark).
+When the same provider had a timed-out switch-on at selection, Rev4a logs that it left the
+mismatched switch-on to the timeout repair, which follows its usual rules and supersedes the
+mismatch on success; when those timed-out switch-ons are themselves ambiguous, it logs the
+same-service skip instead. Both startup repairs run once per Rev4a start.
+
+Known limit: lifecycle jobs (update, recreate, restore, backup) do not take the agent config lock.
+A job that claims the agent after the repair's last ownership check, while its commands run, can
+overlap with it, as it can with a Switch made from the page.
+
+Rev4a logs `[rev4a] Credentials repaired after a token mismatch: <agent>` when a repair succeeds
+and no attempt on that agent fails. If a repair fails or the Gateway never becomes ready, it logs
+`[rev4a] Credentials after a token mismatch are still failing: <agent>`. These outcome and skip
+lines contain no exception text. A row whose error changes to another failure is left for the
+usual lifecycle re-apply or for the user to switch on the credential to keep or choose
+**Retry removal** in Credentials.
 
 Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). The delivery's Gateway CLI calls include config patches, secret-store writes and removals, reloads and GitHub RPCs. They use the token in `/root/.agent-token` when present and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
 

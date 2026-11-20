@@ -155,6 +155,7 @@ export async function githubEnable(exec: NativeExec, token: string): Promise<voi
  */
 async function sweepGithubHandoffs(exec: NativeExec): Promise<void> {
   const script = [
+    'export OPENCLAW_GATEWAY_PORT=3000;',
     "openclaw secrets store list 2>/dev/null | grep -o 'github-setup-[a-f0-9]\\{32\\}' | sort -u |",
     'while read -r n; do openclaw secrets store rm --yes "$n" >/dev/null 2>&1; done; exit 0',
   ].join(' ');

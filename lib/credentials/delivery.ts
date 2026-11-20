@@ -1,8 +1,10 @@
 import { dockerExec, dockerExecWithInput, mapWithConcurrency } from '@/lib/docker-exec';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
-import { agentBusyReason } from '@/lib/agent-busy';
+import { agentBusyReason, currentBusyReason } from '@/lib/agent-busy';
 import { listAgentContainers as listAgentRows } from '@/lib/subscriptions';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
+import { LABEL_AGENT } from '../backup-helper';
+import { dockerRequestJson } from '../docker-socket-path';
 import { writeRefusal } from './guard';
 import { getSecret, getProfile, markSynced, markDesynced } from './vault';
 import { getProvider } from './providers';
@@ -387,23 +389,41 @@ const serialized = withAgentConfigLock;
 
 const safeName = (c: string): string => c.replace(/[^a-zA-Z0-9_.-]/g, '');
 
+/** The ordinary backup probe treats a failed Docker read as no backup. Require a known answer. */
+async function startupRepairBusyReason(agentId: string): Promise<string | null> {
+  const busy = currentBusyReason(agentId);
+  if (busy) return busy;
+  const filters = encodeURIComponent(JSON.stringify({
+    label: [`${LABEL_AGENT}=${agentId}`],
+    status: ['running', 'paused', 'restarting'],
+  }));
+  const timeoutMs = 8_000;
+  const helpers = await dockerRequestJson('GET', `/containers/json?all=true&filters=${filters}`, timeoutMs, AbortSignal.timeout(timeoutMs));
+  if (!Array.isArray(helpers)) throw new Error('Could not check for a running backup');
+  if (helpers.length) return 'A backup of this agent is running';
+  return currentBusyReason(agentId);
+}
+
 /**
- * Why a user-facing switch on or off must not run on this agent now (stopped, gone, or owned
+ * Why a switch on or off must not run on this agent now (stopped, gone, or owned
  * by an update / recreate / restore / edit / backup), or null. `reapplyAssignments` does not
- * call this: the jobs run it themselves once they have finished. When Docker cannot be read
- * the answer is null, so the attempt fails (and is recorded) the way it always did.
+ * call this: the jobs run it themselves once they have finished. If Docker cannot be read,
+ * user-requested writes keep their existing best-effort behaviour.
  */
-export async function agentWriteRefusal(container: string): Promise<string | null> {
+export async function agentWriteRefusal(container: string, opts: { requireKnownOwnership?: boolean } = {}): Promise<string | null> {
   const name = safeName(container);
   try {
     const row = (await listAgentRows({ fresh: true })).find((a) => a.container === name);
+    const busy = row
+      ? await (opts.requireKnownOwnership ? startupRepairBusyReason(row.agentId) : agentBusyReason(row.agentId))
+      : null;
     return writeRefusal({
       exists: !!row,
       running: !!row?.running,
-      busy: row ? await agentBusyReason(row.agentId) : null,
+      busy,
     });
   } catch {
-    return null;
+    return opts.requireKnownOwnership ? 'Agent ownership could not be verified' : null;
   }
 }
 
@@ -439,32 +459,37 @@ export async function enableAssignment(
   return serialized(name, async (): Promise<SyncResult> => {
     // A re-delivery (secret edited) must not switch back on what was switched off meanwhile.
     if (opts.onlyIfEnabled && !getAssignment(profileId, name)?.enabled) return { container: name, status: 'ok' };
-    const exec = execFor(name);
-    try {
-      await applyEnable(exec, profile.providerId, getSecret(profileId));
-    } catch (e) {
-      const error = (e as Error).message;
-      // An unsupported version refused delivery before writing anything. Preserve any
-      // previous assignment, and do not invent an enabled row for a new one.
-      if (!(e instanceof UnsupportedNativeVersionError)) {
-        try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
-      }
-      try { markSynced(profileId, 'error'); } catch { /* keep the delivery result */ }
-      return { container: name, status: 'error', error };
-    }
-    // Migration: only this provider, only this agent. Idempotent.
-    const warnings = await cleanLegacy(exec, profile.providerId);
-    try {
-      supersedeSiblings(profileId, profile.providerId, name);
-      recordAssignment(profileId, name, { enabled: true, mode, ok: true });
-      markSynced(profileId, 'active');
-    } catch (e) {
-      console.warn(`[credentials] delivered to ${name} but could not record it:`, (e as Error).message);
-    }
-    return warnings.length
-      ? { container: name, status: 'ok', warning: `Switched on, but ${warnings.join(' and ')}` }
-      : { container: name, status: 'ok' };
+    return deliverEnabledAssignment(name, profileId, profile.providerId, mode);
   });
+}
+
+/** Deliver and record a switch-on under the agent's config lock. */
+async function deliverEnabledAssignment(name: string, profileId: string, providerId: string, mode: AssignmentMode): Promise<SyncResult> {
+  const exec = execFor(name);
+  try {
+    await applyEnable(exec, providerId, getSecret(profileId));
+  } catch (e) {
+    const error = (e as Error).message;
+    // An unsupported version refused delivery before writing anything. Preserve any
+    // previous assignment, and do not invent an enabled row for a new one.
+    if (!(e instanceof UnsupportedNativeVersionError)) {
+      try { recordAssignment(profileId, name, { enabled: true, mode, ok: false, error }); } catch { /* keep the delivery result */ }
+    }
+    try { markSynced(profileId, 'error'); } catch { /* keep the delivery result */ }
+    return { container: name, status: 'error', error };
+  }
+  // Migration: only this provider, only this agent. Idempotent.
+  const warnings = await cleanLegacy(exec, providerId);
+  try {
+    supersedeSiblings(profileId, providerId, name);
+    recordAssignment(profileId, name, { enabled: true, mode, ok: true });
+    markSynced(profileId, 'active');
+  } catch (e) {
+    console.warn(`[credentials] delivered to ${name} but could not record it:`, (e as Error).message);
+  }
+  return warnings.length
+    ? { container: name, status: 'ok', warning: `Switched on, but ${warnings.join(' and ')}` }
+    : { container: name, status: 'ok' };
 }
 
 /**
@@ -546,7 +571,12 @@ async function retryPendingRemoval(name: string, profileId: string, providerId: 
   // Only a delivered sibling owns the entries. A failed switch-on may have left our secret there.
   const takenOver = listLiveForAgent(name).some((o) => o.enabled && o.syncedAt != null && o.profileId !== profileId
     && getProfile(o.profileId)?.providerId === providerId);
-  const errors = takenOver ? [] : await applyDisable(execFor(name), providerId, secretValues(profileId));
+  let errors: string[] = [];
+  if (!takenOver) {
+    const exec = execFor(name);
+    errors = await applyDisable(exec, providerId, secretValues(profileId));
+    if (!errors.length) await cleanLegacy(exec, providerId);
+  }
   recordAssignment(profileId, name, errors.length
     ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
     : { enabled: false, ok: true });
@@ -634,7 +664,7 @@ export function selectCredentialStartupRepairs(
   return byAgent;
 }
 
-/** For one agent, repairing either of two failed switch-ons of the same provider would supersede the other. */
+/** For one agent, repairing either of two timed-out switch-ons of the same provider would supersede the other. */
 export function selectUnambiguousCredentialEnables(
   rows: readonly CredentialAssignment[],
   providerOf: (profileId: string) => string,
@@ -647,15 +677,64 @@ export function selectUnambiguousCredentialEnables(
   return rows.filter((a) => perProvider.get(providerOf(a.profileId)) === 1);
 }
 
-async function repairMismatchedRemoval(name: string, profileId: string): Promise<boolean> {
-  if (await agentWriteRefusal(name)) return false;
+type MismatchRepairOutcome = 'repaired' | 'failed' | 'skipped';
+
+async function withMismatchRepairLock(name: string, repair: () => Promise<MismatchRepairOutcome>): Promise<MismatchRepairOutcome> {
+  const refused = async () => {
+    if (!(await agentWriteRefusal(name, { requireKnownOwnership: true }))) return false;
+    console.warn(`[rev4a] Credentials not repaired on ${name}: agent is busy, unavailable, or ownership could not be verified`);
+    return true;
+  };
+  if (await refused()) return 'skipped';
   return serialized(name, async () => {
+    if (await refused()) return 'skipped';
+    return repair();
+  });
+}
+
+async function repairMismatchedRemoval(name: string, profileId: string): Promise<MismatchRepairOutcome> {
+  return withMismatchRepairLock(name, async () => {
     // A switch or lifecycle retry may have resolved this while startup waited for the lock.
     const a = getAssignment(profileId, name);
-    if (!a || a.enabled || !a.pendingRemoval) return true;
+    if (!a || a.enabled || !a.pendingRemoval || !TOKEN_MISMATCH.test(a.lastError ?? '')) return 'skipped';
     const profile = getProfile(profileId);
-    if (!profile || !nativeProvider(profile.providerId)) return false;
-    return retryPendingRemoval(name, profileId, profile.providerId);
+    if (!profile || !nativeProvider(profile.providerId)) return 'failed';
+    // The removal is provider-wide. A switched-on sibling of the same service that was never
+    // recorded as delivered and failed for another reason (or whose service cannot be read) may own
+    // the entries: leave it to the user. A sibling that failed on the same token mismatch is this
+    // pass's own next switch-on (removals run first), so the user's latest choice wins.
+    for (const sibling of listLiveForAgent(name)) {
+      if (!sibling.enabled || sibling.profileId === profileId) continue;
+      const siblingProvider = getProfile(sibling.profileId)?.providerId;
+      if (!siblingProvider || (siblingProvider === profile.providerId && sibling.syncedAt == null
+        && !TOKEN_MISMATCH.test(sibling.lastError ?? ''))) {
+        console.warn(`[rev4a] Credential removal not retried on ${name}: another credential of the same service is switched on; finish it in Credentials`);
+        return 'skipped';
+      }
+    }
+    const cleared = await retryPendingRemoval(name, profileId, profile.providerId);
+    return cleared ? 'repaired' : 'failed';
+  });
+}
+
+async function repairMismatchedEnable(name: string, profileId: string): Promise<MismatchRepairOutcome> {
+  return withMismatchRepairLock(name, async () => {
+    const a = getAssignment(profileId, name);
+    if (!a?.enabled || !TOKEN_MISMATCH.test(a.lastError ?? '')) return 'skipped';
+    const profile = getProfile(profileId);
+    if (a.mode !== 'env' || !profile || !nativeProvider(profile.providerId)) return 'failed';
+    for (const sibling of listLiveForAgent(name)) {
+      // A pending removal of the same service is ambiguous too: a switch-on would supersede it.
+      if ((!sibling.enabled && !sibling.pendingRemoval) || sibling.profileId === profileId) continue;
+      const siblingProvider = getProfile(sibling.profileId)?.providerId;
+      if (!siblingProvider) return 'failed';
+      if (siblingProvider === profile.providerId) {
+        console.warn(`[rev4a] Credentials not re-applied on ${name}: another credential of the same service is switched on; choose in Credentials`);
+        return 'skipped';
+      }
+    }
+    const result = await deliverEnabledAssignment(name, profileId, profile.providerId, a.mode);
+    return result.status === 'ok' && getAssignment(profileId, name)?.lastError === null ? 'repaired' : 'failed';
   });
 }
 
@@ -682,12 +761,16 @@ export async function repairCredentialTimeoutsAtStartup(): Promise<void> {
     if (timeoutEnables.length < timedOut.length) {
       console.warn(`[rev4a] Credentials not re-applied on ${agent.container}: two credentials of the same service timed out; switch on the one to keep in Credentials`);
     }
-    // A mismatch switch-on must be the only failed switch-on of its provider.
+    // Preserve the timeout repair's priority. It may supersede the mismatched switch-on.
     const timeoutProviders = new Set(mismatchedEnables.length ? timedOut.map((a) => providerKey(a.profileId)) : []);
-    const mismatchEnables = selectUnambiguousCredentialEnables(mismatchedEnables, providerKey)
-      .filter((a) => !timeoutProviders.has(providerKey(a.profileId)));
+    const mismatchEnables = mismatchedEnables.filter((a) => !timeoutProviders.has(providerKey(a.profileId)));
     if (mismatchEnables.length < mismatchedEnables.length) {
-      console.warn(`[rev4a] Credentials not re-applied on ${agent.container}: two credentials of the same service failed; switch on the one to keep in Credentials`);
+      // Name the timeout repair only when one of that service will really run.
+      const repairedProviders = new Set(timeoutEnables.map((a) => providerKey(a.profileId)));
+      const handedOff = mismatchedEnables.some((a) => repairedProviders.has(providerKey(a.profileId)));
+      console.warn(handedOff
+        ? `[rev4a] Credential with a token mismatch left to the timeout repair on ${agent.container}`
+        : `[rev4a] Credentials not re-applied on ${agent.container}: another credential of the same service is switched on; choose in Credentials`);
     }
     // A Gateway still starting would turn the repair into a connection error. Wait once per agent.
     if (!timeoutEnables.length && !mismatchEnables.length && !pendingRemovals.length) continue;
@@ -698,22 +781,20 @@ export async function repairCredentialTimeoutsAtStartup(): Promise<void> {
     }
     if (mismatchEnables.length || pendingRemovals.length) {
       let failed = !ready;
+      let repaired = false;
       if (ready) {
-        for (const a of pendingRemovals) {
+        for (const a of [...pendingRemovals, ...mismatchEnables]) {
           try {
-            if (!(await repairMismatchedRemoval(agent.container, a.profileId))) failed = true;
-          } catch { failed = true; }
-        }
-        for (const a of mismatchEnables) {
-          try {
-            const result = await enableAssignment(a.profileId, agent.container, a.mode, { onlyIfEnabled: true });
-            if (result.status === 'error' || getAssignment(a.profileId, agent.container)?.lastError != null) failed = true;
+            const repair = a.enabled ? repairMismatchedEnable : repairMismatchedRemoval;
+            const outcome = await repair(agent.container, a.profileId);
+            if (outcome === 'failed') failed = true;
+            if (outcome === 'repaired') repaired = true;
           } catch { failed = true; }
         }
       }
       // No exception text: it may originate from the vault or an agent command.
       if (failed) console.warn(`[rev4a] Credentials after a token mismatch are still failing: ${agent.container}`);
-      else console.log(`[rev4a] Credentials repaired after a token mismatch: ${agent.container}`);
+      else if (repaired) console.log(`[rev4a] Credentials repaired after a token mismatch: ${agent.container}`);
     }
   }
 }

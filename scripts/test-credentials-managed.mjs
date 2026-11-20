@@ -321,11 +321,12 @@ test('SDK runtime failures and unrelated import errors never select the argv fal
   }
 });
 
-test('github disable also sweeps leftover handoffs, keeping only exact github-setup-<hex> names', async () => {
+test('github disable sweeps leftover handoffs on Gateway port 3000, keeping only exact github-setup-<hex> names', async () => {
   const exec = fakeExec();
   await m.githubDisable(exec);
   assert.equal(exec.calls.length, 2);
   const sweep = exec.calls[1].argv[2];
+  assert.ok(sweep.startsWith(`${gw.GATEWAY_TOKEN_SNIPPET}; export OPENCLAW_GATEWAY_PORT=3000; `));
   assert.match(sweep, /secrets store list/);
   assert.match(sweep, /github-setup-\[a-f0-9\]\\\{32\\\}/);
   assert.match(sweep, /secrets store rm --yes "\$n"/);

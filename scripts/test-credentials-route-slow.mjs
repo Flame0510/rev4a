@@ -7,7 +7,10 @@ import { pathToFileURL } from 'node:url';
 const stubs = {
   'next/server': 'export const NextResponse = { json: (body, init) => Response.json(body, init) };',
   '@/lib/rev4a-auth': 'export async function requireAuthJWT() { return null; }',
-  '@/lib/agent-busy': 'export async function agentBusyReason() { return null; }',
+  '@/lib/agent-busy': `
+    export async function agentBusyReason() { return null; }
+    export function currentBusyReason() { throw new Error('Unexpected startup ownership check'); }
+  `,
   '@/lib/agent-readiness': 'export async function waitForGatewayReady() { return true; }',
   '@/lib/rev4a-skills': 'export async function ensureRev4aSkill() {}',
   '@/lib/subscriptions': `export async function listAgentContainers() {

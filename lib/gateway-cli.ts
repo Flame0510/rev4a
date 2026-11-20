@@ -42,7 +42,8 @@ export function gatewayCliArgv(args: readonly string[], opts: { port?: number | 
 
 /**
  * For a shell script that calls `openclaw` itself (several commands, a pipeline): the same
- * token resolution first, then the script. The script is Rev4a's own text, never user input.
+ * token resolution first, then the script. Callers must validate or shell-quote every value
+ * they interpolate. Pairing approval validates the channel and quotes the pairing code.
  */
 export function gatewayShellScript(script: string): string {
   return `${GATEWAY_TOKEN_SNIPPET}; ${script}`;

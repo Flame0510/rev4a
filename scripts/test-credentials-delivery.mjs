@@ -17,10 +17,14 @@ const stubs = {
     }
     export async function mapWithConcurrency(items, _limit, fn) { return Promise.all(items.map(fn)); }
   `,
-  '@/lib/agent-busy': 'export async function agentBusyReason() { return null; }',
+  '@/lib/agent-busy': `
+    export function currentBusyReason() { return globalThis.__credentialDeliveryTest.busy ?? null; }
+    export async function agentBusyReason() { return currentBusyReason(); }
+  `,
   '@/lib/subscriptions': `export async function listAgentContainers() {
     const state = globalThis.__credentialDeliveryTest;
     state.agentLists++;
+    state.onAgentList?.();
     return state.agents ?? [{ container: 'agent-test', agentId: 'test', running: true }];
   }`,
   '@/lib/agent-readiness': `export async function waitForGatewayReady(name, timeout) {
@@ -29,6 +33,12 @@ const stubs = {
     return state.ready !== false;
   }`,
   '@/lib/rev4a-skills': 'export async function ensureRev4aSkill() {}',
+  '../docker-socket-path': `export async function dockerRequestJson(method, path) {
+    const state = globalThis.__credentialDeliveryTest;
+    const query = new URL(path, 'http://offline').searchParams;
+    state.backupReads.push([method, JSON.parse(query.get('filters'))]);
+    return state.onBackupList ? state.onBackupList() : [];
+  }`,
   './vault': `
     const state = () => globalThis.__credentialDeliveryTest;
     export function getSecret(id) { return state().secrets?.[id] ?? { token: 'ghp_offline_test_secret' }; } // secret-ok: fixture
@@ -110,7 +120,7 @@ function reset({ lands = true, failReload = false, slow = false } = {}) {
   clock = 0;
   state = globalThis.__credentialDeliveryTest = {
     calls: [], assignment: null, config: '{}', status: null,
-    agentLists: 0, assignmentLists: 0, readinessChecks: [],
+    agentLists: 0, assignmentLists: 0, readinessChecks: [], backupReads: [],
     onExec: ({ argv, input, opts }) => {
       if (argv[1] === '--version') return 'OpenClaw 2026.10.10';
       if (argv.includes('patch')) {
@@ -137,6 +147,43 @@ const assignment = (profileId, fields = {}) => ({
   profileId, agentId: 'agent-test', enabled: true, mode: 'env', pendingRemoval: false,
   syncedAt: null, lastError: mismatch, ...fields,
 });
+const ambiguousMismatch = '[rev4a] Credentials not re-applied on agent-test: another credential of the same service is switched on; choose in Credentials';
+const refusedMismatch = '[rev4a] Credentials not repaired on agent-test: agent is busy, unavailable, or ownership could not be verified';
+const repairedMismatch = '[rev4a] Credentials repaired after a token mismatch: agent-test';
+const legacySupabaseCleanup = (call) => call.argv[0] === 'sh' && call.argv[2].startsWith('rm -f /root/.supabase/access-token ');
+
+async function startupRepairLogs() {
+  const { log, warn } = console;
+  const lines = [];
+  console.log = console.warn = (line) => lines.push(line);
+  try { await d.repairCredentialTimeoutsAtStartup(); }
+  finally { Object.assign(console, { log, warn }); }
+  return lines;
+}
+
+async function repairWhileLockHeld(beforeRelease) {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const holder = withAgentConfigLock('agent-test', async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await entered.promise;
+  const repair = startupRepairLogs();
+  let logs;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(state.agentLists, 2, 'discovery and the pre-lock ownership check have run');
+    assert.equal(state.backupReads.length, 1);
+    assert.equal(state.calls.length, 0);
+    beforeRelease();
+  } finally {
+    release.resolve();
+    await holder;
+    logs = await repair;
+  }
+  return logs;
+}
 
 try {
   await test('switch-on confirms a slow patch, delivers GitHub, and records success', async () => {
@@ -239,7 +286,7 @@ try {
     assert.equal(value, 'NEW credential');
     console.log(JSON.stringify({ events, finalValue: value }));
   });
-  await test('startup selection groups mismatch and timeout rows and leaves ambiguous switch-ons alone', () => {
+  await test('startup selection groups mismatch and timeout rows and the timeout selector excludes ambiguous providers', () => {
     const first = assignment('first');
     const second = assignment('second');
     const independent = assignment('independent');
@@ -262,6 +309,146 @@ try {
     const providerOf = (id) => id === 'first' || id === 'second' ? 'shared' : id;
     assert.deepEqual(d.selectUnambiguousCredentialEnables([first, second, independent, legacy], providerOf), [independent, legacy]);
     assert.deepEqual(d.selectUnambiguousCredentialEnables([first, legacy], () => 'shared'), []);
+  });
+  await test('startup leaves a mismatch and any enabled sibling untouched', async () => {
+    for (const siblingState of [
+      { lastError: 'connection refused' },
+      { syncedAt: 1, lastError: null },
+      { lastError: mismatch },
+    ]) {
+      reset();
+      const rows = new Map([['candidate', assignment('candidate')], ['sibling', assignment('sibling', siblingState)]]);
+      state.rows = new Map([['agent-test', rows]]);
+      const before = structuredClone(rows);
+      assert.deepEqual(await startupRepairLogs(), Array(siblingState.lastError === mismatch ? 2 : 1).fill(ambiguousMismatch));
+      assert.equal(state.calls.length, 0);
+      assert.deepEqual(rows, before);
+    }
+  });
+  await test('startup leaves a pending removal alone while an undelivered or unknown sibling is switched on', async () => {
+    const skipped = '[rev4a] Credential removal not retried on agent-test: another credential of the same service is switched on; finish it in Credentials';
+    for (const { siblingState, providers } of [
+      { siblingState: { lastError: 'connection refused' }, providers: {} },
+      { siblingState: { syncedAt: 1, lastError: null }, providers: { sibling: '' } },
+    ]) {
+      reset();
+      state.providers = providers;
+      const rows = new Map([
+        ['pending', assignment('pending', { enabled: false, pendingRemoval: true })],
+        ['sibling', assignment('sibling', siblingState)],
+      ]);
+      state.rows = new Map([['agent-test', rows]]);
+      const before = structuredClone(rows);
+      const logs = await startupRepairLogs();
+      assert.ok(logs.includes(skipped), JSON.stringify(logs));
+      assert.equal(state.calls.length, 0);
+      assert.deepEqual(rows, before);
+    }
+  });
+  await test('startup does not switch on over a pending removal of the same service', async () => {
+    reset();
+    const rows = new Map([
+      ['candidate', assignment('candidate')],
+      ['pending', assignment('pending', { enabled: false, pendingRemoval: true, lastError: 'Removal failed: reload could not be confirmed' })],
+    ]);
+    state.rows = new Map([['agent-test', rows]]);
+    const before = structuredClone(rows);
+    assert.deepEqual(await startupRepairLogs(), [ambiguousMismatch]);
+    assert.equal(state.calls.length, 0);
+    assert.deepEqual(rows, before);
+  });
+  await test('startup sees a same-provider sibling switched on after selection while the lock is held', async () => {
+    reset();
+    const candidate = assignment('candidate');
+    const sibling = assignment('sibling', { enabled: false, lastError: null });
+    const rows = new Map([['candidate', candidate], ['sibling', sibling]]);
+    state.rows = new Map([['agent-test', rows]]);
+    const logs = await repairWhileLockHeld(() => { sibling.enabled = true; });
+    assert.deepEqual(logs, [ambiguousMismatch]);
+    assert.equal(state.calls.length, 0);
+    assert.deepEqual(rows, new Map([
+      ['candidate', assignment('candidate')],
+      ['sibling', assignment('sibling', { lastError: null })],
+    ]));
+  });
+  await test('startup delivers a sole mismatched switch-on and clears its error', async () => {
+    reset();
+    state.assignment = assignment('profile');
+    assert.deepEqual(await startupRepairLogs(), [repairedMismatch]);
+    assert.ok(state.calls.some((c) => c.input?.includes('tools.github.configure')));
+    assert.equal(state.assignment.enabled, true);
+    assert.equal(state.assignment.lastError, null);
+    assert.equal(state.status, 'active');
+  });
+  await test('startup skips a switch-on or pending removal whose mismatch error changed while queued', async () => {
+    for (const enabled of [true, false]) {
+      reset();
+      const row = assignment('profile', { enabled, pendingRemoval: !enabled });
+      state.assignment = row;
+      const logs = await repairWhileLockHeld(() => { row.lastError = 'different error'; });
+      assert.deepEqual(logs, []);
+      assert.equal(state.calls.length, 0);
+      assert.deepEqual(state.assignment, assignment('profile', { enabled, pendingRemoval: !enabled, lastError: 'different error' }));
+    }
+  });
+  await test('startup skips mismatch delivery and removal when a lifecycle job takes ownership while queued', async () => {
+    for (const enabled of [true, false]) {
+      reset();
+      state.assignment = assignment('profile', { enabled, pendingRemoval: !enabled });
+      const before = structuredClone(state.assignment);
+      const logs = await repairWhileLockHeld(() => { state.busy = 'An update of this agent is running'; });
+      assert.deepEqual(logs, [refusedMismatch]);
+      assert.equal(state.calls.length, 0);
+      assert.deepEqual(state.assignment, before);
+    }
+  });
+  await test('startup skips mismatch delivery and removal when an ownership read throws under the lock', async () => {
+    const unreadable = () => { throw new Error('fixture Docker read failure'); };
+    for (const enabled of [true, false]) for (const read of ['onAgentList', 'onBackupList']) {
+      reset();
+      state.assignment = assignment('profile', { enabled, pendingRemoval: !enabled });
+      const before = structuredClone(state.assignment);
+      const logs = await repairWhileLockHeld(() => { state[read] = unreadable; });
+      assert.deepEqual(logs, [refusedMismatch]);
+      assert.equal(state.calls.length, 0);
+      assert.deepEqual(state.assignment, before);
+    }
+  });
+  await test('user switches still attempt delivery and removal when the ownership read throws', async () => {
+    for (const change of [d.enableAssignment, d.disableAssignment]) {
+      reset();
+      state.assignment = assignment('profile');
+      state.onAgentList = () => { throw new Error('fixture Docker read failure'); };
+      assert.equal((await change('profile', 'agent-test')).status, 'ok');
+      assert.ok(state.calls.length > 0);
+      assert.equal(state.backupReads.length, 0);
+    }
+  });
+  await test('startup skips mismatch repair when a cold backup owns the agent under the lock', async () => {
+    reset();
+    state.assignment = assignment('profile');
+    const before = structuredClone(state.assignment);
+    const logs = await repairWhileLockHeld(() => { state.onBackupList = () => [{ State: 'paused' }]; });
+    assert.deepEqual(logs, [refusedMismatch]);
+    assert.deepEqual(state.backupReads.at(-1), ['GET', {
+      label: ['rev4a.backup.agent=test'], status: ['running', 'paused', 'restarting'],
+    }]);
+    assert.equal(state.calls.length, 0);
+    assert.deepEqual(state.assignment, before);
+  });
+  await test('a successful lifecycle removal cleans legacy files even when cleanup warns', async () => {
+    reset();
+    state.providers = { profile: 'supabase' };
+    state.assignment = assignment('profile', { enabled: false, pendingRemoval: true });
+    const ordinary = state.onExec;
+    state.onExec = (call) => {
+      if (legacySupabaseCleanup(call)) throw new Error('fixture cleanup failure');
+      return ordinary(call);
+    };
+    await d.reapplyAssignments('agent-test');
+    assert.ok(state.calls.some(legacySupabaseCleanup));
+    assert.equal(state.assignment.pendingRemoval, false);
+    assert.equal(state.assignment.lastError, null);
   });
   await test('startup repairs token mismatches on running agents and clears taken-over removals without exec', async () => {
     reset();
@@ -287,6 +474,9 @@ try {
       assert.equal(rows.get('remove').pendingRemoval, false);
       assert.equal(state.rows.get('taken-over').get('replaced').pendingRemoval, false);
       assert.equal(state.rows.get('stopped').get('stopped').pendingRemoval, true);
+      assert.deepEqual(state.calls.filter(legacySupabaseCleanup).map((c) => c.container), ['agent-test', 'agent-test'],
+        'the removal and switch-on both clean legacy files');
+      assert.ok(!state.calls.some((c) => c.container === 'taken-over'), 'a taken-over removal runs no cleanup or other exec');
       assert.ok(state.calls.some((c) => c.container === 'agent-test' && c.argv.includes('set')));
       const writes = state.calls.filter((c) => c.argv.includes('rm') || c.argv.includes('set'));
       assert.deepEqual(writes.map((c) => [c.container, c.argv[6]]), [['agent-test', 'rm'], ['agent-test', 'set']]);
@@ -323,10 +513,11 @@ try {
     try { await d.repairCredentialTimeoutsAtStartup(); }
     finally { console.warn = warn; }
     const attempts = state.calls.filter((c) => c.argv.includes('rm') || c.argv.includes('set'));
-    assert.deepEqual(attempts.map((c) => c.argv[6]), ['rm', 'set']);
+    // The removal failed, so the switch-on would supersede a still-pending removal: it is left alone.
+    assert.deepEqual(attempts.map((c) => c.argv[6]), ['rm']);
     assert.equal(rows.get('old').pendingRemoval, true);
     assert.equal(rows.get('replacement').syncedAt, null);
-    assert.deepEqual(warnings, ['[rev4a] Credentials after a token mismatch are still failing: agent-test']);
+    assert.deepEqual(warnings, [ambiguousMismatch, '[rev4a] Credentials after a token mismatch are still failing: agent-test']);
   });
   await test('startup skips non-native mismatches before listing agents or logging', async () => {
     reset();
@@ -465,7 +656,7 @@ try {
     assert.equal(rows.get('timeout').lastError, null);
     assert.equal(rows.get('mismatch').enabled, false, 'only the timeout was delivered');
     assert.deepEqual(outcomes, [
-      '[rev4a] Credentials not re-applied on agent-test: two credentials of the same service failed; switch on the one to keep in Credentials',
+      '[rev4a] Credential with a token mismatch left to the timeout repair on agent-test',
       '[rev4a] Credentials re-applied after a timeout: agent-test',
     ]);
   });
