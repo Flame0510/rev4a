@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { gatewayCliArgv, gatewayShellScript } from '../lib/gateway-cli.ts';
 
 const require = createRequire(import.meta.url);
 const { buildPairingStoreScript, parsePairingStoreOutput } = require('../lib/channel-pairing-store.js');
@@ -173,7 +174,7 @@ export async function removeChannelAllowFromStoreEntry() { save([]); return { ch
 
   const source = fs.readFileSync(new URL('../lib/channelManager.ts', import.meta.url), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  function manager({ pending = '{"requests":[]}', store = 'pair:list ["111"]', config } = {}) {
+  function manager({ pending = '{"requests":[]}', store = 'pair:list ["111"]', approval, config } = {}) {
     const calls = [];
     let writes = 0;
     const module = { exports: {} };
@@ -189,13 +190,18 @@ export async function removeChannelAllowFromStoreEntry() { save([]); return { ch
         if (spec === '@/lib/docker-exec') return {
           async dockerExec(_container, args, options) {
             calls.push({ args, options });
-            if (args[0] === 'openclaw') { if (pending instanceof Error) throw pending; return pending; }
+            if (args.includes('pairing')) { if (pending instanceof Error) throw pending; return pending; }
             if (store instanceof Error) throw store;
             return store;
           },
-          async dockerExecShellNoFail() { throw new Error('Pending must not use no-fail shell transport'); },
+          async dockerExecShellNoFail(_container, script) {
+            if (approval === undefined) throw new Error('Pending must not use no-fail shell transport');
+            calls.push({ script });
+            return approval;
+          },
         };
         if (spec === '@/lib/agent-config-lock') return { withAgentConfigLock: (_id, fn) => fn() };
+        if (spec === '@/lib/gateway-cli') return { gatewayCliArgv, gatewayShellScript };
         if (spec === '@/lib/channel-pairing-store') return require('../lib/channel-pairing-store.js');
         throw new Error(`Unexpected module ${spec}`);
       },
@@ -210,7 +216,14 @@ export async function removeChannelAllowFromStoreEntry() { save([]); return { ch
     assert.deepEqual(result.approved, [{ senderId: '111' }]);
     assert.deepEqual(result.pending, []);
     assert.match(result.error, /pending pairing requests/);
-    assert.deepEqual(plain(m.calls[0].args), ['openclaw', 'pairing', 'list', '--channel', 'telegram', '--json']);
+    assert.deepEqual(plain(m.calls[0].args), gatewayCliArgv(['pairing', 'list', '--channel', 'telegram', '--json']));
+  });
+  await test('approvePairing wraps the shell command and quotes the pairing code', async () => {
+    const m = manager({ approval: 'Approved sender' });
+    assert.deepEqual(plain(await m.api.approvePairing('fixture', "a'b")), { success: true });
+    assert.deepEqual(plain(m.calls), [{
+      script: gatewayShellScript("export OPENCLAW_GATEWAY_PORT=3000; openclaw pairing approve telegram 'a'\\''b' 2>&1"),
+    }]);
   });
   await test('valid pending requests preserve code/id aliases and nullable sender', async () => {
     const m = manager({ pending: '{"requests":[{"code":"ABCD","senderId":"222"},{"id":"EFGH"}]}' });

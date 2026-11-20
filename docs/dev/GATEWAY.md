@@ -560,6 +560,8 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    the create route waits for the gateway to finish starting (`waitForGatewayReady`), then writes
    `agents.defaults.model.primary` + fallbacks and the Control UI origin policy (`gateway.controlUi`),
    then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`.
+   Rev4a's config patch callers use `gatewayCliArgv` to read the current Gateway token inside
+   the container, so provider sync and subscription patches work after an Agents token rotation.
    Nothing is restarted: the Gateway watches `openclaw.json` and reloads it by itself, and
    `gateway.controlUi` is hot-applied (`openclaw gateway restart` does nothing inside a
    container, so the route no longer runs it). The Gateway sync (`PUT /api/gateway/provider`)

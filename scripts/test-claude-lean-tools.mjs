@@ -7,6 +7,7 @@ import fsx from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
+import { gatewayCliArgv } from '../lib/gateway-cli.ts';
 
 const require = createRequire(import.meta.url);
 const label = require('../lib/claude-cli-label.js');
@@ -44,6 +45,7 @@ function load({ reads, execs, patchFails = false, lockCalls = [], listing = [] }
       },
     },
     '@/lib/agent-config-lock': { withAgentConfigLock: async (c, fn) => { lockCalls.push(c); return fn(); } },
+    '@/lib/gateway-cli': { gatewayCliArgv },
     '@/lib/credentials/native': { OPENCLAW_RELOAD_TIMEOUT_MS: 150000 },
     '@/lib/claude-cli-label': label,
     '@/lib/agent-containers': { listAgentContainers: async () => listing },
@@ -123,8 +125,8 @@ await testAsync('ensure: writes under one lock hold and reports written when the
   assert.equal(await m.ensureLeanClaudeTools('c1'), 'written');
   assert.equal(lockCalls.length, 1);
   assert.equal(execs.length, 1);
-  assert.deepEqual(execs[0].slice(0, 4), ['openclaw', 'config', 'patch', '--stdin']);
-  assert.deepEqual(JSON.parse(execs[0][4]), JSON.parse(JSON.stringify(m.LEAN_TOOLS_PATCH)));
+  assert.deepEqual(execs[0].slice(0, -1), gatewayCliArgv(['config', 'patch', '--stdin']));
+  assert.deepEqual(JSON.parse(execs[0].at(-1)), JSON.parse(JSON.stringify(m.LEAN_TOOLS_PATCH)));
   assert.equal(logs.log.length, 1);
   assert.match(logs.log[0], /switched off 24 unused tools on Claude runs in c1/);
 });

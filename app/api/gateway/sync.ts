@@ -14,6 +14,7 @@
 import { execSync, execFileSync } from 'child_process';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { dockerExecWithInput } from '@/lib/docker-exec';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -328,7 +329,7 @@ export async function patchRev4aProvider(container: string): Promise<void> {
   // the lock has moved on to the next writer.
   await withAgentConfigLock(container, async () => {
     try {
-      await dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], input, { timeoutMs: 15000 });
+      await dockerExecWithInput(container, gatewayCliArgv(['config', 'patch', '--stdin']), input, { timeoutMs: 15000 });
     } catch (e) {
       throw new Error(String((e as Error).message || e).split('\n')[0]);
     }

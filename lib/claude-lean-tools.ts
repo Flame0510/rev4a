@@ -13,6 +13,7 @@
  * on what the read returned). This module runs in the Next.js server only: the daemon has no lock.
  */
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { OPENCLAW_RELOAD_TIMEOUT_MS } from '@/lib/credentials/native';
 import { claudeRuleFromConfigText } from '@/lib/claude-cli-label';
@@ -94,7 +95,7 @@ export async function ensureLeanClaudeTools(container: string): Promise<LeanTool
       try {
         await dockerExecWithInput(
           container,
-          ['openclaw', 'config', 'patch', '--stdin'],
+          gatewayCliArgv(['config', 'patch', '--stdin']),
           JSON.stringify(LEAN_TOOLS_PATCH),
           { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS },
         );

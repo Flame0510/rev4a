@@ -6,8 +6,10 @@
  * `/root/.agent-token` first, then the container's OPENCLAW_GATEWAY_TOKEN, then a random one,
  * and starts the Gateway with it. `/api/agents/token` rotates a token by rewriting the file only,
  * so the container env keeps the OLD value and a CLI that reads the env is refused with
- * "gateway token mismatch". Every CLI call that talks to the Gateway goes through this module:
- * the token is read INSIDE the container and never reaches the host argv, a log or a script text.
+ * "gateway token mismatch". Callers include config patches, secret-store writes and reloads,
+ * GitHub identity RPCs, Telegram pairing, device management and browser links, cron operations,
+ * subscription models and usage, and update checks. The token is read inside the container and
+ * never reaches host argv, logs or script text.
  *
  * daemon.js (plain CommonJS, cannot import this file) keeps its own copy of the same text:
  * COSTS_GATEWAY_CLI. Keep the two identical.

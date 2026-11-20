@@ -341,7 +341,7 @@ export async function writeDefaultModel(container: string, model: { primary: str
   // A patch can outlast any short deadline while the Gateway reloads: the read-back decides, not the exec.
   // It also catches a patch that merged instead of replacing the fallbacks.
   const result = await writeThenVerify(
-    () => withAgentConfigLock(container, () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], patch, { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS })),
+    () => withAgentConfigLock(container, () => dockerExecWithInput(container, gatewayCliArgv(['config', 'patch', '--stdin']), patch, { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS })),
     async () => sameModel(await readDefaultModel(container), model),
   );
   if (result !== 'ok') throw modelWriteError(result);
@@ -583,7 +583,7 @@ export async function writeMainModel(container: string, model: { primary: string
     const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
     // The lock is held across read, patch and read-back; the read-back decides, not the exec.
     const result = await writeThenVerify(
-      () => dockerExecWithInput(container, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify({ agents: { list: next } }), { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS }),
+      () => dockerExecWithInput(container, gatewayCliArgv(['config', 'patch', '--stdin']), JSON.stringify({ agents: { list: next } }), { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS }),
       async () => {
         const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
         return !!after && sameModel(after.model as AgentModelRef, model);

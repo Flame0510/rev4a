@@ -23,6 +23,7 @@
  */
 import { execSync } from 'child_process';
 import { dockerExec, dockerExecShellNoFail } from '@/lib/docker-exec';
+import { gatewayCliArgv, gatewayShellScript } from '@/lib/gateway-cli';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { PAIRING_STORE_SCRIPT, parsePairingStoreOutput, type PairingStoreResult } from '@/lib/channel-pairing-store';
 
@@ -339,7 +340,7 @@ export async function getPairings(agentId: string, channel: string = 'telegram')
   const pending: PendingPairing[] = [];
   let pendingError: string | null = null;
   try {
-    const raw = await dockerExec(container, ['openclaw', 'pairing', 'list', '--channel', channel, '--json'], { timeoutMs: 20_000 });
+    const raw = await dockerExec(container, gatewayCliArgv(['pairing', 'list', '--channel', channel, '--json']), { timeoutMs: 20_000 });
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { requests?: unknown }).requests)) {
       throw new Error('Invalid pending list');
@@ -381,7 +382,9 @@ export async function approvePairing(agentId: string, code: string, channel: str
   if (!isSafeChannel(channel)) return { success: false, error: 'Invalid channel id' };
 
   try {
-    const out = await dockerExecShellNoFail(container, `openclaw pairing approve ${channel} ${escapeShellArg(code)} 2>&1`);
+    const out = await dockerExecShellNoFail(container, gatewayShellScript(
+      `export OPENCLAW_GATEWAY_PORT=3000; openclaw pairing approve ${channel} ${escapeShellArg(code)} 2>&1`,
+    ));
     if (!out) {
       return { success: false, error: 'Command produced no output — pairing command may not be available' };
     }

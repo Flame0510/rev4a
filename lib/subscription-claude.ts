@@ -526,7 +526,7 @@ async function patchConfig(container: string, patch: object, applied: (models: C
   try {
     await withAgentConfigLock(container, () => dockerExecWithInput(
       container,
-      ['openclaw', 'config', 'patch', '--stdin'],
+      gatewayCliArgv(['config', 'patch', '--stdin']),
       JSON.stringify(patch),
       { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS },
     ));

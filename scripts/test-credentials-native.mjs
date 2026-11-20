@@ -112,8 +112,8 @@ test('no secret value appears in any argv, plan step or patch argv', () => {
 });
 
 test('store set reads the value from stdin', () => {
-  assert.deepEqual(n.storeSetArgv('GH_TOKEN'), ['openclaw', 'secrets', 'store', 'set', 'GH_TOKEN', '--kind', 'env', '--value-file', '-']);
-  assert.deepEqual(n.storeRemoveArgv('GH_TOKEN'), ['openclaw', 'secrets', 'store', 'rm', '--yes', 'GH_TOKEN']);
+  assert.deepEqual(n.storeSetArgv('GH_TOKEN'), gw.gatewayCliArgv(['secrets', 'store', 'set', 'GH_TOKEN', '--kind', 'env', '--value-file', '-']));
+  assert.deepEqual(n.storeRemoveArgv('GH_TOKEN'), gw.gatewayCliArgv(['secrets', 'store', 'rm', '--yes', 'GH_TOKEN']));
 });
 
 test('argv builders refuse a name that is not an env name', () => {
@@ -302,7 +302,9 @@ test('slow patch that lands: plain file read confirms it, then reload runs', asy
     } });
     await n.runEnable(exec, provider, SECRETS[provider]);
     assert.ok(exec.calls.at(-1).argv.includes('reload'));
-    assert.equal(exec.calls.filter((c) => c.argv.includes('patch')).length, 1, 'never resubmit a timed-out patch');
+    const patches = exec.calls.filter((c) => c.argv.includes('patch'));
+    assert.equal(patches.length, 1, 'never resubmit a timed-out patch');
+    assert.deepEqual(patches[0].argv, gw.gatewayCliArgv(['config', 'patch', '--stdin']));
     for (const c of exec.calls) for (const value of Object.values(SECRETS[provider])) {
       assert.ok(!JSON.stringify([c.argv, c.env]).includes(value), 'secret stays off argv/env');
     }
@@ -373,7 +375,7 @@ test('a failed rm mid-way still attempts every other step', async () => {
   const errors = await n.runDisable(exec, 'trello');
   assert.equal(errors.length, 1);
   assert.match(errors[0], /remove TRELLO_API_KEY/);
-  // The reload runs through the Gateway CLI wrapper (sh -c <script> sh <args>): show it as the openclaw command.
+  // Show the OpenClaw commands in call order, without their shell wrapper.
   const kinds = exec.calls.map((c) => (c.argv[0] === 'sh' ? ['openclaw', ...c.argv.slice(4)] : c.argv).slice(0, 4).join(' '));
   assert.deepEqual(kinds, [
     'openclaw secrets store rm', 'openclaw secrets store rm',
@@ -501,8 +503,8 @@ test('mongodb: refused on 2026.9.8 before anything is written, accepted on 2026.
   assert.equal(old.calls.length, 1);
   const ok = fakeExec({ version: 'OpenClaw 2026.9.9 (abc)' });
   await n.runEnable(ok, 'mongodb', SECRETS.mongodb);
-  const store = ok.calls.find((c) => c.argv[1] === 'secrets' && c.argv[3] === 'set');
-  assert.deepEqual(store.argv.slice(-5), ['REV4A_MONGODB_URI', '--kind', 'env', '--value-file', '-']);
+  const store = ok.calls.find((c) => c.argv.includes('store') && c.argv.includes('set'));
+  assert.deepEqual(store.argv, gw.gatewayCliArgv(['secrets', 'store', 'set', 'REV4A_MONGODB_URI', '--kind', 'env', '--value-file', '-']));
   assert.equal(store.input, SECRETS.mongodb.uri, 'the value goes on stdin');
   for (const c of ok.calls) if (c.argv) assert.ok(!c.argv.join(' ').includes(SECRETS.mongodb.uri));
 });

@@ -71,7 +71,7 @@ function runRpcScript(script, input, sdkSource, childSource) {
     return next(specifier, context);
   }`;
   const preload = `import { register } from 'node:module'; register(${JSON.stringify('data:text/javascript,' + encodeURIComponent(loader))});`;
-  return spawnSync(process.execPath, ['--import', 'data:text/javascript,' + encodeURIComponent(preload), '--input-type=module', '-e', script], {
+  return spawnSync(process.execPath, ['--import', 'data:text/javascript,' + encodeURIComponent(preload), '--input-type=module', '-e', script, 'openclaw'], {
     input, encoding: 'utf8', timeout: 10000,
     env: { ...process.env, OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:3000', OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token' },
   });
@@ -131,7 +131,7 @@ test('github enable: no argv/env carries the token; RPC payloads travel only on 
   assert.ok(argv[2].startsWith(gw.GATEWAY_TOKEN_SNIPPET + '; '), 'token resolved before the RPCs');
   assert.match(argv[2], /export OPENCLAW_GATEWAY_URL=ws:\/\/127\.0\.0\.1:3000/);
   assert.ok(argv[2].includes('cd "$(dirname "$(readlink -f "$(command -v openclaw)")")"'), 'resolve global package cwd');
-  assert.match(argv[2], /exec node --input-type=module -e "\$1"/);
+  assert.match(argv[2], /exec node --input-type=module -e "\$1" openclaw$/);
   assert.deepEqual(exec.calls[1].argv, argv, 'both RPCs share the stdin helper');
   const store = JSON.parse(input);
   assert.match(store.params.name, /^github-setup-[a-f0-9]{32}$/);
@@ -204,7 +204,7 @@ test('store and configure failures remove the handoff and redact even JSON-escap
     assertNoTokenInExec(exec.calls, TOKEN);
     assert.equal(exec.calls.length, failedCall + 1);
     const name = JSON.parse(exec.calls[0].input).params.name;
-    assert.deepEqual(exec.calls.at(-1).argv, ['openclaw', 'secrets', 'store', 'rm', '--yes', name]);
+    assert.deepEqual(exec.calls.at(-1).argv, gw.gatewayCliArgv(['secrets', 'store', 'rm', '--yes', name]));
   }
 });
 
@@ -274,7 +274,7 @@ test('SDK import unavailability selects legacy fallback with one token-free warn
     assert.equal(warnings.length, before + 1);
     assert.equal(exec.calls.length, 4);
     const name = JSON.parse(exec.calls[0].input).params.name;
-    assert.deepEqual(exec.calls.at(-1).argv, ['openclaw', 'secrets', 'store', 'rm', '--yes', name]);
+    assert.deepEqual(exec.calls.at(-1).argv, gw.gatewayCliArgv(['secrets', 'store', 'rm', '--yes', name]));
     assertNoTokenInExec(exec.calls);
   } finally {
     console.warn = originalWarn;
@@ -350,8 +350,8 @@ test('removeStoreEntries runs one rm per name with --yes', async () => {
   const exec = fakeExec();
   await m.removeStoreEntries(exec, ['GH_TOKEN', 'GITHUB_TOKEN']);
   assert.deepEqual(exec.calls.map((c) => c.argv), [
-    ['openclaw', 'secrets', 'store', 'rm', '--yes', 'GH_TOKEN'],
-    ['openclaw', 'secrets', 'store', 'rm', '--yes', 'GITHUB_TOKEN'],
+    gw.gatewayCliArgv(['secrets', 'store', 'rm', '--yes', 'GH_TOKEN']),
+    gw.gatewayCliArgv(['secrets', 'store', 'rm', '--yes', 'GITHUB_TOKEN']),
   ]);
 });
 

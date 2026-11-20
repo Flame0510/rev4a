@@ -15,6 +15,7 @@ import {
   removalRecordState,
   setAssignmentError,
   supersedeSiblings,
+  type CredentialAssignment,
 } from './assignments';
 import {
   assertDeliverable,
@@ -540,6 +541,18 @@ export async function disableAssignment(
   });
 }
 
+/** Retry a pending removal under the agent's config lock. Returns whether it cleared. */
+async function retryPendingRemoval(name: string, profileId: string, providerId: string): Promise<boolean> {
+  // Only a delivered sibling owns the entries. A failed switch-on may have left our secret there.
+  const takenOver = listLiveForAgent(name).some((o) => o.enabled && o.syncedAt != null && o.profileId !== profileId
+    && getProfile(o.profileId)?.providerId === providerId);
+  const errors = takenOver ? [] : await applyDisable(execFor(name), providerId, secretValues(profileId));
+  recordAssignment(profileId, name, errors.length
+    ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
+    : { enabled: false, ok: true });
+  return errors.length === 0;
+}
+
 /**
  * Bring one agent in line with its assignments: enabled ones are delivered again, pending
  * removals are retried. Called in the background after create, recreate, update and edit
@@ -571,15 +584,9 @@ export async function reapplyAssignments(container: string): Promise<void> {
           recordAssignment(a.profileId, name, { enabled: true, mode: a.mode, ok: true });
           return;
         }
-        // Pending removal. If another profile of the same provider is now active here, the
-        // entries belong to it: only the pending mark goes.
-        const takenOver = listLiveForAgent(name).some((o) => o.enabled && o.profileId !== a.profileId
-          && getProfile(o.profileId)?.providerId === profile.providerId);
-        const errors = takenOver ? [] : await applyDisable(execFor(name), profile.providerId, secretValues(a.profileId));
-        recordAssignment(a.profileId, name, errors.length
-          ? { enabled: false, pendingRemoval: true, ok: false, error: `Removal failed: ${errors.join('; ')}` }
-          : { enabled: false, ok: true });
-        if (errors.length) console.warn(`[credentials] removal still pending on ${name} (${a.profileId})`);
+        if (!(await retryPendingRemoval(name, a.profileId, profile.providerId))) {
+          console.warn(`[credentials] removal still pending on ${name} (${a.profileId})`);
+        }
       } catch (e) {
         const error = redact((e as Error).message, secretValues(a.profileId));
         console.warn(`[credentials] re-apply failed on ${name} (${a.profileId}):`, error);
@@ -591,61 +598,142 @@ export async function reapplyAssignments(container: string): Promise<void> {
   }
 }
 
-/**
- * Repair enabled assignments left failed by the old 30-second exec kill. Started in the
- * background after startup sync; agents are handled sequentially, using the same locked
- * consistency pass as lifecycle actions. Successful re-apply clears last_error, making
- * later starts a no-op. Stopped agents keep their usual start-time re-apply.
- */
 /** How long the startup repair waits for one agent's Gateway before leaving it for the next start. */
 const REPAIR_READY_TIMEOUT_MS = 2 * 60_000;
+const TOKEN_MISMATCH = /gateway token mismatch/i;
 
-export async function repairCredentialTimeoutsAtStartup(): Promise<void> {
-  // One read of the assignments table; most starts find nothing and return before Docker.
-  const byAgent = new Map<string, ReturnType<typeof listAllAssignments>>();
-  for (const a of listAllAssignments()) {
-    if (!a.enabled || !/timed out or was killed|exit 137/i.test(a.lastError ?? '')) continue;
-    const list = byAgent.get(a.agentId);
-    if (list) list.push(a); else byAgent.set(a.agentId, [a]);
+interface CredentialStartupRepairs {
+  timedOut: CredentialAssignment[];
+  mismatchedEnables: CredentialAssignment[];
+  pendingRemovals: CredentialAssignment[];
+}
+
+/** Group only rows affected by the two known startup-repair cases. */
+export function selectCredentialStartupRepairs(
+  assignments: readonly CredentialAssignment[],
+  providerOf: (profileId: string) => string | undefined,
+): Map<string, CredentialStartupRepairs> {
+  const byAgent = new Map<string, CredentialStartupRepairs>();
+  for (const a of assignments) {
+    const error = a.lastError ?? '';
+    let kind: keyof CredentialStartupRepairs;
+    if (a.enabled && /timed out or was killed|exit 137/i.test(error)) kind = 'timedOut';
+    else {
+      if (!TOKEN_MISMATCH.test(error) || !needsNativeRemoval(a)) continue;
+      const provider = providerOf(a.profileId);
+      if (!provider || !nativeProvider(provider)) continue;
+      kind = a.enabled ? 'mismatchedEnables' : 'pendingRemovals';
+    }
+    let repairs = byAgent.get(a.agentId);
+    if (!repairs) {
+      repairs = { timedOut: [], mismatchedEnables: [], pendingRemovals: [] };
+      byAgent.set(a.agentId, repairs);
+    }
+    repairs[kind].push(a);
   }
+  return byAgent;
+}
+
+/** For one agent, repairing either of two failed switch-ons of the same provider would supersede the other. */
+export function selectUnambiguousCredentialEnables(
+  rows: readonly CredentialAssignment[],
+  providerOf: (profileId: string) => string,
+): CredentialAssignment[] {
+  const perProvider = new Map<string, number>();
+  for (const a of rows) {
+    const provider = providerOf(a.profileId);
+    perProvider.set(provider, (perProvider.get(provider) ?? 0) + 1);
+  }
+  return rows.filter((a) => perProvider.get(providerOf(a.profileId)) === 1);
+}
+
+async function repairMismatchedRemoval(name: string, profileId: string): Promise<boolean> {
+  if (await agentWriteRefusal(name)) return false;
+  return serialized(name, async () => {
+    // A switch or lifecycle retry may have resolved this while startup waited for the lock.
+    const a = getAssignment(profileId, name);
+    if (!a || a.enabled || !a.pendingRemoval) return true;
+    const profile = getProfile(profileId);
+    if (!profile || !nativeProvider(profile.providerId)) return false;
+    return retryPendingRemoval(name, profileId, profile.providerId);
+  });
+}
+
+/**
+ * Repair assignments affected by the old 30-second exec kill or a rotated Gateway token.
+ * Runs in the background after startup sync. Stopped agents are already retried by
+ * reapplyWhenReady at their next start. Success clears last_error or the pending mark.
+ */
+export async function repairCredentialTimeoutsAtStartup(): Promise<void> {
+  const providerOf = (id: string): string | undefined => {
+    try { return getProfile(id)?.providerId; } catch { return undefined; }
+  };
+  // One read of the assignments table; most starts find nothing and return before Docker.
+  const byAgent = selectCredentialStartupRepairs(listAllAssignments(), providerOf);
   if (!byAgent.size) return;
   const agents = await listAgentRows({ fresh: true });
   for (const agent of agents) {
     if (!agent.running) continue;
-    const timedOut = byAgent.get(agent.container);
-    if (!timedOut) continue;
-    // Two timed-out switch-ons of the same provider on one agent: which one the user meant is
-    // not knowable, and repairing either would supersede the other. Leave both as they are.
-    const perProvider = new Map<string, number>();
-    const providerOf = (id: string): string => { try { return getProfile(id)?.providerId ?? id; } catch { return id; } };
-    for (const a of timedOut) perProvider.set(providerOf(a.profileId), (perProvider.get(providerOf(a.profileId)) ?? 0) + 1);
-    const affected = timedOut.filter((a) => perProvider.get(providerOf(a.profileId)) === 1);
-    if (affected.length < timedOut.length) {
+    const repairs = byAgent.get(agent.container);
+    if (!repairs) continue;
+    const { timedOut, mismatchedEnables, pendingRemovals } = repairs;
+    const providerKey = (id: string) => providerOf(id) ?? id;
+    const timeoutEnables = selectUnambiguousCredentialEnables(timedOut, providerKey);
+    if (timeoutEnables.length < timedOut.length) {
       console.warn(`[rev4a] Credentials not re-applied on ${agent.container}: two credentials of the same service timed out; switch on the one to keep in Credentials`);
     }
-    if (!affected.length) continue;
-    // A Gateway still starting would turn the repair into a connection error, which is not
-    // retried at the next start: wait for it first (same wait as a start or an update).
-    if (!(await waitForGatewayReady(agent.container, REPAIR_READY_TIMEOUT_MS))) {
-      console.warn(`[rev4a] Credentials re-apply after a timeout skipped: ${agent.container} (Gateway not ready; retried at the next start)`);
-      continue;
+    // A mismatch switch-on must be the only failed switch-on of its provider.
+    const timeoutProviders = new Set(mismatchedEnables.length ? timedOut.map((a) => providerKey(a.profileId)) : []);
+    const mismatchEnables = selectUnambiguousCredentialEnables(mismatchedEnables, providerKey)
+      .filter((a) => !timeoutProviders.has(providerKey(a.profileId)));
+    if (mismatchEnables.length < mismatchedEnables.length) {
+      console.warn(`[rev4a] Credentials not re-applied on ${agent.container}: two credentials of the same service failed; switch on the one to keep in Credentials`);
     }
-    try {
-      // Only the switch-on that timed out, through the same path as the Switch: on success it
-      // supersedes the other credential of that provider, so the agent ends with exactly the
-      // one the user chose (a full re-apply would deliver both, in table order). A switch-off
-      // made meanwhile is respected (onlyIfEnabled).
-      let failed = false;
-      for (const a of affected) {
-        const r = await enableAssignment(a.profileId, agent.container, a.mode, { onlyIfEnabled: true });
-        if (r.status === 'error') failed = true;
+    // A Gateway still starting would turn the repair into a connection error. Wait once per agent.
+    if (!timeoutEnables.length && !mismatchEnables.length && !pendingRemovals.length) continue;
+    const ready = await waitForGatewayReady(agent.container, REPAIR_READY_TIMEOUT_MS);
+    if (timeoutEnables.length) {
+      if (ready) await repairTimedOutCredentials(agent.container, timeoutEnables);
+      else console.warn(`[rev4a] Credentials re-apply after a timeout skipped: ${agent.container} (Gateway not ready; retried at the next start)`);
+    }
+    if (mismatchEnables.length || pendingRemovals.length) {
+      let failed = !ready;
+      if (ready) {
+        for (const a of pendingRemovals) {
+          try {
+            if (!(await repairMismatchedRemoval(agent.container, a.profileId))) failed = true;
+          } catch { failed = true; }
+        }
+        for (const a of mismatchEnables) {
+          try {
+            const result = await enableAssignment(a.profileId, agent.container, a.mode, { onlyIfEnabled: true });
+            if (result.status === 'error' || getAssignment(a.profileId, agent.container)?.lastError != null) failed = true;
+          } catch { failed = true; }
+        }
       }
-      if (failed) console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${agent.container}`);
-      else console.log(`[rev4a] Credentials re-applied after a timeout: ${agent.container}`);
-    } catch {
       // No exception text: it may originate from the vault or an agent command.
-      console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${agent.container}`);
+      if (failed) console.warn(`[rev4a] Credentials after a token mismatch are still failing: ${agent.container}`);
+      else console.log(`[rev4a] Credentials repaired after a token mismatch: ${agent.container}`);
     }
+  }
+}
+
+async function repairTimedOutCredentials(container: string, affected: readonly CredentialAssignment[]): Promise<void> {
+  try {
+    // Only the switch-on that timed out, through the same path as the Switch: on success it
+    // supersedes the other credential of that provider, so the agent ends with exactly the
+    // one the user chose (a full re-apply would deliver both, in table order). A switch-off
+    // made meanwhile is respected (onlyIfEnabled).
+    let failed = false;
+    for (const a of affected) {
+      const r = await enableAssignment(a.profileId, container, a.mode, { onlyIfEnabled: true });
+      if (r.status === 'error') failed = true;
+    }
+    if (failed) console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${container}`);
+    else console.log(`[rev4a] Credentials re-applied after a timeout: ${container}`);
+  } catch {
+    // No exception text: it may originate from the vault or an agent command.
+    console.warn(`[rev4a] Credentials re-apply after a timeout failed: ${container}`);
   }
 }
 

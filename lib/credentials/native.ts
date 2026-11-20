@@ -96,16 +96,16 @@ const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
 
 export function storeSetArgv(name: string): string[] {
   if (!ENV_NAME_RE.test(name)) throw new Error(`Invalid environment name: ${name}`);
-  return ['openclaw', 'secrets', 'store', 'set', name, '--kind', 'env', '--value-file', '-'];
+  return gatewayCliArgv(['secrets', 'store', 'set', name, '--kind', 'env', '--value-file', '-']);
 }
 
 export function storeRemoveArgv(name: string): string[] {
   if (!ENV_NAME_RE.test(name)) throw new Error(`Invalid environment name: ${name}`);
   // --yes: without it a non-interactive rm prints a prompt, removes nothing and exits 0.
-  return ['openclaw', 'secrets', 'store', 'rm', '--yes', name];
+  return gatewayCliArgv(['secrets', 'store', 'rm', '--yes', name]);
 }
 
-export const CONFIG_PATCH_ARGV: readonly string[] = ['openclaw', 'config', 'patch', '--stdin'];
+export const CONFIG_PATCH_ARGV: readonly string[] = gatewayCliArgv(['config', 'patch', '--stdin']);
 export const SECRETS_RELOAD_ARGV: readonly string[] = ['openclaw', 'secrets', 'reload'];
 export const NATIVE_TIMEOUT_MS = 30_000;
 /** Config patches and secrets reloads can stall while OpenClaw scans plugin metadata. */

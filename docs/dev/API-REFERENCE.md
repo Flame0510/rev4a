@@ -3319,11 +3319,24 @@ left alone, with a log line asking to choose in Credentials) and logs
 `[rev4a] Credentials re-applied after a timeout: <agent>` or a failure line per agent.
 It never waits for delivery during dashboard startup. Success clears `last_error`, so
 the next start skips the repaired assignment; stopped agents retain their usual
-start-time re-apply. Other failed enabled assignments and pending removals keep their
-existing lifecycle retry and manual **Redeliver** / **Retry removal** paths.
+start-time re-apply.
+
+The same pass repairs native credential assignments whose `last_error` contains "gateway token
+mismatch". OpenClaw 2026.10 refused CLI calls that used the old token from the container
+environment. Rev4a now reads the current token inside the container through `lib/gateway-cli.ts`.
+It retries pending removals under the agent lock before retrying mismatched switch-ons. If an
+enabled sibling of the same provider has a recorded delivery (`synced_at`), Rev4a clears the
+pending mark without removing the sibling's entries. An enabled mismatch is retried through the
+Switch's own path only when it is the sole failed switch-on for that provider on that agent.
+A same-provider mismatch leaves the legacy timeout retry eligible under its own rules.
+Rev4a logs when it skips an ambiguous mismatch. Busy agents are skipped. The outcome per agent is
+`[rev4a] Credentials repaired after a token mismatch: <agent>` or
+`[rev4a] Credentials after a token mismatch are still failing: <agent>`, never exception text.
+A retry that records a different failure falls out of the token-mismatch startup repair, while
+agent start, recreate or update and manual **Redeliver** or **Retry removal** can retry it again.
 Credential payloads, version floors, stdin transport and redaction are unchanged.
 
-Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). Every Gateway CLI call of the delivery (reload, GitHub RPCs) runs through `lib/gateway-cli.ts`, which uses the token in `/root/.agent-token` when present (a rotated token) and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
+Two providers are delivered without a secret-store environment entry, because that cannot work: OpenClaw reserves `GH_TOKEN`/`GITHUB_TOKEN` (a store `env` entry for them is dropped before any command runs), so GitHub goes through OpenClaw's **managed GitHub identity** — a one-use `github-setup-<hex>` handoff plus `tools.github.configure` (`mode: managed`); and the Vercel CLI ignores a token-only environment (it forces the account default team), so Vercel is written as the CLI's own `auth.json` + `config.json {currentTeam}` with an accessible team discovered from the Vercel API (`lib/credentials/managed.ts`). The delivery's Gateway CLI calls include config patches, secret-store writes and removals, reloads and GitHub RPCs. They use the token in `/root/.agent-token` when present and the container's `OPENCLAW_GATEWAY_TOKEN` otherwise.
 
 Disabling tries every supported step (each `rm`, the skill entry, the reload) even when one fails. Any failure leaves a row in `pendingRemoval` with `lastError`, including a failed `held: true` removal with no previous row; the removal is retried when Rev4a re-applies the agent's config, and the credential cannot be deleted meanwhile. A row replaced by another profile of the same provider is not touched on the agent (the environment names are shared). A success writes a `desync` audit entry. When the last TOOLS.md integration row is removed, its entire marker block is removed.
 

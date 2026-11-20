@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { gatewayCliArgv } from '../lib/gateway-cli.ts';
 
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
@@ -247,6 +248,7 @@ const writes = new Map();
 // All stopped-container staging stays in memory, including failure-path cleanup.
 // No real fs mutation, os.tmpdir() dependency, Docker process or host directory.
 const stagedFiles = new Map();
+const patches = [];
 let tempSequence = 0;
 const stagingFs = {
   mkdtempSync: (prefix) => `${prefix}${++tempSequence}`,
@@ -275,7 +277,7 @@ const sync = load('app/api/gateway/sync.ts', {
     },
     execFileSync: (command, args, options) => {
       assert.equal(command, 'docker'); // Intercepted here; no process is launched.
-      if (args[0] === 'inspect') return 'fixture:2026.11.2';
+      if (args[0] === 'inspect') return args[2].includes('.Config.Labels') ? 'atlas' : 'fixture:2026.11.2';
       if (args[0] === 'exec' && args[2] === 'cat') {
         if (failRead) throw new Error('fixture read failure');
         return JSON.stringify(config);
@@ -295,7 +297,9 @@ const sync = load('app/api/gateway/sync.ts', {
     },
   },
   fs: stagingFs, os: { tmpdir: () => '/virtual/sec20' }, path,
-  '@/lib/agent-config-lock': { withAgentConfigLock: async (_, fn) => fn() }, '@/lib/docker-exec': {},
+  '@/lib/agent-config-lock': { withAgentConfigLock: async (_, fn) => fn() },
+  '@/lib/gateway-cli': { gatewayCliArgv },
+  '@/lib/docker-exec': { dockerExecWithInput: async (...args) => { patches.push(args); } },
   './provider/keys': { readProviderKeys: () => stored },
   '@/lib/model-catalogue': { bundledCatalogueStatus: () => catalogueStatus, loadOfferedModels: () => [] },
   '@/lib/container-file': { singleFileFromTar: () => ({ body: Buffer.from(JSON.stringify(config)), mode: 0o600 }) },
@@ -307,6 +311,17 @@ const sync = load('app/api/gateway/sync.ts', {
   '@/lib/agent-edit-state': { activeEditAgentIds: () => [] },
   '@/lib/agent-names': { getAgentDisplayNames: async () => new Map() },
   '@/lib/model-pricing': {}, '@/lib/proxy-usage': usage, '@/lib/agent-proxy-token': tokens,
+});
+await test('sync: single-agent model patch uses the Gateway wrapper and stdin', async () => {
+  await sync.patchRev4aProvider('c-atlas');
+  assert.equal(patches.length, 1);
+  const [container, argv, input, options] = patches[0];
+  assert.equal(container, 'c-atlas');
+  assert.deepEqual(argv, gatewayCliArgv(['config', 'patch', '--stdin']));
+  assert.equal(options.timeoutMs, 15000);
+  const expectedKey = derive(key, 'atlas');
+  assert.ok(JSON.parse(input).models.providers.rev4a.apiKey === expectedKey);
+  assert.ok(!JSON.stringify(argv).includes(expectedKey));
 });
 await test('builder: each agent gets its own credential; generic block keeps shared key', () => {
   for (const id of ['atlas', 'beta', 'a.b', 'a', 'x'.repeat(63), 'x'.repeat(64)]) {

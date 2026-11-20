@@ -11,6 +11,13 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
+## Unreleased — Gateway token rotation
+
+On agents running OpenClaw 2026.10.x, credential switches, model sync, subscription changes and
+Telegram pairing work again after rotating the Agents Gateway token. At Rev4a startup, failed
+credential switch-ons and pending removals caused by a token mismatch are retried automatically
+once running agents are ready. Stopped agents retry when they next start. Existing agents recover in place.
+
 ## 1.30.1 — Agents token reaches stopped agents
 
 **Agents → Gateway Token → Save & Sync** now updates every agent. Running agents restart with the new token as before; stopped agents get it on their volume and use it at their next start. Before, a stopped agent kept the old token, and because the token file on the volume wins over the container environment it kept it even after a Recreate. Busy or paused agents are listed and keep the old token until you save again. After the update, Rev4a also gives the saved token, at its first start, to every stopped agent left on an older one by the old Save & Sync (logged).
@@ -699,6 +706,8 @@ Store third-party service credentials and install them into agent containers.
   "exit 137", one agent at a time once its Gateway is ready, with a success/failure log per agent.
   Two such credentials of the same service on one agent are left for the user to choose. This never delays dashboard startup. A success clears the
   error, so later starts skip it. Stopped agents keep their start-time re-apply.
+  Token mismatches are also repaired at startup. If another enabled profile of the same service
+  was delivered, the retry clears the old profile's pending removal and preserves the delivered credential.
   Other failures and pending removals retain the lifecycle consistency pass and manual
   **Redeliver** / **Retry removal**. This fix changes no stored format, values or version
   requirements and is safe to roll back to the preceding release.

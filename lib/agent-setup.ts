@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import { SHARED_SKILLS_DIR, REV4A_RULES_DIR, ensureBackupsDir } from '@/lib/rev4a-paths';
 import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
+import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 
@@ -135,7 +136,7 @@ export function withControlUiPolicy(current: unknown): Record<string, unknown> {
 
 /** One `config patch`. Callers hold the agent's config lock (see lib/agent-config-lock.ts). */
 async function patchConfig(containerName: string, patch: object): Promise<void> {
-  await dockerExecWithInput(containerName, ['openclaw', 'config', 'patch', '--stdin'], JSON.stringify(patch), {
+  await dockerExecWithInput(containerName, gatewayCliArgv(['config', 'patch', '--stdin']), JSON.stringify(patch), {
     timeoutMs: CONFIG_PATCH_TIMEOUT_MS,
   });
 }

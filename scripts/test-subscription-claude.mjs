@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { gatewayCliArgv } from '../lib/gateway-cli.ts';
 
 const claude = await import('../lib/subscription-claude-parse.ts');
 const require = createRequire(import.meta.url);
@@ -674,7 +675,7 @@ function loadClaudeModule({ reads, execs, leanCalls = [], sandboxEnvAnswer = '{"
     },
     '@/lib/container': { isValidAgentId: () => true },
     '@/lib/agent-config-lock': { withAgentConfigLock: async (_c, fn) => fn() },
-    '@/lib/gateway-cli': { gatewayCliArgv: () => [] },
+    '@/lib/gateway-cli': { gatewayCliArgv },
     '@/lib/docker-socket': { resolveDockerSocket: () => '/sock' },
     '@/lib/subscriptions': {
       SubscriptionError,
@@ -732,7 +733,8 @@ await testAsync('disconnect: a read-back that could not read the configuration d
     execs,
   });
   await assert.rejects(() => mod.disconnectClaudeAgent('a1'), (e) => e.status === 502);
-  assert.ok(execs.some((argv) => argv.includes('patch')), 'the patch was attempted');
+  assert.deepEqual(execs.find((argv) => argv.includes('patch'))?.slice(0, -1),
+    gatewayCliArgv(['config', 'patch', '--stdin']), 'the patch was attempted with the Gateway wrapper');
   assert.equal(execs.some((argv) => argv.includes('logout')), false, 'the sign-out did not run after a failed removal');
 });
 

@@ -27,7 +27,7 @@
  */
 
 import { randomBytes } from 'crypto';
-import { gatewayShellScript } from '../gateway-cli';
+import { gatewayCliArgv, gatewayShellScript } from '../gateway-cli';
 import { redact, storeRemoveArgv, type NativeExec } from './native';
 
 /** The single OpenClaw agent inside a Rev4a container. */
@@ -37,7 +37,7 @@ const HANDOFF_RE = /^github-setup-[a-f0-9]{32}$/;
 
 function handoffRmArgv(name: string): string[] {
   if (!HANDOFF_RE.test(name)) throw new Error('Invalid handoff name');
-  return ['openclaw', 'secrets', 'store', 'rm', '--yes', name];
+  return gatewayCliArgv(['secrets', 'store', 'rm', '--yes', name]);
 }
 
 /** The agent's Gateway listens on 3000, not OpenClaw's default. */
@@ -89,7 +89,7 @@ if (typeof callGatewayFromCli !== 'function') {
     await callGatewayFromCli(method, { url: process.env.OPENCLAW_GATEWAY_URL,
       token: process.env.OPENCLAW_GATEWAY_TOKEN, timeout: '15000', json: true }, params);
   } catch (e) {
-    // The message only, like \`openclaw gateway call\`: never a stack trace. Any secret value of
+    // The message only, like the Gateway CLI: never a stack trace. Any secret value of
     // the params is masked here, before the text leaves the container (the host redacts again).
     let msg = String(e && e.message ? e.message : e);
     if (params && typeof params.value === 'string' && params.value) msg = msg.split(params.value).join('***');
@@ -100,12 +100,12 @@ if (typeof callGatewayFromCli !== 'function') {
 }
 `;
 
-/** Legacy CLI has no stdin params option. Only this fallback puts the PAT in container argv. */
+/** The wrapper passes the CLI executable as a positional argument. The legacy CLI has no stdin params option. */
 const GITHUB_LEGACY_RPC_SCRIPT = `
 import { spawnSync } from 'node:child_process';
 const chunks = []; for await (const c of process.stdin) chunks.push(c);
 const { method, params } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-const result = spawnSync('openclaw', ['gateway', 'call', method, '--params', JSON.stringify(params)],
+const result = spawnSync(process.argv[1], ['gateway', 'call', method, '--params', JSON.stringify(params)],
   { stdio: ['ignore', 'ignore', 'inherit'] });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
@@ -114,7 +114,7 @@ process.exit(result.status ?? 1);
 function githubRpcArgv(script: string): string[] {
   return ['sh', '-c', gatewayShellScript([
     `export OPENCLAW_GATEWAY_URL=${GATEWAY_URL}`,
-    'cd "$(dirname "$(readlink -f "$(command -v openclaw)")")" && exec node --input-type=module -e "$1"',
+    'cd "$(dirname "$(readlink -f "$(command -v openclaw)")")" && exec node --input-type=module -e "$1" openclaw',
   ].join('; ')), 'sh', script];
 }
 
