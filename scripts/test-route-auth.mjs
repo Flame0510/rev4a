@@ -4,17 +4,18 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const methods = /^(GET|POST|PUT|PATCH|DELETE)$/;
+const methods = /^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)$/;
 
-// These routes deliberately use a different boundary from dashboard session auth.
+// These handlers deliberately use a different boundary from dashboard session auth. Keyed by
+// "file METHOD": a new handler added to one of these files is still checked.
 const allowlist = {
-  'app/api/auth/check/route.ts': 'Reports whether the supplied cookie is valid, checking its JWT and current password fingerprint.',
-  'app/api/auth/login/route.ts': 'Checks the dashboard password with login throttling and issues the first session cookie.',
-  'app/api/auth/logout/route.ts': 'Clears the browser cookie even when it is missing or expired.',
-  'app/api/auth/status/route.ts': 'Reports only whether a password is configured so the browser can choose setup or login.',
-  'app/api/domain/ask/route.ts': 'Caddy certificate authorization uses a supervised loopback check and returns only an allow or deny status.',
-  'app/api/provider/v1/chat/completions/route.ts': 'Requires a derived agent proxy token, shared provider gateway key, or REV4A_API_KEY before processing a completion.',
-  'app/api/provider/v1/models/route.ts': 'Uses the same provider gateway credentials as completions and returns an empty catalogue without them.',
+  'app/api/auth/check/route.ts GET': 'Reports whether the supplied cookie is valid, checking its JWT and current password fingerprint.',
+  'app/api/auth/login/route.ts POST': 'Checks the dashboard password with login throttling and issues the first session cookie.',
+  'app/api/auth/logout/route.ts POST': 'Clears the browser cookie even when it is missing or expired.',
+  'app/api/auth/status/route.ts GET': 'Reports only whether a password is configured so the browser can choose setup or login.',
+  'app/api/domain/ask/route.ts GET': 'Caddy certificate authorization uses a supervised loopback check and returns only an allow or deny status.',
+  'app/api/provider/v1/chat/completions/route.ts POST': 'Requires a derived agent proxy token, shared provider gateway key, or REV4A_API_KEY before processing a completion.',
+  'app/api/provider/v1/models/route.ts GET': 'Uses the same provider gateway credentials as completions and returns an empty catalogue without them.',
 };
 
 // These existing statements are allowed only in the named handler, before its guard.
@@ -26,7 +27,7 @@ const preludes = {
 
 function codeOnly(source) {
   return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\[\s\S]|[^'\\\r\n])*'|"(?:\\[\s\S]|[^"\\\r\n])*"|`(?:\\[\s\S]|[^`\\])*`/g, (token) => {
-    if (/^['"](?:@\/lib\/rev4a-auth|GET|POST|PUT|PATCH|DELETE)['"]$/.test(token)) return token;
+    if (/^['"](?:@\/lib\/rev4a-auth|GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)['"]$/.test(token)) return token;
     if (token[0] === '/') return token.replace(/[^\n]/g, ' ');
     return "''" + token.replace(/[^\n]/g, '');
   });
@@ -47,7 +48,7 @@ function* exportedHandlers(code) {
         if (methods.test(method)) yield [method, reexport ? '' : localFunction(code, local)];
       }
     } else if (wildcard) {
-      yield ['GET/POST/PUT/PATCH/DELETE', ''];
+      yield ['GET/HEAD/OPTIONS/POST/PUT/PATCH/DELETE', ''];
     } else {
       for (const [binding, value] of exportedBindings(tail)) {
         if (methods.test(binding)) {
@@ -83,7 +84,7 @@ function* exportedBindings(tail) {
     if (/^\w+$/.test(binding[1])) {
       yield [binding[1], value];
     } else {
-      for (const name of binding[1].matchAll(/\b(?:GET|POST|PUT|PATCH|DELETE)\b/g)) yield [name[0], ''];
+      for (const name of binding[1].matchAll(/\b(?:GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)\b/g)) yield [name[0], ''];
     }
     if (end[0] !== ',') return;
     tail = tail.slice(end.index + 1);
@@ -96,8 +97,9 @@ function localFunction(code, name) {
   return declaration ? code.slice(declaration.index + declaration[0].length) : '';
 }
 
-// requireAuthIfConfigured lets requests through until a password exists (first-run setup), so only
-// the setup and wizard routes may use it; every other route needs requireAuthJWT.
+// requireAuthIfConfigured accepts the per-boot setup code until a password exists, then normal
+// authentication: only the first-run setup and wizard routes may use it; every other route needs
+// requireAuthJWT.
 const firstRunRoute = /^app\/api\/(?:setup|wizard)\//;
 
 function unguardedHandlers(file, source) {
@@ -146,13 +148,17 @@ assert.deepEqual(unguardedHandlers(fixture, "export * from './handlers';"), ['un
 const weakGuard = "import { requireAuthIfConfigured } from '@/lib/rev4a-auth'; export async function GET(request: Request) { const denied = await requireAuthIfConfigured(request); if (denied) return denied; }";
 assert.deepEqual(unguardedHandlers(fixture, weakGuard), ['GET']);
 assert.deepEqual(unguardedHandlers('app/api/setup/example/route.ts', weakGuard), []);
+assert.deepEqual(unguardedHandlers(fixture, 'export function HEAD() { return new Response(); } export async function OPTIONS() { return new Response(); }'), ['HEAD', 'OPTIONS']);
 
-const files = globSync('app/api/**/route.ts', { cwd: root }).sort();
-const errors = Object.keys(allowlist).filter((file) => !files.includes(file))
-  .map((file) => `${file}: stale route-auth allowlist entry`);
+const files = globSync(['app/api/**/route.ts', 'app/api/**/route.js', 'app/api/**/route.mjs', 'app/api/**/route.tsx', 'app/api/**/route.jsx'], { cwd: root }).sort();
+const exported = new Map(files.map((file) => [file, [...exportedHandlers(codeOnly(readFileSync(join(root, file), 'utf8')))].map(([method]) => method)]));
+const errors = Object.keys(allowlist).filter((key) => {
+  const [file, method] = key.split(' ');
+  return !exported.get(file)?.includes(method);
+}).map((key) => `${key}: stale route-auth allowlist entry`);
 for (const file of files) {
-  if (Object.hasOwn(allowlist, file)) continue;
   for (const method of unguardedHandlers(file, readFileSync(join(root, file), 'utf8'))) {
+    if (Object.hasOwn(allowlist, `${file} ${method}`)) continue;
     errors.push(`${file} ${method}: start the handler with an imported requireAuthJWT or requireAuthIfConfigured guard and return its denial`);
   }
 }

@@ -727,4 +727,22 @@ await test('restore.sh: a swap that fails between the two moves restores the old
   assert.match(output, /previous data directory|data directory is/);
 });
 
+await test('restore.sh: an archive whose only env file is .env.backup is refused before anything changes', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'rev4a-restore-refuse-'));
+  const data = path.join(home, 'data-dir');
+  const src = path.join(home, 'src');
+  fs.mkdirSync(data); fs.mkdirSync(src);
+  fs.writeFileSync(path.join(data, '.env'), 'A=0\n');
+  fs.writeFileSync(path.join(src, '.env.backup'), 'B=1\n');
+  const archive = path.join(home, 'r.tar.gz');
+  execFileSync('tar', ['-C', src, '-czf', archive, './.env.backup']);
+  const r = spawnSync('bash', [restoreSh, archive], {
+    env: { ...process.env, HOME: home, REV4A_DATA_DIR: data },
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000, killSignal: 'SIGKILL',
+  });
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stderr, /does not look like a Rev4a data backup/);
+  assert.equal(fs.readFileSync(path.join(data, '.env'), 'utf8'), 'A=0\n', 'the current data is untouched');
+});
+
 console.log(`\n${passed} passed`);

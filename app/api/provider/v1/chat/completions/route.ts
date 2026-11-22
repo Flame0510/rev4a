@@ -38,7 +38,7 @@ interface ProviderV1Request {
   [key: string]: unknown;
 }
 
-/** Serialize to JSON and return a Response with explicit Content-Length to avoid Traefik HTTP/2 issues. */
+/** Serialize to JSON with Cache-Control. Next.js 16.4+ drops the Content-Length set here and sends the body chunked. */
 function jsonResponse(data: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   const body = JSON.stringify(data);
   const byteLen = Buffer.byteLength(body, 'utf-8');

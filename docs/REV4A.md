@@ -11,9 +11,14 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## Unreleased — Gateway token rotation
+## Unreleased — Next.js 16.4.6, host restore fixes
 
-- Upgraded to Next.js 16.4.6 for security, disabled the image optimizer endpoint (`/_next/image` now answers 404), and removed two unused dependencies.
+- **Next.js 16.4.6** (security: fixes one critical and four high advisories of 16.2.6). The image optimizer is off: `/_next/image` answers 404 (Rev4a never used it).
+- Next.js 16.4 no longer forwards a route's own `Content-Length`: Workspace previews and downloads and provider proxy answers are sent chunked. Browsers and agents read them as before; a download no longer shows its total size in advance.
+- `scripts/restore.sh` no longer hangs on macOS (bash 5.2 could block forever while checking the archive), and refuses an archive whose only `.env`-like file is, for example, `.env.backup`.
+- Removed from the package: the unused `html2canvas` and `cron-parser` dependencies and the one-off maintainer scripts `scripts/check-providers.mjs` and `scripts/add-auth.cjs`.
+
+## 1.30.3 — Gateway token rotation
 
 On agents running OpenClaw 2026.10.x, credential switches, model sync, subscription changes and
 Telegram pairing work again after rotating the Agents Gateway token. At startup, Rev4a retries
@@ -24,9 +29,6 @@ timeout repair still takes priority for a timed-out switch-on of the same servic
 credentials of one service are switched on or a failure falls outside startup repair, open
 **Credentials** and switch on the one to keep or select **Retry removal**. Stopped agents retry
 when they next start.
-
-`scripts/restore.sh` no longer passes the archive listing to `grep` as a here-string: with bash 5.2 on macOS
-that write could block forever and leave the restore hanging.
 
 ## 1.30.1 — Agents token reaches stopped agents
 
