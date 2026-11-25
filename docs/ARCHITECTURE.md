@@ -537,8 +537,18 @@ is never written, and the command hangs with no error to point at.
   pending across UI reloads.
 
 - **The process model and self-update.** `rev4a serve` (the systemd unit's process) is a
-  supervisor: it spawns `rev4a _run <port>`, which in turn runs Next, the daemon and the
-  terminal WebSocket. `rev4a update` installs the new version, then `rev4a restart` writes
+  launcher that supervises `rev4a _run <port>`. Preflight runs in `_run` on each launch,
+  including after an update, before starting Next, the daemon and the terminal WebSocket.
+  It waits for the Docker daemon when the Docker CLI is on PATH. Otherwise it checks
+  common Docker binary and socket paths and looks for Podman on PATH. Auto-install runs
+  only as root on Linux when `ID` or `ID_LIKE` in `/etc/os-release` identifies Debian,
+  Ubuntu, or a derivative and those runtime checks find nothing. The process environment
+  can disable it with `REV4A_DOCKER_AUTO_INSTALL=0`.
+  Eligible launches use a host-wide lock at `/run/rev4a-docker-install.lock` and
+  `flock` from util-linux to serialize stale lock recovery. The holder rechecks for runtimes
+  before apt and before the Docker install script. A leftover lock older than 15 minutes
+  is logged and replaced.
+  `rev4a update` installs the new version, then `rev4a restart` writes
   `.restart-flag` in the data directory; `_run` sees it, stops its children, waits for the
   port to come free and exits with code **42**, and the supervisor relaunches `_run` on the
   new code — so the supervisor itself never goes down (the unit's `NRestarts` stays 0).

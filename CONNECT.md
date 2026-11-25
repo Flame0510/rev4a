@@ -21,7 +21,7 @@ account or as root. Rev4a runs as root in this guide: `~/.config/rev4a` means
 | Node.js | 22 | Install first; Rev4a does not install Node.js |
 | npm | 10+ | Comes with Node.js |
 | Build tools | `make`, `g++`, `python3` | Native modules (`better-sqlite3`, `node-pty`) compile on Linux. Install `build-essential` on Debian/Ubuntu; Ubuntu 24.04 already includes `python3` |
-| Docker | 24+ | Installed by `rev4a serve` if missing when run as root on Linux; required for agent containers |
+| Docker | 24+ | Required for agent containers. See [Start Rev4a](#start-rev4a) for auto-install conditions |
 | RAM | 2 GB | 4 GB recommended |
 | Disk | 5 GB free | 10 GB recommended for agents |
 
@@ -48,9 +48,12 @@ modules and builds the dashboard through the postinstall hook. Wait for installa
 sudo rev4a serve
 ```
 
-On first run, Rev4a creates `/root/.config/rev4a/.env` with secrets, installs Docker
-if missing (using `get.docker.com`), creates the `rev4a-network` Docker network,
-and pulls the agent image. Wait until it listens on port 3740 and prints:
+On first run, Rev4a creates `/root/.config/rev4a/.env` with secrets. It installs
+Docker with `get.docker.com` only when run as root on Debian, Ubuntu, or a derivative
+and it finds neither Docker nor Podman. Set `REV4A_DOCKER_AUTO_INSTALL=0` in the
+process environment to skip auto-install (for systemd, use an `Environment=` line).
+When Docker is ready, Rev4a creates `rev4a-network` and pulls the agent image if
+needed. Wait until it listens on port 3740 and prints:
 
 ```text
 [SETUP] XXXX-XXXX-XXXX-XXXX — open the dashboard and enter this code

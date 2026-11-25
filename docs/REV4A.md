@@ -18,6 +18,8 @@ The package is published as `rev4a` (it was `@flame0510/project-aether`): instal
 the old package does not update itself to the new name: stop Rev4a, `npm uninstall -g` the old
 package, then `npm i -g rev4a` and start it again (see the release notes).
 
+- **Docker auto-install is more careful.** `rev4a serve` installs Docker only as root on Debian, Ubuntu or a derivative, and only when it finds no Docker binary, no Docker socket and no Podman. It says so in the log first. Set `REV4A_DOCKER_AUTO_INSTALL=0` in the process environment (for systemd, an `Environment=` line) to never install it.
+
 ## 1.31.0 — Next.js 16.4.6, host restore fixes
 
 - **Next.js 16.4.6** (security: fixes one critical and four high advisories of 16.2.6). The image optimizer is off: `/_next/image` answers 404 (Rev4a never used it).
@@ -240,7 +242,7 @@ Config's restart on non-systemd installs returns to the old limitation after rol
 
 ### Environment
 
-Rev4a reads the following environment variables. Set them in `/config` (UI) or directly in `.env`, except the three read before `.env` is loaded — `REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS` (both from the process environment: a shell export or a systemd `Environment=` line) and `REV4A_SKIP_POSTINSTALL_BUILD` (read by `npm install`). See [.env.example](../.env.example) for the canonical, always-current list.
+For settings loaded from `.env`, use `/config` (UI) or edit the file directly. Before `.env` loads, `rev4a serve` reads `REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS`, and `REV4A_DOCKER_AUTO_INSTALL` from the process environment (a shell export or a systemd `Environment=` line). `npm install` reads `REV4A_SKIP_POSTINSTALL_BUILD`. See [.env.example](../.env.example) for file settings.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -262,6 +264,7 @@ Rev4a reads the following environment variables. Set them in `/config` (UI) or d
 | `REV4A_FORCE_INSECURE_COOKIE` | No | No longer read since 1.28.0: the cookie follows the scheme the browser uses. Leave it in `.env` if you may roll back to 1.27; without it, 1.27 on plain HTTP by IP loops at login |
 | `REV4A_AGENT_IMAGE_REGISTRY` | No | Registry repository agent images are pulled from (default: `ghcr.io/flame0510/rev4a/openclaw-agent-base`); a `localhost` registry is reached over plain HTTP |
 | `REV4A_DOCKER_WAIT_SECONDS` | No | How long `rev4a serve` waits for the Docker daemon at start-up (default `90`, capped at 600) |
+| `REV4A_DOCKER_AUTO_INSTALL` | No | Set to `0`, `false`, or `no` (case-insensitive) in the process environment to skip Docker auto-install |
 | `REV4A_LEGACY_BACKUP_VOLUME` | No | Name of the legacy Docker volume older releases kept agent backups in (default `rev4a-backups`). Set it only when a second Rev4a (a test instance) runs on the same Docker, so it never migrates the real volume; an invalid name disables the legacy side |
 | `REV4A_DEV_ORIGINS` | No | Extra comma-separated hostnames or IPs allowed to reach `next dev`; no effect on a production build |
 | `REV4A_SKIP_POSTINSTALL_BUILD` | No | `1` in CI: `npm ci` then skips the post-install `next build` (the workflows build as a separate step). An installation build failure exits non-zero; startup checks `.next/BUILD_ID` before serving. Any non-empty value skips the post-install build, `0` included — leave it unset to build |
@@ -598,11 +601,14 @@ over the same key set here (an empty `.env` value does not hide a non-empty valu
 here, and neither first-run setup nor startup generates a secret the service already
 provides) — so secrets such as `REV4A_PASSWORD` or `REV4A_TOKEN`
 belong in `.env` (or `/config`), not in the drop-in. It is also the only place for the
-variables read before `.env` is loaded (`REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS`).
+variables read before `.env` is loaded (`REV4A_DATA_DIR`, `REV4A_DOCKER_WAIT_SECONDS`,
+and `REV4A_DOCKER_AUTO_INSTALL`). Set `REV4A_DOCKER_AUTO_INSTALL=0` here to skip
+Docker auto-install for the service.
 
 ```ini
 [Service]
 Environment=REV4A_DOCKER_WAIT_SECONDS=180
+Environment=REV4A_DOCKER_AUTO_INSTALL=0
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 ```

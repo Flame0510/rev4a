@@ -10,7 +10,7 @@
  * rev4a serve:
  *   1. Ensures .env exists (auto-generates on first run)
  *   2. Ensures .next build exists (builds if missing)
- *   3. Ensures Docker is installed (installs if missing + root) and waits for its daemon
+ *   3. Checks for Docker, installs it on eligible hosts, and waits for its daemon
  *   4. Ensures agent base image is built (builds if missing)
  *   5. Starts Next.js + daemon + terminal WS as a single process group
  *
@@ -21,11 +21,13 @@
  */
 
 const { spawn, execSync, execFileSync, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, chmodSync, realpathSync, rmSync, openSync, closeSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, lstatSync, chmodSync, realpathSync, rmSync, openSync, closeSync, unlinkSync } = require('fs');
 const { join, dirname } = require('path');
+const { performance } = require('node:perf_hooks');
 const crypto = require('crypto');
 const os = require('os');
 const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines, removeRuntimeEnvLines, RUNTIME_ONLY_ENV_KEYS, parseEnvValues, applyEnvEdits } = require('../lib/env-file.js');
+const { DOCKER_RUNTIME_PATHS, decideDockerInstall } = require('../lib/docker-install-policy.js');
 
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
@@ -84,11 +86,7 @@ function randomString(len) {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function isRoot() {
-  return process.getuid && process.getuid() === 0;
-}
-
-function isLinux() {
-  return os.platform() === 'linux';
+  return process.getuid?.() === 0;
 }
 
 function hasCmd(name) {
@@ -100,16 +98,18 @@ function hasCmd(name) {
   }
 }
 
-function whichDistro() {
-  if (!isLinux()) return null;
+function readDistro() {
   try {
-    const id = execSync(
-      '. /etc/os-release 2>/dev/null && echo "${ID:-}"',
-      { shell: '/bin/bash' }
-    ).toString().trim();
-    return id || null;
+    const release = readFileSync('/etc/os-release', 'utf8');
+    const fields = {};
+    for (const [, key, doubleQuoted, singleQuoted, unquoted] of release.matchAll(
+      /^(ID|ID_LIKE)=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([A-Za-z0-9._-]+))[ \t]*\r?$/gm
+    )) {
+      fields[key] = doubleQuoted ?? singleQuoted ?? unquoted;
+    }
+    return { distroId: fields.ID, distroIdLike: fields.ID_LIKE };
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -159,6 +159,77 @@ function waitForDockerDaemon() {
   return false;
 }
 
+function canAutoInstallDocker(platform) {
+  const decision = decideDockerInstall({
+    platform,
+    isRoot: isRoot(),
+    ...(platform === 'linux' ? readDistro() : {}),
+    env: process.env,
+    existingPaths: DOCKER_RUNTIME_PATHS.filter((path) => existsSync(path)),
+    podmanOnPath: hasCmd('podman'),
+  });
+
+  if (decision.action === 'install') return true;
+  log('DOCKER', decision.reason);
+  if (decision.action === 'guide') {
+    const installUrl = platform === 'linux'
+      ? 'https://docs.docker.com/engine/install/'
+      : 'https://docs.docker.com/get-docker/';
+    log('DOCKER', `  Install Docker manually: ${installUrl}`);
+    log('DOCKER', '  Then run: rev4a serve');
+  }
+  return false;
+}
+
+function withDockerInstallLock(install) {
+  const lockPath = '/run/rev4a-docker-install.lock';
+  const guardDir = '/run/rev4a-docker-install';
+  mkdirSync(guardDir, { recursive: true, mode: 0o700 });
+  const guardFd = openSync(guardDir, 'r');
+  try {
+    // The directory inode stays in place so simultaneous launches cannot race
+    // while removing a stale lock file and creating its replacement.
+    const guard = spawnSync('flock', ['--exclusive', '--nonblock', '0'], {
+      stdio: [guardFd, 'ignore', 'ignore'],
+      timeout: 5000,
+    });
+    if (guard.error) throw guard.error;
+    if (guard.status === 1) {
+      log('DOCKER', 'Another Rev4a launch is handling Docker auto-install. Skipping this attempt.');
+      return false;
+    }
+    if (guard.status !== 0) throw new Error('Could not lock the Docker auto-install directory');
+
+    let lockFd;
+    try {
+      lockFd = openSync(lockPath, 'wx', 0o600);
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      const lock = lstatSync(lockPath);
+      if (!lock.isFile()) throw new Error(`Docker auto-install lock is not a regular file: ${lockPath}`);
+      if (Date.now() - lock.mtimeMs <= 15 * 60_000) {
+        log('DOCKER', `Docker auto-install lock is still recent at ${lockPath}. Skipping this attempt.`);
+        return false;
+      }
+      log('DOCKER', `Ignoring stale Docker auto-install lock at ${lockPath} (older than 15 minutes).`);
+      unlinkSync(lockPath);
+      lockFd = openSync(lockPath, 'wx', 0o600);
+    }
+
+    try {
+      return install();
+    } finally {
+      try {
+        unlinkSync(lockPath);
+      } finally {
+        closeSync(lockFd);
+      }
+    }
+  } finally {
+    closeSync(guardFd);
+  }
+}
+
 /** True when the Docker daemon is reachable and the Docker-dependent steps can run. */
 function ensureDocker() {
   if (hasCmd('docker')) {
@@ -166,42 +237,50 @@ function ensureDocker() {
     return waitForDockerDaemon();
   }
 
-  if (!isLinux()) {
-    log('DOCKER', '⚠ Docker not found. Rev4a needs Docker to create agent containers.');
-    log('DOCKER', '  Install Docker: https://docs.docker.com/get-docker/');
-    log('DOCKER', '  Then run: rev4a serve');
-    return false;
-  }
+  const platform = os.platform();
+  if (!canAutoInstallDocker(platform)) return false;
 
-  if (!isRoot()) {
-    log('DOCKER', '⚠ Docker not found. Run Rev4a as root to auto-install:');
-    log('DOCKER', '  sudo rev4a serve');
-    return false;
-  }
-
-  const distro = whichDistro();
-  log('DOCKER', `Installing Docker (distro: ${distro || 'unknown'})…`);
-
+  let dockerAvailable;
   try {
-    execSync('apt-get update -qq && apt-get install -y -qq curl gnupg lsb-release ca-certificates', {
-      stdio: 'inherit',
-      timeout: 120_000,
+    dockerAvailable = withDockerInstallLock(() => {
+      if (hasCmd('docker')) {
+        log('DOCKER', 'Docker CLI found');
+        return true;
+      }
+      if (!canAutoInstallDocker(platform)) return false;
+
+      log('DOCKER', 'Docker not found: installing it with the official script (get.docker.com). Set REV4A_DOCKER_AUTO_INSTALL=0 to skip.');
+
+      const aptTimeout = 120_000;
+      const installStarted = performance.now();
+      execFileSync('apt-get', ['update', '-qq'], { stdio: 'inherit', timeout: aptTimeout });
+      const aptRemainingMs = Math.floor(aptTimeout - (performance.now() - installStarted));
+      if (aptRemainingMs <= 0) throw new Error('Docker prerequisite update timed out');
+      execFileSync('apt-get', ['install', '-y', '-qq', 'curl', 'gnupg', 'lsb-release', 'ca-certificates'],
+        { stdio: 'inherit', timeout: aptRemainingMs });
+
+      if (hasCmd('docker')) {
+        log('DOCKER', 'Docker CLI found');
+        return true;
+      }
+      if (!canAutoInstallDocker(platform)) return false;
+
+      const scriptTimeout = 180_000;
+      const scriptRemainingMs = Math.min(scriptTimeout, Math.floor(aptTimeout + scriptTimeout - (performance.now() - installStarted)));
+      if (scriptRemainingMs <= 0) throw new Error('Docker auto-install timed out');
+      execSync('curl -fsSL https://get.docker.com | sh', { stdio: 'inherit', timeout: scriptRemainingMs });
+
+      log('DOCKER', 'Docker installed successfully');
+      return true;
     });
-
-    // Docker's official convenience script (fastest path)
-    execSync(
-      'curl -fsSL https://get.docker.com | sh',
-      { stdio: 'inherit', timeout: 180_000 },
-    );
-
-    log('DOCKER', 'Docker installed successfully');
-    return waitForDockerDaemon();
   } catch (err) {
-    log('DOCKER', '⚠ Docker auto-install failed. Install manually:');
+    log('DOCKER', `⚠ Docker auto-install failed: ${err.message}`);
+    log('DOCKER', '  Install manually:');
     log('DOCKER', '  https://docs.docker.com/engine/install/');
     log('DOCKER', '  Then run: rev4a serve');
     return false;
   }
+  return dockerAvailable && waitForDockerDaemon();
 }
 
 // ── Agent image auto-pull ───────────────────────────────────────────────────
@@ -854,15 +933,20 @@ EXAMPLES:
 
 On first run, rev4a serve automatically:
   • Generates .env (JWT secret + API token)
-  • Installs Docker if missing (requires root)
   • Downloads the agent base image for the newest supported OpenClaw version
   • Builds the Next.js app if no build is found
   • Starts Next.js, daemon, and terminal WebSocket as a single process group
   • Cleanly stops all services on Ctrl+C / SIGTERM
 
 CONFIGURATION:
-  All settings live in .env (auto-generated on first run).
+  Application settings live in .env (auto-generated on first run).
   Set your admin password via the web setup wizard at first visit.
+
+DOCKER AT STARTUP:
+  Rev4a installs Docker only when run as root on Debian, Ubuntu, or a derivative
+  and it finds neither Docker nor Podman.
+  Set REV4A_DOCKER_AUTO_INSTALL=0 in the process environment (systemd Environment=)
+  to skip auto-install. Rev4a reads this setting before loading .env.
 `;
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {

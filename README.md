@@ -54,8 +54,11 @@ sudo rev4a serve
 ```
 
 The npm install compiles native modules and builds the dashboard. On first start,
-`rev4a serve` creates `/root/.config/rev4a/.env`, installs Docker if missing on Linux
-when run as root, creates `rev4a-network`, pulls the agent image, and starts all services.
+`rev4a serve` creates `/root/.config/rev4a/.env` and starts all services. It installs
+Docker with `get.docker.com` only when run as root on Debian, Ubuntu, or a derivative
+and it finds neither Docker nor Podman. Set `REV4A_DOCKER_AUTO_INSTALL=0` in the
+process environment to skip auto-install. When Docker is ready, Rev4a creates
+`rev4a-network` and pulls the agent image if needed.
 Wait for the dashboard to listen on port 3740 and the `[SETUP]` code to appear.
 
 **Plain HTTP or HTTPS:** HTTPS through a reverse proxy is recommended. Plain HTTP by IP works
@@ -94,7 +97,7 @@ sudo env PORT=8080 rev4a serve
 |---|---|---|
 | Node.js | 22 | Required for the dashboard server |
 | Build tools | `make`, `g++`, `python3` | Native modules (`better-sqlite3`, `node-pty`) compile on Linux. Install `build-essential` on Debian/Ubuntu; Ubuntu 24.04 already includes `python3` |
-| Docker | 24+ | Required for creating agent containers; installed by `rev4a serve` if missing when run as root on Linux |
+| Docker | 24+ | Required for creating agent containers. See [Quick Start](#quick-start) for auto-install conditions |
 | npm | 10+ | Comes with Node.js |
 
 **That's it.** No PostgreSQL, no Redis, no external services.
