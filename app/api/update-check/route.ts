@@ -94,11 +94,10 @@ export async function GET(request: Request): Promise<NextResponse> {
  * POST /api/update-check
  *
  * Spawns `rev4a update` as a detached background process: it installs the latest
- * version, writes `.restart-flag` and lets `rev4a serve` restart the child (`rev4a
- * _run`) with the new binary. Nothing here has to restart anything — this server stays
- * up through install and build, and only `rev4a restart` at the end of the update stops
- * it (`fuser -k <port>/tcp`), so any callback meant to run after that is dead code; the
- * CLI's own flag is the only mechanism that has to work.
+ * version and calls `rev4a restart`. The CLI writes `.restart-flag` so `rev4a serve`
+ * restarts the child (`rev4a _run`) with the new binary. The server stays up through
+ * install and build. The CLI fallback only signals the dashboard server if its
+ * recorded PID and OS start time still match.
  *
  * The child's output goes to `update.log` in the data directory: since the update
  * restarts this process mid-run, that file is the only record of what happened.

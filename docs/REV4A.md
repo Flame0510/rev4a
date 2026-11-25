@@ -11,7 +11,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## Unreleased — The npm package is now `rev4a`
+## Unreleased — npm package renamed to `rev4a`, safer host startup
 
 The package is published as `rev4a` (it was `@flame0510/project-aether`): install it with
 `npm i -g rev4a`. The command, the data directory and the systemd unit do not change. An install of
@@ -19,6 +19,7 @@ the old package does not update itself to the new name: stop Rev4a, `npm uninsta
 package, then `npm i -g rev4a` and start it again (see the release notes).
 
 - **Docker auto-install is more careful.** `rev4a serve` installs Docker only as root on Debian, Ubuntu or a derivative, and only when it finds no Docker binary, no Docker socket and no Podman. It says so in the log first. Set `REV4A_DOCKER_AUTO_INSTALL=0` in the process environment (for systemd, an `Environment=` line) to never install it.
+- **Rev4a no longer stops other programs on its port.** `rev4a serve` and `rev4a restart` used to kill whatever listened on the dashboard port (`fuser -k`) on Linux. Now they stop only a Rev4a process they recorded themselves; if another program holds the port, `rev4a serve` says which and exits. A Rev4a left running by an older version is not recognised once: stop it through its own supervisor (systemd does this on `systemctl restart`). An invalid `--port` or `PORT` is refused instead of falling back to 3740.
 
 ## 1.31.0 — Next.js 16.4.6, host restore fixes
 
@@ -545,6 +546,15 @@ sudo journalctl -u rev4a -f
 ```
 
 ### Start-up and Docker
+
+Before preflight, `rev4a serve` probes the dashboard port. If it is busy, the CLI
+only signals processes recorded for that port in `server.pid` or `run.pid` under
+`<REV4A_DATA_DIR>/data` with a matching OS start time. If the port stays occupied,
+startup stops and shows listener details when available. A listener left behind by a
+version that predates these records is treated as another program. On a standalone
+install, stop that older Rev4a instance through its original supervisor, or use
+`PORT=<n> rev4a serve` or `rev4a serve --port <n>` to choose another port.
+The port must be an integer from 1 through 65535.
 
 `rev4a serve` waits for the Docker daemon before its Docker-dependent steps, up to
 `REV4A_DOCKER_WAIT_SECONDS` (default 90, capped at 600; `0` checks once without
@@ -1104,10 +1114,10 @@ The migration of backups from the `rev4a-backups` volume to `<data>/backups` mov
 - Ensure the `workspace` parameter is a valid workspace ID
 
 ### Old version persists after rebuild
-1. Kill process: `fuser -k 3740/tcp`
-2. Wait 2 seconds
-3. Restart: `sudo systemctl restart rev4a.service`
-4. Check `public/sw.js` exists (delete if so)
+1. Restart the dashboard with `sudo systemctl restart rev4a.service` under systemd or
+   `rev4a restart` under a standalone `rev4a serve` supervisor.
+2. If startup reports a port conflict, choose another port with `PORT` or `--port`.
+3. Check whether `public/sw.js` exists and remove it if present.
 
 ---
 

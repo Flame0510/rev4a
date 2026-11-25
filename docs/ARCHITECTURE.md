@@ -552,6 +552,15 @@ is never written, and the command hangs with no error to point at.
   `.restart-flag` in the data directory; `_run` sees it, stops its children, waits for the
   port to come free and exits with code **42**, and the supervisor relaunches `_run` on the
   new code — so the supervisor itself never goes down (the unit's `NRestarts` stays 0).
+  `_run` atomically writes private `run.pid` and `server.pid` records in the data directory
+  for itself and `server.js`. Each holds the PID, port, OS start time and package root.
+  The supervisor bind-probes the port before preflight. On a conflict it only signals
+  recorded processes for that port whose OS start times still match. It sends SIGTERM,
+  rechecks identity before escalating to SIGKILL after five seconds, and polls for the
+  port to become free for up to another five seconds. `ss` on Linux and `lsof` on macOS
+  are optional diagnostics for a port that remains busy. An orphan from an older release
+  without a PID record is treated as another program. The `restart` fallback only signals
+  the recorded dashboard server, leaving `_run` available to process the flag.
   The dashboard's **Update now** is only a detached `rev4a update` (`POST
   /api/update-check`): it must not try to restart anything itself, because the update
   stops the very process that spawned it, and the CLI's own flag is the mechanism that

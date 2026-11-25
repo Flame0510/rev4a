@@ -3759,11 +3759,12 @@ never a placeholder like `0.0.0`. `log` is the file name, in the Rev4a data dire
 where the update's output is written.
 
 ### `POST /api/update-check`
-Run `rev4a update` as a detached background process. Nothing here restarts anything:
-this server stays up through the install and the build, and only `rev4a restart` at the
-end of the update stops it (`fuser -k <port>/tcp`); `rev4a serve` then brings the child
-back on the new binary via its `.restart-flag`, so the connection drops and the page has
-to wait for the server to answer again.
+Run `rev4a update` as a detached background process. The server stays up through the
+install and build. At the end, `rev4a restart` writes `.restart-flag` for the supervisor
+and gives its watcher time to act. The fallback only signals the server from `server.pid`
+in the same directory when its current OS start time matches the record.
+`rev4a serve` then brings the child back on the new binary. The connection drops while
+the page waits for the server to answer again.
 
 The child's output goes to `update.log` under `<REV4A_DATA_DIR>/data` (or
 `~/.config/rev4a/data` by default) — the update restarts the process that spawned

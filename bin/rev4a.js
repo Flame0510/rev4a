@@ -25,8 +25,14 @@ const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameS
 const { join, dirname } = require('path');
 const { performance } = require('node:perf_hooks');
 const crypto = require('crypto');
+const { createServer } = require('net');
 const os = require('os');
+const { setTimeout: sleep } = require('timers/promises');
 const { assertEnvValue, isLoaderEnvKey, disableLoaderEnvLines, removeRuntimeEnvLines, RUNTIME_ONLY_ENV_KEYS, parseEnvValues, applyEnvEdits } = require('../lib/env-file.js');
+const {
+  validPort, readProcessStartTime, readPidRecord, writePidRecord, removePidRecord,
+  isRecordedProcess, describePortListeners, stopRev4aPids, waitForPort,
+} = require('../lib/port-owner.js');
 const { DOCKER_RUNTIME_PATHS, decideDockerInstall } = require('../lib/docker-install-policy.js');
 
 const ROOT = join(__dirname, '..');
@@ -41,6 +47,10 @@ const PKG_JSON = join(ROOT, 'package.json');
 // that file is looked up under this very directory.
 const CONFIG_DIR = process.env.REV4A_DATA_DIR || join(os.homedir(), '.config', 'rev4a');
 const DATA_DIR = join(CONFIG_DIR, 'data');
+const SERVER_PID_FILE = join(DATA_DIR, 'server.pid');
+const RUN_PID_FILE = join(DATA_DIR, 'run.pid');
+const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
+const RESTART_POLL_MS = 2000;
 const ENV_SOURCE = join(CONFIG_DIR, '.env');
 const ENV_LINK = join(ROOT, '.env');
 const DOCKERFILE = join(ROOT, 'agent-templates', 'base-image', 'Dockerfile');
@@ -763,7 +773,98 @@ function preflight() {
 
 // ── Serve (start all 3 processes) ───────────────────────────────────────────
 
-function serve(port) {
+const portReaders = {
+  platform: process.platform,
+  execFileSync: (file, args) => execFileSync(file, args, {
+    encoding: 'utf8', stdio: 'pipe', timeout: 1500, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+  }),
+  readFileSync: (file) => readFileSync(file, 'utf8'),
+};
+const pidFiles = { readFileSync: portReaders.readFileSync, writeFileSync, chmodSync, renameSync, unlinkSync };
+const portPoll = { now: () => performance.now(), sleep };
+// Only records owned by this user are trusted (lstat: a symlink is never followed).
+const pidOwner = typeof process.getuid === 'function' ? { lstatSync, uid: process.getuid() } : null;
+
+function recordDashboardProcess(file, pid, port) {
+  try {
+    const startTime = readProcessStartTime(pid, portReaders);
+    if (!startTime) throw new Error('Process start time unavailable');
+    const record = { pid, port, startTime, root: ROOT };
+    writePidRecord(file, record, pidFiles);
+    return () => {
+      try {
+        removePidRecord(file, record, pidFiles);
+      } catch (error) {
+        log('SERVE', `Could not remove ${file}: ${error.message}`);
+      }
+    };
+  } catch (error) {
+    log('SERVE', `Could not write ${file}: ${error.message}`);
+    return () => {};
+  }
+}
+
+function recordDashboardProcesses(server, port) {
+  process.once('exit', recordDashboardProcess(RUN_PID_FILE, process.pid, port));
+  server.once('exit', recordDashboardProcess(SERVER_PID_FILE, server.pid, port));
+}
+
+function watchForRestart(onRestart) {
+  const watcher = setInterval(() => {
+    if (existsSync(RESTART_FLAG)) {
+      try { unlinkSync(RESTART_FLAG); } catch {}
+      onRestart();
+    }
+  }, RESTART_POLL_MS);
+  watcher.unref();
+}
+
+function stopDashboardProcesses(records, tag) {
+  return stopRev4aPids(records, portReaders, {
+    ...portPoll,
+    selfPid: process.pid,
+    kill: process.kill,
+    onSignal: (pid, signal) => log(tag, `Sent ${signal} to Rev4a process (PID ${pid})`),
+    onError: (pid, signal, error) => log(tag, `Could not send ${signal} to Rev4a process (PID ${pid}): ${error.message}`),
+  });
+}
+
+function probeDashboardPort(port) {
+  return new Promise((resolve, reject) => {
+    const probe = createServer((socket) => socket.destroy());
+    probe.once('error', (error) => {
+      if (error.code === 'EADDRINUSE') resolve(false);
+      else reject(error);
+    });
+    probe.listen(port, () => probe.close((error) => {
+      if (error) reject(error);
+      else resolve(true);
+    }));
+  });
+}
+
+async function prepareDashboardPort(port) {
+  const probe = () => probeDashboardPort(port);
+  try {
+    if (await probe()) return true;
+    const records = [RUN_PID_FILE, SERVER_PID_FILE]
+      .map((file) => readPidRecord(file, pidFiles.readFileSync, pidOwner))
+      .filter((record) => record?.port === port);
+    const signaled = await stopDashboardProcesses(records, 'SERVE');
+    if (signaled && await waitForPort(probe, portPoll)) return true;
+    console.error(signaled
+      ? `Port ${port} is still in use after stopping recorded Rev4a processes.`
+      : `Port ${port} is already in use by another program.`);
+    const listeners = describePortListeners(port, portReaders);
+    if (listeners) console.error(listeners);
+    console.error('Choose another dashboard port with PORT=<n> rev4a serve or rev4a serve --port <n>.');
+  } catch (error) {
+    console.error(`Could not bind dashboard port ${port}: ${error.message}`);
+  }
+  return false;
+}
+
+function serve(port, { recordProcesses, watchForRestart } = {}) {
   preflight();
   // Version check is non-blocking — runs after startup
   setTimeout(checkVersion, 2000);
@@ -812,6 +913,7 @@ function serve(port) {
     env: { ...childEnv, ...(setupCode ? { REV4A_SETUP_CODE: setupCode } : {}),
       TERMINAL_WS_PORT: wsPort, REV4A_TERMINAL_SECRET: terminalSecret },
   });
+  recordProcesses?.(next, port);
   children.push(next);
   log('SERVE', `Next.js PID ${next.pid}`);
 
@@ -835,6 +937,7 @@ function serve(port) {
 
   let shutdownSignal = null;
   let shuttingDown = false;
+  let forceStop;
   const cleanup = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -844,26 +947,18 @@ function serve(port) {
       try { child.kill('SIGTERM'); } catch {}
     }
     // Force kill after 8s if any child survives
-    setTimeout(() => {
+    forceStop = setTimeout(() => {
       for (const child of children) {
         try { child.kill('SIGKILL'); } catch {}
       }
-      process.exit(0);
+      process.exit(shutdownSignal === 'UPDATE' ? 42 : 0);
     }, 8000);
   };
 
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
 
-  // Watch for restart flag (written by rev4a update command)
-  const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
-  const restartWatcher = setInterval(() => {
-    if (existsSync(RESTART_FLAG)) {
-      try { require('fs').unlinkSync(RESTART_FLAG); } catch {}
-      cleanup('UPDATE');
-    }
-  }, 2000);
-  restartWatcher.unref();
+  watchForRestart?.(() => cleanup('UPDATE'));
 
   // Wait for all children to exit, then restart if it was an update
   let exited = 0;
@@ -872,21 +967,12 @@ function serve(port) {
       exited++;
       log(child.spawnfile, `Exited (code ${code})`);
       if (exited >= children.length) {
+        clearTimeout(forceStop);
         if (shutdownSignal === 'UPDATE') {
-          // Poll until the port is actually free before restarting
-          const net = require('net');
-          const checkPort = () => {
-            const tester = net.createServer();
-            tester.once('error', () => {
-              // Port still in use — retry
-              setTimeout(checkPort, 500);
-            });
-            tester.once('listening', () => {
-              tester.close(() => process.exit(42));
-            });
-            tester.listen(port, '0.0.0.0');
-          };
-          checkPort();
+          // The supervisor probes again and reports any remaining conflict.
+          waitForPort(() => probeDashboardPort(port), portPoll)
+            .catch((error) => log('SERVE', `Could not bind dashboard port ${port}: ${error.message}`))
+            .finally(() => process.exit(42));
         } else {
           process.exit(0);
         }
@@ -956,22 +1042,13 @@ if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   process.exit(0);
 }
 
-if (cmd === 'serve') {
-  console.log(BANNER);
-  const portIdx = args.indexOf('--port');
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : (parseInt(process.env.PORT, 10) || DEFAULT_PORT);
-
-  // Kill any stale rev4a processes on this port before starting.
-  // Prevents zombie process accumulation on systems without systemd.
-  try {
-    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
-  } catch { /* best-effort */ }
-
+async function supervise(port) {
   // Auto-restart loop: when rev4a update triggers exit code 42,
   // re-exec rev4a serve so the new binary is loaded. Works with
   // or without systemd (systemd Restart=always also handles it).
   let exitCode = 42;
   while (exitCode === 42) {
+    if (!await prepareDashboardPort(port)) return 1;
     const result = spawnSync(
       process.execPath,
       [process.argv[1] || join(__dirname, 'rev4a.js'), '_run', String(port)],
@@ -980,23 +1057,41 @@ if (cmd === 'serve') {
     exitCode = result.signal ? 0 : (result.status ?? 0);
     if (exitCode === 42) {
       console.log('[REV4A] Restarting…');
-      // Wait for the port to be fully released before respawning
-      const net = require('net');
-      const portNum = port;
-      try {
-        const { execSync } = require('child_process');
-        execSync('sleep 1', { stdio: 'ignore' });
-      } catch {}
+      await sleep(1000);
     }
   }
-  process.exit(exitCode);
+  return exitCode;
+}
+
+if (cmd === 'serve') {
+  console.log(BANNER);
+  const portIdx = args.findIndex((arg) => arg === '--port' || arg.startsWith('--port='));
+  const source = portIdx >= 0 ? '--port' : 'PORT';
+  const rawPort = portIdx < 0 ? process.env.PORT ?? String(DEFAULT_PORT)
+    : args[portIdx] === '--port' ? args[portIdx + 1] : args[portIdx].slice('--port='.length);
+  const port = /^\d+$/.test(rawPort) ? Number(rawPort) : NaN;
+  if (!validPort(port)) {
+    console.error(`Invalid dashboard port in ${source}. Use an integer between 1 and 65535.`);
+    process.exitCode = 1;
+    return;
+  }
+  supervise(port).then((code) => { process.exitCode = code; }).catch((error) => {
+    console.error(`Could not start Rev4a: ${error.message}`);
+    process.exitCode = 1;
+  });
+  return;
 }
 
 // Internal entry point: called by the auto-restart spawn above
 if (cmd === '_run') {
   console.log(BANNER);
-  const port = parseInt(args[args.indexOf('_run') + 1], 10) || DEFAULT_PORT;
-  serve(port);
+  const port = Number(args[1]);
+  if (!validPort(port)) {
+    console.error('Invalid dashboard port. Use an integer between 1 and 65535.');
+    process.exitCode = 1;
+    return;
+  }
+  serve(port, { recordProcesses: recordDashboardProcesses, watchForRestart });
   return;
 }
 
@@ -1026,21 +1121,22 @@ if (cmd === 'build') {
 }
 
 if (cmd === 'restart') {
-  // Find and kill the running rev4a serve process, then restart it.
-  // Uses the restart flag file as the primary mechanism (works with
-  // the watcher inside _run), but also does a direct kill + respawn
-  // as a fallback for environments where the watcher might miss the flag
-  // (e.g. multiple zombie processes, nohup edge cases).
-  const RESTART_FLAG = join(DATA_DIR, '.restart-flag');
+  // Snapshot the server before the watcher can replace it, including on a custom port.
+  const server = readPidRecord(SERVER_PID_FILE, pidFiles.readFileSync, pidOwner);
   writeFileSync(RESTART_FLAG, '');
   console.log('Restart signal sent. The running rev4a serve process will restart.');
 
-  // Also kill the port directly — ensures restart even if watcher misses the flag
-  const port = parseInt(process.env.PORT, 10) || DEFAULT_PORT;
-  try {
-    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'pipe', timeout: 5000 });
-  } catch { /* best-effort */ }
-  process.exit(0);
+  // Give _run's watcher time to act. The fallback stops only its recorded server,
+  // so _run can still consume the flag and request a relaunch of all services.
+  if (isRecordedProcess(server, portReaders)) {
+    sleep(RESTART_POLL_MS + 200)
+      .then(() => stopDashboardProcesses([server], 'RESTART'))
+      .catch((error) => {
+        console.error(`Could not stop the recorded Rev4a server: ${error.message}`);
+        process.exitCode = 1;
+      });
+  }
+  return;
 }
 
 if (cmd === 'update') {
