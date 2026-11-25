@@ -33,15 +33,14 @@ sudo apt-get update \
   && curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
   && sudo bash /tmp/nodesource_setup.sh \
   && sudo apt-get install -y nodejs \
-  && sudo npm i -g @flame0510/project-aether
+  && sudo npm i -g rev4a
 ```
 
 Each step runs only if the previous one succeeded: if the block stops, fix the error it
 printed before going on.
 
-`@flame0510/project-aether` is the current package name; it installs the `rev4a`
-command. Installation compiles the native modules and builds the dashboard through
-the postinstall hook. Wait for installation to finish before starting Rev4a.
+The `rev4a` package installs the `rev4a` command. Installation compiles the native
+modules and builds the dashboard through the postinstall hook. Wait for installation to finish before starting Rev4a.
 
 ### Start Rev4a
 
@@ -239,12 +238,12 @@ The scripts ship with the global npm package. Run them as root for the VPS insta
 
 ```bash
 # Archive Rev4a's data directory (.env, data/, shared/) into /root/rev4a-backups/
-sudo bash "$(npm root -g)/@flame0510/project-aether/scripts/backup.sh"
+sudo bash "$(npm root -g)/rev4a/scripts/backup.sh"
 
 # Restore it (the current state is archived first; rev4a.service is stopped if running,
 # any other running `rev4a serve` must be stopped first)
 # Replace the archive path with the backup you want to restore:
-sudo bash "$(npm root -g)/@flame0510/project-aether/scripts/restore.sh" /root/rev4a-backups/rev4a-backup-20260926-120000.tar.gz
+sudo bash "$(npm root -g)/rev4a/scripts/restore.sh" /root/rev4a-backups/rev4a-backup-20260926-120000.tar.gz
 ```
 
 Run them as the user Rev4a runs as (root on a typical server install). The archive holds
@@ -274,4 +273,4 @@ register by hand (the old `lineage.js` utility and `POST /api/lineage` are gone)
 | Port in use | Another process on PORT | Change `PORT` env var |
 | Blank dashboard | Daemon stopped | Restart `rev4a serve` |
 | Auth 401 | Wrong token | Check `REV4A_TOKEN` |
-| `gyp ERR! stack Error: not found: make` / node-gyp build failure | Missing build tools for `better-sqlite3` or `node-pty` | Run `sudo apt-get install -y build-essential`, then retry `sudo npm i -g @flame0510/project-aether` |
+| `gyp ERR! stack Error: not found: make` / node-gyp build failure | Missing build tools for `better-sqlite3` or `node-pty` | Run `sudo apt-get install -y build-essential`, then retry `sudo npm i -g rev4a` |

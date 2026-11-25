@@ -3746,7 +3746,7 @@ Installed version against the latest published one.
 **Query params:** `check=1` queries the registry; without it the answer comes
 from local state only.
 
-**Response:** `{ "installed": "1.4.2", "latest": "1.5.0", "updateAvailable": true, "package": "@flame0510/project-aether", "log": "update.log" }`
+**Response:** `{ "installed": "1.4.2", "latest": "1.5.0", "updateAvailable": true, "package": "rev4a", "log": "update.log" }`
 
 `updateAvailable` is recomputed against the version reading the request, even when the
 registry answer comes from the fifteen-minute cache: reusing the cached flag made the

@@ -9,7 +9,7 @@ import { adoptPid, claimUpdate, CLAIM_ENV, failClaimed } from '@/lib/update-stat
 
 // Fallback used only when package.json cannot be read — the published npm
 // package name is the single source of truth, so never hardcode it elsewhere.
-const FALLBACK_PKG_NAME = '@flame0510/project-aether';
+const FALLBACK_PKG_NAME = 'rev4a';
 
 /**
  * The installed package's name and version. `version` is **null when it cannot be read**

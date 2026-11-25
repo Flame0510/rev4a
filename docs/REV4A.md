@@ -11,7 +11,14 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## Unreleased — Next.js 16.4.6, host restore fixes
+## Unreleased — The npm package is now `rev4a`
+
+The package is published as `rev4a` (it was `@flame0510/project-aether`): install it with
+`npm i -g rev4a`. The command, the data directory and the systemd unit do not change. An install of
+the old package does not update itself to the new name: stop Rev4a, `npm uninstall -g` the old
+package, then `npm i -g rev4a` and start it again (see the release notes).
+
+## 1.31.0 — Next.js 16.4.6, host restore fixes
 
 - **Next.js 16.4.6** (security: fixes one critical and four high advisories of 16.2.6). The image optimizer is off: `/_next/image` answers 404 (Rev4a never used it).
 - Next.js 16.4 no longer forwards a route's own `Content-Length`: Workspace previews and downloads and provider proxy answers are sent chunked. Browsers and agents read them as before; a download no longer shows its total size in advance.

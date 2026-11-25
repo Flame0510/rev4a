@@ -9,7 +9,7 @@
 # No CI workflow builds or pushes this image today (ghcr.io/flame0510/rev4a
 # does not exist). Deferred deliberately — do not wire up a build for this
 # without an explicit decision to resume it. The README Quick Start installs
-# the supported package with `npm i -g @flame0510/project-aether` and starts it with `rev4a serve`.
+# the supported package with `npm i -g rev4a` and starts it with `rev4a serve`.
 #
 # Kept here so the host-socket approach isn't lost if picked back up.
 #

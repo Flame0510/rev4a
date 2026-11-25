@@ -118,7 +118,7 @@ it, and it is the gate a change passes *before* it is merged:
 3. `npm test` — every fast test (see below)
 4. `npm run check:package-types` — pack the publishable files, require a sibling `.d.ts`
    for every CommonJS `.js`/`.mjs` in `lib/`, and typecheck the unpacked package under
-   `node_modules/@flame0510/project-aether`
+   `node_modules/rev4a`
 5. `npm run build` — the Next.js production build
 
 A new push to the same branch cancels the run still in flight. The job's token is

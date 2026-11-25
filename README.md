@@ -47,7 +47,7 @@ sudo apt-get update \
   && curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
   && sudo bash /tmp/nodesource_setup.sh \
   && sudo apt-get install -y nodejs \
-  && sudo npm i -g @flame0510/project-aether
+  && sudo npm i -g rev4a
 
 # Then, once the install above finished without errors, start everything:
 sudo rev4a serve
