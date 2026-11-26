@@ -160,6 +160,8 @@ already filled in — you normally never set these by hand. See
 | `REV4A_TIMEZONE` | server's own zone | No | Default dashboard time zone (IANA name, e.g. `Europe/Rome`), used only while none is saved in *Config > Time zone*; an invalid name is ignored |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
 
+**Remote access:** choose guarded presets on the **Remote access** page of the dashboard (`/remote-access`, guide: [rev4a.app](https://rev4a.app/en/docs/remote-access)) or in the Access step of the first run; Save & Restart works under systemd and under `rev4a serve` (a direct `next dev` asks for a manual restart).
+
 **Caddy Domain mode (1.30.0)** serves the dashboard and running agents’ published ports on separate HTTPS hostnames.
 The Linux root setup command configures Caddy and saves local listen settings. See [Domain mode setup](./CONNECT.md#caddy-domain-mode-1300).
 

@@ -341,8 +341,10 @@ const instruction = done.props.children.find((node) => node?.type === 'p' && Arr
 assert.ok(instruction, 'local choice renders the recreate instruction');
 assert.ok(instruction.props.children.some((node) => node?.props?.href === '/remote-access' && node.props.children === 'Remote access'));
 assert.ok(!JSON.stringify(instruction.props.children).includes('from System'));
-for (const file of ['README.md', 'CONNECT.md']) {
-  const note = fs.readFileSync(path.join(root, file), 'utf8').split('\n').find((line) => line.startsWith('**1.29.0:**'));
+// README keeps the note as a "Remote access" paragraph; CONNECT.md keeps the 1.29.0 release note.
+for (const [file, prefix] of [['README.md', '**Remote access:**'], ['CONNECT.md', '**1.29.0:**']]) {
+  const note = fs.readFileSync(path.join(root, file), 'utf8').split('\n').find((line) => line.startsWith(prefix));
+  assert.ok(note, `${file} has a line starting with ${prefix}`);
   assert.match(note, /\*\*Remote access\*\* page/);
   assert.ok(note.includes('`/remote-access`'));
   assert.match(note, /\]\(https:\/\/rev4a\.app\/en\/docs\/remote-access\)/);
