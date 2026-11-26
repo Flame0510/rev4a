@@ -1,13 +1,23 @@
 # REV4A — Multi-Agent Dashboard for OpenClaw
 
-> **Last updated:** 2026-11-18
+[![npm](https://img.shields.io/npm/v/rev4a)](https://www.npmjs.com/package/rev4a)
+[![CI](https://github.com/Flame0510/rev4a/actions/workflows/ci.yml/badge.svg)](https://github.com/Flame0510/rev4a/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-**1.29.0:** Choose guarded presets on the **Remote access** page of the dashboard (`/remote-access`, guide: [rev4a.app](https://rev4a.app/en/docs/remote-access)) or in the Access step of the first run; Save & Restart works under systemd and under `rev4a serve` (a direct `next dev` asks for a manual restart).
+> **Last updated:** 2026-11-26
 
-> **One command to deploy a management dashboard for your OpenClaw agent fleet.**
-> Zero external databases. Only Node.js + Docker.
+> **A self-hosted control plane for your OpenClaw agent fleet.**
+> Each agent in its own Docker container; providers, credentials, costs and
+> maintenance in one dashboard. Zero external databases. Only Node.js + Docker.
 
-**Live demo:** —
+**Website:** [rev4a.app](https://rev4a.app) · **npm:** [`rev4a`](https://www.npmjs.com/package/rev4a)
+
+```bash
+sudo npm i -g rev4a   # on a Debian/Ubuntu VPS with Node.js 22 and build tools
+sudo rev4a serve      # dashboard on port 3740
+```
+
+The full steps, prerequisites included, are in [Quick Start](#quick-start).
 
 ---
 
@@ -149,6 +159,8 @@ already filled in — you normally never set these by hand. See
 | `REV4A_CADDY_MAIN` | `/etc/caddy/Caddyfile` | No | Main Caddyfile that imports the generated file and is passed to Caddy validate and reload |
 | `REV4A_TIMEZONE` | server's own zone | No | Default dashboard time zone (IANA name, e.g. `Europe/Rome`), used only while none is saved in *Config > Time zone*; an invalid name is ignored |
 | `REV4A_DOCKER_WAIT_SECONDS` | `90` | No | How long `rev4a serve` waits for the Docker daemon at start-up before starting without it. Capped at 600; `0` checks once; a negative or non-numeric value means 90. Read from the process environment, not from the `.env` file |
+
+**Remote access:** choose guarded presets on the **Remote access** page of the dashboard (`/remote-access`, guide: [rev4a.app](https://rev4a.app/en/docs/remote-access)) or in the Access step of the first run; Save & Restart works under systemd and under `rev4a serve` (a direct `next dev` asks for a manual restart).
 
 **Caddy Domain mode (1.30.0)** serves the dashboard and running agents’ published ports on separate HTTPS hostnames.
 The Linux root setup command configures Caddy and saves local listen settings. See [Domain mode setup](./CONNECT.md#caddy-domain-mode-1300).
@@ -319,16 +331,12 @@ at container creation time.
 
 ---
 
-## Comparison
+## Contributing
 
-| | REV4A | Clawix | NanoClaw | MetaClaw |
-|---|---|---|---|---|
-| **Dashboard** | ✅ Full web UI | ✅ Full web UI | ❌ Chat only | ❌ Chat only |
-| **Container isolation** | ✅ Docker per-agent | ✅ Docker per-agent | ✅ Docker per-agent | ✅ Docker per-agent |
-| **Agent runtime** | OpenClaw | Proprietary | Claude Code | Claude Code |
-| **Database** | SQLite (zero setup) | PostgreSQL + Redis | SQLite | SQLite |
-| **External services** | None | PostgreSQL + Redis | None | None |
-| **Install** | npm global package | docker compose | bash script | npm install |
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) first
+(language rule, `npm run precheck`) and [AGENTS.md](./AGENTS.md) for the
+repository rules, including upgrade safety (§2.2c). Report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md),
+never in a public issue.
 
 ---
 
