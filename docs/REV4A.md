@@ -11,7 +11,14 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ---
 
-## Unreleased — npm package renamed to `rev4a`, safer host startup
+## 1.32.1 — Public repository, token-free publishing
+
+No change to the app. The source is now public at `github.com/Flame0510/rev4a`, with its history
+cleaned of personal data (the earlier private repository is archived). Releases publish to npm through
+npm Trusted Publishing and the agent image through the workflow's own token, so no publishing token is
+stored anywhere. Installs update as usual.
+
+## 1.32.0 — npm package renamed to `rev4a`, safer host startup
 
 The package is published as `rev4a` (it was `@flame0510/project-aether`): install it with
 `npm i -g rev4a`. The command, the data directory and the systemd unit do not change. An install of

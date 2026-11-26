@@ -4,7 +4,7 @@
 > on this repository. Read this first, then follow the docs it references.
 >
 > **Status:** Active — `main` branch
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-26
 
 ---
 
@@ -63,8 +63,8 @@ that line (see `CONTRIBUTING.md` § Language rule).
 words it knows, and it never reads the commit message (it scans tracked/staged file
 content, `git ls-files` / `git diff --name-only`). Twice already an agent doing the
 English pass on its own diff missed Italian the script would later catch (commits
-`c7654c0`, `7b586f6`), and one Italian commit message (`0d9814b`) shipped because
-nothing checks that at all. Before committing, run the script for the words, then
+`74adce4`, `0ddd0ec`), and one Italian commit message (`7fb1e7f`, translated in the
+2026-11 history rewrite) shipped because nothing checks that at all. Before committing, run the script for the words, then
 reread the diff yourself for Italian syntax made of words the list leaves out on
 purpose (`come`, `per`, `non`, `la`…) — and reread the commit message, which the
 script will never see.
