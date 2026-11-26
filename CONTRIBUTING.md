@@ -196,13 +196,24 @@ This triggers `.github/workflows/release-publish.yml`, which:
    be published
 3. Skips the publish (with a warning, not a failed run) if that version
    already exists on npm — safe to re-run a release
-4. Publishes to npm with `NPM_TOKEN`
+4. Publishes to npm through Trusted Publishing: no npm token is stored in the repository
+   (see *Publishing credentials* below)
 5. Commits the version bump back to `main` (`chore: align package.json with
    vX.Y.Z [skip ci]`) so the repo can never drift from what's on npm
 
 `workflow_dispatch` is also available for a dry run (`dry_run: true`, the
 default) — it runs the same steps up to `npm publish --dry-run` without
 actually publishing, useful to sanity-check the pipeline itself.
+
+**Publishing credentials.** Neither workflow stores a token. npm trusts
+`release-publish.yml` of this repository (npmjs.com → package `rev4a` → Settings →
+Trusted Publisher: GitHub Actions, repository `Flame0510/rev4a`, workflow
+`release-publish.yml`); the job exchanges its OIDC token (`id-token: write`) for a
+short-lived publish token, with npm 11.5.1 or later. The agent image workflow pushes to
+ghcr with the job's own `GITHUB_TOKEN` (`packages: write`); the package must give this
+repository write access once (package settings → Manage Actions access). A fork or a
+renamed copy of the repository matches neither, so it cannot publish the `rev4a`
+package or this image.
 
 **Do not** re-add a `push` trigger on `package.json` — that was the previous
 setup, and it made every commit touching `package.json` attempt a publish,

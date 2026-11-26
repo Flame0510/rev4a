@@ -26,11 +26,14 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # The job only reads the repository and publishes with NPM_TOKEN; it never
-    # writes through GITHUB_TOKEN. npm publish is not run with --provenance, so
-    # id-token: write is not needed either.
+    # The job only reads the repository; it never writes through GITHUB_TOKEN.
+    # npm publishes through Trusted Publishing: npm trusts this workflow file of this
+    # repository (configured once on npmjs.com, package settings) and exchanges the
+    # job's OIDC token for a short-lived publish token, so no npm token is stored here.
+    # id-token: write lets the job request that OIDC token; it grants nothing else.
     permissions:
       contents: read
+      id-token: write
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
@@ -111,6 +114,13 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Trusted Publishing needs npm 11.5.1 or later; Node 22 ships npm 10. Installed only
+      # here, after npm ci and the build, so the dependency install keeps the npm that
+      # ships with Node.
+      - name: Install an npm that supports Trusted Publishing
+        if: steps.exists.outputs.already == 'false'
+        run: npm install -g npm@11.21.2
+
       # A release always publishes for real. The dry run exists only for the
       # manual dispatch, where it is also the default.
       - name: Publish (dry run)
@@ -119,9 +129,9 @@ jobs:
 
       - name: Publish
         if: steps.exists.outputs.already == 'false' && (github.event_name == 'release' || !inputs.dry_run)
+        # No NODE_AUTH_TOKEN: npm authenticates through OIDC (see the permissions above).
+        # On a public repository npm also attaches provenance on its own.
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Carry the published version back into main, so the repo and the registry
   # can no longer drift apart silently.
