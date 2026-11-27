@@ -13,7 +13,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-import subscriptionsParse from '../lib/subscriptions-parse.js';
 
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`ok   ${name}`); }
@@ -53,6 +52,7 @@ function loadModule(file, dependencies) {
 }
 
 const configLock = loadModule('lib/agent-config-lock.ts', {});
+const modelSetup = loadModule('lib/agent-model-setup.ts', {});
 
 function loadRoute(deps = {}) {
   return loadModule(routeFile, {
@@ -76,7 +76,7 @@ function loadRoute(deps = {}) {
     '@/lib/subscription-claude': {
       readClaudeAgent: async () => ({ claude: { state: 'connected' } }),
     },
-    '@/lib/subscriptions-parse': subscriptionsParse,
+    '@/lib/agent-model-setup': modelSetup,
     ...deps,
   });
 }
@@ -301,14 +301,21 @@ await test('guarded setup loses to a queued manual save and preserves its primar
   console.log('     ' + JSON.stringify({ httpStatus: result.status, ...result.body, writes: h.calls.writes, model: modelOf(h.stored()) }));
 });
 
-await test('guarded setup preserves a legacy string primary without writing', async () => {
-  const h = harness({ initialConfig: { agents: { defaults: { model: 'legacy/model' } } } });
-  const result = await put(h.route, setup);
-  assert.equal(result.status, 409);
-  assert.equal(result.body.code, 'model-already-set');
-  assert.equal(h.calls.writes, 0);
-  assert.equal(modelOf(h.stored()), 'legacy/model');
-});
+for (const [location, agents] of [
+  ['defaults only', { defaults: { model: 'legacy/model' } }],
+  ['list main only', { list: [{ id: 'main', model: { primary: 'list/model' } }] }],
+  ['entries.main only', { entries: { main: { model: 'entries/model' } } }],
+]) {
+  await test(`guarded setup preserves an existing primary in ${location}`, async () => {
+    const initialConfig = { agents };
+    const h = harness({ initialConfig });
+    const result = await put(h.route, setup);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'model-already-set');
+    assert.equal(h.calls.writes, 0);
+    assert.deepEqual(h.stored(), initialConfig);
+  });
+}
 
 await test('guarded setup reports an existing primary even if the subscription signed out', async () => {
   const h = harness({ profiles: [] });
@@ -318,8 +325,13 @@ await test('guarded setup reports an existing primary even if the subscription s
   assert.equal(h.calls.writes, 0);
 });
 
-await test('guarded setup writes an unset primary and creates missing defaults or agents', async () => {
-  for (const initialConfig of [{ agents: { defaults: { model: { primary: '' } } } }, { agents: { list: [{ id: 'main' }] } }, {}]) {
+await test('guarded setup writes when there is no effective primary and creates missing defaults or agents', async () => {
+  for (const initialConfig of [
+    { agents: { defaults: { model: { primary: '' } } } },
+    { agents: { list: [{ id: 'other', model: 'other/model' }, { id: 'main' }] } },
+    { agents: { defaults: {}, entries: { main: { model: {} } } } },
+    {},
+  ]) {
     const h = harness({ initialConfig });
     const result = await put(h.route, setup);
     assert.equal(result.status, 200);
@@ -338,6 +350,18 @@ await test('a normal PUT can still replace an existing primary', async () => {
   assert.equal(result.status, 200);
   assert.equal(h.calls.writes, 1);
   assert.deepEqual(modelOf(h.stored()), { primary: 'openai/gpt-6-astra', fallbacks: [] });
+});
+
+await test('guarded setup keeps fallbacks already stored on the agent (defaults and main entry)', async () => {
+  const h = harness({ initialConfig: { agents: {
+    defaults: { model: { fallbacks: ['rev4a/keep-default'] } },
+    list: [{ id: 'main', model: { fallbacks: ['rev4a/keep-main'] } }],
+  } } });
+  const res = await put(h.route, { ...setup, fallbacks: [] });
+  assert.equal(res.status, 200);
+  const stored = h.stored();
+  assert.deepEqual(stored.agents.defaults.model, { primary: 'openai/gpt-6-astra', fallbacks: ['rev4a/keep-default'] });
+  assert.deepEqual(stored.agents.list[0].model, { primary: 'openai/gpt-6-astra', fallbacks: ['rev4a/keep-main'] });
 });
 
 console.log(`\n${passed} passed`);

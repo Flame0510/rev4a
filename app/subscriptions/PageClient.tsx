@@ -8,12 +8,14 @@ import {
   DEFAULT_SUBSCRIPTION_PROVIDER,
   getSubscriptionProvider,
   type SubscriptionProvider,
+  type SubscriptionProviderId,
 } from '@/lib/subscription-providers';
 import { getProviderCopy, type SubscriptionProviderCopy, SUBSCRIPTIONS_PAGE_DESCRIPTION, EXPERIMENTAL_LABEL, CLAUDE_USAGE_NOTE, CLAUDE_USAGE_LINK, claudeRowView } from './providers';
 import { Skeleton } from '@/app/components/Skeleton';
 import UsageBlock from './UsageBlock';
 import ClaudeConnectModal from './ClaudeConnectModal';
 import ConnectModal from './ConnectModal';
+import { setupSubscriptionModel, TERMS_REQUIRED } from './subscription-model-setup';
 import {
   SubscriptionsBodySkeleton,
   SubscriptionsModelsSkeleton,
@@ -46,6 +48,7 @@ interface Row {
   job: Job | null;
   /** The message of a failed action, until the next one. */
   notice: string | null;
+  modelSetupError?: string | null;
 }
 /** `pending`: an account is connected but its agent is still loading the provider catalogue. */
 interface Models { list: SubModel[]; error: string | null; loading: boolean; pending: boolean }
@@ -118,6 +121,7 @@ export default function SubscriptionsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({ [DEFAULT_SUBSCRIPTION_PROVIDER.id]: true });
   const [connectAgent, setConnectAgent] = useState<{ providerId: string; agentId: string } | null>(null);
+  const [settingModels, setSettingModels] = useState<Partial<Record<string, SubscriptionProviderId>>>({});
   /** The agent whose disconnect awaits the operator's confirmation. */
   const [confirmDisconnect, setConfirmDisconnect] = useState<{ providerId: string; agent: SubAgent } | null>(null);
 
@@ -129,6 +133,8 @@ export default function SubscriptionsPageClient() {
   const modelsAbort = useRef(new Map<string, AbortController>());
   const modelsTimer = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const listAbort = useRef<AbortController | null>(null);
+  // An agent has one model config even when it has a row in both provider accordions.
+  const setupAbort = useRef(new Map<string, AbortController>());
   // Rows with an action being started (rowKey): guards a double click before React commits the disabled buttons.
   const starting = useRef(new Set<string>());
   const alive = useRef(true);
@@ -211,10 +217,10 @@ export default function SubscriptionsPageClient() {
   // `loadRow` and `pollJob` call each other (a finished job refreshes its row; a row that
   // reads a running job polls it), so they are reached through a ref.
   const api = useRef<{
-    loadRow: (providerId: string, agentId: string) => Promise<void>;
+    loadRow: (providerId: string, agentId: string) => Promise<SubAgent | undefined>;
     pollJob: (providerId: string, agentId: string) => void;
   }>({
-    loadRow: async () => {},
+    loadRow: async () => undefined,
     pollJob: () => {},
   });
 
@@ -230,9 +236,11 @@ export default function SubscriptionsPageClient() {
         await fetch(`/api/subscriptions?agentId=${encodeURIComponent(agentId)}${providerAnd(providerId)}`, { signal: controller.signal }),
       );
       if (!alive.current || controller.signal.aborted || rowAbort.current.get(key) !== controller) return;
+      if (!json.agent) throw new Error('Could not read this agent.');
       const running = json.action?.state === 'running' ? json.action : null;
       patchRow(providerId, agentId, { status: json.agent, loading: false, error: null, job: running });
       if (running) api.current.pollJob(providerId, agentId);
+      return json.agent;
     } catch (e) {
       if (!alive.current || controller.signal.aborted || rowAbort.current.get(key) !== controller || (e as Error)?.name === 'AbortError') return;
       patchRow(providerId, agentId, { loading: false, error: (e as Error).message || 'Could not read this agent.' });
@@ -349,6 +357,7 @@ export default function SubscriptionsPageClient() {
     const timers = pollTimer.current;
     const modelAborts = modelsAbort.current;
     const modelTimers = modelsTimer.current;
+    const setups = setupAbort.current;
     return () => {
       alive.current = false;
       listAbort.current?.abort();
@@ -357,16 +366,18 @@ export default function SubscriptionsPageClient() {
       rowAborts.forEach((c) => c.abort());
       pollAborts.forEach((c) => c.abort());
       timers.forEach((t) => clearTimeout(t));
+      setups.forEach((c) => c.abort());
+      setups.clear();
     };
   }, [loadAll]);
 
   const disconnect = async (provider: SubscriptionProvider, agent: SubAgent) => {
     const key = rowKey(provider.id, agent.agentId);
-    if (starting.current.has(key)) return;
+    if (starting.current.has(key) || setupAbort.current.has(agent.agentId)) return;
     starting.current.add(key);
     // The optimistic job carries the same kind the server reports for this provider.
     const kind: Job['kind'] = provider.loginKind === 'link-code' ? 'claude-logout' : 'logout';
-    patchRow(provider.id, agent.agentId, { job: { agentId: agent.agentId, kind, state: 'running', error: null }, notice: null });
+    patchRow(provider.id, agent.agentId, { job: { agentId: agent.agentId, kind, state: 'running', error: null }, notice: null, modelSetupError: null });
     try {
       await readJson<{ job: Job }>(await fetch(provider.logoutPath, {
         method: 'POST',
@@ -398,9 +409,78 @@ export default function SubscriptionsPageClient() {
   const closeConnect = () => {
     const id = connectAgent;
     setConnectAgent(null);
-    if (id) {
+    if (id && !setupAbort.current.has(id.agentId)) {
       void api.current.loadRow(id.providerId, id.agentId);
       void loadModels(id.providerId);
+    }
+  };
+
+  const connected = async (providerId: SubscriptionProviderId, email: string | null, termsRequired = false) => {
+    const target = connectAgent;
+    if (!target || !alive.current || setupAbort.current.has(target.agentId)) return;
+    const { agentId } = target;
+    patchRow(providerId, agentId, { modelSetupError: null });
+    void loadModels(providerId);
+    if (termsRequired) {
+      showToast(`${connectName} connected, but Anthropic asks this account to accept its updated terms`, 'info');
+      void api.current.loadRow(providerId, agentId);
+      return;
+    }
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    setupAbort.current.set(agentId, controller);
+    let setupStarted = false;
+    const connectionMessage = `${connectName} connected${email ? ` as ${email}` : ''}`;
+    try {
+      // The rendered row predates the sign-in. Reuse its status read to check for a current model.
+      const status = await api.current.loadRow(providerId, agentId);
+      if (signal.aborted) return;
+      if (!status || status.error) {
+        // Connected, but whether the agent has a model is unknown: say so on the row, with its Model link.
+        showToast(connectionMessage, 'success');
+        patchRow(providerId, agentId, { modelSetupError: 'The agent could not be read to set a model automatically. Choose one in its Model section.' });
+        return;
+      }
+      if (!status.running || status.primary !== null || status.fallbacks.length > 0) {
+        showToast(connectionMessage, 'success');
+        return;
+      }
+
+      setupStarted = true;
+      // Reveal the row progress if this dialog is still open.
+      setConnectAgent((current) => current === target ? null : current);
+      const result = await setupSubscriptionModel({
+        agentId,
+        provider: providerId,
+        email: email ?? status.email,
+        signal,
+        onProgress: (phase) => {
+          if (phase === 'waiting') setSettingModels((current) => ({ ...current, [agentId]: providerId }));
+        },
+      });
+      if (signal.aborted) return;
+      if (result.kind === 'set') showToast(`${connectName} now uses ${result.name}`, 'success');
+      else if (result.kind === 'already-set') showToast(connectionMessage, 'success');
+      else patchRow(providerId, agentId, { modelSetupError: result.kind === 'error' ? result.message : TERMS_REQUIRED });
+    } catch (error) {
+      if (!signal.aborted && error instanceof Error && error.name !== 'AbortError') {
+        patchRow(providerId, agentId, { modelSetupError: error.message });
+      }
+    } finally {
+      if (setupAbort.current.get(agentId) === controller) {
+        setupAbort.current.delete(agentId);
+        if (setupStarted) {
+          setSettingModels((current) => {
+            const next = { ...current };
+            delete next[agentId];
+            return next;
+          });
+          for (const view of providers) {
+            if (view.agents.some((agent) => agent.agentId === agentId)) void api.current.loadRow(view.provider.id, agentId);
+          }
+        }
+      }
     }
   };
 
@@ -489,8 +569,13 @@ export default function SubscriptionsPageClient() {
                       agent={a}
                       row={providerRows[a.agentId] ?? EMPTY_ROW}
                       connecting={!!connectAgent && connectAgent.providerId === provider.id && connectAgent.agentId === a.agentId}
-                      onConnect={() => setConnectAgent({ providerId: provider.id, agentId: a.agentId })}
-                      onRetry={() => { void api.current.loadRow(provider.id, a.agentId); }}
+                      modelSetupProvider={settingModels[a.agentId]}
+                      onConnect={() => {
+                        if (!setupAbort.current.has(a.agentId)) setConnectAgent({ providerId: provider.id, agentId: a.agentId });
+                      }}
+                      onRetry={() => {
+                        if (!setupAbort.current.has(a.agentId)) void api.current.loadRow(provider.id, a.agentId);
+                      }}
                       onDisconnect={(s) => setConfirmDisconnect({ providerId: provider.id, agent: s })}
                     />
                   ))}
@@ -540,16 +625,7 @@ export default function SubscriptionsPageClient() {
           copy={connectView.copy}
           loginPath={connectView.provider.loginPath}
           onClose={closeConnect}
-          onConnected={(email, termsRequired) => {
-            const id = connectAgent;
-            // A blocked account is connected but cannot answer yet: no success toast; the dialog explains.
-            if (termsRequired) showToast(`${connectName} connected, but Anthropic asks this account to accept its updated terms`, 'info');
-            else showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success');
-            if (id) {
-              void api.current.loadRow(id.providerId, id.agentId);
-              void loadModels(id.providerId);
-            }
-          }}
+          onConnected={(email, termsRequired) => { void connected(connectView.provider.id, email, termsRequired); }}
         />
       )}
 
@@ -560,14 +636,14 @@ export default function SubscriptionsPageClient() {
           agentId={connectAgent.agentId}
           agentName={connectName}
           onClose={closeConnect}
-          onConnected={(email) => { showToast(`${connectName} connected${email ? ` as ${email}` : ''}`, 'success'); }}
+          onConnected={(email) => { void connected(connectView.provider.id, email); }}
         />
       )}
     </Page>
   );
 }
 
-function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, onDisconnect }: {
+function AgentRow({ provider, copy, agent, row, connecting, modelSetupProvider, onConnect, onRetry, onDisconnect }: {
   /** The provider whose model prefix the row uses: always passed by the page. */
   provider: SubscriptionProvider;
   /** The provider's UI copy: always passed by the page. */
@@ -576,6 +652,7 @@ function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, 
   row: Row;
   /** The connect dialog is open (or its login is starting) for this row. */
   connecting?: boolean;
+  modelSetupProvider?: SubscriptionProviderId;
   onConnect: () => void;
   onRetry: () => void;
   onDisconnect: (s: SubAgent) => void;
@@ -603,7 +680,7 @@ function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, 
             {row.error ? (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 11, color: 'var(--red)' }}>{row.error}</span>
-                <Button type="button" variant="secondary" size="sm" onClick={onRetry}>Retry</Button>
+                <Button type="button" variant="secondary" size="sm" disabled={!!modelSetupProvider || row.loading} loading={row.loading} onClick={onRetry}>{row.loading ? 'Retrying…' : 'Retry'}</Button>
               </div>
             ) : (
               <Skeleton width={150} height={20} />
@@ -628,7 +705,7 @@ function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, 
 
   // An open connect dialog (or a login starting) makes this row busy too: its other actions
   // (Disconnect on a route-off or needs-reconnect row) must not race the sign-in.
-  const busy = !!running || row.loading || !!connecting;
+  const busy = !!running || row.loading || !!connecting || !!modelSetupProvider;
   const disconnecting = !!running;
   const rowCopy = copy.row;
   const showAccount = claude ? claude.account : a.connected;
@@ -653,10 +730,16 @@ function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, 
         {row.error && (
           <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: 'var(--red)' }}>{row.error} The status above may be out of date.</span>
-            <Button type="button" variant="secondary" size="sm" disabled={row.loading} loading={row.loading} onClick={onRetry}>Retry</Button>
+            <Button type="button" variant="secondary" size="sm" disabled={busy} loading={row.loading} onClick={onRetry}>{row.loading ? 'Retrying…' : 'Retry'}</Button>
           </div>
         )}
         {row.notice && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{row.notice}</div>}
+        {row.modelSetupError && (
+          <div role="alert" style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>
+            {row.modelSetupError}{' '}
+            <Link href={`/agents?agent=${encodeURIComponent(agent.agentId)}#model-section`} className="ui-link">Choose in the Model section</Link>
+          </div>
+        )}
         {!a.running && <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', marginTop: 4 }}>Stopped, status unknown. Start the agent to connect it.</div>}
         {a.running && showModel && a.primary && (
           <div style={{ fontSize: 11, color: 'var(--text-dim, #888)', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -684,7 +767,12 @@ function AgentRow({ provider, copy, agent, row, connecting, onConnect, onRetry, 
           </div>
         )}
       </div>
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {modelSetupProvider === provider.id && (
+          <div role="status">
+            <Button type="button" variant="primary" size="sm" loading>Setting the model…</Button>
+          </div>
+        )}
         {claude ? (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {rowCopy && claude.action !== 'none' && (

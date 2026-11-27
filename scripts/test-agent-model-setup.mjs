@@ -7,7 +7,7 @@ const source = fs.readFileSync(new URL('../lib/agent-model-setup.ts', import.met
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 });
-const { resolveCreateModel, pickSubscriptionModel, needsModelSetup } =
+const { resolveCreateModel, pickSubscriptionModel, needsModelSetup, effectiveAgentPrimary } =
   await import('data:text/javascript;base64,' + Buffer.from(outputText).toString('base64'));
 
 const defaultModel = 'rev4a/deepseek/deepseek-flash';
@@ -70,4 +70,13 @@ test('model setup is only required on a confirmed unset row', () => {
   for (const row of [{ health: 'ok' }, { health: 'missing' }, { health: 'unknown' }, {}, undefined, null]) {
     assert.equal(needsModelSetup(row), false);
   }
+});
+
+test('effective primary takes defaults, list main, then keyed main in order', () => {
+  const list = [{ id: 'other', model: 'other/model' }, { id: 'main', model: 'list/model' }];
+  const entries = { main: { model: { primary: 'entries/model' } } };
+  assert.equal(effectiveAgentPrimary({ agents: { defaults: { model: { primary: 'default/model' } }, list, entries } }), 'default/model');
+  assert.equal(effectiveAgentPrimary({ agents: { defaults: { model: '' }, list, entries } }), 'list/model');
+  assert.equal(effectiveAgentPrimary({ agents: { list: [list[0], { id: 'main', model: {} }], entries } }), 'entries/model');
+  assert.equal(effectiveAgentPrimary({ agents: { list: [list[0]] } }), null);
 });

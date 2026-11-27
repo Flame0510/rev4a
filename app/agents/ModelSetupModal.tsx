@@ -6,7 +6,7 @@ import { Button, Modal, Pill, showToast } from '../components/ui';
 import ClaudeConnectModal from '../subscriptions/ClaudeConnectModal';
 import ConnectModal from '../subscriptions/ConnectModal';
 import { EXPERIMENTAL_LABEL, getProviderCopy } from '../subscriptions/providers';
-import { pickSubscriptionModel } from '@/lib/agent-model-setup';
+import { setupSubscriptionModel, TERMS_REQUIRED, type SubscriptionModelSetupPhase } from '../subscriptions/subscription-model-setup';
 import { getSubscriptionProvider, type SubscriptionProviderId } from '@/lib/subscription-providers';
 import { isClaudeConnected, type ClaudeStatus, type SubscriptionStatus } from './SubscriptionLine';
 
@@ -17,13 +17,9 @@ const providers = (['openai', 'anthropic'] as const).map((id) => {
   return { provider, copy };
 });
 
-const MODELS_RETRY_MS = 5_000;
-const MODELS_WAIT_MS = 120_000;
-const MODELS_TIMEOUT = 'Timed out waiting for the account\'s models.';
 // Both status routes return the version refusal in agent.error. The supported version list
 // in that message changes over time, and the server module cannot be imported by the client.
 const UNSUPPORTED_PREFIX = 'This agent is not on a supported OpenClaw version (';
-const TERMS_REQUIRED = "Anthropic asks this account to accept its updated terms at claude.ai first. Accept them, then choose Use Claude again.";
 
 type Status = {
   unsupported: boolean;
@@ -32,8 +28,7 @@ type Status = {
   /** The signed-in account per provider, for the Claude terms check; null when unknown. */
   email: Record<SubscriptionProviderId, string | null>;
 };
-type Model = { key: string; name: string };
-type Action = { provider: SubscriptionProviderId; phase: 'waiting' | 'setting' };
+type Action = { provider: SubscriptionProviderId; phase: SubscriptionModelSetupPhase };
 
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as T & { error?: string };
@@ -46,71 +41,6 @@ async function readStatus(url: string, signal: AbortSignal) {
   const data = await readJson<{ agent: SubscriptionStatus & ClaudeStatus & { running: boolean } }>(response);
   if (!data.agent) throw new Error('Could not read this agent\'s subscription status.');
   return data.agent;
-}
-
-function waitForModelPoll(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    signal.throwIfAborted();
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, MODELS_RETRY_MS);
-    signal.addEventListener('abort', abort, { once: true });
-  });
-}
-
-async function loadModels(provider: SubscriptionProviderId, agentId: string, controller: AbortController): Promise<Model[]> {
-  const { signal } = controller;
-  const url = `/api/subscriptions/models?provider=${provider}&agentId=${encodeURIComponent(agentId)}`;
-  const timer = setTimeout(() => controller.abort(new Error(MODELS_TIMEOUT)), MODELS_WAIT_MS);
-  try {
-    for (;;) {
-      const response = await fetch(url, { signal, cache: 'no-store' });
-      const data = await readJson<{ models?: Model[]; pending?: boolean; error?: string | null }>(response);
-      signal.throwIfAborted();
-      if (!data.pending) {
-        if (data.error) throw new Error(data.error);
-        return data.models ?? [];
-      }
-      await waitForModelPoll(signal);
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const TERMS_CHECK_MS = 15_000;
-
-/**
- * True when a fresh usage read (`refresh=1`, past the 3-minute server cache, like the Claude dialog's
- * Check again) reports that this Claude account must accept Anthropic's updated terms. A failed,
- * slow (over 15 s) or unreadable answer does not block the setup.
- */
-async function claudeTermsRequired(email: string, signal: AbortSignal): Promise<boolean> {
-  signal.throwIfAborted();
-  const local = new AbortController();
-  const stop = () => local.abort();
-  signal.addEventListener('abort', stop, { once: true });
-  const timer = setTimeout(stop, TERMS_CHECK_MS);
-  try {
-    const response = await fetch(
-      `/api/subscriptions/usage?provider=anthropic&refresh=1&email=${encodeURIComponent(email)}`,
-      { signal: local.signal, cache: 'no-store' },
-    );
-    if (!response.ok) return false;
-    const data = await response.json().catch(() => ({})) as { errors?: { email?: string; code?: string }[] };
-    return (data.errors ?? []).some((e) => e.email === email && e.code === 'terms-required');
-  } catch (e) {
-    if (signal.aborted) throw e;
-    return false;
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener('abort', stop);
-  }
 }
 
 export default function ModelSetupModal({ agentId, agentName, onClose, onDone, onChoose }: {
@@ -174,42 +104,23 @@ export default function ModelSetupModal({ agentId, agentName, onClose, onDone, o
     const { signal } = controller;
     actionRef.current = controller;
     setError('');
-    setAction({ provider, phase: 'waiting' });
     try {
-      // A Claude account that must accept Anthropic's updated terms is connected but cannot answer:
-      // the same usage read SubscriptionLine uses says so. A failed read does not block the setup.
-      const email = provider === 'anthropic' ? signedInEmail ?? status?.email.anthropic ?? null : null;
-      if (email && await claudeTermsRequired(email, signal)) throw new Error(TERMS_REQUIRED);
-      const models = await loadModels(provider, agentId, controller);
-      const key = pickSubscriptionModel(provider, models);
-      if (!key) throw new Error('The account did not offer a subscription model.');
-
-      setAction({ provider, phase: 'setting' });
-      const response = await fetch('/api/gateway/agent', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ containerName: agentId, model: `subscription:${key}`, fallbacks: [], onlyIfUnset: true }),
+      const result = await setupSubscriptionModel({
+        agentId,
+        provider,
+        email: signedInEmail ?? status?.email[provider] ?? null,
         signal,
+        onProgress: (phase) => setAction({ provider, phase }),
       });
-      const data = await response.json().catch(() => ({})) as {
-        status?: string; code?: string; verify?: { ok: boolean }; error?: string;
-      };
-      signal.throwIfAborted();
-      if (response.status === 409 && data.code === 'model-already-set') {
-        onDone();
+      if (signal.aborted) return;
+      if (result.kind === 'error' || result.kind === 'terms-required') {
+        setError(result.kind === 'error' ? result.message : TERMS_REQUIRED);
         return;
       }
-      if (!response.ok) throw new Error(data.error || `Request failed (HTTP ${response.status}).`);
-      if (data.status !== 'ok' || data.verify?.ok === false) {
-        throw new Error(data.error || 'Could not set the model.');
-      }
-      showToast(`${agentName} now uses ${models.find((model) => model.key === key)?.name || key}`, 'success');
+      if (result.kind === 'set') showToast(`${agentName} now uses ${result.name}`, 'success');
       onDone();
-    } catch (e) {
-      if (actionRef.current === controller) {
-        if (signal.reason?.message === MODELS_TIMEOUT) setError(MODELS_TIMEOUT);
-        else if (!signal.aborted && (e as Error)?.name !== 'AbortError') setError((e as Error).message);
-      }
+    } catch (error) {
+      if (!signal.aborted && error instanceof Error && error.name !== 'AbortError') setError(error.message);
     } finally {
       if (actionRef.current === controller) {
         actionRef.current = null;
@@ -232,20 +143,22 @@ export default function ModelSetupModal({ agentId, agentName, onClose, onDone, o
     void setSubscriptionModel(provider, email);
   }
 
+  function closeLogin() {
+    setLogin(null);
+    setError('');
+    setStatus(null);
+    void refreshStatus();
+  }
+
   const loginView = providers.find(({ provider }) => provider.id === login);
   if (loginView) {
     const { provider, copy } = loginView;
     return provider.loginKind === 'link-code' ? (
       <ClaudeConnectModal agentId={agentId} agentName={agentName} copy={copy} loginPath={provider.loginPath}
-        onClose={() => {
-          setLogin(null);
-          setError('');
-          setStatus(null);
-          void refreshStatus();
-        }} onConnected={(email, terms) => connected(provider.id, terms, email)} />
+        onClose={closeLogin} onConnected={(email, terms) => connected(provider.id, terms, email)} />
     ) : (
       <ConnectModal agentId={agentId} agentName={agentName} provider={provider} copy={copy}
-        onClose={() => setLogin(null)} onConnected={() => connected(provider.id)} />
+        onClose={closeLogin} onConnected={() => connected(provider.id)} />
     );
   }
 

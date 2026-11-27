@@ -21,6 +21,7 @@ import { dockerExecNoFail, mapWithConcurrency } from '@/lib/docker-exec';
 import { loadModelsConfig, loadOfferedModels } from '@/lib/model-catalogue';
 import { singleFileFromTar } from '@/lib/container-file';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
+import { effectiveAgentPrimary } from '@/lib/agent-model-setup';
 
 const execFileAsync = promisify(execFile);
 
@@ -124,14 +125,12 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const defaults = ((config.agents ?? {}) as Record<string, unknown>).defaults ?? {};
     const model = (defaults as Record<string, unknown>).model;
-    const primary = typeof model === 'string'
-      ? model
-      : (model && typeof model === 'object' ? (model as Record<string, unknown>).primary : null);
+    const primary = effectiveAgentPrimary(config);
     const fallbacks = model && typeof model === 'object' && Array.isArray((model as Record<string, unknown>).fallbacks)
       ? ((model as Record<string, unknown>).fallbacks as unknown[])
       : [];
 
-    if (typeof primary !== 'string' || !primary) return { ...base, health: 'unset' };
+    if (!primary) return { ...base, health: 'unset' };
 
     const bare = primary.replace(/^rev4a\//, '');
     const models = ((config.models ?? {}) as Record<string, unknown>).providers ?? {};

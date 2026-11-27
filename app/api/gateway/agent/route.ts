@@ -2,7 +2,7 @@
  * PUT /api/gateway/agent
  *
  * Update the model configuration for an agent container.
- * Uses base64-safe write — no heredoc shell escaping issues.
+ * Streams the config to the container over stdin.
  *
  * Body:
  *   { "containerName": "openclaw-atlas", "model": "rev4a/deepseek-flash", "fallbacks": ["rev4a/deepseek-v4-pro"] }
@@ -19,7 +19,7 @@ import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { readFastStatus, statusReadFailedMessage, SubscriptionError, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
 import { readClaudeAgent } from '@/lib/subscription-claude';
-import { normalizeModel, type AgentModelRef } from '@/lib/subscriptions-parse';
+import { effectiveAgentPrimary } from '@/lib/agent-model-setup';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -214,7 +214,7 @@ export async function PUT(request: NextRequest) {
       // Check and write under the same lock so a concurrent save cannot be overwritten.
       const agents = (config.agents || {}) as Record<string, unknown>;
       const defaults = (agents.defaults || {}) as Record<string, unknown>;
-      if (onlyIfUnset && normalizeModel(defaults.model as AgentModelRef).primary) {
+      if (onlyIfUnset && effectiveAgentPrimary(config)) {
         return NextResponse.json({
           status: 'error',
           code: 'model-already-set',
@@ -227,10 +227,13 @@ export async function PUT(request: NextRequest) {
       // Update model config
       const list = (agents.list || []) as Record<string, unknown>[];
 
+      // A first-model save (onlyIfUnset) sets the primary only: fallbacks already stored on the agent are
+      // kept whatever the request carries, so an automatic setup can never erase them.
+      const requestFallbacks = onlyIfUnset ? undefined : body.fallbacks;
       const mainAgent = list.find((a) => a.id === 'main');
       if (mainAgent) {
         const primary = ensureRev4aPrefix(requestedModel);
-        let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(mainAgent.model));
+        let fallbacks = dedupe(requestFallbacks ? ensureRev4aPrefixes(requestFallbacks) : existingFallbacks(mainAgent.model));
         // The primary never doubles as its own fallback.
         fallbacks = fallbacks.filter((fb) => fb !== primary);
         mainAgent.model = {
@@ -241,7 +244,7 @@ export async function PUT(request: NextRequest) {
 
       {
         const primary = ensureRev4aPrefix(requestedModel);
-        let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(defaults.model));
+        let fallbacks = dedupe(requestFallbacks ? ensureRev4aPrefixes(requestFallbacks) : existingFallbacks(defaults.model));
         fallbacks = fallbacks.filter((fb) => fb !== primary);
         defaults.model = {
           primary,

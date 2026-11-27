@@ -192,10 +192,17 @@ If the proxy runs in a container and `ufw` is on, allow the Docker bridge to rea
 **BUG-38 update note.** Disconnect for ChatGPT works again on OpenClaw 2026.10.10
 agents. No action is needed after updating.
 
-**BUG-36 update note.** Installs without a Gateway key get one the next time
-`rev4a serve` starts. Agents receive their derived proxy tokens on the following
-successful sync. Add an upstream API key in Gateway to offer that provider's
-enabled proxy models. Rev4a preserves existing Gateway keys and settings.
+**BUG-36 update note.** At startup, `rev4a serve` seeds a missing Gateway key
+when it can write the key store. Agents receive their derived proxy tokens on
+the following successful sync. Add an upstream API key in Gateway to offer that provider's
+enabled proxy models. Startup seeding keeps an existing Gateway key and leaves
+an unreadable `<REV4A_DATA_DIR>/data/provider-keys.json` untouched.
+
+**BUG-39 update note.** The Agents page recognizes a primary already set on the
+main entry and protects it from first-model setup. After sign-in, setup retries
+while the login finishes. The Agents page shows the informational provider
+banner until an upstream key is configured. Gateway sync preserves legacy model
+and auth files on agents whose OpenClaw version is unknown or unsupported.
 
 **FEAT-28 update note.** Gateway keys are no longer required to create an agent.
 Agents without a primary show **No model** and **Connect subscription**. No migration
@@ -312,7 +319,7 @@ scan of stored data is added, and older releases can still read the resulting fi
 **Key design decisions:**
 - Every agent runs in an **isolated Docker container** with its own OpenClaw instance
 - Container state is ephemeral; persistent data lives in shared volumes
-- Provider API keys are stored once in `data/provider-keys.json` and synced on demand
+- Provider API keys are stored once in `<REV4A_DATA_DIR>/data/provider-keys.json` and synced on demand
 - No PostgreSQL, no Redis — the entire dashboard uses SQLite via `better-sqlite3`
 - Gateway token is shared across all containers and managed from the UI
 

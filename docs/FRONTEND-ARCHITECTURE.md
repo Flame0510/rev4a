@@ -191,6 +191,7 @@ Rules:
   - one shared render (`navItems` in `Sidebar.tsx`) lists the pages in three titled groups, each with a small uppercase title and a thin line above every group but the first: Monitor (Dashboard, Lineage, Costs, System, Containers), Agents (Agents, Workspace, Context, Crons, Skills, Plugins) and Setup (Gateway, Credentials, Subscriptions, Config, Wizard)
   - titles are plain text hidden from screen readers (the `role="group"` wrapper carries the name in `aria-label`); the desktop nav scrolls instead of pushing Logout off screen; the Wizard link is hidden on mobile
 - **Mobile bottom nav**
+  - five entries: Home, Agents, Workspace, Gateway, Subscriptions (Containers moved to the menu only)
   - active below `md`
   - item row centers from `sm` upward within the mobile range
 - **PDF preview in Agents**
@@ -245,7 +246,16 @@ The Agents update result renders the persisted outcome note: verified associatio
 needed (model left/restored)**, already associated, unchanged and failed jobs. Restoring a model
 on a route without an inference binding never appears in the associated count.
 
-`/subscriptions` (`app/subscriptions/PageClient.tsx`, skeleton in `SubscriptionsSkeleton.tsx` and `loading.tsx`, sidebar entry between Credentials and Config) renders one `Accordion` per subscription provider (today ChatGPT (Codex) first, then Claude (via Claude Code) with an `Experimental` `Pill`). The page subtitle is provider-neutral ("Connect a subscription to your agents. You choose the model in the agent panel."). **It is asynchronous in three independent steps:** `GET /api/subscriptions` returns the agent list at once (names, running; no exec), so the rows appear immediately; each row then loads its own status from `GET /api/subscriptions?agentId=[&provider=<id>]` in parallel (a skeleton line under the name while it loads, a per-row error with Retry, which also covers a server-side error such as "Could not read this agent's subscription status: the read failed"), and the models load separately from `GET /api/subscriptions/models[?provider=<id>]` (a skeleton in the Models block until it arrives). The "N of M agents connected" area shows a skeleton until every row has answered. Each row shows the agent's display name (`AGENT_NAME`), the container name as a small secondary line only when it differs, and next to the account email its plan ("Plus", "Pro"). A connected agent shows its model read-only ("Model: <primary> · fallback <first fallback>", bare names) and a link "Change in the agent panel" to `/agents?agent=<id>`, which the Agents page reads once the list has loaded to select that agent. The page has no model control: the model is chosen in the agent panel.
+`/subscriptions` (`app/subscriptions/PageClient.tsx`, skeleton in `SubscriptionsSkeleton.tsx` and `loading.tsx`, sidebar entry between Credentials and Config) renders one `Accordion` per subscription provider (today ChatGPT (Codex) first, then Claude (via Claude Code) with an `Experimental` `Pill`). The page subtitle is provider-neutral ("Connect a subscription to your agents. You choose the model in the agent panel."). **It is asynchronous in three independent steps:** `GET /api/subscriptions` returns the agent list at once (names, running; no exec), so the rows appear immediately; each row then loads its own status from `GET /api/subscriptions?agentId=[&provider=<id>]` in parallel (a skeleton line under the name while it loads, a per-row error with Retry, which also covers a server-side error such as "Could not read this agent's subscription status: the read failed"), and the models load separately from `GET /api/subscriptions/models[?provider=<id>]` (a skeleton in the Models block until it arrives). The "N of M agents connected" area shows a skeleton until every row has answered. Each row shows the agent's display name (`AGENT_NAME`), the container name as a small secondary line only when it differs, and next to the account email its plan ("Plus", "Pro"). A connected agent shows its model read-only ("Model: <primary> · fallback <first fallback>", bare names) and a link "Change in the agent panel" to `/agents?agent=<id>`, which the Agents page reads once the list has loaded to select that agent. Manual model selection lives in the agent panel.
+
+**Automatic model setup.** After a successful ChatGPT or Claude sign-in, the page refreshes
+that agent's row. When the row has neither a primary nor fallbacks, the sign-in dialog closes
+and the row shows **Setting the model…** while the shared setup runs. The action is keyed by
+agent and its button appears in the provider row that started it. Actions on that agent are
+disabled during setup, and leaving the page aborts the action. The page shows the new model in
+a toast on success. Setup errors appear on the row with **Choose in the Model section**, a link
+to `/agents?agent=<id>#model-section`. If Claude's sign-in dialog reports required terms, it
+explains how to accept them and automatic setup is skipped.
 
 **Providers.** One registry, `lib/subscription-providers.ts`, describes every subscription provider the page, its components and the read routes know: `id`, `name`, `shortName`, `modelPrefix`, `loginPath`, `logoutPath`, `loginKind` (`device-code` | `link-code`), `hasUsage`, `experimental`, plus `getSubscriptionProvider(id)` and `providerFromParam(value)` (missing/empty → the default `openai` provider, so existing callers keep working). It is pure TypeScript with no Node or server imports, because the page imports it too; it holds no UI text. The words that name a provider live in `app/subscriptions/providers.ts`, a client-side map keyed by provider id (`getProviderCopy(id)`). Today both have two entries: `openai` (ChatGPT (Codex)) with the same strings, paths and requests as before, and `anthropic` (Claude (via Claude Code), experimental). `getProviderList()` in `lib/subscriptions.ts` lists one entry per registry provider with a server implementation, in registry order, so the page gets both accordions at once (Claude included). The page renders one `Accordion` per provider returned by `GET /api/subscriptions` and keeps only ids it knows from both maps: an id announced by a newer server is ignored, never rendered broken. Per-provider state (open state, models, agent rows) is keyed by provider id; per-agent state (status, abort controllers, job poll timer, double-click guard, the disconnect job) is keyed by provider id and agent id through one `rowKey` helper, because the same agent can appear in two accordions. The status and disconnect URLs carry `agentId=` and, for a non-default provider only, `&provider=<id>`; the `openai` URLs stay byte-for-byte as before. The connect dialog is chosen by `loginKind`, never by provider id: `device-code` opens the existing `ConnectModal`, `link-code` opens `ClaudeConnectModal`. The `openai` accordion is open by default. The read routes take an optional `provider=` parameter, but the page sends it only for a non-default provider, so the `openai` URLs stay exactly as documented here. A list answer without a `providers` array is a load failure (the error banner), never a silent empty page; a list that names no provider this build knows shows the default (`openai`) accordion with no agents, as before the registry.
 
@@ -269,15 +279,23 @@ Access hides its invite link and keeps the device approvals list visible.
 
 `ModelSetupModal` uses the shared `Modal`, `Button` and `Pill`. It checks
 subscription support and connection status, then opens the existing sign-in
-dialog or uses the already connected plan. Model catalogue polls use the
-target agent's account, with 5 s between attempts and an abortable 120 s
-deadline. The active provider button shows the waiting or saving state. The
-save sends `onlyIfUnset: true` so an existing primary is preserved under the
-config lock. Before a Claude model is set, a fresh usage read
-(`/api/subscriptions/usage?provider=anthropic&refresh=1`, 15 s limit) checks
-that Anthropic does not require the account to accept updated terms; a failed
-or slow read does not block. Closing the Claude sign-in dialog refreshes the
-connection status.
+dialog or uses the already connected plan. The active provider button shows
+the waiting or saving state. Closing either sign-in dialog refreshes the
+connection status. Closing the model setup dialog cancels its setup action.
+
+Both `ModelSetupModal` and the Subscriptions page call
+`app/subscriptions/subscription-model-setup.ts`. The module takes an abort
+signal and a progress callback and returns an outcome for a saved model, an
+existing model, required Claude terms, or an error. Before a Claude model is
+set, a fresh usage read (`/api/subscriptions/usage?provider=anthropic&refresh=1`,
+15 s limit) checks the terms for the signed-in account. Setup continues if the
+usage check fails or times out. Model catalogue polls use the target agent's
+account, with 5 s between attempts and an abortable 120 s deadline. The save
+sends `onlyIfUnset: true` so an existing effective primary is preserved under
+the config lock. If the save returns 409 because the subscription login is
+still running, setup retries every 2 s. New attempts stop at 30 s. A request
+already sent keeps its own 60 s limit ("The model save did not answer in time.
+Check the Model section.").
 
 Errors offer **Choose in the Model section**. This closes the dialog, refreshes
 the picker and scrolls to `#model-section`. The Gateway key-save return link
@@ -332,7 +350,7 @@ and interrupted job messages into the error display, including any stop warning.
 | `ModelSection` | `app/agents/ModelSection.tsx` | MODEL section of the agent panel: primary and fallback pickers with `Select` groups ("Rev4a proxy", "ChatGPT subscription" and, when the agent's Claude plan is connected, "Claude subscription"); pre-fills the previous primary as the first fallback when a subscription primary is chosen with none; marks bare `openai/<id>` and `anthropic/<id>` with `subscription:` on save. |
 | Subscriptions page | `app/subscriptions/PageClient.tsx` | Accordion per provider (only ids the registry and copy map know), one row per agent, `ConnectModal` (device code) or `ClaudeConnectModal` (link and code chosen by `loginKind`), `ConfirmModal` for Disconnect; per-provider state keyed by provider id and per-agent state by provider and agent (`rowKey`). |
 | `ConnectModal` | `app/subscriptions/ConnectModal.tsx` | ChatGPT device-code login dialog shared by Subscriptions and agent model setup. |
-| `ModelSetupModal` | `app/agents/ModelSetupModal.tsx` | Agent setup options, subscription model selection and API key hand-off. |
+| `ModelSetupModal` | `app/agents/ModelSetupModal.tsx` | Agent setup options, shared subscription model setup and API key hand-off. |
 | `ClaudeConnectModal` | `app/subscriptions/ClaudeConnectModal.tsx` | Guided Claude sign-in: install/start/wait/verify/connect/connected/failed steps (the sign-in step offers **Open Anthropic's sign-in page** or **Copy link** to open it in another browser or device; if the clipboard is refused the link is shown to copy by hand; once the code is submitted Cancel is hidden and Close only closes the dialog, because the job finishes on its own), the `loginKind: 'link-code'` body; the pasted code is component state only and is dropped on send. |
 | Provider registry | `lib/subscription-providers.ts` | Id, name, short name, model prefix, login/logout paths, `loginKind` and `hasUsage` per provider, with `getSubscriptionProvider` and `providerFromParam`; pure TypeScript, no Node or server imports (the page imports it), no UI text. |
 | Provider copy | `app/subscriptions/providers.ts` | Client-side UI text that names a provider, keyed by provider id (`getProviderCopy`), plus the page subtitle, the Experimental label, the Claude usage note/link, and the pure row (`claudeRowView`) and dialog-step (`linkCodeStep`) mappings. The ChatGPT strings are unchanged. |
