@@ -70,10 +70,12 @@ function harness(provider, { defaults = {}, list = [], blockWrite, keepNull = fa
       assert.equal(locked, false);
       assert.deepEqual(Array.from(args), isClaude
         ? ['timeout', '60', '/root/.local/bin/claude', 'auth', 'logout']
-        : ['timeout', '60', 'openclaw', 'models', 'auth', 'logout', 'openai:fixture', '--yes']);
+        : ['timeout', '60', ...gatewayCli.gatewayCliArgv([
+          'gateway', 'call', 'models.authLogout', '--params', '{"provider":"openai","profileIds":["openai:fixture"]}', '--json', '--timeout', '55000',
+        ])]);
       events.push('logout');
       signedIn[provider] = false;
-      return '';
+      return isClaude ? '' : '{"provider":"openai","removedProfiles":["openai:fixture"],"abortedRunIds":[]}';
     }
     assert.deepEqual(Array.from(args), ['sh', '-c', subscriptionsParse.STOP_CODEX_SCRIPT]);
     return '';

@@ -85,7 +85,7 @@
   { "id": "C15", "argv": ["pairing", "approve"], "evidence": { "file": "lib/channelManager.ts", "text": "pairing approve" } },
   { "id": "C16", "argv": ["models", "list", "--provider", "--json"], "evidence": { "file": "lib/subscriptions.ts", "text": "'--provider'" } },
   { "id": "C17", "argv": ["models", "auth", "login", "--provider", "--device-code"], "evidence": { "file": "lib/subscription-login.ts", "text": "--device-code" } },
-  { "id": "C18", "argv": ["models", "auth", "logout", "--yes"], "evidence": { "file": "lib/subscriptions.ts", "text": "logout" } },
+  { "id": "C18", "argv": ["gateway", "call", "--params", "--json"], "evidence": { "file": "lib/subscriptions.ts", "text": "models.authLogout" } },
   { "id": "C19", "argv": ["status", "--usage", "--json"], "evidence": { "file": "lib/subscription-usage.ts", "text": "--usage" } },
   { "id": "C20", "argv": ["secrets", "store", "set", "--kind", "--value-file"], "evidence": { "file": "lib/credentials/native.ts", "text": "'--value-file'" } },
   { "id": "C21", "argv": ["secrets", "store", "rm", "--yes"], "evidence": { "file": "lib/credentials/native.ts", "text": "'--yes'" } },
