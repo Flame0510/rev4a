@@ -100,6 +100,10 @@ access to them.
 | `rev4a-openclaw-upgrade` | Evaluate a new OpenClaw release before Rev4a supports it: static diff of packages, config schema and docs, then seed, snapshot, update, compare, rollback on throwaway local agents; keeps the inventory of every Rev4a ↔ OpenClaw touchpoint (`references/inventory.md`) |
 | `rev4a-models-update` | Discover upstream models, update the proxy catalogue and pricing, and check which models connected subscriptions offer |
 
+Skills Rev4a develops **for the agents it runs** live in `agent-skills/` (not shipped in the npm
+package, not installed by Rev4a yet): today `orchestrate`, the generic sub-agent orchestration skill with its
+campaign keeper. See `agent-skills/README.md`; its suites run under `npm test`.
+
 ---
 
 ### 2.2b Design System (UI)
