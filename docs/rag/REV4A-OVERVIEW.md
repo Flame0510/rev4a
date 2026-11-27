@@ -1,6 +1,6 @@
 # What is Rev4a?
 
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-27
 
 Rev4a is the control panel for your AI agent infrastructure. It shows you everything your agents are doing, how much they cost, and whether the system is healthy — all in one dashboard.
 
@@ -224,6 +224,10 @@ Pulse is the AI assistant embedded in Rev4a. She appears as a floating chat butt
 - Guide you through features ("how do I create an agent?")
 - Answer questions about agents, providers, costs, sessions, containers, crons, credentials, and the first-run wizard
 - Give practical tips based on the page you're on
+
+Pulse needs a provider API key and an enabled model in Gateway. If Gateway
+offers no models, the panel disables chat and shows **Open Gateway**. Agents
+can use connected ChatGPT or Claude subscriptions without a Gateway key.
 
 Pulse does NOT have access to live data — she knows the page layout and features, but you need to look at the dashboard for real-time information.
 

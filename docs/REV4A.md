@@ -13,6 +13,7 @@ A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
 ## Unreleased
 
+- When the Gateway offers no models, PULSE explains its API key requirement and links to Gateway. Chat becomes available as soon as the catalogue offers a model.
 - Connecting ChatGPT or Claude on Subscriptions automatically sets the first model for an agent with no primary or fallbacks. Closing the Claude dialog before it reports the connection skips this step (the agent stays in "No model"; Use Claude from its card finishes it); when the agent cannot be read right after the sign-in, the row says so with a link to the Model section.
 
 ## 1.32.1 — Public repository, token-free publishing
@@ -699,6 +700,16 @@ Container workspaces are discovered dynamically — any Docker container with an
 ---
 
 ## Features (current)
+
+### PULSE
+
+PULSE is the floating assistant in the dashboard. It needs a provider API key
+configured in Gateway and at least one enabled Gateway model. Agents can use
+connected ChatGPT or Claude subscriptions without a Gateway key.
+
+When Gateway offers no models, the panel keeps any existing messages, disables
+the composer and shows **Open Gateway**. Once Gateway offers a model, the
+composer becomes available without a page reload.
 
 ### Credentials (`/credentials`)
 Store third-party service credentials and install them into agent containers.

@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useModels } from '../lib/models-context';
 import Link from 'next/link';
+import { Button } from './ui';
 
 const STORAGE_KEY = 'rev4a_pulse_chat';
 const MODEL_STORAGE_KEY = 'rev4a-pulse-model';
@@ -75,6 +76,7 @@ function renderContent(text: string) {
 
 export default function PulseChat() {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [input, setInput] = useState('');
@@ -82,8 +84,12 @@ export default function PulseChat() {
   const [selectedModel, setSelectedModel] = useState<string>('');
   // The shared catalogue, not a private copy. It refreshes when the Gateway page
   // changes what is enabled, so this select cannot go stale mid-session.
-  const { providers: modelGroups, loaded: modelsLoaded } = useModels();
+  const { providers: modelGroups, loaded: modelsLoaded, failed: modelsFailed, refresh: refreshModels } = useModels();
   const modelsLoading = !modelsLoaded;
+  // Only a catalogue that was really read and is empty: a failed read (401 before sign-in) is not one.
+  const noModel = modelsLoaded && !modelsFailed && modelGroups.length === 0;
+  // Nothing to send to: no selectable model (empty, still loading, or the last read failed).
+  const noSelectableModel = !modelGroups.some((g) => g.models.length > 0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -122,11 +128,23 @@ export default function PulseChat() {
   }, [messages]);
 
   useEffect(() => {
-    if (open) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      inputRef.current?.focus();
-    }
+    if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [open, messages, noModel]);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
   }, [open, messages]);
+
+  // A read that failed (for instance before sign-in) is retried when the panel opens.
+  const retried = useRef(false);
+  useEffect(() => {
+    if (!modelsFailed) { retried.current = false; return; }
+    // One retry per failure, however often the panel is opened.
+    if (open && !retried.current) {
+      retried.current = true;
+      refreshModels();
+    }
+  }, [open, modelsFailed, refreshModels]);
 
   const newSession = useCallback(() => {
     setMessages([]);
@@ -136,7 +154,7 @@ export default function PulseChat() {
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (noModel || noSelectableModel || !text || streaming) return;
 
     const userMsg: Message = { role: 'user', content: text };
     const history = [...messages, userMsg];
@@ -177,12 +195,14 @@ export default function PulseChat() {
 
       if (!reader) return;
 
+      // A network chunk can end in the middle of a `data:` line: keep the unfinished tail and join it
+      // with the next chunk, or that piece of the answer is lost (words went missing mid-sentence).
+      let pending = '';
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const lines = pending.split('\n');
+        pending = done ? '' : lines.pop() ?? '';
 
         for (const line of lines) {
           if (!line.startsWith('data:')) continue;
@@ -202,6 +222,7 @@ export default function PulseChat() {
             // non-JSON SSE line, skip
           }
         }
+        if (done) break;
       }
     } catch (err: unknown) {
       if ((err as Error)?.name !== 'AbortError') {
@@ -214,7 +235,7 @@ export default function PulseChat() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, messages, pathname, streaming]);
+  }, [input, messages, noModel, noSelectableModel, pathname, selectedModel, streaming]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -248,38 +269,41 @@ export default function PulseChat() {
               </svg>
               PULSE
             </span>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              disabled={modelsLoading || modelGroups.length === 0}
-              style={{
-                border: '1px solid var(--border)',
-                background: 'var(--bg)',
-                color: 'var(--text)',
-                fontFamily: 'var(--font-mono-stack)',
-                fontSize: 11,
-                borderRadius: 0,
-                padding: '1px 4px',
-                cursor: modelsLoading ? 'wait' : 'pointer',
-                outline: 'none',
-                opacity: modelsLoading ? 0.5 : 1,
-              }}
-              aria-label="Select model"
-            >
-              {modelsLoading ? (
-                <option value="">…</option>
-              ) : (
-                modelGroups.map((group) => (
-                  <optgroup key={group.provider} label={`${group.emoji} ${group.provider}`}>
-                    {group.models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {group.emoji} {m.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))
+            {/* No selectable model: an empty picker looks broken, so the header shows none. */}
+            {!noSelectableModel && (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={modelsLoading}
+                style={{
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontFamily: 'var(--font-mono-stack)',
+                  fontSize: 11,
+                  borderRadius: 0,
+                  padding: '1px 4px',
+                  cursor: modelsLoading ? 'wait' : 'pointer',
+                  outline: 'none',
+                  opacity: modelsLoading ? 0.5 : 1,
+                }}
+                aria-label="Select model"
+              >
+                {modelsLoading ? (
+                  <option value="">…</option>
+                ) : (
+                  modelGroups.map((group) => (
+                    <optgroup key={group.provider} label={`${group.emoji} ${group.provider}`}>
+                      {group.models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {group.emoji} {m.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                )}
+              </select>
               )}
-            </select>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               {messages.length > 0 && (
                 <button
@@ -302,7 +326,7 @@ export default function PulseChat() {
           </div>
 
           <div className="ochat__messages">
-            {messages.length === 0 && (
+            {!noModel && messages.length === 0 && (
               <p className="ochat__empty">
                 Hello! I'm <strong>Pulse</strong>, the oracle of Rev4a. Ask me about the dashboard, data, or the page you're looking at.
               </p>
@@ -318,6 +342,23 @@ export default function PulseChat() {
             <div ref={bottomRef} />
           </div>
 
+          {noModel && (
+            <div className="ochat__notice" role="status">
+              <div className="ochat__notice-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 3 2 21h20L12 3z" /><path d="M12 10v5" /><path d="M12 18h.01" />
+                </svg>
+                Pulse needs a Gateway model
+              </div>
+              <p className="ochat__notice-text">
+                Add a provider API key, or enable a model, on the Gateway page. Your subscriptions power your agents, not Pulse.
+              </p>
+              <Button type="button" variant="primary" size="sm" onClick={() => router.push('/gateway')}>
+                Open Gateway
+              </Button>
+            </div>
+          )}
+
           <div className="ochat__footer">
             <textarea
               ref={inputRef}
@@ -325,14 +366,15 @@ export default function PulseChat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Ask Pulse…"
+              placeholder={noModel ? 'Add a provider API key in the Gateway to use Pulse' : 'Ask Pulse…'}
               rows={1}
-              disabled={streaming}
+              disabled={noModel || noSelectableModel || streaming}
             />
             <button
+              type="button"
               className="ochat__send"
               onClick={send}
-              disabled={!input.trim() || streaming}
+              disabled={noModel || noSelectableModel || !input.trim() || streaming}
               aria-label="Send"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

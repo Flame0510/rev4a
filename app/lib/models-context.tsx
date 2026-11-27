@@ -25,6 +25,8 @@ interface ProviderEntry {
 interface ModelsContextValue {
   providers: ProviderEntry[];
   loaded: boolean;
+  /** The last read failed (e.g. 401 before sign-in): `providers` is not a real empty catalogue. */
+  failed: boolean;
   /** Re-read the catalogue. Call after changing which models are enabled. */
   refresh: () => void;
 }
@@ -32,12 +34,14 @@ interface ModelsContextValue {
 const ModelsContext = createContext<ModelsContextValue>({
   providers: [],
   loaded: false,
+  failed: false,
   refresh: () => {},
 });
 
 export function ModelsProvider({ children }: { children: React.ReactNode }) {
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   // Refreshes can overlap — two quick toggles — and responses can arrive out of
   // order. Only the most recent request may write.
@@ -52,21 +56,29 @@ export function ModelsProvider({ children }: { children: React.ReactNode }) {
       })
       .then((data) => {
         if (mine !== seq.current) return;
+        // Anything but an array of groups is a failed read, not an empty catalogue.
+        if (!Array.isArray(data) || !data.every((g) => g && typeof g === 'object' && Array.isArray(g.models))) {
+          throw new Error('unexpected catalogue shape');
+        }
         // An empty array is a real answer — every model disabled, or no provider
         // key — so it must replace the list rather than be discarded as a failure.
-        if (Array.isArray(data)) setProviders(data);
+        setProviders(data);
+        setFailed(false);
         setLoaded(true);
       })
       .catch(() => {
         // Keep the previous list: a failed refresh is not an empty catalogue.
-        if (mine === seq.current) setLoaded(true);
+        if (mine === seq.current) {
+          setFailed(true);
+          setLoaded(true);
+        }
       });
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   return (
-    <ModelsContext.Provider value={{ providers, loaded, refresh }}>
+    <ModelsContext.Provider value={{ providers, loaded, failed, refresh }}>
       {children}
     </ModelsContext.Provider>
   );
