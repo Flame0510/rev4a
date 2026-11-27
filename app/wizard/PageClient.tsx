@@ -174,8 +174,9 @@ function ProvidersStep({
     <div style={{ display: 'grid', gap: 14 }}>
       <h2 className="wizard-title">Configure Providers</h2>
       <p className="wizard-text">
-        Add API keys for the LLM providers you want to use. At least one is required
-        to create working agents. Keys are stored securely and never logged.
+        Add API keys for the LLM providers you want to use, or skip this step and connect your
+        ChatGPT or Claude subscription to an agent after creating it. Keys are stored securely and
+        never logged.
       </p>
       <div style={{ display: 'grid', gap: 10 }}>
         {providers.map((p) => (

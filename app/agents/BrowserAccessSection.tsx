@@ -305,10 +305,12 @@ export function useControlUiPublicUrl(agentId?: string): string | null | undefin
 export default function BrowserAccessSection({
   agentId,
   running,
+  modelMissing = false,
   onChanged,
 }: {
   agentId: string;
   running: boolean;
+  modelMissing?: boolean;
   /** After a successful approve, reject or revoke, so the list can refresh its badge. */
   onChanged?: () => void;
 }) {
@@ -324,6 +326,13 @@ export default function BrowserAccessSection({
   const [copied, setCopied] = useState<boolean | null>(null);
   const inviteAbortRef = useRef<AbortController | null>(null);
   const inviteInputId = useId();
+
+  useEffect(() => {
+    if (!modelMissing) return;
+    inviteAbortRef.current?.abort();
+    setInvite(null);
+    setCopied(null);
+  }, [modelMissing]);
 
   /** Resolves to whether the answer was good and fast, or null when this load was superseded. */
   const load = useCallback(async (): Promise<boolean | null> => {
@@ -480,7 +489,7 @@ export default function BrowserAccessSection({
     );
 
   const createInvite = async () => {
-    if (busyRef.current) return;
+    if (modelMissing || busyRef.current) return;
     busyRef.current = 'invite';
     setBusy('invite');
     setMsg(null);
@@ -491,6 +500,7 @@ export default function BrowserAccessSection({
     try {
       const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/invite-link`, { signal: controller.signal, cache: 'no-store' });
       const data = (await res.json().catch(() => null)) as (InviteLink & { error?: string }) | null;
+      controller.signal.throwIfAborted();
       if (res.ok && data?.url) setInvite(data);
       else setMsg({ text: data?.error ?? `Could not create the invite link (HTTP ${res.status})`, ok: false });
     } catch (e) {
@@ -531,11 +541,17 @@ export default function BrowserAccessSection({
   };
 
   if (!running) {
-    return <div style={metaStyle}>Start the agent to see and manage the browsers that can open its Control UI.</div>;
+    return (
+      <div style={metaStyle}>
+        {modelMissing && <div>Set up a model first.</div>}
+        Start the agent to see and manage the browsers that can open its Control UI.
+      </div>
+    );
   }
 
   return (
     <div>
+      {modelMissing && <div style={metaStyle}>Set up a model first.</div>}
       {msg && (
         <div style={{ margin: '6px 0' }}>
           <Badge tone={msg.ok ? 'success' : 'danger'}><span style={{ fontSize: 10 }}>{msg.text}</span></Badge>
@@ -556,7 +572,7 @@ export default function BrowserAccessSection({
         </div>
       )}
 
-      {access?.requiresApproval === true && (
+      {!modelMissing && access?.requiresApproval === true && (
         <div style={{ margin: '8px 0' }}>
           {!invite ? (
             <Button variant="secondary" size="sm" loading={busy === 'invite'} disabled={busy !== null} onClick={() => { void createInvite(); }}>

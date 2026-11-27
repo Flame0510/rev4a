@@ -10,6 +10,7 @@
  * A reference marked `subscription:openai/<id>` is a ChatGPT subscription model and one marked
  * `subscription:anthropic/<id>` is a Claude subscription model; both are stored as the bare
  * `<provider>/<id>`. The route answers 409 when the agent has no sign-in for the provider named.
+ * `onlyIfUnset: true` sets a first model without replacing a primary selected by another writer.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { agentBusyReason } from '@/lib/agent-busy';
@@ -18,6 +19,7 @@ import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { readFastStatus, statusReadFailedMessage, SubscriptionError, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
 import { readClaudeAgent } from '@/lib/subscription-claude';
+import { normalizeModel, type AgentModelRef } from '@/lib/subscriptions-parse';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -107,10 +109,49 @@ function existingFallbacks(model: unknown): string[] {
   return [];
 }
 
+async function subscriptionSignInError(refs: string[], safeContainer: string, agentId: string): Promise<NextResponse | undefined> {
+  // A ChatGPT subscription model needs a ChatGPT sign-in on this agent: without one the next turn fails.
+  if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:openai/'))) {
+    const read = await readFastStatus(safeContainer);
+    if (read.status === 'failed') {
+      return NextResponse.json({ status: 'error', error: statusReadFailedMessage(read.reason) }, { status: 503 });
+    }
+    if (read.status === 'unsupported') {
+      return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
+    }
+    if (read.state.profiles.length === 0) {
+      return NextResponse.json({ status: 'error', error: 'This agent is not connected to a ChatGPT subscription.' }, { status: 409 });
+    }
+  }
+
+  // A Claude subscription model needs Claude Code signed in with a Claude plan on this agent.
+  if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:anthropic/'))) {
+    const notConnected = NextResponse.json({ status: 'error', error: 'This agent is not connected to a Claude subscription.' }, { status: 409 });
+    if (!agentId) return notConnected;
+    try {
+      const claude = await readClaudeAgent(agentId);
+      // `readClaudeAgent` reports a failed read as a row carrying `error`, not as an exception.
+      if (claude.error === UNSUPPORTED_AGENT_MESSAGE) {
+        return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
+      }
+      // Any other error (an unreadable status or configuration, an API account) is not "not connected".
+      if (claude.error) return NextResponse.json({ status: 'error', error: claude.error }, { status: 503 });
+      if (claude.claude.state !== 'connected') return notConnected;
+    } catch (e) {
+      // It still throws for an invalid or unknown agent (a SubscriptionError 503 is passed on).
+      if (e instanceof SubscriptionError && e.status === 503) {
+        return NextResponse.json({ status: 'error', error: e.message }, { status: 503 });
+      }
+      // No usable Claude sign-in to store a model for.
+      return notConnected;
+    }
+  }
+}
+
 export async function PUT(request: NextRequest) {
   const denied = await requireAuthJWT(request); if (denied) return denied as any;
   try {
-    const body: { containerName?: string; model?: string; fallbacks?: string[] } = await request.json();
+    const body: { containerName?: string; model?: string; fallbacks?: string[]; onlyIfUnset?: boolean } = await request.json();
     const { containerName } = body;
 
     if (!containerName) {
@@ -144,42 +185,10 @@ export async function PUT(request: NextRequest) {
       }
     } catch { /* no container or no label: the rest of the route reports it */ }
 
-    // A ChatGPT subscription model needs a ChatGPT sign-in on this agent: without one the next turn fails.
-    if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:openai/'))) {
-      const read = await readFastStatus(safeContainer);
-      if (read.status === 'failed') {
-        return NextResponse.json({ status: 'error', error: statusReadFailedMessage(read.reason) }, { status: 503 });
-      }
-      if (read.status === 'unsupported') {
-        return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
-      }
-      if (read.state.profiles.length === 0) {
-        return NextResponse.json({ status: 'error', error: 'This agent is not connected to a ChatGPT subscription.' }, { status: 409 });
-      }
-    }
-
-    // A Claude subscription model needs Claude Code signed in with a Claude plan on this agent.
-    if (refs.some((r) => typeof r === 'string' && r.startsWith('subscription:anthropic/'))) {
-      const notConnected = NextResponse.json({ status: 'error', error: 'This agent is not connected to a Claude subscription.' }, { status: 409 });
-      if (!agentId) return notConnected;
-      try {
-        const claude = await readClaudeAgent(agentId);
-        // `readClaudeAgent` reports a failed read as a row carrying `error`, not as an exception.
-        if (claude.error === UNSUPPORTED_AGENT_MESSAGE) {
-          return NextResponse.json({ status: 'error', error: UNSUPPORTED_AGENT_MESSAGE }, { status: 409 });
-        }
-        // Any other error (an unreadable status or configuration, an API account) is not "not connected".
-        if (claude.error) return NextResponse.json({ status: 'error', error: claude.error }, { status: 503 });
-        if (claude.claude.state !== 'connected') return notConnected;
-      } catch (e) {
-        // It still throws for an invalid or unknown agent (a SubscriptionError 503 is passed on).
-        if (e instanceof SubscriptionError && e.status === 503) {
-          return NextResponse.json({ status: 'error', error: e.message }, { status: 503 });
-        }
-        // No usable Claude sign-in to store a model for.
-        return notConnected;
-      }
-    }
+    const onlyIfUnset = body.onlyIfUnset === true;
+    // Read sign-in outside the config lock. In setup, an existing primary takes precedence.
+    const signInError = await subscriptionSignInError(refs, safeContainer, agentId);
+    if (!onlyIfUnset && signInError) return signInError;
 
     const requestedModel = body.model; // narrowed above; the closure below would lose that
     // Read, change and write openclaw.json under the agent's config lock: a patch or
@@ -188,7 +197,7 @@ export async function PUT(request: NextRequest) {
       // Read current config
       const raw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
       if (!raw) {
-        return NextResponse.json({ status: 'error', error: 'Failed to read config from container (empty)' }, { status: 500 });
+        return signInError ?? NextResponse.json({ status: 'error', error: 'Failed to read config from container (empty)' }, { status: 500 });
       }
 
       let config: Record<string, unknown>;
@@ -202,8 +211,20 @@ export async function PUT(request: NextRequest) {
         }, { status: 500 });
       }
 
-      // Update model config
+      // Check and write under the same lock so a concurrent save cannot be overwritten.
       const agents = (config.agents || {}) as Record<string, unknown>;
+      const defaults = (agents.defaults || {}) as Record<string, unknown>;
+      if (onlyIfUnset && normalizeModel(defaults.model as AgentModelRef).primary) {
+        return NextResponse.json({
+          status: 'error',
+          code: 'model-already-set',
+          error: 'This agent already has a model.',
+        }, { status: 409 });
+      }
+
+      if (signInError) return signInError;
+
+      // Update model config
       const list = (agents.list || []) as Record<string, unknown>[];
 
       const mainAgent = list.find((a) => a.id === 'main');
@@ -218,7 +239,6 @@ export async function PUT(request: NextRequest) {
         };
       }
 
-      const defaults = (agents.defaults || {}) as Record<string, unknown>;
       {
         const primary = ensureRev4aPrefix(requestedModel);
         let fallbacks = dedupe(body.fallbacks ? ensureRev4aPrefixes(body.fallbacks) : existingFallbacks(defaults.model));
@@ -228,6 +248,8 @@ export async function PUT(request: NextRequest) {
           fallbacks,
         };
       }
+      agents.defaults = defaults;
+      config.agents = agents;
 
       // Write back
       const newConfig = JSON.stringify(config, null, 2);

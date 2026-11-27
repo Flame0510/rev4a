@@ -3,7 +3,8 @@
  * Tests of `PUT /api/gateway/agent` around subscription model references: the ChatGPT mark is
  * unchanged, the Claude mark is accepted and stored as a bare `anthropic/<id>`, bad ids are
  * refused, a Claude mark on an agent without a Claude plan answers 409, and a stored bare
- * `anthropic/<id>` fallback keeps no `rev4a/` prefix.
+ * `anthropic/<id>` fallback keeps no `rev4a/` prefix. Also tests first-model setup under
+ * the real config lock, including configs without defaults.
  *
  * The route runs for real with its Next.js, Docker and subscription dependencies stubbed.
  * Run: node scripts/test-gateway-agent-subscription.mjs
@@ -12,6 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import subscriptionsParse from '../lib/subscriptions-parse.js';
 
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`ok   ${name}`); }
@@ -23,8 +25,8 @@ class SubscriptionError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-function loadRoute(deps = {}) {
-  const source = fs.readFileSync(new URL('../' + routeFile, import.meta.url), 'utf8');
+function loadModule(file, dependencies) {
+  const source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8');
   const code = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -39,29 +41,6 @@ function loadRoute(deps = {}) {
     setTimeout,
     clearTimeout,
   };
-  const dependencies = {
-    'next/server': {
-      NextRequest: class {},
-      NextResponse: class NextResponse {
-        constructor(body, init) { this.body = body; this.status = init?.status ?? 200; }
-        static json(body, init) { return new NextResponse(body, init); }
-      },
-    },
-    '@/lib/agent-busy': { agentBusyReason: async () => null },
-    'child_process': { execSync: () => '' },
-    '@/lib/agent-config-lock': { withAgentConfigLock: async (_container, fn) => fn() },
-    '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
-    '@/lib/subscriptions': {
-      readFastStatus: async () => ({ status: 'ok', state: { profiles: [{ id: 'openai:fixture' }] } }),
-      statusReadFailedMessage: (reason) => `Could not read this agent's subscription status: ${reason}`,
-      SubscriptionError,
-      UNSUPPORTED_AGENT_MESSAGE: 'This agent is not on a supported OpenClaw version (2026.9.x). Update it first.',
-    },
-    '@/lib/subscription-claude': {
-      readClaudeAgent: async () => ({ claude: { state: 'connected' } }),
-    },
-    ...deps,
-  };
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', sandbox)(
     (name) => {
       if (!(name in dependencies)) throw new Error('Unexpected dependency: ' + name);
@@ -73,6 +52,35 @@ function loadRoute(deps = {}) {
   return module.exports;
 }
 
+const configLock = loadModule('lib/agent-config-lock.ts', {});
+
+function loadRoute(deps = {}) {
+  return loadModule(routeFile, {
+    'next/server': {
+      NextRequest: class {},
+      NextResponse: class NextResponse {
+        constructor(body, init) { this.body = body; this.status = init?.status ?? 200; }
+        static json(body, init) { return new NextResponse(body, init); }
+      },
+    },
+    '@/lib/agent-busy': { agentBusyReason: async () => null },
+    'child_process': { execSync: () => '' },
+    '@/lib/agent-config-lock': configLock,
+    '@/lib/rev4a-auth': { requireAuthJWT: async () => null },
+    '@/lib/subscriptions': {
+      readFastStatus: async () => ({ status: 'ok', state: { profiles: [{ id: 'openai:fixture' }] } }),
+      statusReadFailedMessage: (reason) => `Could not read this agent's subscription status: ${reason}`,
+      SubscriptionError,
+      UNSUPPORTED_AGENT_MESSAGE: 'This agent is not on a supported OpenClaw version (2026.9.x). Update it first.',
+    },
+    '@/lib/subscription-claude': {
+      readClaudeAgent: async () => ({ claude: { state: 'connected' } }),
+    },
+    '@/lib/subscriptions-parse': subscriptionsParse,
+    ...deps,
+  });
+}
+
 const config = () => ({
   agents: {
     list: [{ id: 'main', model: { primary: 'rev4a/deepseek-flash', fallbacks: ['anthropic/claude-haiku-5-5'] } }],
@@ -81,8 +89,8 @@ const config = () => ({
 });
 
 /** The route with a real in-memory openclaw.json; every read and write is visible. */
-function harness({ claudeState = 'connected', claudeError = null, claudeThrows = false, claudeFailure = null, profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture' } = {}) {
-  let stored = config();
+function harness({ claudeState = 'connected', claudeError = null, claudeThrows = false, claudeFailure = null, profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture', initialConfig = config() } = {}) {
+  let stored = initialConfig;
   const calls = { openai: 0, claude: 0, writes: 0 };
   const execSync = (command, options = {}) => {
     if (command.includes('docker inspect')) return agentId;
@@ -261,6 +269,75 @@ await test('an unmarked anthropic/… id is still a Rev4a catalogue model and ga
   const res = await put(h.route, { containerName: 'agent_fixture', model: 'anthropic/claude-haiku-5-5' });
   assert.equal(res.status, 200);
   assert.equal(modelOf(h.stored()).primary, 'rev4a/anthropic/claude-haiku-5-5');
+});
+
+const setup = {
+  containerName: 'agent_fixture',
+  model: 'subscription:openai/gpt-6-astra',
+  fallbacks: [],
+  onlyIfUnset: true,
+};
+
+await test('guarded setup loses to a queued manual save and preserves its primary and fallbacks', async () => {
+  const h = harness({ initialConfig: { agents: { defaults: {} } } });
+  const manual = { primary: 'rev4a/deepseek/selected-by-user', fallbacks: ['rev4a/deepseek/another'] };
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const lock = configLock.withAgentConfigLock(setup.containerName, () => held);
+  const manualSave = put(h.route, { containerName: setup.containerName, model: manual.primary, fallbacks: manual.fallbacks });
+  const automaticSave = put(h.route, setup);
+  release();
+  await lock;
+  assert.equal((await manualSave).status, 200);
+  const result = await automaticSave;
+  assert.equal(result.status, 409);
+  assert.deepEqual({ ...result.body }, {
+    status: 'error',
+    code: 'model-already-set',
+    error: 'This agent already has a model.',
+  });
+  assert.equal(h.calls.writes, 1);
+  assert.deepEqual(modelOf(h.stored()), manual);
+  console.log('     ' + JSON.stringify({ httpStatus: result.status, ...result.body, writes: h.calls.writes, model: modelOf(h.stored()) }));
+});
+
+await test('guarded setup preserves a legacy string primary without writing', async () => {
+  const h = harness({ initialConfig: { agents: { defaults: { model: 'legacy/model' } } } });
+  const result = await put(h.route, setup);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, 'model-already-set');
+  assert.equal(h.calls.writes, 0);
+  assert.equal(modelOf(h.stored()), 'legacy/model');
+});
+
+await test('guarded setup reports an existing primary even if the subscription signed out', async () => {
+  const h = harness({ profiles: [] });
+  const result = await put(h.route, setup);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, 'model-already-set');
+  assert.equal(h.calls.writes, 0);
+});
+
+await test('guarded setup writes an unset primary and creates missing defaults or agents', async () => {
+  for (const initialConfig of [{ agents: { defaults: { model: { primary: '' } } } }, { agents: { list: [{ id: 'main' }] } }, {}]) {
+    const h = harness({ initialConfig });
+    const result = await put(h.route, setup);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.verify.ok, true);
+    assert.equal(h.calls.writes, 1);
+    assert.deepEqual(modelOf(h.stored()), { primary: 'openai/gpt-6-astra', fallbacks: [] });
+    if (initialConfig.agents?.list) assert.deepEqual(mainModelOf(h.stored()), modelOf(h.stored()));
+    console.log('     ' + JSON.stringify({ status: result.status, verify: result.body.verify, writes: h.calls.writes, model: modelOf(h.stored()) }));
+  }
+});
+
+await test('a normal PUT can still replace an existing primary', async () => {
+  const h = harness();
+  const { containerName, model, fallbacks } = setup;
+  const result = await put(h.route, { containerName, model, fallbacks });
+  assert.equal(result.status, 200);
+  assert.equal(h.calls.writes, 1);
+  assert.deepEqual(modelOf(h.stored()), { primary: 'openai/gpt-6-astra', fallbacks: [] });
 });
 
 console.log(`\n${passed} passed`);

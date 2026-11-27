@@ -3,11 +3,12 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonLines } from '../components/Skeleton';
-import { Button, AgentCard, AgentStartDialog, Badge, ConfirmModal, Input, Pill, type AgentStartPrompt, type Tone } from '../components/ui';
+import { Button, AgentCard, AgentStartDialog, Badge, ConfirmModal, Input, Pill, Surface, type AgentStartPrompt, type Tone } from '../components/ui';
 import PasswordInput from '../components/PasswordInput';
 import ImageDownloadBanner from './ImageDownloadBanner';
 import ChannelManager from './ChannelManager';
 import ModelSection from './ModelSection';
+import ModelSetupModal from './ModelSetupModal';
 import CostSection from './CostSection';
 import { AgentSpendAlerts } from '../system/AgentSpendAlerts';
 import ResourceSection from './ResourceSection';
@@ -18,6 +19,7 @@ import BrowserAccessSection, { Elapsed, OpenControlUiButton, type GatewayState }
 import UpdateSection from './UpdateSection';
 import { validatePortInput, type PortBindings } from '@/lib/agent-ports';
 import { agentPortsLabel, requestAgentLifecycle } from '@/lib/agent-start';
+import { needsModelSetup } from '@/lib/agent-model-setup';
 import { GATEWAY_POLL_STUCK_MS, skipGatewayTick } from '@/lib/gateway-state';
 import {
   InfoIcon, BracesIcon, KeyIcon, TrashIcon, TerminalIcon,
@@ -107,46 +109,31 @@ function fmtCreated(created: string | null): string {
   return `${m}m`;
 }
 
-/** NoProviderBanner - shown when no provider API keys are configured */
 function NoProviderBanner() {
   return (
-    <div style={{
-      padding: '10px 14px',
-      background: 'rgba(251,191,36,0.08)',
-      borderBottom: '1px solid rgba(251,191,36,0.2)',
-      fontSize: 12,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      flexShrink: 0,
-      flexWrap: 'wrap',
-      gap: 8,
-    }}>
-      <div>
-        <strong style={{ color: '#fbbf24' }}>⚠ No providers configured.</strong>
-        {' '}Agents need model providers to run. Configure them in the&nbsp;
-        <a href="/gateway" style={{ color: 'var(--violet)', textDecoration: 'underline' }}>
-          Gateway
-        </a>.
-      </div>
-      <a
-        href="/gateway"
-        style={{
-          padding: '4px 10px',
-          border: '1px solid var(--violet)',
-          color: 'var(--violet)',
-          fontSize: 11,
-          textDecoration: 'none',
-          background: 'transparent',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        Open Gateway →
-      </a>
-    </div>
+    <Surface as="aside" compact>
+      No API keys yet — agents can use your ChatGPT or Claude subscription, or add a key in the{' '}
+      <a href="/gateway" className="ui-link">Gateway</a>.
+    </Surface>
   );
 }
 
+function ConnectSubscriptionButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button type="button" variant="primary" size="sm" onClick={(event) => {
+      event.stopPropagation();
+      onClick();
+    }}>
+      Connect subscription
+    </Button>
+  );
+}
+
+function clearSetupParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('setup');
+  window.history.replaceState(null, '', url);
+}
 
 /**
  * The image as the card shows it. An agent whose image lost its tag reports a bare digest
@@ -205,6 +192,7 @@ function AgentListItem({
   busy,
   onClick,
   onLifecycle,
+  onSetupModel,
 }: {
   agent: Agent;
   loading: boolean;
@@ -222,10 +210,14 @@ function AgentListItem({
   busy?: boolean;
   onClick: () => void;
   onLifecycle: () => void;
+  onSetupModel: () => void;
 }) {
   const row = modelSummary[agent.agentId];
+  const modelMissing = needsModelSetup(row);
   let model: React.ReactNode = null;
-  if (row && row.primary) {
+  if (modelMissing) {
+    model = <Pill tone="warning" title="Connect a subscription or add an API key">No model</Pill>;
+  } else if (row && row.primary) {
     // A bare `openai/<id>` or `anthropic/<id>` is a subscription model: it is not in the Rev4a
     // catalogue on purpose, so the catalogue health the summary computes does not apply to it.
     // Whether the agent is signed in is shown in its panel (Subscription line), so the card
@@ -312,7 +304,8 @@ function AgentListItem({
       toggling={loading}
       toggleDisabled={agent.state === 'unknown' || !!busy}
       onToggle={() => { void onLifecycle(); }}
-      action={agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
+      action={modelMissing ? <ConnectSubscriptionButton onClick={onSetupModel} />
+        : agent.state === 'running' && agent.controlPort ? <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} stopPropagation gateway={gw?.state} blocksOpen={gw?.blocksOpen} /> : undefined}
       meta={[
         imageLabel(agent),
         compactPorts(agent.ports),
@@ -335,6 +328,9 @@ export default function AgentsPageClient() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<FilterState>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [setupAgentId, setSetupAgentId] = useState<string | null>(null);
+  const [scrollModelFor, setScrollModelFor] = useState<string | null>(null);
+  const [modelRevisions, setModelRevisions] = useState<Record<string, number>>({});
   const [isMobile, setIsMobile] = useState(false);
   const [showList, setShowList] = useState(true);
   const [chSummary, setChSummary] = useState<Record<string, { telegram: boolean }>>({});
@@ -350,9 +346,7 @@ export default function AgentsPageClient() {
   /** When the Gateway request in flight started (null: none): interval ticks skip instead of aborting it. */
   const gwInFlight = useRef<number | null>(null);
   const [imageReady, setImageReady] = useState(true);
-  // null = not checked yet. Keeping "unknown" distinct from "none configured" is
-  // the whole point: `false` as the initial value makes an unanswered check look
-  // exactly like a negative answer, so the warning banner renders on no evidence.
+  // Unknown status keeps the banner hidden while the agent list loads independently.
   const [providersConfigured, setProvidersConfigured] = useState<boolean | null>(null);
   const [gatewayToken, setGatewayToken] = useState('');
   const [tokenLoading, setTokenLoading] = useState(true);
@@ -362,16 +356,18 @@ export default function AgentsPageClient() {
   const lifecycleBusyRef = useRef(false);
   const lifecycleAbortRef = useRef<AbortController | null>(null);
   const listAbortRef = useRef<AbortController | null>(null);
+  const listLoads = useRef(0);
+  const mdSummaryAbortRef = useRef<AbortController | null>(null);
   const [startPrompt, setStartPrompt] = useState<AgentStartPrompt | null>(null);
   const [lifecycleError, setLifecycleError] = useState('');
   useEffect(() => () => {
     lifecycleAbortRef.current?.abort();
     listAbortRef.current?.abort();
+    mdSummaryAbortRef.current?.abort();
   }, []);
   const skipNextPoll = useRef(false);
   /** Guards the un-awaited channel-summary fetch against out-of-order responses. */
   const chSummarySeq = useRef(0);
-  const mdSummarySeq = useRef(0);
   const dvSummarySeq = useRef(0);
   const bkSummarySeq = useRef(0);
 
@@ -382,14 +378,17 @@ export default function AgentsPageClient() {
    * caller the chip kept showing the previous model until the next poll, which
    * reads as "the save did not work".
    *
-   * Sequence-guarded because several can overlap; the last one issued wins.
+   * A save can overlap the poll. Cancel the earlier read so it cannot restore stale chips.
    */
   const refreshModelSummary = useCallback(async () => {
-    const seq = ++mdSummarySeq.current;
+    mdSummaryAbortRef.current?.abort();
+    const controller = new AbortController();
+    mdSummaryAbortRef.current = controller;
     try {
-      const res = await fetch('/api/agents/models-summary');
-      if (!res.ok || seq !== mdSummarySeq.current) return;
+      const res = await fetch('/api/agents/models-summary', { signal: controller.signal });
+      if (!res.ok) return;
       const payload = await res.json();
+      if (controller.signal.aborted) return;
       const byId: Record<string, { primary: string | null; health: string; fallbackCount: number; firstFallback?: string | null }> = {};
       for (const row of payload.agents ?? []) byId[row.agentId] = row;
       setMdSummary(byId);
@@ -398,7 +397,7 @@ export default function AgentsPageClient() {
 
   /**
    * Refresh the "browser waiting" badges. Shared by the poll and by an approve,
-   * reject or revoke in the detail panel, and sequence-guarded like the model rows.
+   * reject or revoke in the detail panel, and sequence-guarded against stale reads.
    */
   const refreshDeviceSummary = useCallback(async () => {
     const seq = ++dvSummarySeq.current;
@@ -525,6 +524,7 @@ export default function AgentsPageClient() {
       const data = await res.json();
       if (controller.signal.aborted) return;
       if (!Array.isArray(data)) throw new Error('Invalid response');
+      listLoads.current += 1;
       setAgents(data);
       setError('');
 
@@ -558,7 +558,7 @@ export default function AgentsPageClient() {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [refreshGateway]);
+  }, [refreshGateway, refreshModelSummary]);
 
   useEffect(() => {
     load();
@@ -579,13 +579,17 @@ export default function AgentsPageClient() {
 
   // Check if any provider is configured in the Gateway
   useEffect(() => {
+    const controller = new AbortController();
     // summary=1: skips the live-pricing round trip we don't need here.
-    fetch('/api/gateway/provider?summary=1')
-      .then((r) => r.json())
-      .then((d: { providers?: Array<{ configured: boolean }> }) =>
-        setProvidersConfigured((d.providers || []).some((p) => p.configured))
-      )
-      .catch(() => setProvidersConfigured(false));
+    fetch('/api/gateway/provider?summary=1', { signal: controller.signal })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d: { providers?: Array<{ configured: boolean }> } | null) => {
+        if (!controller.signal.aborted && Array.isArray(d?.providers)) {
+          setProvidersConfigured(d.providers.some((p) => p.configured));
+        }
+      })
+      .catch(() => { /* the banner is optional */ });
+    return () => controller.abort();
   }, []);
 
   // Load gateway token
@@ -705,17 +709,56 @@ export default function AgentsPageClient() {
   // Deep link `/agents?agent=<id>` (the Subscriptions page uses it): select that agent once the
   // list has loaded, one time only, so the operator's own later choice is never overridden.
   const deepLinked = useRef(false);
+  const setupDeepLink = useRef<string | null>(null);
+  // Opened by the operator: a `?setup=1` link still waiting for its agent must not replace this dialog later.
+  const openSetup = useCallback((agentId: string) => {
+    if (setupDeepLink.current) {
+      setupDeepLink.current = null;
+      clearSetupParam();
+    }
+    setSetupAgentId(agentId);
+  }, []);
   useEffect(() => {
-    if (deepLinked.current || agents.length === 0) return;
-    deepLinked.current = true;
-    let wanted: string | null = null;
-    try { wanted = new URLSearchParams(window.location.search).get('agent'); } catch { /* no window */ }
+    if (deepLinked.current) return;
+    const url = new URL(window.location.href);
+    const wanted = url.searchParams.get('agent');
     const hit = wanted ? agents.find((a) => a.agentId === wanted) : null;
+    if (url.searchParams.get('setup') === '1') {
+      setupDeepLink.current = wanted;
+      if (!hit) {
+        if (wanted && listLoads.current < 3) return;
+        setupDeepLink.current = null;
+        clearSetupParam();
+      }
+    } else if (agents.length === 0) {
+      return;
+    }
+    deepLinked.current = true;
     if (hit) {
       setSelectedId(hit.agentId);
       if (isMobile) setShowList(false);
+      if (url.hash === '#model-section') setScrollModelFor(hit.agentId);
     }
   }, [agents, isMobile]);
+
+  useEffect(() => {
+    const agentId = setupDeepLink.current;
+    if (!agentId || selectedId !== agentId || !agents.some((agent) => agent.agentId === agentId)) return;
+    const row = mdSummary[agentId];
+    if (!row?.health || row.health === 'unknown') return;
+    setupDeepLink.current = null;
+    if (needsModelSetup(row)) setSetupAgentId(agentId);
+    clearSetupParam();
+  }, [agents, mdSummary, selectedId]);
+
+  useEffect(() => {
+    if (!scrollModelFor || scrollModelFor !== selectedId || loading || error || (isMobile && showList)) return;
+    const section = document.getElementById('model-section');
+    if (section) {
+      section.scrollIntoView({ block: 'start' });
+      setScrollModelFor(null);
+    }
+  }, [scrollModelFor, selectedId, loading, error, isMobile, showList]);
 
   /** An agent was deleted: drop it optimistically, then reconcile with the server. */
   const handleAgentDeleted = useCallback((agentId: string) => {
@@ -726,14 +769,78 @@ export default function AgentsPageClient() {
     void load();
   }, [load]);
 
+  function cancelSetupDeepLink() {
+    if (!setupDeepLink.current) return;
+    clearSetupParam();
+    setupDeepLink.current = null;
+    deepLinked.current = true;
+  }
+
   function selectAgent(agent: Agent) {
+    cancelSetupDeepLink();
+    setScrollModelFor(null);
     setSelectedId(agent.agentId);
     if (isMobile) setShowList(false);
   }
 
   function backToList() {
+    cancelSetupDeepLink();
+    setScrollModelFor(null);
     setShowList(true);
   }
+
+  const setupAgent = agents.find((agent) => agent.agentId === setupAgentId);
+  function modelSaved(agentId: string) {
+    // The save confirms a primary exists. Catalogue health will come from the next read.
+    setMdSummary((previous) => {
+      const row = previous[agentId];
+      return needsModelSetup(row) ? { ...previous, [agentId]: { ...row, health: 'unknown' } } : previous;
+    });
+    void refreshModelSummary();
+  }
+
+  function finishModelSetup(agentId: string) {
+    setSetupAgentId(null);
+    setModelRevisions((previous) => ({ ...previous, [agentId]: (previous[agentId] ?? 0) + 1 }));
+  }
+
+  const setupModal = setupAgent && (
+    <ModelSetupModal
+      key={setupAgent.agentId}
+      agentId={setupAgent.agentId}
+      agentName={setupAgent.displayName || setupAgent.name}
+      onClose={() => setSetupAgentId(null)}
+      onDone={() => {
+        finishModelSetup(setupAgent.agentId);
+        modelSaved(setupAgent.agentId);
+      }}
+      onChoose={() => {
+        selectAgent(setupAgent);
+        setScrollModelFor(setupAgent.agentId);
+        finishModelSetup(setupAgent.agentId);
+        void refreshModelSummary();
+      }}
+    />
+  );
+  // Keep panel state tied to the agent. Changing selection discards its pending
+  // actions and dialogs. Setup only remounts the model picker after a sign-in or save.
+  const detailPanel = selected && (
+    <DetailPanel
+      key={selected.agentId}
+      agent={selected}
+      busy={!!bkSummary[selected.agentId]}
+      gateway={gwSummary[selected.agentId]}
+      modelMissing={needsModelSetup(mdSummary[selected.agentId])}
+      modelRevision={modelRevisions[selected.agentId] ?? 0}
+      onSetupModel={() => openSetup(selected.agentId)}
+      onDeleted={handleAgentDeleted}
+      onChanged={load}
+      onModelSaved={() => modelSaved(selected.agentId)}
+      onAccessChanged={refreshDeviceSummary}
+      onActivity={notifyActivity}
+      onRestarted={boostGateway}
+    />
+  );
 
   const tokenSection = (
     <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', flexShrink: 0 }}>
@@ -764,11 +871,7 @@ export default function AgentsPageClient() {
     </div>
   );
 
-  // Hold the skeleton until the provider check has answered too. Both effects
-  // fire on mount, so this costs nothing when the check is warm (~3ms) and only
-  // shows up on a cold one (~230ms) — where it's exactly what we want, since
-  // that's the window the banner used to flash in.
-  if (loading || providersConfigured === null) {
+  if (loading) {
     return (
       <div style={{ padding: 14, display: 'grid', gap: 14 }}>
         {lifecycleFeedback}
@@ -799,6 +902,7 @@ export default function AgentsPageClient() {
       return (
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
           {lifecycleFeedback}
+          {setupModal}
           {/* Mobile header back - fixed top */}
           <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <Button variant="ghost" size="sm" onClick={backToList}>
@@ -811,7 +915,7 @@ export default function AgentsPageClient() {
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', paddingBottom: FLOATING_CLEARANCE }} data-testid="agent-detail-scroll">
             <ImageDownloadBanner onImageReady={handleImageReady} />
             {providersConfigured === false && <NoProviderBanner />}
-            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} gateway={gwSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} onRestarted={boostGateway} />
+            {detailPanel}
           </div>
         </div>
       );
@@ -821,6 +925,7 @@ export default function AgentsPageClient() {
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column' }}>
         {lifecycleFeedback}
+        {setupModal}
         <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length}</span>
@@ -854,6 +959,7 @@ export default function AgentsPageClient() {
               busy={!!bkSummary[agent.agentId] || !!lifecycleLoading || !!startPrompt}
               onClick={() => selectAgent(agent)}
               onLifecycle={() => handleLifecycle(agent)}
+              onSetupModel={() => openSetup(agent.agentId)}
             />
           ))}
         </div>
@@ -865,11 +971,12 @@ export default function AgentsPageClient() {
   return (
     <div style={{ flex: 1, background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-mono-stack)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {lifecycleFeedback}
+      {setupModal}
       <div style={{ height: 48, padding: '0 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: 'var(--font-serif-stack)', fontSize: '20px', letterSpacing: '4px', color: 'var(--violet)' }}>AGENTS</span>
           <span style={{ fontSize: 11, color: '#888' }}>{agents.length} agents · {agents.filter((a) => a.state === 'running').length} running</span>
-          <Button variant="primary" size="sm" disabled={!imageReady || !providersConfigured} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : !providersConfigured ? 'No providers configured' : undefined}>
+          <Button variant="primary" size="sm" disabled={!imageReady} onClick={() => router.push('/agents/create')} title={!imageReady ? 'Agent base image not built yet' : undefined}>
             + NEW
           </Button>
         </div>
@@ -904,20 +1011,16 @@ export default function AgentsPageClient() {
                 gatewaySummary={gwSummary}
                 busy={!!bkSummary[agent.agentId] || !!lifecycleLoading || !!startPrompt}
                 selected={isSelected}
-                onClick={() => setSelectedId(agent.agentId)}
+                onClick={() => selectAgent(agent)}
                 onLifecycle={() => handleLifecycle(agent)}
+                onSetupModel={() => openSetup(agent.agentId)}
               />
             );
           })}
         </div>
         <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg2)', padding: 16 }}>
-          {!selected ? (
+          {detailPanel ?? (
             <div style={{ color: '#666', fontSize: 12, padding: 20 }}>Select an agent for details</div>
-          ) : (
-            // key: without it React reuses one DetailPanel instance across
-            // selections, so in-flight state (deleting, recreating, restarting,
-            // toasts, open confirms) leaks onto the next agent you click.
-            <DetailPanel key={selected.agentId} agent={selected} busy={!!bkSummary[selected.agentId]} gateway={gwSummary[selected.agentId]} onDeleted={handleAgentDeleted} onChanged={load} onModelSaved={refreshModelSummary} onAccessChanged={refreshDeviceSummary} onActivity={notifyActivity} onRestarted={boostGateway} />
           )}
         </div>
       </div>
@@ -1241,8 +1344,11 @@ function EditBanner({ agentId, onChanged, ping }: { agentId: string; onChanged: 
   );
 }
 
-function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved, onAccessChanged, onActivity, onRestarted }: {
+function DetailPanel({ agent, busy, gateway, modelMissing, modelRevision, onSetupModel, onDeleted, onChanged, onModelSaved, onAccessChanged, onActivity, onRestarted }: {
   agent: Agent;
+  modelMissing: boolean;
+  modelRevision: number;
+  onSetupModel: () => void;
   /** The agent is gone — the parent drops it from the list. */
   onDeleted: (agentId: string) => void;
   /** The agent changed in place (renamed, recreated) — refetch the list. */
@@ -1301,6 +1407,14 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
 
   return (
     <div style={{ display: 'grid', gap: 12, maxWidth: 600, margin: '16px auto', paddingBottom: 24 }}>
+      {modelMissing && (
+        <Surface compact tone="warning">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>No model. Connect a subscription or add an API key.</span>
+            <ConnectSubscriptionButton onClick={onSetupModel} />
+          </div>
+        </Surface>
+      )}
       {/* Status */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', padding: '14px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
@@ -1350,15 +1464,17 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
       </div>
 
       {/* Channels - Telegram */}
-      <ChannelSection agentId={agent.agentId} displayName={agent.displayName || agent.name} />
+      <ChannelSection agentId={agent.agentId} displayName={agent.displayName || agent.name} modelMissing={modelMissing} />
 
       {/* Browser access - open the Control UI, approve and revoke browsers */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<KeyIcon size={12} />} label="BROWSER ACCESS" />
         <div style={{ padding: '12px 14px' }}>
-          {agent.state === 'running' && agent.controlPort && (
+          {(modelMissing || (agent.state === 'running' && agent.controlPort)) && (
             <div style={{ marginBottom: 8 }}>
-              <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
+              {modelMissing ? <ConnectSubscriptionButton onClick={onSetupModel} /> : (
+                <OpenControlUiButton agentId={agent.agentId} hostIp={agent.controlUiHostIp} publicUrl={agent.domainConfigured === false ? undefined : agent.publicUrl} label="Open Control UI ↗" gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
+              )}
               {gateway?.state === 'starting' && (
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Gateway starting… <Elapsed startedAtMs={gateway.startedAtMs} /></div>
               )}
@@ -1367,16 +1483,16 @@ function DetailPanel({ agent, busy, gateway, onDeleted, onChanged, onModelSaved,
               )}
             </div>
           )}
-          <BrowserAccessSection agentId={agent.agentId} running={agent.state === 'running'} onChanged={onAccessChanged} />
+          <BrowserAccessSection agentId={agent.agentId} running={agent.state === 'running'} modelMissing={modelMissing} onChanged={onAccessChanged} />
         </div>
       </div>
 
-      <PortsSection agentId={agent.agentId} bindings={agent.portBindings} running={agent.state === 'running'} gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} />
+      <PortsSection agentId={agent.agentId} bindings={agent.portBindings} running={agent.state === 'running'} gateway={gateway?.state} blocksOpen={gateway?.blocksOpen} modelMissing={modelMissing} />
 
       {/* Model - primary + fallbacks (moved here from the Gateway page) */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 0, background: 'var(--bg)', overflow: 'hidden' }}>
         <SectionHeader icon={<BracesIcon size={12} />} label="MODEL" />
-        <ModelSection agentId={agent.agentId} onSaved={onModelSaved} agentBusy={busy} />
+        <ModelSection key={modelRevision} agentId={agent.agentId} onSaved={onModelSaved} agentBusy={busy} />
       </div>
 
       {/* Costs - what this agent spent, as its own OpenClaw priced it */}
@@ -2284,7 +2400,7 @@ function RecreateSection({ agentName, displayName, agentBusy, portsDiffer, hostI
 
 /* ─── Channel section - Telegram ─── */
 
-function ChannelSection({ agentId, displayName }: { agentId: string; displayName: string }) {
+function ChannelSection({ agentId, displayName, modelMissing }: { agentId: string; displayName: string; modelMissing: boolean }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<{ telegram: boolean } | null>(null);
   const previewAbortRef = useRef<AbortController | null>(null);
@@ -2337,6 +2453,7 @@ function ChannelSection({ agentId, displayName }: { agentId: string; displayName
       <ChannelManager
         agentId={agentId}
         displayName={displayName}
+        modelMissing={modelMissing}
         open={open}
         onClose={() => { setOpen(false); doFetchPreview(); }}
       />

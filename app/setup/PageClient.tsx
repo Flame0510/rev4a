@@ -167,7 +167,8 @@ export default function SetupPageClient() {
               </h2>
               <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, margin: 0 }}>
                 The essentials are done. After logging in, the setup wizard
-                will help you add your first provider and create your first agent.
+                will help you add a provider key (optional with a ChatGPT or Claude
+                subscription) and create your first agent.
               </p>
               <div style={{ display: 'grid', gap: 6, textAlign: 'left', padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)' }}>
                 {[

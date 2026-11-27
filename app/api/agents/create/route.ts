@@ -4,6 +4,8 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { patchRev4aProvider } from '../../gateway/sync';
+import { readProviderKeys } from '../../gateway/provider/keys';
+import { resolveCreateModel } from '@/lib/agent-model-setup';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
 import { extractProviderAndModel } from '@/app/api/provider/upstream';
 import { DB_FILE, AGENTS_TOKEN_FILE, PROVIDER_KEYS_FILE, templatesDir } from '@/lib/rev4a-paths';
@@ -55,7 +57,8 @@ interface CreateBody {
   name: string;
   template: string;
   portRange?: string;
-  model?: string;
+  model?: unknown;
+  noModel?: unknown;
   fallbacks?: string[];
   /** Optional memory limit in MB (256 to 1048576); absent, null or 0 means no limit. */
   memoryLimitMb?: number | string | null;
@@ -100,7 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { name: displayName, template, portRange: portInput, model, fallbacks } = body;
+    const { name: displayName, template, portRange: portInput, fallbacks } = body;
 
     // Validate display name
     if (!displayName || displayName.trim().length < 1) {
@@ -142,15 +145,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Validate model (if provided) exists in models.config.json
-    // A request without a model used to create an agent with no primary at all —
-    // the config write below was skipped — while the event log recorded a default
-    // the agent never had. The default is now applied for real, and validated like
-    // any other model, so it cannot produce an agent the proxy refuses.
-    const effectiveModel: string = typeof model === 'string' && model ? model : DEFAULT_MODEL;
-    if (!isValidModel(effectiveModel)) {
+    const modelSetup = resolveCreateModel(body, isValidModel, DEFAULT_MODEL);
+    if (modelSetup.kind === 'error') {
       return NextResponse.json(
-        { success: false, error: `Model '${effectiveModel}' is not offered by this deployment: it is not in the catalogue, is disabled, or its provider has no API key.` },
+        { success: false, error: modelSetup.error },
+        { status: modelSetup.status },
+      );
+    }
+    const noModel = modelSetup.kind === 'none';
+    if (noModel && 'fallbacks' in body) {
+      return NextResponse.json(
+        { success: false, error: 'Do not send fallbacks with noModel' },
         { status: 400 },
       );
     }
@@ -299,7 +304,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           port: portStart,
           portEnd,
           isBlock,
-          model: effectiveModel,
+          model: modelSetup.kind === 'model' ? modelSetup.model : null,
+          ...(noModel ? { noModel: true } : {}),
           fallbacks,
           containerId,
           containerName,
@@ -388,22 +394,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         gatewaySection.controlUi = withControlUiPolicy(gatewaySection.controlUi);
         config.gateway = gatewaySection;
 
-        // Model reference (primary + fallbacks)
-        {
+        const agents = (config.agents || {}) as Record<string, unknown>;
+        const defaults = (agents.defaults || {}) as Record<string, unknown>;
+        if (modelSetup.kind === 'model') {
           // Always the canonical `rev4a/<provider>/<model>`: the Agents chips and the
           // Model panel look the primary up by catalogue id, so the alias form
           // (`rev4a/deepseek-flash`) or a bare name would show as not in the catalogue.
-          const modelRef = toRev4aRef(effectiveModel);
+          const modelRef = toRev4aRef(modelSetup.model);
           const fallbackRefs = (fallbacks || []).map((fb: string) => toRev4aRef(fb));
-          const agents = (config.agents || {}) as Record<string, unknown>;
-          const defaults = (agents.defaults || {}) as Record<string, unknown>;
           defaults.model = {
             primary: modelRef,
             fallbacks: fallbackRefs.filter((fb: string) => fb !== modelRef),
           };
-          agents.defaults = defaults;
-          config.agents = agents;
+        } else {
+          delete defaults.model;
         }
+        agents.defaults = defaults;
+        config.agents = agents;
 
         // Disable update check (agents are managed through Rev4a)
         config.update = {
@@ -423,8 +430,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // No restart: the Gateway watches openclaw.json and reloads it by itself
       // (it logs "[reload] ..."), and gateway.controlUi is hot-applied. The
       // "openclaw gateway restart" command does nothing inside a container (no systemd).
-    } catch {
-      // post-creation config is non-fatal; can be synced manually
+    } catch (e: unknown) {
+      // post-creation config is non-fatal; can be synced manually. Parse and type errors quote the
+      // openclaw.json they read, which holds credentials: log the error kind and exit code only.
+      const err = e as { name?: unknown; status?: unknown };
+      const kind = typeof err?.name === 'string' ? err.name : 'Error';
+      const exit = typeof err?.status === 'number' ? ` (exit ${err.status})` : '';
+      console.error(`[agent:create] post-creation config failed: ${kind}${exit}; openclaw.json was not updated.`);
     }
 
     // Guarantee Rev4a runtime config (hooks, shared-skills, provider).
@@ -437,7 +449,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Also guarantee models.providers.rev4a (host-dependent, not in base image).
       // Like the full-file write above, this needs no restart: the Gateway
       // reloads openclaw.json by itself.
-      await patchRev4aProvider(containerName);
+      if (readProviderKeys().rev4a) {
+        await patchRev4aProvider(containerName);
+      } else {
+        console.log('[agent:create] The Rev4a provider block will be written when the first Gateway key is saved.');
+      }
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
       console.error('[agent:create] runtime config patch failed:', redactedMessage(e, agentsToken));
@@ -459,6 +475,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       portEnd,
       isBlock,
       portDisplay: isBlock ? `${portStart}-${portEnd}` : String(portStart),
+      noModel,
     });
   } catch (e: unknown) {
     let removed = '';

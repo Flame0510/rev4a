@@ -94,13 +94,18 @@ export interface SubscriptionProviderCopy {
   codeHint: string;
   /** The line under the device code while the login waits. */
   waiting: string;
-  /** The disconnect confirmation: "<agent> goes back to <model> and signs out of <provider>". */
-  disconnectMessage: (agentName: string, backTo: string) => string;
+  /** The disconnect confirmation. A null model means the agent will need model setup. */
+  disconnectMessage: (agentName: string, backTo: string | null) => string;
   /** Row wording and actions; present for a provider with a status the page maps itself. */
   row?: SubscriptionRowCopy;
   /** The guided dialog of a `link-code` provider; absent for a `device-code` one. */
   linkCode?: LinkCodeCopy;
 }
+
+const disconnectMessage = (agentName: string, backTo: string | null, provider: string) =>
+  backTo === null
+    ? `Disconnect ${agentName}? It signs out of ${provider} and will have no model until you connect a subscription or add an API key.`
+    : `Disconnect ${agentName}? It goes back to ${backTo} and signs out of ${provider}.`;
 
 const CHATGPT: SubscriptionProviderCopy = {
   modelsUnavailable: 'ChatGPT models are still unavailable. Refresh to try again.',
@@ -112,7 +117,7 @@ const CHATGPT: SubscriptionProviderCopy = {
   connectTitle: (agentName) => `Connect ChatGPT to ${agentName}`,
   codeHint: 'Enter this code on OpenAI with your ChatGPT account. It expires in 15 minutes.',
   waiting: 'Waiting for you to finish on OpenAI…',
-  disconnectMessage: (agentName, backTo) => `Disconnect ${agentName}? It goes back to ${backTo} and signs out of ChatGPT. Connecting again needs a new code.`,
+  disconnectMessage: (agentName, backTo) => `${disconnectMessage(agentName, backTo, 'ChatGPT')} Connecting again needs a new code.`,
 };
 
 const CLAUDE: SubscriptionProviderCopy = {
@@ -125,7 +130,7 @@ const CLAUDE: SubscriptionProviderCopy = {
   connectTitle: (agentName) => `Connect Claude to ${agentName}`,
   codeHint: 'Sign in on Anthropic with your Claude account, then paste here the code Claude Code shows.',
   waiting: 'Waiting for you to finish on Anthropic…',
-  disconnectMessage: (agentName, backTo) => `Disconnect ${agentName}? It goes back to ${backTo} and signs out of Claude. Claude Code stays installed in the agent.`,
+  disconnectMessage: (agentName, backTo) => `${disconnectMessage(agentName, backTo, 'Claude')} Claude Code stays installed in the agent.`,
   row: {
     notConnected: 'Not connected',
     signedInNotInUse: 'Signed in, not in use',

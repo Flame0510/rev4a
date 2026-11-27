@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Input, MemoryLimitPicker, TemplateOption, useDockerTotalMb } from '../../components/ui';
+import { Button, Input, MemoryLimitPicker, Surface, TemplateOption, useDockerTotalMb } from '../../components/ui';
 import { OpenControlUiButton, useControlUiPublicUrl } from '../BrowserAccessSection';
 import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
 import { memoryLimitPolicyError } from '@/lib/agent-resource-policy';
@@ -97,8 +97,8 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [fallbacks] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [result, setResult] = useState<{ containerName: string; displayName: string; containerId: string; port: number } | null>(null);
-  const publicUrl = useControlUiPublicUrl(result?.containerName);
+  const [result, setResult] = useState<{ containerName: string; displayName: string; containerId: string; port: number; noModel: boolean } | null>(null);
+  const publicUrl = useControlUiPublicUrl(result?.noModel ? undefined : result?.containerName);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const handleSelectTemplate = (id: string) => {
@@ -144,9 +144,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
         template: selectedTemplate,
       };
       if (portRange.trim()) body.portRange = portRange.trim();
-      if (selectedModel) body.model = selectedModel;
+      if (models.length === 0) {
+        body.noModel = true;
+      } else {
+        if (selectedModel) body.model = selectedModel;
+        if (fallbacks.length > 0) body.fallbacks = fallbacks;
+      }
       if (memoryLimitMb !== null) body.memoryLimitMb = memoryLimitMb;
-      if (fallbacks.length > 0) body.fallbacks = fallbacks;
 
       const res = await fetch('/api/agents/create', {
         method: 'POST',
@@ -343,15 +347,9 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 6 }}>Model (optional)</label>
             {models.length === 0 ? (
-              <div style={{
-                padding: '10px 12px',
-                background: 'rgba(251,191,36,0.06)',
-                border: '1px solid rgba(251,191,36,0.2)',
-                fontSize: 12, color: '#fbbf24',
-                lineHeight: 1.5,
-              }}>
-                No provider keys configured. Add API keys in the Providers section to unlock model selection.
-              </div>
+              <Surface compact>
+                No model available yet. After creating the agent, connect your ChatGPT or Claude subscription, or add an API key in the Gateway.
+              </Surface>
             ) : (
               <select
                 value={selectedModel}
@@ -411,7 +409,13 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               Name: <span style={{ color: 'var(--text)' }}>{result.displayName || result.containerName}</span>
             </div>
             <div style={{ marginTop: 8 }}>
-              <OpenControlUiButton agentId={result.containerName} publicUrl={publicUrl} label="Open Control UI ↗" />
+              {result.noModel ? (
+                <Button type="button" variant="primary" onClick={() => router.push(`/agents?agent=${encodeURIComponent(result.containerName)}&setup=1`)}>
+                  Set up the model
+                </Button>
+              ) : (
+                <OpenControlUiButton agentId={result.containerName} publicUrl={publicUrl} label="Open Control UI ↗" />
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>

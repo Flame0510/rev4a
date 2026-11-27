@@ -49,6 +49,7 @@ import {
   type AuthProfile,
   type SubscriptionModel,
   type AgentModelRef,
+  type ModelPair,
   type SubscriptionProfileReference,
 } from '@/lib/subscriptions-parse';
 
@@ -311,7 +312,7 @@ export async function readProfiles(container: string, opts: { retry?: boolean } 
 }
 
 /** `agents.defaults.model` of a running agent. Throws when the config cannot be read. */
-export async function readDefaultModel(container: string): Promise<AgentModelRef> {
+async function readDefaultModel(container: string): Promise<AgentModelRef> {
   const s = await readAgentState(container);
   if (s.model === null) throw new SubscriptionError(502, 'Could not read the agent configuration.');
   return s.model;
@@ -328,23 +329,6 @@ function modelWriteError(result: 'exec-failed' | 'mismatch'): SubscriptionError 
   return new SubscriptionError(502, result === 'exec-failed'
     ? 'The agent is still applying the change or refused it. Check again in a minute.'
     : 'The model change did not apply as expected. Check the agent panel.');
-}
-
-/**
- * Write `agents.defaults.model` and read it back. Exported for the other provider module (Claude),
- * which reverts its own model prefix through the same checked write.
- */
-export async function writeDefaultModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
-  // A null primary is left out of the patch (the key stays as it is) rather than sent as null.
-  const body = model.primary === null ? { fallbacks: model.fallbacks } : model;
-  const patch = JSON.stringify({ agents: { defaults: { model: body } } });
-  // A patch can outlast any short deadline while the Gateway reloads: the read-back decides, not the exec.
-  // It also catches a patch that merged instead of replacing the fallbacks.
-  const result = await writeThenVerify(
-    () => withAgentConfigLock(container, () => dockerExecWithInput(container, gatewayCliArgv(['config', 'patch', '--stdin']), patch, { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS })),
-    async () => sameModel(await readDefaultModel(container), model),
-  );
-  if (result !== 'ok') throw modelWriteError(result);
 }
 
 // ---- per-agent status and models --------------------------------------------------------
@@ -449,8 +433,8 @@ export async function getProviderList(): Promise<ProviderListView[]> {
 }
 
 /** The models one signed-in account offers, read from one of its agents, cached per account email. */
-async function readAccountModels(container: string, email: string | null): Promise<SubscriptionModel[]> {
-  const key = email ?? '';
+async function readAccountModels(container: string, email: string | null, anonymousKey = ''): Promise<SubscriptionModel[]> {
+  const key = email || anonymousKey;
   const gen = generation();
   const hit = modelsCache().get(key);
   if (hit && hit.models.length > 0 && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
@@ -467,6 +451,20 @@ async function readAccountModels(container: string, email: string | null): Promi
   // models for the whole TTL once they exist.
   if (models.length > 0 && generation() === gen) modelsCache().set(key, { at: Date.now(), models });
   return models;
+}
+
+/** Read the catalogue of the account connected to this agent. */
+export async function getAgentSubscriptionModels(agentId: string): ReturnType<typeof getSubscriptionModels> {
+  const agent = await getAgentStatus(agentId);
+  if (agent.error) throw new SubscriptionError(agent.error === UNSUPPORTED_AGENT_MESSAGE ? 409 : 503, agent.error);
+  if (!agent.connected) return { models: [], error: 'This agent is not connected.', pending: false };
+  try {
+    // Without an email, the container is the only way to distinguish anonymous profiles.
+    const models = await readAccountModels(agent.container, agent.email, `openai-agent:${agent.container}`);
+    return { models, error: null, pending: models.length === 0 };
+  } catch {
+    return { models: [], error: 'Could not read the model list from a connected agent.', pending: false };
+  }
 }
 
 async function discoverSources(): Promise<Map<string, SourceAgent>> {
@@ -553,43 +551,84 @@ async function requireRunning(agentId: unknown): Promise<AgentContainer> {
   return a;
 }
 
-/** The `agents.list` of the agent's configuration, or null when it cannot be read or has none. */
-export async function readAgentList(container: string): Promise<Record<string, unknown>[] | null> {
-  const raw = await dockerExecNoFail(container, ['cat', CONFIG_PATH], { timeoutMs: 8000 });
-  if (!raw.trim()) return null;
-  try {
-    const list = (JSON.parse(raw) as { agents?: { list?: unknown } }).agents?.list;
-    return Array.isArray(list) ? (list as Record<string, unknown>[]) : null;
-  } catch {
-    return null;
-  }
+interface AgentModelConfig {
+  agents?: { defaults?: { model?: unknown }; list?: unknown };
 }
 
-/**
- * Put `model` on the `id: main` entry of `agents.list`. The patch carries the whole list (an
- * array is replaced as a whole), read just before, with only that entry's model changed.
- * Exported for the other provider module (Claude), which reverts the same entry.
- */
-export async function writeMainModel(container: string, model: { primary: string | null; fallbacks: string[] }): Promise<void> {
-  // The list is read, changed and sent back whole: hold the agent's config lock across all three,
-  // or a patch landing in between would be overwritten by the stale list.
+async function readModelConfig(container: string): Promise<AgentModelConfig> {
+  const raw = await dockerExecNoFail(container, ['cat', CONFIG_PATH], { timeoutMs: 8000 });
+  try {
+    const config: unknown = JSON.parse(raw);
+    if (config && typeof config === 'object' && !Array.isArray(config)) return config as AgentModelConfig;
+  } catch { /* Empty or invalid config. */ }
+  throw new SubscriptionError(502, 'Could not read the agent configuration.');
+}
+
+function agentList(config: AgentModelConfig): Record<string, unknown>[] {
+  const list = config.agents?.list;
+  return Array.isArray(list) ? list : [];
+}
+
+/** The caller holds the config lock. A patch can outlast its exec while the Gateway reloads. */
+async function patchModelAndVerify(container: string, patch: object, readBack: () => Promise<boolean>): Promise<void> {
+  const result = await writeThenVerify(
+    () => dockerExecWithInput(
+      container,
+      gatewayCliArgv(['config', 'patch', '--stdin']),
+      JSON.stringify(patch),
+      { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS },
+    ),
+    readBack,
+  );
+  if (result !== 'ok') throw modelWriteError(result);
+}
+
+async function writeDefaultModel(container: string, model: ModelPair | null): Promise<void> {
+  // A null model deletes the key. A model with only fallbacks retains its existing shape.
+  const value = model && modelPatchValue(model);
+  await patchModelAndVerify(container, { agents: { defaults: { model: value } } }, async () => {
+    if (model) return sameModel(await readDefaultModel(container), model);
+    const defaults = (await readModelConfig(container)).agents?.defaults;
+    return !defaults || !Object.hasOwn(defaults, 'model');
+  });
+}
+
+function modelPatchValue({ primary, fallbacks }: ModelPair) {
+  return primary === null ? { fallbacks } : { primary, fallbacks };
+}
+
+async function writeMainModel(
+  container: string,
+  list: Record<string, unknown>[],
+  main: Record<string, unknown>,
+  model: ModelPair | null,
+): Promise<void> {
+  const entry = { ...main };
+  if (model === null) delete entry.model;
+  else entry.model = modelPatchValue(model);
+  const next = list.map((e) => (e === main ? entry : e));
+  await patchModelAndVerify(container, { agents: { list: next } }, async () => {
+    const after = agentList(await readModelConfig(container)).find((e) => e && e.id === 'main');
+    if (!after) return false;
+    return model === null ? !Object.hasOwn(after, 'model') : sameModel(after.model as AgentModelRef, model);
+  });
+}
+
+/** Revert a provider's model references before signing out of that provider. */
+export async function revertAgentSubscriptionModels(container: string, prefix?: string): Promise<void> {
+  // Plan and verify both writes under the same lock. The main patch replaces the whole list.
   await withAgentConfigLock(container, async () => {
-    const list = await readAgentList(container);
-    const main = list?.find((e) => e && e.id === 'main');
-    if (!list || !main) throw new SubscriptionError(502, 'Could not read the agent configuration.');
-    // Like writeDefaultModel: a null primary is left out (an entry with only fallbacks keeps that
-    // shape) instead of being written as an explicit null.
-    const entryModel = model.primary === null ? { fallbacks: model.fallbacks } : { primary: model.primary, fallbacks: model.fallbacks };
-    const next = list.map((e) => (e === main ? { ...e, model: entryModel } : e));
-    // The lock is held across read, patch and read-back; the read-back decides, not the exec.
-    const result = await writeThenVerify(
-      () => dockerExecWithInput(container, gatewayCliArgv(['config', 'patch', '--stdin']), JSON.stringify({ agents: { list: next } }), { timeoutMs: OPENCLAW_RELOAD_TIMEOUT_MS }),
-      async () => {
-        const after = (await readAgentList(container))?.find((e) => e && e.id === 'main');
-        return !!after && sameModel(after.model as AgentModelRef, model);
-      },
-    );
-    if (result !== 'ok') throw modelWriteError(result);
+    const current = await readDefaultModel(container);
+    const list = agentList(await readModelConfig(container));
+    const plan = revertSubscriptionModel(current, null, prefix);
+    const main = list.find((e) => e && e.id === 'main');
+    const mainPlan = main && main.model !== undefined
+      ? revertSubscriptionModel(main.model as AgentModelRef, plan.clear ? null : plan.primary, prefix)
+      : null;
+    if (plan.clear || plan.changed) await writeDefaultModel(container, plan.clear ? null : plan);
+    if (main && mainPlan && (mainPlan.clear || mainPlan.changed)) {
+      await writeMainModel(container, list, main, mainPlan.clear ? null : mainPlan);
+    }
   });
 }
 
@@ -602,21 +641,7 @@ export async function writeMainModel(container: string, model: { primary: string
 export async function disconnectAgent(agentId: unknown): Promise<{ removed: number }> {
   const a = await requireRunning(agentId);
   return withAgentLock(a.agentId, async () => {
-    const current = await readDefaultModel(a.container);
-    const stuck = 'This agent uses the subscription model and has no model of its own to go back to. Choose one in the agent panel first.';
-    const plan = revertSubscriptionModel(current, null);
-    if (plan.stuck) throw new SubscriptionError(409, stuck);
-    // The main entry goes back to the same place when it has no own model of its own.
-    const list = await readAgentList(a.container);
-    const main = list?.find((e) => e && e.id === 'main');
-    const mainPlan = main && main.model !== undefined ? revertSubscriptionModel(main.model as AgentModelRef, plan.primary) : null;
-    if (mainPlan?.stuck) throw new SubscriptionError(409, stuck);
-    if (plan.changed) {
-      await writeDefaultModel(a.container, { primary: plan.primary, fallbacks: plan.fallbacks });
-    }
-    if (mainPlan?.changed) {
-      await writeMainModel(a.container, { primary: mainPlan.primary, fallbacks: mainPlan.fallbacks });
-    }
+    await revertAgentSubscriptionModels(a.container);
     const profiles = await readProfiles(a.container).catch(() => null);
     if (!profiles) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
     let removed = 0;

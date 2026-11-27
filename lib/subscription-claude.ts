@@ -40,14 +40,11 @@ import {
   findAgentContainer,
   invalidateSubscriptions,
   listAgentContainers,
-  readAgentList,
-  readDefaultModel,
+  revertAgentSubscriptionModels,
   runsSupportedVersion,
   statusReadFailedMessage,
   subscriptionGeneration,
   withAgentLock,
-  writeDefaultModel,
-  writeMainModel,
   type AgentContainer,
   type AgentSubscription,
 } from '@/lib/subscriptions';
@@ -76,7 +73,6 @@ import {
 } from '@/lib/subscription-claude-parse';
 import {
   normalizeModel,
-  revertSubscriptionModel,
   statusFailureReason,
   type AgentModelRef,
   type SubscriptionModel,
@@ -314,8 +310,8 @@ function parseClaudeModels(input: string): SubscriptionModel[] | null {
     }));
 }
 
-async function readClaudeModels(container: string, email: string | null): Promise<SubscriptionModel[]> {
-  const key = `claude:${email ?? ''}`;
+async function readClaudeModels(container: string, email: string | null, anonymousKey = 'claude:'): Promise<SubscriptionModel[]> {
+  const key = email ? `claude:${email}` : anonymousKey;
   const gen = subscriptionGeneration();
   const hit = sharedModels().get(key);
   if (hit && hit.models.length > 0 && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
@@ -329,6 +325,21 @@ async function readClaudeModels(container: string, email: string | null): Promis
   // An empty answer is never cached: it would hide the models for the whole TTL once they exist.
   if (models.length > 0 && subscriptionGeneration() === gen) sharedModels().set(key, { at: Date.now(), models });
   return models;
+}
+
+/** Read the catalogue of the Claude plan connected to this agent. */
+export async function getAgentClaudeModels(agentId: string): ReturnType<typeof getClaudeModels> {
+  const agent = await readClaudeAgent(agentId);
+  if (agent.error && !agent.claude.apiAccount) {
+    throw new SubscriptionError(agent.error === UNSUPPORTED_AGENT_MESSAGE ? 409 : 503, agent.error);
+  }
+  if (!agent.connected) return { models: [], error: 'This agent is not connected.', pending: false };
+  try {
+    const models = await readClaudeModels(agent.container, agent.email, `claude-agent:${agent.container}`);
+    return { models, error: null, pending: models.length === 0 };
+  } catch {
+    return { models: [], error: 'Could not read the model list from a connected agent.', pending: false };
+  }
 }
 
 /** One connected agent per account email ('' when Claude Code reports none). */
@@ -816,23 +827,6 @@ function dropClaudeCaches(): void {
 
 // ---- disconnect --------------------------------------------------------------------------
 
-/** Remove `anthropic/*` from `agents.defaults.model` and from the `main` entry of `agents.list`. */
-async function revertClaudeModels(container: string): Promise<void> {
-  const current = await readDefaultModel(container);
-  const stuck = 'This agent uses the subscription model and has no model of its own to go back to. Choose one in the agent panel first.';
-  const plan = revertSubscriptionModel(current, null, CLAUDE_MODEL_PREFIX);
-  if (plan.stuck) throw new SubscriptionError(409, stuck);
-  // The main entry goes back to the same place when it has no own model of its own.
-  const list = await readAgentList(container);
-  const main = list?.find((e) => e && e.id === 'main');
-  const mainPlan = main && main.model !== undefined
-    ? revertSubscriptionModel(main.model as AgentModelRef, plan.primary, CLAUDE_MODEL_PREFIX)
-    : null;
-  if (mainPlan?.stuck) throw new SubscriptionError(409, stuck);
-  if (plan.changed) await writeDefaultModel(container, { primary: plan.primary, fallbacks: plan.fallbacks });
-  if (mainPlan?.changed) await writeMainModel(container, { primary: mainPlan.primary, fallbacks: mainPlan.fallbacks });
-}
-
 /** Remove the Claude Code rule, when it is there, and read it back. */
 async function removeClaudeRoute(container: string): Promise<void> {
   const before = await readClaudeRaw(container);
@@ -843,8 +837,8 @@ async function removeClaudeRoute(container: string): Promise<void> {
 }
 
 /**
- * Disconnect one agent: put it back on its own model (the `anthropic/` models are reverted in
- * `agents.defaults.model` and in the `main` entry of `agents.list`), remove the Claude Code rule,
+ * Disconnect one agent: revert or clear the `anthropic/` models in `agents.defaults.model`
+ * and the `main` entry of `agents.list`, remove the Claude Code rule,
  * run Claude Code's own `auth logout` and check the agent is logged out. The binary stays: it is
  * the runtime the agent will use again on the next connect.
  */
@@ -858,7 +852,7 @@ export async function disconnectClaudeAgent(agentId: unknown): Promise<{ removed
     } catch (e) {
       throw e instanceof SubscriptionError ? e : new SubscriptionError(502, 'Could not read the subscription status from this agent.');
     }
-    await revertClaudeModels(a.container);
+    await revertAgentSubscriptionModels(a.container, CLAUDE_MODEL_PREFIX);
     await removeClaudeRoute(a.container);
     const wasLoggedIn = raw.status?.loggedIn === true;
     if (raw.installed) {

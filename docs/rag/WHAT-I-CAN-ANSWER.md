@@ -21,7 +21,7 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "Where can I see the first-run wizard?"
 - "Is there a page for cron jobs?"
 - "Where can I see my AI providers?" — The Gateway page (`/gateway`) shows providers and the model catalogue. Which model an agent runs is on the Agents page, in that agent's detail panel.
-- "How do I create a new agent?"
+- "How do I create a new agent?" — Open **Agents → New** and choose a template and an agent name. You can deploy with an empty model catalogue.
 - "What templates are available?"
 - "What is the Custom template?"
 - "How does the custom agent bootstrap work?"
@@ -42,7 +42,8 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 
 ## How-To Questions
 
-- "How do I create an agent?"
+- "How do I create an agent?" — In **Agents → New**, choose a template, name the agent, and deploy it. With no offered model, use **Set up the model** after deployment. Connect ChatGPT or Claude (Experimental), or add an API key in the Gateway. From Gateway, use **Back to the agent's model** to select a model.
+- "Why does my agent say No model?" — Its primary model is unset. Use **Connect subscription** on its card or in its detail panel. The card and panel replace their Control UI buttons until a primary is set. Existing channels remain visible and removable in Channel Manager, and adding one requires a model.
 - "How do I set up Rev4a for the first time?"
 - "How do I complete the first-run wizard?"
 - "How do I add an API key for a provider?"
@@ -74,9 +75,9 @@ PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she
 - "How do I register a new provider via OAuth?" — Gateway provider OAuth is not supported; the unused endpoint was removed. Add providers by pasting an API key on the Gateway page (`/gateway`). To connect a ChatGPT Plus or Pro account to an agent, use the separate Subscriptions page (`/subscriptions`); that device-code login stays inside the agent. The same page connects a Claude Pro/Max plan through Claude Code (Experimental), with a guided sign-in.
 - "How much of my ChatGPT quota is left?" — Open the Subscriptions page (`/subscriptions`): at the top of "ChatGPT (Codex)" each connected account shows its 5-hour and weekly usage with the reset times (Refresh re-reads it; it is cached for 3 minutes). The agent panel's MODEL section shows the same as "5h 86% left · week 98% left". The quota is the account's, shared by all agents signed in with it and your own Codex use.
 - "How do I manage agent model fallbacks?"
-- "How do I use my ChatGPT subscription in an agent?" — Open the Subscriptions page (`/subscriptions`), open "ChatGPT (Codex)", press Connect on the agent, open the link, enter the code with your ChatGPT account, then open the agent's panel on the Agents page and pick the subscription model in its MODEL section (primary or fallback, next to the Rev4a proxy models). If no fallback is set, the previous model is pre-filled as the first fallback and is used when the subscription reaches its usage limit. Disconnect on the Subscriptions page returns the agent to its own model and signs the account out.
-- "How do I use my Claude Pro or Max plan in an agent?" — Open the Subscriptions page (`/subscriptions`), open "Claude (via Claude Code)" (Experimental), press Connect on the agent, sign in on claude.com in the tab the dialog opens (or press Copy link to open it in another browser or device; if the clipboard is refused the link is shown to copy by hand), paste the code Anthropic shows and press Continue. Rev4a installs Claude Code in the agent the first time, then switches the agent's `anthropic/*` models to Claude Code. Choose a Claude model in the agent's MODEL section ("Claude subscription" group). Usage counts against your own Claude plan; for round-the-clock automation an API key is the safer choice. Disconnect returns the agent to its own model and signs out; Claude Code stays installed. Rev4a also sets `IS_SANDBOX=1` in the agent's Claude Code settings so that manual compaction (Compact) works on Claude sessions, including agents connected earlier. The sign-in stays inside the agent and Rev4a stores neither the code nor a token.
-- "How do I connect an agent to Telegram?"
+- "How do I use my ChatGPT subscription in an agent?" — Open the Subscriptions page (`/subscriptions`), open "ChatGPT (Codex)", press Connect on the agent, open the link, enter the code with your ChatGPT account, then open the agent's panel on the Agents page and pick the subscription model in its MODEL section (primary or fallback, next to the Rev4a proxy models). If no fallback is set, the previous model is pre-filled as the first fallback and is used when the subscription reaches its usage limit. Disconnect on the Subscriptions page returns the agent to its own model and signs the account out; with no other model to return to, the agent is left with "No model" until you set one.
+- "How do I use my Claude Pro or Max plan in an agent?" — Open the Subscriptions page (`/subscriptions`), open "Claude (via Claude Code)" (Experimental), press Connect on the agent, sign in on claude.com in the tab the dialog opens (or press Copy link to open it in another browser or device; if the clipboard is refused the link is shown to copy by hand), paste the code Anthropic shows and press Continue. Rev4a installs Claude Code in the agent the first time, then switches the agent's `anthropic/*` models to Claude Code. Choose a Claude model in the agent's MODEL section ("Claude subscription" group). Usage counts against your own Claude plan; for round-the-clock automation an API key is the safer choice. Disconnect returns the agent to its own model and signs out (with no other model to return to, the agent is left with "No model"); Claude Code stays installed. Rev4a also sets `IS_SANDBOX=1` in the agent's Claude Code settings so that manual compaction (Compact) works on Claude sessions, including agents connected earlier. The sign-in stays inside the agent and Rev4a stores neither the code nor a token.
+- "How do I connect an agent to Telegram?" — Set a primary model, then use **Manage Channels** in the agent panel and add a Telegram bot token.
 - "How do I approve a pairing code?"
 
 ## Explanation Questions

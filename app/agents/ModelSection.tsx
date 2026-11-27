@@ -373,11 +373,11 @@ export default function ModelSection({
       if (res.ok && data.success !== false) {
         setMsg({ text: 'Model saved. It applies immediately, no restart needed.', ok: true });
         setAutoFallback(null);
-        await load();
-        setSubKey((k) => k + 1);
         // The card in the list reads a separate summary endpoint; without this it
         // keeps showing the previous model until the next poll.
         onSaved?.();
+        await load();
+        setSubKey((k) => k + 1);
       } else {
         setMsg({ text: data.error || 'Save failed', ok: false });
       }
@@ -446,7 +446,7 @@ export default function ModelSection({
   const warnUnknown = containerLacksIt && status == null && groups.length === 0;
 
   return (
-    <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div id="model-section" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {loading && <div style={{ fontSize: 11, color: '#888' }}>Loading…</div>}
 
       {!loading && current && !current.reachable && (

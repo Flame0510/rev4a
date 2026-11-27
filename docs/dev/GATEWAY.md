@@ -7,9 +7,9 @@ API keys and the model catalogue offered to every agent container. It does not
 assign models to agents.
 
 The Gateway aggregates multiple upstream AI providers (DeepSeek, OpenAI, Anthropic,
-Kimi, GLM, Qwen, and others) behind a single Rev4a provider. Agent containers see
-only `rev4a` as their provider and route all LLM traffic through the Rev4a proxy
-at `/api/provider/v1/`.
+Kimi, GLM, Qwen, and others) behind a single Rev4a provider. API-key models use
+`rev4a` and route through the proxy at `/api/provider/v1/`. Subscription models
+use the connected account in each agent.
 
 ---
 
@@ -66,6 +66,15 @@ Provider API keys are stored in `data/provider-keys.json`:
 
 The `rev4a` entry is the shared root key. Agent containers authenticate with their
 own HMAC-derived proxy token; unsynced legacy clients may still use the shared key. See [`PROVIDERS.md`](PROVIDERS.md).
+
+Agents can be created before any keys are saved. Create skips the
+`models.providers.rev4a` patch until there is a shared Gateway key. Saving that
+key runs the regular fleet sync and writes the provider block. To select an
+API-key model, configure the shared Gateway key and an upstream key.
+
+**Use an API key** in the agent's setup dialog opens `/gateway?agent=<id>`.
+After a key is saved, **Back to the agent's model** opens
+`/agents?agent=<id>#model-section`, where you can choose and save a primary.
 
 ### Sync Flow
 
@@ -556,16 +565,26 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    plugin load path, web search provider, heartbeat off. See
    [REV4A.md](../REV4A.md#agent-templates).
 
-6. **Model ref written after gateway readiness** — When the wizard creates an agent,
-   the create route waits for the gateway to finish starting (`waitForGatewayReady`), then writes
-   `agents.defaults.model.primary` + fallbacks and the Control UI origin policy (`gateway.controlUi`),
-   then writes the provider block from `buildRev4aProviderConfig()` with `openclaw config patch --stdin`.
+6. **Model setup after gateway readiness** — Create waits for the gateway to finish
+   starting (`waitForGatewayReady`) and writes the Control UI origin policy
+   (`gateway.controlUi`). A create with a model writes its primary and fallbacks.
+   A create with `noModel: true` leaves `agents.defaults.model` absent. When the
+   shared Rev4a key exists, create also writes the provider block from
+   `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. Otherwise,
+   saving the first Gateway key writes the block on sync.
    Rev4a's config patch callers use `gatewayCliArgv` to read the current Gateway token inside
    the container, so provider sync and subscription patches work after an Agents token rotation.
    Nothing is restarted: the Gateway watches `openclaw.json` and reloads it by itself, and
    `gateway.controlUi` is hot-applied (`openclaw gateway restart` does nothing inside a
    container, so the route no longer runs it). The Gateway sync (`PUT /api/gateway/provider`)
    never touches model references — only `models.providers` is synced.
+
+   Subscription setup reads the catalogue of the account connected to the target
+   agent (`GET /api/subscriptions/models?provider=<id>&agentId=<id>`). Its save
+   sends `onlyIfUnset: true` so a primary selected in another session wins.
+   `PUT /api/gateway/agent` verifies the agent's sign-in for the requested
+   provider. The setup dialog picks from the agent's own catalogue, since the
+   save route does not verify that the account offers the exact model.
 
 ---
 

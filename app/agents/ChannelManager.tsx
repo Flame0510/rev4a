@@ -29,13 +29,14 @@ interface Props {
   agentId: string;
   /** What to call the agent in the UI: its display name, falling back to the container name. */
   displayName: string;
+  modelMissing?: boolean;
   open: boolean;
   onClose: () => void;
 }
 
 const PAIRING_POLL_MS = 5000;
 
-export default function ChannelManager({ agentId, displayName, open, onClose }: Props) {
+export default function ChannelManager({ agentId, displayName, modelMissing = false, open, onClose }: Props) {
   const [channels, setChannels] = useState<ChannelsData | null>(null);
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [pairingsLoading, setPairingsLoading] = useState(true);
@@ -141,6 +142,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
   }, [open, channels?.telegram?.connected, pollPairings]);
 
   const handleTelegramConnect = async () => {
+    if (modelMissing) return;
     setLoading(true); setError(''); setSuccess('');
     try {
       const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/channels/telegram`, {
@@ -244,6 +246,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
   return (
     <Modal open={open} onClose={onClose} title={`Channel Manager: ${displayName}`} maxWidth={520}>
 
+      {modelMissing && <p>Set up a model first: messages would get no answer.</p>}
       {error && <div style={{ margin: '8px 0' }}><Badge tone="danger">{error}</Badge></div>}
       {success && <div style={{ margin: '8px 0' }}><Badge tone="success">{success}</Badge></div>}
 
@@ -284,6 +287,7 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
           tg={tg ?? null}
           tgToken={tgToken}
           setTgToken={setTgToken}
+          modelMissing={modelMissing}
           loading={loading}
           disconnecting={disconnecting}
           pairingsLoading={pairingsLoading}
@@ -307,13 +311,14 @@ export default function ChannelManager({ agentId, displayName, open, onClose }: 
 // ── Telegram Tab ─────────────────────────────
 
 function TelegramTab({
-  tg, tgToken, setTgToken, loading, disconnecting, pairingsLoading, restarting,
+  tg, tgToken, setTgToken, modelMissing, loading, disconnecting, pairingsLoading, restarting,
   pending, approved, pairingError, approvingCode, revokingId,
   onConnect, onDisconnect, onRestart, onApprove, onRevoke,
 }: {
   tg: TelegramChannel | null;
   tgToken: string;
   setTgToken: (v: string) => void;
+  modelMissing: boolean;
   loading: boolean;
   disconnecting: boolean;
   pairingsLoading: boolean;
@@ -382,12 +387,13 @@ function TelegramTab({
         data-lpignore="true"
         data-bwignore="true"
         value={tgToken}
+        disabled={modelMissing}
         onChange={(e) => setTgToken(e.target.value)}
         placeholder="1234567890:ABCdef..."
       />
 
       <div style={{ marginTop: 12 }}>
-        <Button variant="primary" size="sm" onClick={onConnect} loading={loading} disabled={loading || !tgToken.trim()}>
+        <Button variant="primary" size="sm" onClick={onConnect} loading={loading} disabled={modelMissing || loading || !tgToken.trim()}>
           {loading ? 'Connecting…' : 'Connect Telegram'}
         </Button>
       </div>
