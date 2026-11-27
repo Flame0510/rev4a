@@ -1,6 +1,6 @@
 # Gateway Page
 
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-27
 
 The Gateway page (`/gateway`) is the control panel for provider configuration:
 API keys and the model catalogue offered to every agent container. It does not
@@ -67,10 +67,10 @@ Provider API keys are stored in `data/provider-keys.json`:
 The `rev4a` entry is the shared root key. Agent containers authenticate with their
 own HMAC-derived proxy token; unsynced legacy clients may still use the shared key. See [`PROVIDERS.md`](PROVIDERS.md).
 
-Agents can be created before any keys are saved. Create skips the
-`models.providers.rev4a` patch until there is a shared Gateway key. Saving that
-key runs the regular fleet sync and writes the provider block. To select an
-API-key model, configure the shared Gateway key and an upstream key.
+`rev4a serve` generates the shared Gateway key when it is missing, before the
+startup sync. To offer API-key models, add an upstream API key. Agents can be
+created before any upstream keys are saved. To rotate the Gateway key, select
+**Generate**, then **Save** to replace it and sync the fleet.
 
 **Use an API key** in the agent's setup dialog opens `/gateway?agent=<id>`.
 After a key is saved, **Back to the agent's model** opens
@@ -78,7 +78,9 @@ After a key is saved, **Back to the agent's model** opens
 
 ### Sync Flow
 
-At startup, a missing gateway key is not a warning when Docker confirms there are no agent containers (`No agent containers to sync.`); existing containers or an unreachable Docker daemon retain the missing-key error, and the catalogue-unavailable check is unchanged.
+If startup could not seed a missing Gateway key, the sync still reports the
+missing key when agents exist or Docker cannot be reached. When Docker confirms
+there are no agents, the sync reports `No agent containers to sync.`
 
 When a provider key is saved, a model toggle is changed, Sync All is pressed, Rev4a
 starts, or a time-of-day price changes (see [Costs](#costs-openclaw-prices-every-call)),
@@ -540,9 +542,9 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    `models.providers.rev4a.models`, model IDs do NOT include the `rev4a/`
    prefix. OpenClaw adds it automatically at runtime.
 
-3. **Provider keys in `data/provider-keys.json`** — Not in env vars or
-   committed code. This file is gitignored and managed exclusively through the
-   Gateway UI.
+3. **Provider keys in `<data dir>/provider-keys.json`** — Startup seeds the Gateway
+   key in this gitignored file. The Gateway page manages the stored keys and
+   rotates the Gateway key.
 
 4. **No gateway restart after model sync** — The sync module writes `models.providers`
    to the file directly without restarting the gateway.
@@ -570,8 +572,9 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    (`gateway.controlUi`). A create with a model writes its primary and fallbacks.
    A create with `noModel: true` leaves `agents.defaults.model` absent. When the
    shared Rev4a key exists, create also writes the provider block from
-   `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. Otherwise,
-   saving the first Gateway key writes the block on sync.
+   `buildRev4aProviderConfig()` with `openclaw config patch --stdin`. If the key
+   is unavailable during create, a successful sync after the key becomes
+   available writes the block.
    Rev4a's config patch callers use `gatewayCliArgv` to read the current Gateway token inside
    the container, so provider sync and subscription patches work after an Agents token rotation.
    Nothing is restarted: the Gateway watches `openclaw.json` and reloads it by itself, and

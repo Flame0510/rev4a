@@ -4,7 +4,7 @@
 [![CI](https://github.com/Flame0510/rev4a/actions/workflows/ci.yml/badge.svg)](https://github.com/Flame0510/rev4a/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Last updated:** 2026-11-26
+> **Last updated:** 2026-11-27
 
 > **A self-hosted control plane for your OpenClaw agent fleet.**
 > Each agent in its own Docker container; providers, credentials, costs and
@@ -188,6 +188,11 @@ If the proxy runs in a container and `ufw` is on, allow the Docker bridge to rea
 `local` keep their 127.0.0.1 ports until recreated.
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
+
+**BUG-36 update note.** Installs without a Gateway key get one the next time
+`rev4a serve` starts. Agents receive their derived proxy tokens on the following
+successful sync. Add an upstream API key in Gateway to offer that provider's
+enabled proxy models. Rev4a preserves existing Gateway keys and settings.
 
 **FEAT-28 update note.** Gateway keys are no longer required to create an agent.
 Agents without a primary show **No model** and **Connect subscription**. No migration
