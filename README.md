@@ -189,6 +189,9 @@ If the proxy runs in a container and `ufw` is on, allow the Docker bridge to rea
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
 
+**BUG-38 update note.** Disconnect for ChatGPT works again on OpenClaw 2026.10.10
+agents. No action is needed after updating.
+
 **BUG-36 update note.** Installs without a Gateway key get one the next time
 `rev4a serve` starts. Agents receive their derived proxy tokens on the following
 successful sync. Add an upstream API key in Gateway to offer that provider's

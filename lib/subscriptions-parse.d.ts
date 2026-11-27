@@ -61,6 +61,7 @@ export function statusFailureReason(message: unknown): string;
 export function readWithRetry<T extends { status: string; reason?: string }>(read: () => Promise<T>, delaysMs: number[], sleep: (ms: number) => Promise<void>): Promise<T>;
 export function formatPlan(plan: unknown): string | null;
 export function parseStatusJson(input: unknown): StatusRead | null;
+export function parseAuthLogout(input: unknown, profileIds: readonly string[]): { ok: true; removed: string[] } | { ok: false };
 export function parseModelList(input: unknown): SubscriptionModel[] | null;
 export function isSubscriptionModel(id: unknown, prefix?: string): boolean;
 export function normalizeModel(model: AgentModelRef): ModelPair;

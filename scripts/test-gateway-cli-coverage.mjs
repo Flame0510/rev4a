@@ -13,7 +13,6 @@ const allowlist = [
   { file: 'lib/agent-plugins.ts', pattern: /^\['openclaw', 'plugins', 'list', '--json'\]$/, reason: 'Reads installed plugin metadata.' },
   { file: 'lib/credentials/mongodb.ts', pattern: /^\['openclaw', 'skills', 'info', MONGODB_SKILL, '--json'\]$/, reason: 'Reads the local skill and its requirements.' },
   { file: 'lib/subscription-login.ts', pattern: /^const LOGIN_CMD = \x60timeout \$\{LOGIN_TIMEOUT_S\} script -e -qfc "openclaw models auth login --provider openai --device-code" \/dev\/null\x60;$/, reason: 'Performs provider sign-in and writes local auth state.' },
-  { file: 'lib/subscriptions.ts', pattern: /^\['timeout', String\(LOGOUT_TIMEOUT_S\), 'openclaw', 'models', 'auth', 'logout', p\.id, '--yes'\]$/, reason: 'Removes local provider auth state.' },
   { file: 'lib/credentials/managed.ts', pattern: /^"openclaw secrets store list 2>\/dev\/null \| grep -o 'github-setup-\[a-f0-9\].+' \| sort -u \|"$/, reason: 'Reads the local secret-store inventory inside the wrapped handoff sweep.' },
   { file: 'lib/credentials/native.ts', pattern: /^export const SECRETS_RELOAD_ARGV: readonly string\[\] = \['openclaw', 'secrets', 'reload'\];$/, reason: 'Describes the plan. Execution uses secretsReloadExecArgv.' },
   { file: 'lib/claude-lean-tools.ts', pattern: /^\s*'create_goal', 'get_goal', 'update_goal', 'intent', 'transcripts', 'codex_plugins', 'openclaw',$/, reason: 'OpenClaw is a Codex tool name in this filter.' },

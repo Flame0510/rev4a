@@ -9,7 +9,7 @@
  * list models, disconnect and write the model:
  *
  *   models list --provider openai --json     the models the account offers (cached 10 min)
- *   models auth logout <profile> --yes       disconnect
+ *   gateway call models.authLogout --params … --json   disconnect
  *   config patch --stdin                     `agents.defaults.model` only
  *
  * The model is read first (fast read), written, and read back; a config that cannot be read
@@ -34,6 +34,7 @@ import {
   type SubscriptionProviderId,
 } from '@/lib/subscription-providers';
 import {
+  parseAuthLogout,
   parseModelList,
   parseStatusJson,
   subscriptionProfileReferences,
@@ -644,20 +645,27 @@ export async function disconnectAgent(agentId: unknown): Promise<{ removed: numb
     await revertAgentSubscriptionModels(a.container);
     const profiles = await readProfiles(a.container).catch(() => null);
     if (!profiles) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
+    const profileIds = profiles.map((p) => p.id).filter((id) => /^openai:\S+$/.test(id));
     let removed = 0;
-    for (const p of profiles) {
-      if (!/^openai:\S+$/.test(p.id)) continue;
-      try {
-        // `timeout` inside the container: a host-side deadline leaves the process running there.
-        await dockerExec(a.container, ['timeout', String(LOGOUT_TIMEOUT_S), 'openclaw', 'models', 'auth', 'logout', p.id, '--yes'], { timeoutMs: (LOGOUT_TIMEOUT_S + 10) * 1000 });
-        removed++;
-      } catch {
+    if (profileIds.length > 0) {
+      const args = gatewayCliArgv([
+        'gateway', 'call', 'models.authLogout', '--params', JSON.stringify({ provider: 'openai', profileIds }), '--json',
+        // The CLI's own default is shorter than the in-container limit below.
+        '--timeout', String((LOGOUT_TIMEOUT_S - 5) * 1000),
+      ]);
+      // `timeout` inside the container: a host-side deadline leaves the process running there.
+      const output = await dockerExec(a.container, ['timeout', String(LOGOUT_TIMEOUT_S), ...args], {
+        timeoutMs: (LOGOUT_TIMEOUT_S + 10) * 1000,
+      }).catch(() => '');
+      const result = parseAuthLogout(output, profileIds);
+      if (!result.ok) {
         invalidateSubscriptions();
         throw new SubscriptionError(502, 'The agent could not sign out. Try again.');
       }
+      removed = result.removed.length;
     }
     invalidateSubscriptions();
-    // A sign-out that timed out answers with no error: read the profiles back.
+    // Confirm that the sign-out reached the stored state.
     const after = await readAgentState(a.container).catch(() => null);
     if (!after) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
     if (after.profiles.length > 0) throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');

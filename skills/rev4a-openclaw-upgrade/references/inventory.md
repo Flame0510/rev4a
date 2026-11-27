@@ -3,6 +3,8 @@
 Everything in Rev4a that depends on OpenClaw, with its call sites. An evaluation checks the target
 release against every row.
 
+On upgrade, verify that the `models.authLogout` RPC exists and accepts `profileIds`.
+
 ## How to keep this file current
 
 - **A Rev4a change that adds, moves or removes a touchpoint updates this file in the same commit**:
@@ -107,7 +109,7 @@ Rev4a's Gateway CLI calls use `gatewayCliArgv` or `gatewayShellScript` (`lib/gat
 | C15 | `openclaw pairing approve <ch> <code> 2>&1` (shell) | `lib/channelManager.ts`, `approvePairing` | Telegram approve | Text heuristic (T2) | test-channel-pairing.mjs, test-gateway-cli-coverage.mjs | Reaches the Gateway on 2026.10.x and uses `gatewayShellScript`. |
 | C16 | `openclaw models list --provider openai --json` | `lib/subscriptions.ts:415-431` | Subscriptions page model list, model panel ChatGPT group | `models[]` missing → `'unreadable'` thrown (loud) | test-subscriptions.mjs (parseModelList) | — |
 | C17 | `timeout 900 script -e -qfc "openclaw models auth login --provider openai --device-code" /dev/null` | `lib/subscription-login.ts:57,186` | ChatGPT (Codex) sign-in | Text output parsed (T1); flag rename → login fails (loud) | test-subscriptions.mjs (parseDeviceLogin) | — |
-| C18 | `timeout 60 openclaw models auth logout <profileId> --yes` | `lib/subscriptions.ts:581` | Subscription disconnect | Followed by a re-read of profiles (loud if still present) | none | — |
+| C18 | `timeout 60 openclaw gateway call models.authLogout --params <json> --json` with `provider: 'openai'` and `profileIds` | `lib/subscriptions.ts:649-666` | ChatGPT subscription disconnect | Renamed RPC or missing IDs in `removedProfiles` → disconnect fails (loud). Rev4a then reads the profiles back to confirm removal. | test-subscription-logout-rpc.mjs | RPC present in 2026.9.9 and 2026.10.10. Verified live on 2026.10.10. |
 | C19 | `timeout 120 openclaw status --usage --json` | `lib/subscription-usage.ts:46-58` | Subscriptions usage windows | Empty / no openai provider / no windows → `no usage` error per account (loud-ish) | test-subscriptions.mjs (parseUsageStatus) | comment: "11 to 50 s on a slow host, about 360 MB" |
 | C20 | `openclaw secrets store set <NAME> --kind env --value-file -` (value on stdin) | `lib/credentials/native.ts`, `storeSetArgv` | Credentials switch-on (Supabase, Trello, Notion, MongoDB) | Non-zero → loud (redacted) | test-credentials-native.mjs, test-gateway-cli-coverage.mjs | Reaches the Gateway on 2026.10.x and uses `gatewayCliArgv`. The command also works wrapped on 2026.9.9, where the store is local. |
 | C21 | `openclaw secrets store rm --yes <NAME>` | `lib/credentials/native.ts`, `storeRemoveArgv`; `lib/credentials/managed.ts`, `handoffRmArgv` and `sweepGithubHandoffs` | Credentials switch-off, handoff cleanup | `--yes` required: without it the CLI prompts, removes nothing and exits 0. A missing name is expected to exit 0. | test-credentials-native.mjs, test-credentials-managed.mjs, test-gateway-cli-coverage.mjs | Reaches the Gateway on 2026.10.x and uses `gatewayCliArgv` or `gatewayShellScript` for the sweep. The command also works wrapped on 2026.9.9. |
@@ -417,7 +419,7 @@ Rev4a's Gateway CLI calls use `gatewayCliArgv` or `gatewayShellScript` (`lib/gat
 | 12 s, retries 1 s + 2 s | `lib/subscriptions.ts:205,207` | STATUS_SCRIPT |
 | 5 s | `lib/subscriptions.ts:211` | Version check via Docker API |
 | 30 s | `lib/subscriptions.ts:308,539` | Subscription `config patch` |
-| 60 s (+10 host) | `lib/subscriptions.ts:57,581` | `models auth logout` |
+| 60 s (+10 host) | `lib/subscriptions.ts:77,655` | `models.authLogout` Gateway call |
 | 10 s | `lib/subscriptions.ts:596` | STOP_CODEX_SCRIPT |
 | 900 s / 60 s ready / 60 s tail | `lib/subscription-login.ts:51-52`; `lib/subscriptions-parse.js:252-255` | Device login |
 | 120 s in-container / 130 s host / 3 min cache | `lib/subscription-usage.ts:19-21` | `status --usage` |
