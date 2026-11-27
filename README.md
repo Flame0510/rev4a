@@ -24,7 +24,7 @@ The full steps, prerequisites included, are in [Quick Start](#quick-start).
 ## ✨ Features
 
 - **Multi-container agent management** — Create, monitor, and manage OpenClaw agents in isolated Docker containers from a single UI
-- **Agent creation wizard** — Pick a template (Atlas, Prometheus, Argus), choose an LLM model, deploy an agent in seconds
+- **Agent creation wizard** — Pick a template (Atlas, Prometheus, Argus), choose an offered model or set one up after deployment
 - **Provider sync** — Add API keys once, push them to all agent containers with one click
 - **Model configuration** — Change the primary model and fallbacks per agent, from the detail panel on the Agents page. Providers: OpenAI, Anthropic, Google, DeepSeek, Groq, Kimi, GLM, Qwen, plus OpenRouter as an aggregator.
 - **Model details** — Every model row opens a modal with its description, price and provider, architecture and parameter count (mixture of experts, context, vision encoder, precision, weights on disk), reasoning modes, capabilities, benchmarks with sources and licence. Numbers come from the model card on Hugging Face plus curated entries that cite a source; nothing is estimated
@@ -35,7 +35,7 @@ The full steps, prerequisites included, are in [Quick Start](#quick-start).
 - **System health** — runtime sessions, daemon heartbeat and failed runs, cron jobs and what the agents spent today, with recommendations
 - **System** — the host machine's CPU, memory, swap and storage, now and over 1h / 24h / 7d / 30d (sampled every 30 s, kept 30 days); what each agent and container consumes (CPU, memory, storage, processes — charts per container) and what Docker holds on disk; recent alerts for the machine and its containers, plus spend and loop alarms (a session past its model's context window, a day of spend far above the agent's usual day, a failing retry loop, money leaving a provider account that Rev4a did not meter; alarms only, snoozable)
 - **Memory limit per agent** — optional, never imposed: set it for an agent in its RESOURCES section (applied live), when creating one, or as a default that only prefills new agents on the Configuration page. Usage is shown against it, an out-of-memory kill appears under Recent alerts, and the System page warns when memory is high and running agents have no limit
-- **Subscriptions** — connect a ChatGPT Plus or Pro (Codex) account to an agent with a device code, or a Claude Pro/Max plan through a guided sign-in (Experimental: Rev4a installs Claude Code, opens Anthropic's page and takes the code you paste), then pick the subscription model next to the Rev4a proxy models in the agent's MODEL section, with the previous model pre-filled as the fallback; the sign-in stays inside the agent
+- **Subscriptions** — connect a ChatGPT Plus or Pro (Codex) account with a device code, or a Claude Pro/Max plan with guided sign-in (Experimental). No Gateway key is needed. A new agent without a model can set up its first model from the deployment screen. The agent's MODEL section offers subscription and Rev4a proxy models and can pre-fill the previous model as a fallback. Sign-in stays inside the agent.
 - **Costs** — what each agent spent, priced by its own OpenClaw with the prices Rev4a syncs (cache rates included, DeepSeek off-peak applied): by day, agent, model and session, with the calls that could not be priced
 - **Per-agent metering at the proxy** — every call through the Rev4a provider proxy is counted per agent with the provider's own token counts and the price in force at that moment; the Costs page sets it next to what each agent recorded and marks an agent the proxy saw clearly more of
 - **Update screen** — while Rev4a updates itself, every open tab shows the phase and the log, and the server refuses changes (reads and the agents' proxy keep working) until the new version answers
@@ -80,6 +80,10 @@ Open `http://<server>:3740` (replace `<server>` with your VPS IP), or your HTTPS
 dashboard address. Enter the **Setup code** printed by the current `rev4a serve`,
 choose your dashboard password, and complete the wizard. The code changes on each
 start until a password exists; configured installs do not print or require it.
+
+Connect your ChatGPT or Claude subscription to an agent, or add an API key in the
+Gateway. From **Agents → New**, deploy an agent, then use **Set up the model** if
+the wizard had no model to offer.
 
 Then [run it as a service](./CONNECT.md#run-it-as-a-service-systemd) so it starts on
 boot. [CONNECT.md](./CONNECT.md#deploy-on-a-vps) has the full VPS guide, including
@@ -184,6 +188,14 @@ If the proxy runs in a container and `ufw` is on, allow the Docker bridge to rea
 `local` keep their 127.0.0.1 ports until recreated.
 
 **Login lock:** from the 6th wrong password within an hour the dashboard locks that client address (30 s, doubling up to 15 minutes). Behind a reverse proxy, the proxy must send the real client in `X-Forwarded-For` and its address must be set in `REV4A_TRUSTED_PROXIES` (`127.0.0.1` for a proxy on the same host); without it every visitor shares one login-throttle key.
+
+**FEAT-28 update note.** Gateway keys are no longer required to create an agent.
+Agents without a primary show **No model** and **Connect subscription**. No migration
+is needed. Existing agents with a primary keep their model and controls; an older agent
+created through the API without a model (before 1.3.0) now shows **No model** too, because
+it really has none: set one from the setup dialog or the Model section. Disconnecting a ChatGPT
+or Claude subscription with no replacement model now signs the agent out and returns it to
+**No model**. Previously, the disconnect was refused.
 
 **SEC-21 update note:** after updating, every browser has to log in once. Browser
 session cookies now carry a keyed password fingerprint; cookies from earlier releases

@@ -367,6 +367,14 @@ Update the primary model and fallbacks of a single agent container.
 `fallbacks` omitted and `fallbacks: []` are different requests. Omitted leaves the
 container's existing fallbacks untouched; `[]` clears them.
 
+Set `onlyIfUnset: true` to set a first model. The route checks
+`agents.defaults.model` under the same lock as the write. If a primary already
+exists, it returns HTTP **409** and leaves the primary and fallbacks in place.
+
+```json
+{ "status": "error", "code": "model-already-set", "error": "This agent already has a model." }
+```
+
 A model id sent as `subscription:openai/<id>` is a ChatGPT subscription model and one sent as
 `subscription:anthropic/<id>` is a Claude subscription model; both are stored as the bare
 `<provider>/<id>`. See [`PUT /api/gateway/agent` and subscription models](#put-apigatewayagent-and-subscription-models)
@@ -1172,8 +1180,9 @@ Create a new agent container from a template. `docker run` is spawned without a 
 | `name` | yes | Display name (`AGENT_NAME`); the container name and `AGENT_ID` are generated (`agent_<hex>`) |
 | `template` | yes | Template name (directory in `agent-templates/`) |
 | `portRange` | no | Optional port range (e.g. `3700-3709`) or single port (e.g. `3700`). Default: auto-assigned 10-port block, chosen by `findAvailablePortBlock()` |
-| `model` | no | Primary model id. Must be offered by this deployment (in the catalogue, enabled, provider has a key), in any form the proxy accepts; otherwise `400`. Defaults to `rev4a/deepseek/deepseek-flash`, validated the same way |
-| `fallbacks` | no | Array of fallback model IDs |
+| `model` | no | Primary model id in any form the proxy accepts. The model must be offered by this deployment (in the catalogue, enabled, provider has a key), otherwise `400`. A missing or empty string defaults to `rev4a/deepseek/deepseek-flash` when `noModel` is absent or false |
+| `noModel` | no | Boolean. Set to `true` to create without a primary or fallbacks. Omit `model` or send an empty string, and omit `fallbacks`. Invalid values or conflicting fields return `400` |
+| `fallbacks` | no | Array of fallback model IDs. Allowed when `noModel` is absent or false |
 | `memoryLimitMb` | no | Memory limit in MB, an integer from 256 to 1048576 (1 TiB); absent, `null`, `0` or `''` mean no limit and the `docker run` command is exactly what it was. Validated before anything is created (`400` on a bad value); when set, adds `--memory <bytes> --memory-swap <bytes>` (swap equal to the limit) built from the validated integer only |
 
 **A failed create leaves nothing behind.** Once `docker run` has been attempted, any failure (a run error, the Gateway not ready in time, an unexpected error) removes the container and the data volume `agent-<container>-data`, but only when this request created the volume (it is looked up before the run; if it existed or Docker could not say, it is kept). The error message says what was removed ("The agent and its data were removed.") and the removal is logged (`[agent:create] rollback: …`). Cleanup uses immediate force removal, with a 30 s deadline. The Gateway readiness window is 120 s, or 300 s when the image's architecture differs from the Docker host's (`/images/<ref>/json` against `/info`: emulation, several times slower); the timeout error names the window used. The route allows up to 480 s.
@@ -1200,7 +1209,8 @@ Create a new agent container from a template. `docker run` is spawned without a 
   "port": 3700,
   "portEnd": 3709,
   "isBlock": true,
-  "portDisplay": "3700-3709"
+  "portDisplay": "3700-3709",
+  "noModel": false
 }
 ```
 
@@ -1209,18 +1219,25 @@ Create a new agent container from a template. `docker run` is spawned without a 
 2. The route waits for the gateway to finish starting (`waitForGatewayReady`, up to 120 s, or 300 s when the image architecture differs from the Docker host's)
 3. Once ready, rewrites `openclaw.json` in one write — `gateway.controlUi`,
    `agents.defaults.model` (primary and fallbacks, always as `rev4a/<provider>/<model>`)
-   and `update`; the Gateway reloads the file by itself (no restart)
+   and `update`. With `noModel: true` the config has no `agents.defaults.model` and the
+   response reports `noModel: true`. A config write failure is logged as its error kind and exit code only
+   (never the message: parse and type errors quote openclaw.json, which holds
+   credentials), and creation still returns the requested `noModel` status. The Gateway reloads the file by itself after a successful write.
 4. Applies the runtime config (hooks, shared skills) and writes `models.providers.rev4a`
    with `openclaw config patch --stdin`. No restart for this step: `gateway.reload`
    defaults to `hybrid`, which hot-applies changes under `agents`, `models` and
-   `routing`. If the catalogue cannot be read the provider patch is skipped and logged
+   `routing`. Without a shared Gateway key, the route logs that the provider block
+   is deferred until the first Gateway key is saved. A failed catalogue read also skips
+   the provider patch and is logged.
 
 Failures in steps 3 and 4 do not fail the request.
 
 **Side effects:**
 - Template files (`AGENTS.md`, `SOUL.md`, etc.) are copied into the container workspace via `docker cp`
 - The agent URL is included in the response
-- An event is logged to `data/events.db` if available
+- An `agent_created` event is logged to `data/events.db` if available. An explicit
+  no-model create records `model: null` and `noModel: true`. A model create records its
+  selected or default model.
 
 **Error:** `400` for validation errors, `409` if name/port already in use
 
@@ -3555,6 +3572,13 @@ absence from older responses.
 ### `GET /api/subscriptions/models`
 **Query:** optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`). **Response:** `{ models: [{ key, name, contextWindow }], error, pending }`. The models the connected accounts offer: one `openclaw models list` CLI call per distinct account (about 7 s), cached 10 min per account email and dropped by a connect or disconnect; finding a connected agent uses the cached status read only (an unsupported or unreadable agent cannot be a source). Right after Connect, OpenClaw installs the Codex plugin and hot-reloads its config (about a minute); until then the agent lists no model. Such an empty list is never cached, and the answer carries `pending: true` whenever any successfully read account is still empty, even alongside partial `models` or another account's `error`. Available models are retained and cached independently while pending accounts retry. With no available models the Subscriptions page shows "Loading ChatGPT models…" and the MODEL section keeps "Loading subscription models…", both asking again every 5 s for at most 3 minutes. Independent deadline timers abort fetch/body reads at that limit, keep partial models and publish a retry message. The response remains `{ models, error, pending }`. With `provider=anthropic` the answer lists the models of the connected Claude plans that Claude Code can run (`available: true` only); see [Claude](#claude-claude-code).
 
+**Agent scope.** Pass `agentId=<id>` with either provider to get only the models
+of the account connected to that agent. An invalid agent id returns **400** and
+an unknown agent returns **404**. A disconnected agent returns HTTP **200**
+with `{ "models": [], "error": "This agent is not connected.", "pending": false }`.
+The scoped read uses the same account cache. If the account has no reported
+email, it caches by container. `pending` reflects only the requested account.
+
 ### `GET /api/subscriptions/usage`
 **Query:** `email=<account>` for one account, `refresh=1` to bypass the cache, optional `provider=<id>` (default `openai`; unknown → **400** `{ "error": "Unknown subscription provider" }`; a known provider without usage limits → **400** `{ "error": "This subscription provider has no usage limits" }`). `provider=anthropic` answers the Claude plan's usage with the same response shape (windows "5 hours" and "Week"); each read is ONE tiny Claude Code call inside a running connected agent (`claude -p "." --model haiku` with no tools, MCP or session: about 1.5 s and a few hundred tokens of the plan), of which only the `rate_limit_event` line is read; the result and a failure (`Could not read the Claude usage limits.` in `errors`) are cached 3 minutes per account, `refresh=1` bypasses it, concurrent callers share one probe, and no credential file is read. **Response:** `{ accounts: [{ email, plan, windows: [{ label, usedPercent, resetAt }], updatedAt }], errors: [{ email, message }] }` (`label` is OpenClaw's own label, seen as "5h" and "Week", `usedPercent` 0-100, `resetAt` and `updatedAt` ISO times). The ChatGPT (Codex) usage limits of each connected account. The quota is the account's, shared by every agent signed in with it and the owner's own Codex use, so it is read once per account from one running connected agent (`openclaw status --usage --json` under an in-container `timeout 120`; 11 to 50 s on a slow host) and cached 3 minutes per account, failures included, so the next refresh does not start another CLI. A connect or disconnect does not drop this cache; `refresh=1` is the only way to force a read. One account that cannot be read is an entry in `errors` ("Could not read the usage from <agent name>"), never a failed response.
 
@@ -3577,7 +3601,7 @@ Consumer Terms §3.7 forbid automated access and Claude Code requires account fl
 Cancels the login, including the process inside the container. **Response:** `{ login }` with the job as it stands (`cancelled`, or its final state if it had already ended), `{ login: null }` when there is none.
 
 ### `POST /api/subscriptions/openai/logout`
-**Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202** `{ job }` at once. The job puts the agent back on its own model if it uses the subscription, drops the remaining `openai/*` fallbacks, also reverts a subscription model in the `main` entry of `agents.list`, then runs `timeout 60 openclaw models auth logout <profile> --yes` for every ChatGPT (OAuth) profile and reads the profiles back (the job fails with "The sign-out did not complete. Try again." if one remains), then stops the agent's Codex runtime processes (best effort, no restart); an API-key `openai:` profile is left alone. It fails (`failed` with an `error`) when the agent uses the subscription model and has no model of its own to go back to. 409 when the agent is stopped, busy or already has a subscription change running.
+**Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202** `{ job }` at once. The job reverts the subscription primary and drops the remaining `openai/*` fallbacks in `agents.defaults.model` and the `main` entry of `agents.list`. When a subscription primary has no replacement in either entry, the job removes its `model` key. A missing default primary yields `health: 'unset'` in the agents model summary. The job verifies each change before it runs `timeout 60 openclaw models auth logout <profile> --yes` for every ChatGPT (OAuth) profile. It reads the profiles back and fails with "The sign-out did not complete. Try again." if one remains. It then stops the agent's Codex runtime processes (best effort, no restart). An API-key `openai:` profile is left alone. The route answers **409** when the agent is stopped, busy or already has a subscription change running.
 
 ### `GET /api/subscriptions/openai/logout?agentId=<id>`
 **Response:** `{ job }`, `{ job: null }` when there is none: `{ agentId, kind: "logout", state, error }`, `state` `running` then `done` or `failed`. In memory, one per agent, kept 30 minutes after it ends; while it runs the agent counts as busy.
@@ -3680,8 +3704,8 @@ Anthropic's own sentence ("That code wasn't accepted. …"). `timeout` (124) or 
 ### `POST /api/subscriptions/anthropic/logout`
 **Body:** `{ "agentId": "atlas" }`. Starts the disconnect as a background job and answers **202**
 `{ job }` at once. The job reverts the `anthropic/` models in `agents.defaults.model` and in the `main`
-entry of `agents.list` (a stuck agent — a `anthropic/` primary with no model of its own — makes the job
-`failed` with the same sentence as ChatGPT), removes the Claude Code runtime rule with
+entry of `agents.list`, removing the `model` key when a subscription primary has no replacement.
+The job verifies each model change before proceeding. It removes the Claude Code runtime rule with
 `openclaw config patch --stdin` (the `anthropic/*` key is sent as `null`; when it was the only key
 `models` itself is nulled, so no empty `models` object is left behind), runs
 `timeout 60 /root/.local/bin/claude auth logout` and reads the status back, which must say logged out.
@@ -3698,7 +3722,7 @@ A model id sent as `subscription:openai/<id>` is stored as the bare `openai/<id>
 
 The model write behind it (`openclaw config patch`, for `agents.defaults.model` and the `main` entry of `agents.list`; also used by Disconnect) waits up to 150 s (`OPENCLAW_RELOAD_TIMEOUT_MS`), because a patch can outlast a short deadline while the Gateway reloads, and is judged by reading the model back, not by the exit of the patch: a patch that failed or timed out but whose read-back shows the intended model is a success; otherwise `502` "The agent is still applying the change or refused it. Check again in a minute." (the read-back showed another model after a failed patch) or "The model change did not apply as expected. Check the agent panel." (the patch reported success).
 
-There is no route that chooses a subscription model: the agent's model (primary and fallbacks) is chosen in one place, the MODEL section of the agent panel, which sends `PUT /api/gateway/agent` with `{ containerName, model, fallbacks }`. Each of `model` and the entries of `fallbacks` is either a Rev4a catalogue id (stored as `rev4a/<id>`) or a `subscription:<provider>/<id>` mark (stored as the bare `<provider>/<id>`), in any combination. The MODEL section reads the agent's connections from `GET /api/subscriptions?agentId=` (ChatGPT) and `GET /api/subscriptions?agentId=<id>&provider=anthropic` (Claude) and the models from `GET /api/subscriptions/models` and `GET /api/subscriptions/models?provider=anthropic`, offering the "ChatGPT subscription" and "Claude subscription" groups only when the matching plan is connected.
+The MODEL section sends `PUT /api/gateway/agent` with `{ containerName, model, fallbacks }` when an operator saves a model. Each of `model` and the entries of `fallbacks` is either a Rev4a catalogue id (stored as `rev4a/<id>`) or a `subscription:<provider>/<id>` mark (stored as the bare `<provider>/<id>`), in any combination. The MODEL section reads the agent's connections from `GET /api/subscriptions?agentId=` (ChatGPT) and `GET /api/subscriptions?agentId=<id>&provider=anthropic` (Claude) and the models from `GET /api/subscriptions/models` and `GET /api/subscriptions/models?provider=anthropic`, offering the "ChatGPT subscription" and "Claude subscription" groups only when the matching plan is connected. The first-model setup dialog picks from the scoped catalogue using `agentId` and saves with `onlyIfUnset: true`.
 
 ---
 

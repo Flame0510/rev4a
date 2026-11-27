@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button, ConfirmModal, Input, LoadingSpinner, Metric, ModalityIcons, Page, PageHeader, Pill, Surface } from '../components/ui';
 import ModelDetailsModal from './ModelDetailsModal';
 import { formatParams, formatPrice } from '../lib/model-format';
@@ -71,6 +72,8 @@ function savedMessage(saved: string, sync: SyncOutcomeView | undefined): { type:
 }
 
 export default function GatewayPageClient() {
+  const router = useRouter();
+  const [returnAgent, setReturnAgent] = useState<string | null>(null);
   // This page is the only thing that changes which models are on offer, so it is
   // the only thing that has to tell the rest of the app to re-read them. Without
   // this the chat panel's select kept the old list for the whole session.
@@ -270,6 +273,7 @@ export default function GatewayPageClient() {
         const json = await res.json();
         if (json.status === 'ok') {
           setMessages((prev) => ({ ...prev, [provider]: savedMessage('API key saved.', json.sync) }));
+          setReturnAgent(new URLSearchParams(window.location.search).get('agent'));
           setOriginalKeys((prev) => ({ ...prev, [provider]: key }));
           setProviders((prev) => prev.map((p) => p.provider === provider ? { ...p, configured: true } : p));
           refreshOfferedModels(); // a new key can make models available
@@ -331,6 +335,7 @@ export default function GatewayPageClient() {
         const json = await res.json();
         if (json.status === 'ok') {
           setMessages((prev) => ({ ...prev, rev4a: savedMessage('Gateway key saved.', json.sync) }));
+          setReturnAgent(new URLSearchParams(window.location.search).get('agent'));
           setOriginalKeys((prev) => ({ ...prev, rev4a: key }));
           await loadAll();
         } else {
@@ -423,6 +428,18 @@ export default function GatewayPageClient() {
         title="Gateway"
         description="Providers and the model catalogue. API keys are stored in .env."
       />
+
+      {returnAgent && (
+        <div style={{ marginBottom: 14 }}>
+          {!skeletonRows && (!rev4aKeyConfigured || configuredCount === 0) && (
+            <p>To use an API-key model, save a Gateway key and at least one provider API key.</p>
+          )}
+          <Button type="button" variant="primary" size="sm" disabled={overlay.active}
+            onClick={() => router.push(`/agents?agent=${encodeURIComponent(returnAgent)}#model-section`)}>
+            Back to the agent's model
+          </Button>
+        </div>
+      )}
 
       {/* Sync all agents — propagate provider baseUrl + models to every container */}
       <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>

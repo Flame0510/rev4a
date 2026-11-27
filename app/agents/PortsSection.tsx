@@ -7,8 +7,10 @@ import type { PortBindings } from '@/lib/agent-ports';
 import type { AgentPortStatus } from '@/lib/agent-ports-status';
 import { OpenControlUiButton, type GatewayState } from './BrowserAccessSection';
 
-export default function PortsSection({ agentId, bindings, running, gateway, blocksOpen }: {
+export default function PortsSection({ agentId, bindings, running, gateway, blocksOpen, modelMissing = false }: {
   agentId: string;
+  /** The agent has no model yet (models-summary `unset`): the Control UI shortcut is replaced by model setup elsewhere in the panel. */
+  modelMissing?: boolean;
   bindings: PortBindings;
   running: boolean;
   gateway?: GatewayState;
@@ -76,7 +78,7 @@ export default function PortsSection({ agentId, bindings, running, gateway, bloc
             {running && auth === 'basic' && <span>user rev4a — password on the <a className="ui-link" href="/remote-access">Remote access page</a></span>}
             {running && !url && <code>{controlUiTunnelCommand(String(hostPort), window.location.hostname, hostIp)}</code>}
           </>,
-          action: running && controlUi && url ? (
+          action: running && controlUi && url && !modelMissing ? (
             <OpenControlUiButton agentId={agentId} hostIp={hostIp} publicUrl={publicUrl} gateway={gateway} blocksOpen={blocksOpen} disabled={busyAction !== null} />
           ) : undefined,
         };

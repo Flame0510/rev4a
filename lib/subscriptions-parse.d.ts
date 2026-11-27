@@ -99,7 +99,10 @@ export function revertSubscriptionModel(
   model: AgentModelRef,
   homePrimary?: string | null,
   prefix?: string,
-): { stuck: boolean; changed: boolean; primary: string | null; fallbacks: string[] };
+): ModelPair & (
+  | { stuck: true; changed: false; clear: true }
+  | { stuck: false; changed: boolean; clear?: never }
+);
 export function keepStoredRef(id: string): string;
 /** "2026.9.4" to "2026.9"; null when there are no two leading numbers. */
 export function majorMinor(version: unknown): string | null;
