@@ -33,7 +33,8 @@ const gatewayCli = load('lib/gateway-cli.ts');
 const providers = load('lib/subscription-providers.ts');
 const providerCopy = load('app/subscriptions/providers.ts', { '@/lib/subscription-providers': providers });
 const claudeParse = load('lib/subscription-claude-parse.ts');
-const { needsModelSetup } = load('lib/agent-model-setup.ts');
+const agentModelSetup = load('lib/agent-model-setup.ts');
+const { needsModelSetup } = agentModelSetup;
 
 function harness(provider, { defaults = {}, list = [], blockWrite, keepNull = false } = {}) {
   const isClaude = provider === 'anthropic';
@@ -150,6 +151,7 @@ function harness(provider, { defaults = {}, list = [], blockWrite, keepNull = fa
     '@/lib/subscription-claude-parse': claudeParse,
   }, globals);
   const summary = load('app/api/agents/models-summary/route.ts', {
+    '@/lib/agent-model-setup': agentModelSetup,
     child_process: childProcess, util: { promisify },
     'next/server': { NextResponse: { json: (body) => body } },
     '@/lib/docker-exec': docker,

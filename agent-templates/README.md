@@ -86,9 +86,15 @@ each agent through Caddy. You can also configure your own reverse proxy to the p
 
 ### Creating an agent by hand
 
-Use the creation wizard (`/agents/create`): it copies the template files, mounts
-the shared volumes, writes the model and provider configuration and waits for the
-gateway. A bare container, for testing the image only:
+The creation wizard (`/agents/create`) copies the template files, mounts the
+shared volumes, waits for the Gateway and applies provider configuration when
+the Gateway key and catalogue are available. Choose an offered model in Create
+or deploy without one. For an agent without a model, **Set up the model** chooses
+`gpt-6.1-sol` for ChatGPT or the first Sonnet for Claude when available, then
+falls back to the first model from that provider. The agent panel's **Model**
+section lets you set the primary and fallbacks manually.
+
+To test the image in a bare container, run the following.
 
 ```bash
 export OPENCLAW_GATEWAY_TOKEN=<token>   # docker reads the value from the environment

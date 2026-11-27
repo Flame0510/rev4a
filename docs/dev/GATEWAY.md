@@ -49,12 +49,10 @@ row shows:
 >
 > | file | full path |
 > |---|---|
-> | provider keys | `REV4A_DATA/data/provider-keys.json` |
+> | provider keys | `<REV4A_DATA_DIR>/data/provider-keys.json` |
 > | model overrides | `REV4A_DATA/model-overrides.json` |
 >
-> Paths written below as `data/provider-keys.json` mean the first row.
-
-Provider API keys are stored in `data/provider-keys.json`:
+Provider API keys are stored in `<REV4A_DATA_DIR>/data/provider-keys.json`:
 
 ```json
 {
@@ -67,13 +65,14 @@ Provider API keys are stored in `data/provider-keys.json`:
 The `rev4a` entry is the shared root key. Agent containers authenticate with their
 own HMAC-derived proxy token; unsynced legacy clients may still use the shared key. See [`PROVIDERS.md`](PROVIDERS.md).
 
-`rev4a serve` generates the shared Gateway key when it is missing, before the
-startup sync. To offer API-key models, add an upstream API key. Agents can be
-created before any upstream keys are saved. To rotate the Gateway key, select
-**Generate**, then **Save** to replace it and sync the fleet.
+See [Gateway key startup seeding](PROVIDERS.md#gateway-key-startup-seeding)
+for how `rev4a serve` provisions the shared key. To offer API-key models, add
+an upstream API key. Agents can be created before any upstream keys are saved.
+To rotate the Gateway key, select **Generate**, then **Save** to replace it
+and sync the fleet.
 
 **Use an API key** in the agent's setup dialog opens `/gateway?agent=<id>`.
-After a key is saved, **Back to the agent's model** opens
+After any successful key save, **Back to the agent's model** opens
 `/agents?agent=<id>#model-section`, where you can choose and save a primary.
 
 ### Sync Flow
@@ -98,8 +97,8 @@ the Gateway:
    `docker exec` when running, through `docker cp` otherwise (stopped, paused, created), since `exec`
    cannot reach them. A read that fails, or returns an empty object, stops
    there: **nothing is written** and the container is reported in `sync.failed`
-5. **Cleans up** stale `models.json` and `auth-profiles.json` — running containers
-   only, since it needs `exec`
+5. **Cleans up** stale `models.json` and `auth-profiles.json` on running containers
+   with a supported OpenClaw version, which stores credentials in SQLite
 6. **Writes** the file back with only `models.providers.rev4a` replaced — **does NOT
    touch** `agents.defaults.model` or `agents.list[].model`. Running containers get
    it through `docker exec` and hot-apply it; the others through `docker cp`, with
@@ -330,7 +329,7 @@ npm run info:verify  -- proposals.json   # the gate: refuses what the card does 
 Lives in the agent detail panel, not on this page. `app/agents/ModelSection.tsx`
 reads `GET /api/agents/[id]/model` for the current primary and fallbacks, and the
 enabled catalogue from `GET /api/models`, which returns only models whose provider
-has a configured API key in `<data dir>/provider-keys.json`. Note this page does
+has a configured API key in `<REV4A_DATA_DIR>/data/provider-keys.json`. Note this page does
 **not** apply that filter — `GET /api/gateway/provider` returns the whole catalogue
 so you can add a key and enable its models in one pass. The filter is applied by
 `/api/models` and by the sync.
@@ -367,7 +366,7 @@ its warning.
 
 ## Subscription models and proxy models
 
-An agent's primary is either a **proxy model** (`rev4a/<provider>/<model>`, served by the Rev4a provider proxy from the catalogue on the Gateway page) or a **subscription model** (a bare `openai/<id>`, served by the ChatGPT (Codex) account the agent is signed in to, or a bare `anthropic/<id>`, served through Claude Code by the operator's Claude plan — Experimental; see the Subscriptions page and [ARCHITECTURE.md](../ARCHITECTURE.md)). A primary can therefore be a bare `openai/<id>` subscription model. The agents list shows it as "<id> · ChatGPT" (or "<id> · Claude") (some ids are also proxy models, which keep their plain name), with no chip of its own, and with the `NO FALLBACK` warning when it has no fallback (it goes silent at the usage limit). The `subscription:` mark of the save and its checks are in [API-REFERENCE.md](API-REFERENCE.md); a save with no `fallbacks` keeps stored bare `openai/<id>` refs unchanged. Subscription models are not in the catalogue and are not synced: the sync writes `models.providers.rev4a` only and never touches `agents.defaults.model`. The catalogue also has ids that start with `openai/` (reached through OpenRouter); those are stored as `rev4a/openai/<id>`, and the `rev4a/` prefix is what tells the two apart. `PUT /api/gateway/agent` takes `subscription:openai/<id>` or `subscription:anthropic/<id>` for the subscription kind (the Claude one only when the agent's Claude state is connected); the panel marks a bare `openai/<id>` only when `<id>` uses the characters `A-Za-z0-9._-`, and any other id (for example a legacy `openai/gpt-4o:free`) is saved as `rev4a/...` as before. The agent panel's MODEL section offers both kinds in every picker, the primary and each fallback, as groups: "Rev4a proxy" (the catalogue), "ChatGPT subscription" and "Claude subscription" (the models each account offers, shown only when the agent is connected to it). Any combination is allowed: a subscription primary with proxy fallbacks, a proxy primary with a subscription fallback, several of each. The Subscriptions page does not choose models.
+An agent's primary is either a **proxy model** (`rev4a/<provider>/<model>`, served by the Rev4a provider proxy from the catalogue on the Gateway page) or a **subscription model** (a bare `openai/<id>`, served by the ChatGPT (Codex) account the agent is signed in to, or a bare `anthropic/<id>`, served through Claude Code by the operator's Claude plan — Experimental; see the Subscriptions page and [ARCHITECTURE.md](../ARCHITECTURE.md)). A primary can therefore be a bare `openai/<id>` subscription model. The agents list shows it as "<id> · ChatGPT" (or "<id> · Claude") (some ids are also proxy models, which keep their plain name), with no chip of its own, and with the `NO FALLBACK` warning when it has no fallback (it goes silent at the usage limit). The `subscription:` mark of the save and its checks are in [API-REFERENCE.md](API-REFERENCE.md); a save with no `fallbacks` keeps stored bare `openai/<id>` refs unchanged. Subscription models are not in the catalogue and are not synced: the sync writes `models.providers.rev4a` only and never touches `agents.defaults.model`. The catalogue also has ids that start with `openai/` (reached through OpenRouter); those are stored as `rev4a/openai/<id>`, and the `rev4a/` prefix is what tells the two apart. `PUT /api/gateway/agent` takes `subscription:openai/<id>` or `subscription:anthropic/<id>` for the subscription kind (the Claude one only when the agent's Claude state is connected); the panel marks a bare `openai/<id>` only when `<id>` uses the characters `A-Za-z0-9._-`, and any other id (for example a legacy `openai/gpt-4o:free`) is saved as `rev4a/...` as before. The agent panel's MODEL section offers both kinds in every picker, the primary and each fallback, as groups: "Rev4a proxy" (the catalogue), "ChatGPT subscription" and "Claude subscription" (the models each account offers, shown only when the agent is connected to it). Any combination is allowed: a subscription primary with proxy fallbacks, a proxy primary with a subscription fallback, several of each. When an agent has no primary or fallbacks, connecting a subscription on the Subscriptions page sets its first model from that account.
 
 **Safety net.** When the operator picks a subscription model as primary while the fallback list is empty, the panel pre-fills the previous primary as the first fallback before saving (with the note "Used when the ChatGPT subscription reaches its usage limit", or "Used when the Claude subscription reaches its usage limit." when the chosen primary is a Claude model); the operator can remove it. So an agent that uses a subscription model normally has its previous proxy model as `fallbacks[0]`: if the subscription's usage limit is reached, OpenClaw falls back to it by itself and the call goes through the proxy (and is metered there). Choosing a Rev4a model as primary in the agent panel replaces a subscription primary; that is an explicit choice, and the agent stays connected. Disconnecting on the Subscriptions page puts the agent back on its own model first.
 
@@ -542,9 +541,8 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    `models.providers.rev4a.models`, model IDs do NOT include the `rev4a/`
    prefix. OpenClaw adds it automatically at runtime.
 
-3. **Provider keys in `<data dir>/provider-keys.json`** — Startup seeds the Gateway
-   key in this gitignored file. The Gateway page manages the stored keys and
-   rotates the Gateway key.
+3. **Provider keys in `<REV4A_DATA_DIR>/data/provider-keys.json`** — The Gateway
+   page manages the stored keys and rotates the Gateway key.
 
 4. **No gateway restart after model sync** — The sync module writes `models.providers`
    to the file directly without restarting the gateway.
@@ -586,7 +584,7 @@ The wizard uses this authenticated endpoint at Finish; Setup restart retains its
    agent (`GET /api/subscriptions/models?provider=<id>&agentId=<id>`). Its save
    sends `onlyIfUnset: true` so a primary selected in another session wins.
    `PUT /api/gateway/agent` verifies the agent's sign-in for the requested
-   provider. The setup dialog picks from the agent's own catalogue, since the
+   provider. The setup dialog and the Subscriptions page pick from the agent's own catalogue, since the
    save route does not verify that the account offers the exact model.
 
 ---

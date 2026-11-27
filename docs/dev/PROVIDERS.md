@@ -33,26 +33,15 @@ Agent Container          Rev4a Gateway              Upstream API
 ### Authentication
 
 The Gateway authenticates `Authorization` Bearer credentials using the shared
-`rev4a` key in `data/provider-keys.json` as the root for derived agent tokens:
+`rev4a` key in `<REV4A_DATA_DIR>/data/provider-keys.json` as the root for derived
+agent tokens. The data directory defaults to `~/.config/rev4a` on Unix and to
+`rev4a` under the roaming application data directory on Windows.
 
 ```json
 {
   "rev4a": "<gateway-token>"
 }
 ```
-
-`rev4a serve` generates a missing Gateway key before the startup sync. The key
-is 48 lowercase hexadecimal characters. When startup creates the file, it also
-copies any configured `PROVIDER_DEEPSEEK_API_KEY` and `PROVIDER_OPENROUTER_API_KEY`
-values into `deepseek` and `openrouter`. Creation is exclusive. When adding a key
-to an existing file, the seeder preserves the other entries and checks for changes
-before replacing the file. It skips files with an existing key, invalid UTF-8 or
-JSON, or a different owner on POSIX. New and updated files have mode `0600` on POSIX.
-
-Use a literal path for `REV4A_DATA_DIR`. Startup skips key generation with a
-warning if this setting contains variable references like `${PORT}` or if the
-dashboard data directory cannot be resolved. To rotate the key, open the Gateway
-page, select **Generate**, then **Save** to replace the stored key and sync the fleet.
 
 | Token match | Result |
 |---|---|
@@ -72,6 +61,32 @@ invalidates every derived token. `REV4A_API_KEY` cannot derive agent credentials
 Only the 'rev4a' entry roots these tokens. Other provider keys in the file (e.g.
 `deepseek`, `openrouter`) are ignored for authentication — they are used as
 upstream credentials by the proxy, not as client tokens.
+
+### Gateway key startup seeding
+
+`rev4a serve` seeds the Gateway key before startup sync. A generated key is 48
+lowercase hexadecimal characters. New and updated key files have mode `0600`
+on POSIX.
+
+- With no key file, startup creates it exclusively with `rev4a` and copies any
+  configured `PROVIDER_DEEPSEEK_API_KEY` and `PROVIDER_OPENROUTER_API_KEY` values to
+  `deepseek` and `openrouter`.
+- With a readable, writable JSON object and no Gateway key, startup adds `rev4a`
+  while preserving the other entries. It checks for concurrent changes before
+  replacing the file. It keeps an existing non-empty Gateway key without logging
+  a generation message.
+- Startup leaves the file alone and warns when the file is unreadable, is invalid
+  UTF-8 or invalid JSON, belongs to another user on POSIX or cannot be written.
+  A dangling symlink also causes startup to skip seeding.
+- Creating the file or adding the key logs `Gateway key generated (provider-keys.json)`.
+  A concurrent edit that prevents seeding logs
+  `Warning: provider-keys.json changed during startup; Gateway key not generated`.
+- Use a literal path for `REV4A_DATA_DIR`. Startup warns and skips seeding if the
+  path contains a variable reference such as `${PORT}` or the directory cannot be
+  resolved.
+
+To rotate the key, select **Generate** in Gateway and then **Save** to replace
+the stored key and sync the fleet.
 
 ### Model Discovery
 
@@ -181,7 +196,7 @@ catalogue advertises text and image input. [Anthropic's compatibility guide](htt
 ```
 
 The proxy authenticates using the provider's real API key from
-`data/provider-keys.json`.
+`<REV4A_DATA_DIR>/data/provider-keys.json`.
 
 Upstream request failures return `502` with the fixed message
 `Gateway error: the upstream request failed` (`type: "gateway_error"`). Fetch error
@@ -295,7 +310,7 @@ or backup, or whose config cannot be read/written; its outcome is logged. Those
 missed keep working with the shared key until a later successful sync or patch.
 The rewrite is idempotent and uses the existing bounded per-container operations;
 there is no table scan, schema migration, new dependency, or change to `.env` or
-`provider-keys.json`. Older OpenClaw agents receive the same provider shape and
+`<REV4A_DATA_DIR>/data/provider-keys.json`. Older OpenClaw agents receive the same provider shape and
 version-specific model fields; only the opaque API credential changes.
 
 Rollback to the previous release (`v1.24.0`, verified in local tagged code)
@@ -322,4 +337,4 @@ skill's `neutralize-backup.mjs` already removes the provider `apiKey` and identi
 - All secrets in documentation, logs, or reports must be masked (e.g. `sk-...ast4`).
 - The Gateway's `GET /api/provider/v1/models` endpoint returns an empty list when
   no valid token is provided, preventing model information leakage.
-- API keys live in `data/provider-keys.json` (gitignored), never in committed code.
+- API keys live in `<REV4A_DATA_DIR>/data/provider-keys.json` (gitignored), never in committed code.

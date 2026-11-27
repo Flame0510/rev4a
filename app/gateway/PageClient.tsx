@@ -426,7 +426,7 @@ export default function GatewayPageClient() {
       <PageHeader
         eyebrow=""
         title="Gateway"
-        description="Providers and the model catalogue. API keys are stored in .env."
+        description="Providers and the model catalogue. API keys are stored in provider-keys.json."
       />
 
       {returnAgent && (

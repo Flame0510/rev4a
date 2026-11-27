@@ -63,7 +63,8 @@ const LAST_VERSION_PATH = '/root/.openclaw/.last-version';
  * The OpenClaw version a container runs, for its model `input` list. Best-effort and
  * synchronous: the image tag when it names a version, else the `.last-version` file the
  * entrypoint writes (through `docker exec` when running, `docker cp` when stopped).
- * Null when nothing says — the caller then falls back to the newest version's list.
+ * Null when no supported version can be resolved. The caller uses the model inputs
+ * common to all supported versions and skips legacy-file cleanup.
  */
 function containerVersionSync(name: string): string | null {
   try {
@@ -447,7 +448,8 @@ export async function syncAllAgents(): Promise<SyncOutcome> {
       // an older supported release never receives a modality value it would reject.
       // Read + rewrite of the whole file: one hold of the agent's config lock around both.
       await withAgentConfigLock(container.name, async () => {
-        syncContainer(container, buildRev4aProviderConfig(containerVersionSync(container.name), container.agentId || container.name));
+        const version = containerVersionSync(container.name);
+        syncContainer(container, buildRev4aProviderConfig(version, container.agentId || container.name), version);
       });
       outcome.synced.push(container.name);
       if (!container.running) outcome.stopped.push(container.name);
@@ -479,15 +481,16 @@ export async function syncAllAgents(): Promise<SyncOutcome> {
 function syncContainer(
   container: AgentContainer,
   rev4aProviderConfig: Rev4aProviderConfig,
+  version: string | null,
 ): string {
   const remotePath = '/root/.openclaw/openclaw.json';
   // Read first. If this throws, the container is reported as failed and nothing
   // below runs — in particular nothing is written.
   const { config, mode } = readContainerJson(container, remotePath);
 
-  // Clean up stale files from old versions. Needs exec, so running containers
-  // only; a stopped one is cleaned on the first sync after it starts.
-  if (container.running) {
+  // Supported versions keep credentials in SQLite. Clean up legacy files only on
+  // those versions, on the first sync after a stopped container starts.
+  if (container.running && version !== null) {
     try {
       execFileSync('docker', ['exec', container.name, 'rm', '-f',
         '/root/.openclaw/agents/main/agent/models.json',

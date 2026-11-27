@@ -29,6 +29,12 @@ test('parses clean JSON and JSON surrounded by CLI notices', () => {
   assert.deepEqual(parseAuthLogout(`OpenClaw Gateway\n${response(profileIds)}\nDeprecationWarning: example\n`, profileIds), expected);
 });
 
+test('skips an unmatched opening brace in a warning before the logout answer', () => {
+  assert.deepEqual(parseAuthLogout(`Warning: malformed line {\n${response(profileIds)}`, profileIds), {
+    ok: true, removed: profileIds,
+  });
+});
+
 test('rejects partial, empty, malformed and error responses', () => {
   for (const output of [response(profileIds.slice(0, 1)), response([]), 'garbage', errorOutput, response([...profileIds, 42])]) {
     assert.deepEqual(parseAuthLogout(output, profileIds), { ok: false });
@@ -182,4 +188,11 @@ test('the logout answer is found among notices, log lines and braces in strings'
   assert.deepEqual(parseAuthLogout(JSON.stringify({ ok: false, error: { code: 'X' }, removedProfiles: ids }), ids), { ok: false });
   assert.deepEqual(parseAuthLogout(JSON.stringify({ removedProfiles: [ids[0]] }), ids), { ok: false });
   assert.deepEqual(parseAuthLogout('{ unterminated', ids), { ok: false });
+});
+
+test('pathological output with many open braces fails fast and safely', () => {
+  const answer = JSON.stringify({ removedProfiles: ['openai:a@example.test'] });
+  const started = Date.now();
+  assert.deepEqual(parseAuthLogout('{'.repeat(64000) + answer, ['openai:a@example.test']), { ok: false });
+  assert.ok(Date.now() - started < 1000, 'bounded scan');
 });

@@ -254,7 +254,7 @@ await test('dialog: a poll in flight when the code is submitted cannot put the v
 const page = readFileSync(new URL('../app/subscriptions/PageClient.tsx', import.meta.url), 'utf8');
 
 await test('page: the open connect dialog is part of the row busy state, so Disconnect waits', () => {
-  assert.match(page, /const busy = !!running \|\| row\.loading \|\| !!connecting;/);
+  assert.match(page, /const busy = !!running \|\| row\.loading \|\| !!connecting \|\| !!modelSetupProvider;/);
   assert.match(page, /connecting=\{!!connectAgent && connectAgent\.providerId === provider\.id && connectAgent\.agentId === a\.agentId\}/);
 });
 

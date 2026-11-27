@@ -577,15 +577,15 @@ export default function AgentsPageClient() {
       .catch(() => setImageReady(false));
   }, []);
 
-  // Check if any provider is configured in the Gateway
+  // Check if any upstream provider is configured in the Gateway.
   useEffect(() => {
     const controller = new AbortController();
     // summary=1: skips the live-pricing round trip we don't need here.
     fetch('/api/gateway/provider?summary=1', { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
-      .then((d: { providers?: Array<{ configured: boolean }> } | null) => {
+      .then((d: { providers?: Array<{ provider: string; configured: boolean }> } | null) => {
         if (!controller.signal.aborted && Array.isArray(d?.providers)) {
-          setProvidersConfigured(d.providers.some((p) => p.configured));
+          setProvidersConfigured(d.providers.some((p) => p.configured && p.provider !== 'rev4a'));
         }
       })
       .catch(() => { /* the banner is optional */ });

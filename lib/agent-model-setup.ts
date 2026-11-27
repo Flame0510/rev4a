@@ -40,3 +40,23 @@ export function pickSubscriptionModel(
 export function needsModelSetup(row: { health?: string } | undefined | null): boolean {
   return row?.health === 'unset';
 }
+
+function modelPrimary(model: unknown): string | null {
+  const primary = typeof model === 'string' ? model
+    : model && typeof model === 'object' ? (model as { primary?: unknown }).primary : null;
+  return typeof primary === 'string' && primary ? primary : null;
+}
+
+/** Resolve a configured primary in defaults, the main list entry, or the keyed main entry. */
+export function effectiveAgentPrimary(config: { agents?: unknown }): string | null {
+  const agents = config.agents as {
+    defaults?: { model?: unknown };
+    list?: { id?: unknown; model?: unknown }[];
+    entries?: { main?: { model?: unknown } };
+  } | null | undefined;
+  const defaults = modelPrimary(agents?.defaults?.model);
+  if (defaults) return defaults;
+
+  const main = Array.isArray(agents?.list) ? agents.list.find((entry) => entry?.id === 'main') : undefined;
+  return modelPrimary(main?.model) ?? modelPrimary(agents?.entries?.main?.model);
+}
