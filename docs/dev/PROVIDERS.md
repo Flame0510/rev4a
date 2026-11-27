@@ -1,6 +1,6 @@
 # Provider Gateway & Key Management
 
-> **Last updated:** 2026-11-10
+> **Last updated:** 2026-11-27
 
 This document covers the Rev4a Provider Gateway (proxy), the provider key
 endpoints, and how agent containers authenticate against the Rev4a proxy.
@@ -40,6 +40,19 @@ The Gateway authenticates `Authorization` Bearer credentials using the shared
   "rev4a": "<gateway-token>"
 }
 ```
+
+`rev4a serve` generates a missing Gateway key before the startup sync. The key
+is 48 lowercase hexadecimal characters. When startup creates the file, it also
+copies any configured `PROVIDER_DEEPSEEK_API_KEY` and `PROVIDER_OPENROUTER_API_KEY`
+values into `deepseek` and `openrouter`. Creation is exclusive. When adding a key
+to an existing file, the seeder preserves the other entries and checks for changes
+before replacing the file. It skips files with an existing key, invalid UTF-8 or
+JSON, or a different owner on POSIX. New and updated files have mode `0600` on POSIX.
+
+Use a literal path for `REV4A_DATA_DIR`. Startup skips key generation with a
+warning if this setting contains variable references like `${PORT}` or if the
+dashboard data directory cannot be resolved. To rotate the key, open the Gateway
+page, select **Generate**, then **Save** to replace the stored key and sync the fleet.
 
 | Token match | Result |
 |---|---|

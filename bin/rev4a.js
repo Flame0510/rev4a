@@ -22,7 +22,7 @@
 
 const { spawn, execSync, execFileSync, spawnSync } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, statSync, lstatSync, chmodSync, realpathSync, rmSync, openSync, closeSync, unlinkSync } = require('fs');
-const { join, dirname } = require('path');
+const { join, dirname, resolve } = require('path');
 const { performance } = require('node:perf_hooks');
 const crypto = require('crypto');
 const { createServer } = require('net');
@@ -34,6 +34,7 @@ const {
   isRecordedProcess, describePortListeners, stopRev4aPids, waitForPort,
 } = require('../lib/port-owner.js');
 const { DOCKER_RUNTIME_PATHS, decideDockerInstall } = require('../lib/docker-install-policy.js');
+const { seedGatewayKey } = require('../lib/gateway-key-seed.js');
 
 const ROOT = join(__dirname, '..');
 const NEXT_DIR = join(ROOT, '.next');
@@ -504,6 +505,25 @@ function loadEnv() {
   return result;
 }
 
+// The environment serve() gives the dashboard (keep in step with the block in serve()): the Gateway
+// key seeder resolves the data directory with it, before serve() builds the real one.
+function loadServerEnv(port) {
+  const envVars = loadEnv();
+  const env = { ...process.env };
+  for (const [key, value] of Object.entries(envVars)) {
+    // Preserve non-empty service values when the file assigns an empty value.
+    if (value !== '' || !env[key]) env[key] = value;
+  }
+  // Record which non-empty values came from .env so runtime reads can detect edits.
+  const dotenvKeys = Object.entries(envVars).filter(([key, value]) => value !== '' && !RUNTIME_ONLY_ENV_KEYS.includes(key)).map(([key]) => key);
+  env.PORT = String(port);
+  env.NODE_ENV = process.env.NODE_ENV || 'production';
+  for (const key of RUNTIME_ONLY_ENV_KEYS) delete env[key];
+  env.REV4A_DOTENV_KEYS = dotenvKeys.join(',');
+  env.REV4A_SUPERVISED = '1';
+  return env;
+}
+
 /**
  * The loader keys (NODE_OPTIONS, LD_*, DYLD_*...) Next.js would load from the .env files at
  * the package root, read by Next's own @next/env in a separate process (it writes what it
@@ -539,7 +559,43 @@ function refuseIfLoaderKeysLeft() {
   }
 }
 
-function ensureEnv() {
+function seedStartupGatewayKey(port) {
+  const env = loadServerEnv(port);
+  for (const key of Object.keys(env)) if (isLoaderEnvKey(key)) delete env[key];
+
+  // Resolve Next's dotenv fallback and the OS home in the environment the dashboard sees.
+  const script = String.raw`
+    const { loadEnvConfig } = require(require.resolve('@next/env', { paths: [process.cwd()] }));
+    const { readEnvValue } = require('./lib/env-file.js');
+    const { homedir } = require('node:os');
+    const { join } = require('node:path');
+    const inherited = process.env.REV4A_DATA_DIR;
+    const { loadedEnvFiles } = loadEnvConfig(process.cwd(), false, { info() {}, error() { process.exitCode = 1; } }, true);
+    const source = loadedEnvFiles.find(({ env }) => Object.hasOwn(env, 'REV4A_DATA_DIR'));
+    const configured = inherited ?? (source && readEnvValue(source.contents, 'REV4A_DATA_DIR'));
+    // A path can reference server-only variables whose values are unavailable at this point.
+    if (/\$\{?\w/.test(configured ?? '')) process.exit(1);
+    const dataRoot = process.env.REV4A_DATA_DIR || (process.platform === 'win32'
+      ? join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'rev4a')
+      : join(homedir(), '.config', 'rev4a'));
+    const { PROVIDER_DEEPSEEK_API_KEY, PROVIDER_OPENROUTER_API_KEY } = process.env;
+    process.stdout.write(JSON.stringify({ dataRoot, PROVIDER_DEEPSEEK_API_KEY, PROVIDER_OPENROUTER_API_KEY }));
+  `;
+  const result = spawnSync(process.execPath, ['-e', script], { cwd: ROOT, env, encoding: 'utf8', timeout: 5000 });
+  let resolved;
+  if (!result.error && result.status === 0) {
+    try { resolved = JSON.parse(result.stdout); } catch { /* handled below */ }
+  }
+  if (typeof resolved?.dataRoot !== 'string' || !resolved.dataRoot || resolved.dataRoot.includes('\0')
+      || [resolved.PROVIDER_DEEPSEEK_API_KEY, resolved.PROVIDER_OPENROUTER_API_KEY].some((value) => value !== undefined && typeof value !== 'string')) {
+    log('ENV', 'Warning: could not resolve the data directory; Gateway key not generated');
+    return;
+  }
+
+  seedGatewayKey(resolve(ROOT, resolved.dataRoot, 'data', 'provider-keys.json'), resolved, (message) => log('ENV', message));
+}
+
+function ensureEnv({ startupPort } = {}) {
   let configured = false;
   try {
     readFileSync(ENV_SOURCE, 'utf-8');
@@ -628,6 +684,7 @@ function ensureEnv() {
     refuseIfLoaderKeysLeft();
     // Seed agent token file if missing
     seedAgentToken();
+    if (startupPort !== undefined) seedStartupGatewayKey(startupPort);
     return;
   }
 
@@ -675,6 +732,7 @@ function ensureEnv() {
   refuseIfLoaderKeysLeft();
 
   seedAgentToken();
+  if (startupPort !== undefined) seedStartupGatewayKey(startupPort);
 }
 
 function seedAgentToken() {
@@ -750,9 +808,9 @@ function checkVersion() {
 
 // ── Preflight ───────────────────────────────────────────────────────────────
 
-function preflight() {
+function preflight(port) {
   log('PREFLIGHT', 'Running pre-flight checks…');
-  ensureEnv();
+  ensureEnv({ startupPort: port });
   // Network and image need the daemon. Without it the image check fails and
   // would start a pull and then a local build — up to fifteen minutes, before the
   // dashboard is even up — for an image that is most likely already there.
@@ -865,7 +923,7 @@ async function prepareDashboardPort(port) {
 }
 
 function serve(port, { recordProcesses, watchForRestart } = {}) {
-  preflight();
+  preflight(port);
   // Version check is non-blocking — runs after startup
   setTimeout(checkVersion, 2000);
 
@@ -889,6 +947,7 @@ function serve(port, { recordProcesses, watchForRestart } = {}) {
   for (const key of RUNTIME_ONLY_ENV_KEYS) delete childEnv[key];
   childEnv.REV4A_DOTENV_KEYS = dotenvKeys.join(',');
   childEnv.REV4A_SUPERVISED = '1';
+
   let setupCode;
   if (!childEnv.REV4A_PASSWORD) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

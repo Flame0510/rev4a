@@ -1,6 +1,6 @@
 # Rev4a — VPS Dashboard
 
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-27
 
 A Next.js 16 dashboard for monitoring and managing the OpenClaw ecosystem.
 
@@ -858,7 +858,7 @@ Available templates:
 4. Once ready, the route writes:
    - `gateway.controlUi` with the browser-origin policy (`withControlUiPolicy()` in `lib/agent-setup.ts`): the Host-header fallback on, so the Control UI is accepted from the host the browser connected to — a public IP is refused without it — while pages from other origins are refused; an `allowedOrigins: ["*"]` list and the retired `dangerouslyDisableDeviceAuth` are dropped, any other allowlist is kept. Recreate re-applies the policy. Each new browser still needs a one-time device approval
    - `agents.defaults.model` with the selected primary and fallbacks, when a model was requested.
-5. If the shared Gateway key exists, the route builds `models.providers.rev4a` with `buildRev4aProviderConfig()` and writes it with `openclaw config patch --stdin`. Saving the first Gateway key syncs the block to agents created without it.
+5. `rev4a serve` generates the shared Gateway key at startup when it is missing. At create, the route builds `models.providers.rev4a` with `buildRev4aProviderConfig()` and writes it with `openclaw config patch --stdin`. If the key is unavailable at create, the next successful sync after it becomes available writes the block.
 6. The agent's Control UI is reachable at `http://<host>:<port>#token=<gateway-token>` in direct mode. [Domain mode](#1300--caddy-domain-mode) manages a separate HTTPS hostname per agent. You can also configure your own reverse proxy to the published port.
 
 ---

@@ -1,6 +1,6 @@
 # Rev4a API Reference
 
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-27
 
 All routes are under `/api/`. Authentication is required on every endpoint
 unless otherwise noted.
@@ -1226,9 +1226,10 @@ Create a new agent container from a template. `docker run` is spawned without a 
 4. Applies the runtime config (hooks, shared skills) and writes `models.providers.rev4a`
    with `openclaw config patch --stdin`. No restart for this step: `gateway.reload`
    defaults to `hybrid`, which hot-applies changes under `agents`, `models` and
-   `routing`. Without a shared Gateway key, the route logs that the provider block
-   is deferred until the first Gateway key is saved. A failed catalogue read also skips
-   the provider patch and is logged.
+   `routing`. `rev4a serve` generates the shared Gateway key at startup when it is
+   missing, so the provider block can be written at create. If the key or catalogue
+   is unavailable at create, the route logs the skipped patch. A successful sync
+   writes the block once both are available.
 
 Failures in steps 3 and 4 do not fail the request.
 
