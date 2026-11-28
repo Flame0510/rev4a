@@ -315,6 +315,16 @@ export function routeRemovalPatch(config: unknown): Record<string, unknown> | nu
 
 // ---- state -------------------------------------------------------------------------------
 
+/** A disconnect succeeds only when the read-back establishes that Claude Code is signed out. */
+export function claudeSignOutConfirmed(after: {
+  installed: boolean;
+  status: Pick<ClaudeStatus, 'loggedIn'> | null;
+}): 'ok' | 'signed-in' | 'unknown' {
+  if (after.installed === false || after.status?.loggedIn === false) return 'ok';
+  if (after.status?.loggedIn === true) return 'signed-in';
+  return 'unknown';
+}
+
 /**
  * The one state the page and the server agree on:
  * - not installed: Claude Code is missing from the agent;
@@ -403,7 +413,7 @@ export const CLAUDE_STATUS_SCRIPT_SRC = [
   'if(fs.existsSync(bin)){',
   'out.installed=true;',
   "try{const v=cp.execFileSync(bin,['--version'],{encoding:'utf8',timeout:15000});out.version=(String(v).trim().slice(0,200))||null;}catch(e){}",
-  "try{const r=cp.spawnSync(bin,['auth','status','--json'],{encoding:'utf8',timeout:15000});if(r.error)throw r.error;const raw=String(r.stdout||'');const a=raw.indexOf('{');const b=raw.lastIndexOf('}');if(a===-1||b<=a)throw new Error('no json');const s=JSON.parse(raw.slice(a,b+1));out.status={loggedIn:s&&s.loggedIn===true,authMethod:str(s&&s.authMethod),email:str(s&&s.email),orgName:str(s&&s.orgName),subscriptionType:str(s&&s.subscriptionType),planTier:str(s&&s.planTier),loginExpiresAt:str(s&&s.loginExpiresAt)};}catch(e){out.statusError=true;}",
+  "try{const r=cp.spawnSync(bin,['auth','status','--json'],{encoding:'utf8',timeout:15000});if(r.error)throw r.error;if(r.signal||(r.status!==0&&r.status!==1))throw new Error('status failed');const raw=String(r.stdout||'');const a=raw.indexOf('{');const b=raw.lastIndexOf('}');if(a===-1||b<=a||raw.slice(0,a).trim().endsWith('['))throw new Error('no json');const s=JSON.parse(raw.slice(a,b+1));if(!s||typeof s!=='object'||Array.isArray(s)||typeof s.loggedIn!=='boolean')throw new Error('no loggedIn');out.status={loggedIn:s.loggedIn,authMethod:str(s&&s.authMethod),email:str(s&&s.email),orgName:str(s&&s.orgName),subscriptionType:str(s&&s.subscriptionType),planTier:str(s&&s.planTier),loginExpiresAt:str(s&&s.loginExpiresAt)};}catch(e){out.statusError=true;}",
   '}',
   '}catch(e){}',
   'try{',
