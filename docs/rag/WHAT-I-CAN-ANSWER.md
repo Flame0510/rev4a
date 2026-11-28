@@ -1,8 +1,12 @@
 # What PULSE Can Answer
 
-> **Last updated:** 2026-11-18
+> **Last updated:** 2026-11-27
 
 PULSE is the in-dashboard AI concierge for Rev4a. This document defines what she can and cannot answer.
+
+PULSE needs a provider API key and an enabled model in Gateway. If the model
+list is empty, use **Open Gateway** in the chat panel. Agents can use connected
+ChatGPT or Claude subscriptions without a Gateway key.
 
 ---
 
