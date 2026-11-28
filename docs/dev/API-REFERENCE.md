@@ -1264,6 +1264,31 @@ Failures in steps 3 and 4 do not fail the request.
 
 **Errors** include `400` for validation errors and explicitly requested ports
 already in use, and `409` for an existing agent name or an unavailable base image.
+A memory admission refusal also returns `409` with `{ success: false, error, code }`.
+For `insufficient-host`, `resources` contains the same breakdown as the preview below.
+
+### `GET /api/agents/create/resources?limitMb=<n>`
+
+Requires the same authentication as Create. Omit `limitMb` or leave it empty for
+an unlimited agent. The Create memory-limit parser also accepts `0` for unlimited
+and returns `400` for an invalid value.
+
+The route previews admission for the newest supported local image from current
+Docker data and in-flight reservations. It performs Docker reads only. A failed
+or timed-out image lookup returns `200` with `{ ok: false, code: 'unknown-host',
+error: 'Docker could not be read. Check that Docker is running, then retry.' }`.
+When a successful lookup finds no supported image, it returns `200` with `{ ok: false, code: 'no-image',
+error: 'No supported agent image is downloaded. Download it from the Agents page first.' }`.
+With an image, it returns `200` with `ok` and `version`, plus `code` and `error` on refusal.
+
+Success and `insufficient-host` include `breakdown` with `dockerTotalMb`, `requiredMb`,
+`shortfallMb`, `headroomMb`, the target reservation and its basis, and the other
+reservations sorted by size. Each other entry includes `agentId`, `name`,
+`reservedMb`, `basis`, and `kind`. A running agent with an in-flight reservation
+also has `claimed: true` and is excluded from stop suggestions. The suggestion
+includes `dockerMemoryGb` and, when stopping one eligible agent would cover
+the shortfall, its `stopAgentId`, `stopAgentName`, and `freesMb`. Create checks
+admission again on submission.
 
 ---
 

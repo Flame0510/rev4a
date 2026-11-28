@@ -863,6 +863,16 @@ Available templates:
 
 **Step 2 — Config.** Enter an agent name, an optional port and an optional **Memory limit**. The memory picker uses the Configuration page's default and sends the chosen size in MB as `memoryLimitMb`. The first offered model is pre-selected. If the catalogue is empty, you can deploy and set up the model afterwards.
 
+**Memory check** below the picker shows how much Docker memory the new agent needs.
+It refreshes after valid limit changes and when you choose **Create Another**.
+If Docker has too little memory, the breakdown shows the new agent's reservation,
+what the running agents and containers account for, and what is kept free.
+It suggests which agent to stop when one is enough, or
+how much memory to give Docker. On Docker Desktop, it includes the settings path.
+Use **Check again** after making a change. **Deploy Agent** runs a fresh check.
+If it refuses for insufficient memory, the wizard returns to Config with the
+latest breakdown. Update refusals also show the numbers and suggested actions.
+
 **Step 3 — Deploy.** `POST /api/agents/create` creates the container and returns its port and model setup status. With a primary configured, the success screen offers **Open Control UI**. With no primary, **Set up the model** opens the agent panel and offers ChatGPT, Claude (Experimental), and **Use an API key**. Unsupported images use the Gateway path. The subscription flow selects a first model from the agent's account after sign-in. The API key flow shows a link back to the agent's Model section after any key is saved. Browser Access keeps device approvals visible and hides **Invite link** while the primary is unset.
 
 **Post-creation pipeline:**
