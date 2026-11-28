@@ -7,7 +7,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
-import { readProviderKeys, writeProviderKeys } from './keys';
+import { loadProviderKeys, ProviderKeysChangedError, ProviderKeysUnreadableError, readProviderKeys, saveProviderKeys } from './keys';
 import { dockerUnreachableReason, syncAllAgents, type SyncOutcome } from '../sync';
 import { detectProviderGatewayUrl } from '@/lib/docker-utils';
 import { getPricing, nextPriceChange, priceAt, priceBandAt } from '@/lib/model-pricing';
@@ -115,13 +115,16 @@ function getProviderApiKey(providerName: string): string | null {
 }
 
 function setProviderApiKey(providerName: string, value: string | null): void {
-  const keys = readProviderKeys();
+  // Include any legacy env keys in the same exclusive create as the edited key.
+  const snapshot = loadProviderKeys({ migrateMissing: false });
+  const { keys, state } = snapshot;
+  if (state === 'unreadable') throw new ProviderKeysUnreadableError();
   if (value === null) {
     delete keys[providerName];
   } else {
     keys[providerName] = value;
   }
-  writeProviderKeys(keys);
+  saveProviderKeys(snapshot);
 }
 
 function restartService(): { stdout: string; stderr: string } {
@@ -263,6 +266,9 @@ export async function POST(request: NextRequest) {
       sync,
     });
   } catch (e: unknown) {
+    if (e instanceof ProviderKeysUnreadableError || e instanceof ProviderKeysChangedError) {
+      return NextResponse.json({ status: 'error', error: e.message }, { status: 409 });
+    }
     return NextResponse.json({ status: 'error', error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }
@@ -285,8 +291,7 @@ export async function PUT(request: NextRequest) {
     // Only a whole-fleet outage is refused this way: once Docker answers, a container
     // that fails individually is reported in `sync`, because undoing the override
     // would not undo the containers that did receive it. Provider key saves are not
-    // gated like this — the first-run wizard saves keys without reading the response
-    // and may run before Docker is up, so a refusal there would be silent.
+    // gated like this because the first-run wizard may run before Docker is up.
     const unreachable = dockerUnreachableReason();
     if (unreachable) {
       return NextResponse.json({

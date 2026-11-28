@@ -29,7 +29,7 @@ const STEPS = [
 export default function WizardPageClient() {
   const router = useRouter();
   const {
-    step, stepIndex, saving, providerKeys,
+    step, stepIndex, saving, providerKeys, providerError,
     setProviderKeys, goNext, skip, goToStep, completeAll, restart, hydrated,
   } = useWizard();
   const [completionError, setCompletionError] = useState('');
@@ -49,6 +49,16 @@ export default function WizardPageClient() {
   const actionRef = useRef(false);
   const completionAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => completionAbortRef.current?.abort(), []);
+
+  const handleSaveProviders = async () => {
+    if (actionRef.current) return;
+    actionRef.current = true;
+    try {
+      await goNext();
+    } finally {
+      actionRef.current = false;
+    }
+  };
 
   const handleComplete = async () => {
     if (actionRef.current) return;
@@ -118,10 +128,10 @@ export default function WizardPageClient() {
   if (!hydrated) return null;
 
   return (
-    <WizardFrame stepIndex={stepIndex} steps={STEPS} busy={action !== null} onStepClick={(index) => { if (!actionRef.current) goToStep(index); }}>
+    <WizardFrame stepIndex={stepIndex} steps={STEPS} busy={action !== null || saving} onStepClick={(index) => { if (!actionRef.current) goToStep(index); }}>
       {step === 'welcome'   && <WelcomeStep onNext={goNext} />}
       {step === 'access' && <AccessStep onNext={goNext} onSkip={skip} localChosen={accessRestart} onChoice={chooseAccess} />}
-      {step === 'providers' && <ProvidersStep keys={providerKeys} onChange={setProviderKeys} onNext={goNext} onSkip={skip} saving={saving} />}
+      {step === 'providers' && <ProvidersStep keys={providerKeys} onChange={setProviderKeys} onNext={handleSaveProviders} onSkip={() => { if (!actionRef.current) skip(); }} saving={saving} error={providerError} />}
       {step === 'agents'    && <AgentsStep onNext={goNext} onSkip={skip} />}
       {step === 'done'      && <DoneStep manualRestart={manualRestart} accessRestart={accessRestart} onComplete={handleComplete} action={action} error={completionError} onRestart={handleRestart} />}
     </WizardFrame>
@@ -155,13 +165,14 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
 }
 
 function ProvidersStep({
-  keys, onChange, onNext, onSkip, saving,
+  keys, onChange, onNext, onSkip, saving, error,
 }: {
   keys: ProviderKeys;
   onChange: (fn: (prev: ProviderKeys) => ProviderKeys) => void;
   onNext: () => void;
   onSkip: () => void;
   saving: boolean;
+  error: string;
 }) {
   const providers = [
     { key: 'deepseek' as const, label: 'DeepSeek', placeholder: 'sk-...', recommended: true },
@@ -193,16 +204,18 @@ function ProvidersStep({
               data-bwignore="true"
               placeholder={p.placeholder}
               value={keys[p.key]}
+              disabled={saving}
               onChange={(e) => onChange((prev) => ({ ...prev, [p.key]: e.target.value }))}
               className="wizard-input"
             />
           </div>
         ))}
       </div>
+      {error && <Surface variant="subtle" tone="danger"><div role="alert" className="wizard-text" style={{ overflowWrap: 'anywhere' }}>{error}</div></Surface>}
       <div className="wizard-actions">
-        <Button variant="ghost" size="sm" onClick={onSkip}>Skip for now</Button>
-        <Button variant="primary" size="md" onClick={onNext} loading={saving}>
-          Save &amp; Continue <ArrowRightIcon />
+        <Button variant="ghost" size="sm" onClick={onSkip} disabled={saving}>Skip for now</Button>
+        <Button variant="primary" size="md" onClick={onNext} loading={saving} disabled={saving}>
+          {saving ? 'Saving…' : 'Save & Continue'} <ArrowRightIcon />
         </Button>
       </div>
     </div>
@@ -303,7 +316,7 @@ function WizardFrame({
   stepIndex, steps, children, onStepClick, busy = false,
 }: {
   stepIndex: number;
-  /** A completion or restart is running: the steps are refused, so they look disabled. */
+  /** Step navigation is disabled while a wizard action is running. */
   busy?: boolean;
   steps: { key: string; label: string; labelMobile: string }[];
   children: React.ReactNode;
