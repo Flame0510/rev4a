@@ -198,6 +198,15 @@ catalogue advertises text and image input. [Anthropic's compatibility guide](htt
 The proxy authenticates using the provider's real API key from
 `<REV4A_DATA_DIR>/data/provider-keys.json`.
 
+Rev4a ignores an unreadable key file, logs one warning per unreadable file state
+and leaves its content as is. Reads still tighten permissions on regular key files
+to `0600` when needed. Saving or removing a key returns HTTP `409` until the file
+is fixed or removed. The setup wizard displays the save error and stays on the
+Providers step. Legacy environment keys are migrated only when the file is missing,
+using exclusive creation. Saving also returns `409` if the final read fails,
+the bytes differ or another writer creates the file first, though an edit can still
+land between the comparison and the write.
+
 Upstream request failures return `502` with the fixed message
 `Gateway error: the upstream request failed` (`type: "gateway_error"`). Fetch error
 messages can contain an authorization header: neither those messages nor error

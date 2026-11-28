@@ -655,8 +655,9 @@ bootstrap, Caddy certificate checks, and the provider gateway's own caller crede
 
 The unused gateway provider OAuth route was removed: its GET polled a caller-selected
 device flow and saved credentials, allowing login CSRF through navigation. Its device
-flow configuration and interfaces were local to the deleted file. `readProviderKeys` and
-`writeProviderKeys` remain shared by the live provider configuration, catalogue and proxy.
+flow configuration and interfaces were local to the deleted file. The provider configuration,
+catalogue and proxy share `readProviderKeys`. The Gateway POST uses the same loader and
+checks the file before saving.
 The Subscriptions page's per-agent ChatGPT login remains a separate, active workflow.
 
 **GET audit (2026-11-08):** the 74 remaining GET handlers in `app/api` were inspected
@@ -677,7 +678,7 @@ Docker actions or sending alerts.
 | `app/api/subscriptions/openai/login/route.ts:50`, `app/api/credentials/assignments/route.ts:41` | Login status and the assignment busy check can expire an overdue login and terminate its host/container CLI processes (`lib/subscription-login.ts:82`, `lib/subscription-login.ts:287`, `lib/subscription-login.ts:299`). They do not initiate login or save caller-supplied credentials. |
 | `app/api/update-status/route.ts:85` | `readUpdate` can rewrite `update-state.json` to `done`/`failed` based on process/version/deadline evidence (`lib/update-state.js:213`). |
 | `app/api/agents/[id]/backup/route.ts:43`, `app/api/agents/[id]/update/route.ts:32` | Legacy backup listing/existence checks create temporary `docker run --rm` helpers with a read-only volume mount (`lib/backups-volume.ts:83`, `lib/backups-volume.ts:117`). They do not delete backup data. |
-| `app/api/gateway/provider/route.ts:144`, `app/api/gateway/provider/balance/route.ts:32`, `app/api/models/route.ts:40`, `app/api/agents/models-summary/route.ts:102`, `app/api/agents/[id]/model/route.ts:111`, `app/api/provider/v1/models/route.ts:32`, `app/api/costs/agent/route.ts:36`, `app/api/costs/usage/route.ts:39` | Shared key reads can create the parent directory, tighten file permissions and migrate configured environment keys into a missing/unreadable `provider-keys.json` (`app/api/gateway/provider/keys.ts:26`). |
+| `app/api/gateway/provider/route.ts:144`, `app/api/gateway/provider/balance/route.ts:32`, `app/api/models/route.ts:40`, `app/api/agents/models-summary/route.ts:102`, `app/api/agents/[id]/model/route.ts:111`, `app/api/provider/v1/models/route.ts:32`, `app/api/costs/agent/route.ts:36`, `app/api/costs/usage/route.ts:39` | Shared key reads can tighten file permissions and create the parent directory to migrate configured environment keys into a missing `provider-keys.json`. They preserve unreadable content (`app/api/gateway/provider/keys.ts`). |
 | `app/api/events/route.ts:12`, `app/api/session/route.ts:17`, `app/api/sessions/route.ts:21`, `app/api/sessions/[id]/route.ts:20`, `app/api/system-health/route.ts:66`, `app/api/metrics/alerts/route.ts:41`; lifecycle status reads listed above plus `app/api/agents/[id]/route.ts:155` and `app/api/agents/[id]/restore/route.ts:50` | Even read-only `openDb` calls first run shared bootstrap (`lib/db.ts:9`, `lib/db-bootstrap.mjs:65`): create/migrate schema and metadata, and remove legacy lineage tables when present. These are existing bootstrap effects, not caller-directed mutations. |
 | `app/api/credentials/route.ts:14`, `app/api/credentials/[id]/route.ts:23`, `app/api/credentials/[id]/assignments/route.ts:58`, `app/api/credentials/assignments/route.ts:21`, `app/api/credentials/detect/route.ts:167` | First vault read can create/migrate credential schema and tighten file permissions (`lib/credentials/db.ts:15`, `lib/credentials/db.ts:104`). |
 

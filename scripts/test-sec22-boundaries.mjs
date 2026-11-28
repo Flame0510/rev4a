@@ -46,7 +46,11 @@ await test('PP-02 saves reject every control before trimming or mutating/syncing
   let stored = { deepseek: 'previous' };
   const route = load('app/api/gateway/provider/route.ts', {
     'next/server': next, child_process: { execSync: () => assert.fail('No processes') },
-    './keys': { readProviderKeys: () => ({ ...stored }), writeProviderKeys: (keys) => { stored = keys; writes++; } },
+    './keys': {
+      readProviderKeys: () => ({ ...stored }), loadProviderKeys: () => ({ keys: { ...stored }, state: 'ok' }),
+      ProviderKeysUnreadableError: class extends Error {}, ProviderKeysChangedError: class extends Error {},
+      saveProviderKeys: ({ keys }) => { stored = keys; writes++; },
+    },
     '../sync': { syncAllAgents: async () => { syncs++; return { ok: true }; } },
     '@/lib/docker-utils': { detectProviderGatewayUrl: () => 'http://mock' },
     '@/lib/model-pricing': {}, '@/lib/model-details': {}, '@/lib/provider-labels': { PROVIDER_LABELS: {} },
