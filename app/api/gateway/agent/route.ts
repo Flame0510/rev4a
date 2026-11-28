@@ -20,6 +20,8 @@ import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { readFastStatus, statusReadFailedMessage, SubscriptionError, UNSUPPORTED_AGENT_MESSAGE } from '@/lib/subscriptions';
 import { readClaudeAgent } from '@/lib/subscription-claude';
 import { effectiveAgentPrimary } from '@/lib/agent-model-setup';
+import { modelWriteVerified } from '@/lib/gateway-agent-verify';
+import { configErrorSummary } from '@/lib/redact-secret';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -28,7 +30,7 @@ function execInContainer(container: string, cmd: string, timeout = 15000): strin
   try {
     return execSync(
       `docker exec ${container} sh -c ${JSON.stringify(cmd)}`,
-      { timeout, maxBuffer: 1024 * 1024, encoding: 'utf-8' },
+      { timeout, maxBuffer: 1024 * 1024, encoding: 'utf-8', stdio: 'pipe' },
     ).trim();
   } catch (e: unknown) {
     const err = e as { stderr?: string; message?: string };
@@ -203,11 +205,11 @@ export async function PUT(request: NextRequest) {
       let config: Record<string, unknown>;
       try {
         config = JSON.parse(raw);
-      } catch (e) {
+      } catch {
+        console.warn(`[gateway:agent] openclaw.json of ${safeContainer} is not valid JSON`);
         return NextResponse.json({
           status: 'error',
           error: 'Failed to parse config from container',
-          detail: raw.slice(0, 200),
         }, { status: 500 });
       }
 
@@ -231,8 +233,8 @@ export async function PUT(request: NextRequest) {
       // kept whatever the request carries, so an automatic setup can never erase them.
       const requestFallbacks = onlyIfUnset ? undefined : body.fallbacks;
       const mainAgent = list.find((a) => a.id === 'main');
+      const primary = ensureRev4aPrefix(requestedModel);
       if (mainAgent) {
-        const primary = ensureRev4aPrefix(requestedModel);
         let fallbacks = dedupe(requestFallbacks ? ensureRev4aPrefixes(requestFallbacks) : existingFallbacks(mainAgent.model));
         // The primary never doubles as its own fallback.
         fallbacks = fallbacks.filter((fb) => fb !== primary);
@@ -242,15 +244,9 @@ export async function PUT(request: NextRequest) {
         };
       }
 
-      {
-        const primary = ensureRev4aPrefix(requestedModel);
-        let fallbacks = dedupe(requestFallbacks ? ensureRev4aPrefixes(requestFallbacks) : existingFallbacks(defaults.model));
-        fallbacks = fallbacks.filter((fb) => fb !== primary);
-        defaults.model = {
-          primary,
-          fallbacks,
-        };
-      }
+      const fallbacks = dedupe(requestFallbacks ? ensureRev4aPrefixes(requestFallbacks) : existingFallbacks(defaults.model));
+      const model = { primary, fallbacks: fallbacks.filter((fb) => fb !== primary) };
+      defaults.model = model;
       agents.defaults = defaults;
       config.agents = agents;
 
@@ -258,13 +254,15 @@ export async function PUT(request: NextRequest) {
       const newConfig = JSON.stringify(config, null, 2);
       execSync(
         `docker exec -i ${safeContainer} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-        { timeout: 15000, maxBuffer: 1024 * 1024, input: newConfig },
+        { timeout: 15000, maxBuffer: 1024 * 1024, input: newConfig, stdio: 'pipe' },
       );
 
-      return { defaults };
+      // Read back under the same lock: a second save landing in between would make this one look failed.
+      const verifyRaw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
+      const mainPrimary = mainAgent ? primary : undefined;
+      return { model, verifyOk: modelWriteVerified(verifyRaw, { ...model, mainPrimary }), verifyBytes: verifyRaw.length };
     });
     if (locked instanceof NextResponse) return locked;
-    const { defaults } = locked;
     // No gateway restart: the Gateway watches openclaw.json and hot-applies this.
     // Confirmed against a live agent by writing the file exactly the way this
     // route does — the container logged:
@@ -274,24 +272,16 @@ export async function PUT(request: NextRequest) {
     // defaults to `hybrid`, which restarts on its own for the sections that do
     // need it. The restart here cost ~7.5s of fully blocked event loop.
 
-    // Verify
-    const verifyRaw = readFileFromContainer(safeContainer, '/root/.openclaw/openclaw.json');
-    const verifyOk = verifyRaw.includes('"primary"');
-    const verifyBytes = verifyRaw.length;
+    const { verifyOk, verifyBytes } = locked;
 
     return NextResponse.json({
       status: 'ok',
       agent: safeContainer,
-      model: {
-        // Report what was written, not what was asked: both prefixed, and the
-        // fallbacks as preserved or replaced.
-        primary: (defaults.model as { primary: string }).primary,
-        fallbacks: (defaults.model as { fallbacks: string[] }).fallbacks,
-      },
+      model: locked.model,
       verify: { ok: verifyOk, bytes: verifyBytes },
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ status: 'error', error: message }, { status: 500 });
+    console.error(`[gateway:agent] PUT failed: ${configErrorSummary(e)}`);
+    return NextResponse.json({ status: 'error', error: 'Could not set the model.' }, { status: 500 });
   }
 }

@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { format } from 'node:util';
 
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`ok   ${name}`); }
@@ -24,7 +25,7 @@ class SubscriptionError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-function loadModule(file, dependencies) {
+function loadModule(file, dependencies, routeConsole = console) {
   const source = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8');
   const code = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -33,7 +34,7 @@ function loadModule(file, dependencies) {
   const sandbox = {
     module,
     exports: module.exports,
-    console,
+    console: routeConsole,
     Buffer,
     JSON,
     encodeURIComponent,
@@ -53,8 +54,10 @@ function loadModule(file, dependencies) {
 
 const configLock = loadModule('lib/agent-config-lock.ts', {});
 const modelSetup = loadModule('lib/agent-model-setup.ts', {});
+const modelVerify = loadModule('lib/gateway-agent-verify.ts', {});
+const redactor = loadModule('lib/redact-secret.ts', { './update-state.js': {} });
 
-function loadRoute(deps = {}) {
+function loadRoute(deps = {}, routeConsole) {
   return loadModule(routeFile, {
     'next/server': {
       NextRequest: class {},
@@ -77,8 +80,10 @@ function loadRoute(deps = {}) {
       readClaudeAgent: async () => ({ claude: { state: 'connected' } }),
     },
     '@/lib/agent-model-setup': modelSetup,
+    '@/lib/gateway-agent-verify': modelVerify,
+    '@/lib/redact-secret': redactor,
     ...deps,
-  });
+  }, routeConsole);
 }
 
 const config = () => ({
@@ -89,14 +94,24 @@ const config = () => ({
 });
 
 /** The route with a real in-memory openclaw.json; every read and write is visible. */
-function harness({ claudeState = 'connected', claudeError = null, claudeThrows = false, claudeFailure = null, profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture', initialConfig = config() } = {}) {
+function harness({
+  claudeState = 'connected', claudeError = null, claudeThrows = false, claudeFailure = null,
+  profiles = [{ id: 'openai:fixture' }], agentId = 'agent_fixture', initialConfig = config(),
+  initialRaw, verifyRaw, writeError,
+} = {}) {
   let stored = initialConfig;
   const calls = { openai: 0, claude: 0, writes: 0 };
+  const logs = [];
   const execSync = (command, options = {}) => {
     if (command.includes('docker inspect')) return agentId;
-    if (command.includes('cat /root/.openclaw/openclaw.json')) return JSON.stringify(stored);
+    if (command.includes('cat /root/.openclaw/openclaw.json')) {
+      assert.equal(options.stdio, 'pipe');
+      return (calls.writes ? verifyRaw : initialRaw) ?? JSON.stringify(stored);
+    }
     if (command.includes("cat > /root/.openclaw/openclaw.json")) {
+      assert.equal(options.stdio, 'pipe');
       calls.writes++;
+      if (writeError) throw writeError;
       stored = JSON.parse(options.input);
       return '';
     }
@@ -121,8 +136,11 @@ function harness({ claudeState = 'connected', claudeError = null, claudeThrows =
         return { claude: { state: claudeState }, error: claudeError };
       },
     },
+  }, {
+    warn: (...args) => logs.push(format(...args)),
+    error: (...args) => logs.push(format(...args)),
   });
-  return { route, calls, stored: () => stored };
+  return { route, calls, logs, stored: () => stored };
 }
 
 const put = (route, body) => route.PUT({ json: async () => body });
@@ -137,11 +155,51 @@ await test('anthropic mark: accepted and stored as the bare anthropic/<id>', asy
     fallbacks: ['rev4a/deepseek-v4-pro'],
   });
   assert.equal(res.status, 200);
+  assert.equal(res.body.verify.ok, true);
   assert.equal(modelOf(h.stored()).primary, 'anthropic/claude-haiku-5-5');
   assert.deepEqual(modelOf(h.stored()).fallbacks, ['rev4a/deepseek-v4-pro']);
   assert.equal(mainModelOf(h.stored()).primary, 'anthropic/claude-haiku-5-5');
   assert.equal(h.calls.claude, 1, 'the Claude state is read once');
   assert.equal(h.calls.openai, 0, 'the ChatGPT status is not read for a Claude mark');
+});
+
+const fixtureCredential = 'sk-live-FAKECRED-123'; // secret-ok: synthetic fixture
+const malformedConfig = `{"apiKey": "${fixtureCredential}",`;
+const modelRequest = { containerName: 'agent_fixture', model: 'rev4a/deepseek-flash' };
+
+await test('invalid initial config returns a fixed 500 and a log without file content', async () => {
+  const h = harness({ initialRaw: malformedConfig });
+  const res = await put(h.route, modelRequest);
+  assert.equal(res.status, 500);
+  assert.equal(JSON.stringify(res.body), JSON.stringify({ status: 'error', error: 'Failed to parse config from container' }));
+  assert.equal(Object.hasOwn(res.body, 'detail'), false);
+  assert.ok(!JSON.stringify(res.body).includes(fixtureCredential));
+  assert.deepEqual(h.logs, ['[gateway:agent] openclaw.json of agent_fixture is not valid JSON']);
+  assert.equal(h.calls.writes, 0);
+});
+
+await test('a write failure returns a fixed 500 and logs only the error kind and exit code', async () => {
+  const writeError = Object.assign(new Error(malformedConfig), { status: 2, stderr: malformedConfig });
+  const h = harness({ writeError });
+  const res = await put(h.route, modelRequest);
+  assert.equal(res.status, 500);
+  assert.equal(JSON.stringify(res.body), JSON.stringify({ status: 'error', error: 'Could not set the model.' }));
+  assert.deepEqual(h.logs, ['[gateway:agent] PUT failed: Error (exit 2)']);
+  assert.equal(h.calls.writes, 1);
+});
+
+await test('an unrelated primary, a different main primary or an invalid read-back preserves HTTP 200 with verify false', async () => {
+  const wrongMain = config();
+  mainModelOf(wrongMain).primary = 'rev4a/other';
+  for (const verifyRaw of ['{"other":{"primary":"rev4a/deepseek-flash"}}', JSON.stringify(wrongMain), malformedConfig, '']) {
+    const h = harness({ verifyRaw });
+    const res = await put(h.route, modelRequest);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'ok');
+    assert.equal(res.body.verify.ok, false);
+    assert.equal(res.body.verify.bytes, verifyRaw.length);
+    assert.ok(!JSON.stringify(res.body).includes(fixtureCredential));
+  }
 });
 
 await test('anthropic mark: refused with 409 when the agent is not connected to Claude', async () => {

@@ -291,7 +291,9 @@ async function runRecreate(id: number, agentId: string, image: string, wasRunnin
     try {
       await patchRev4aProvider(agentId);
     } catch (e) {
-      console.error('[agent:recreate] provider patch failed:', (e as Error).message);
+      // Loaded here: the lib tests load this file with a closed list of stubbed dependencies.
+      const { configErrorSummary } = await import('@/lib/redact-secret');
+      console.error('[agent:recreate] provider patch failed:', configErrorSummary(e));
     }
 
     updateRecreateRow(id, { status: 'done', error: warning });

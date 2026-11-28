@@ -17,7 +17,7 @@ import { findAvailablePortBlock, portMappingArgs, validatePortInput, DEFAULT_BLO
 import { agentPortsHostIp, getUsedHostPorts } from '@/lib/agent-ports-server';
 import { requireAuthJWT } from '@/lib/rev4a-auth';
 import { waitForGatewayReady } from '@/lib/agent-readiness';
-import { redactSecret, redactedMessage } from '@/lib/redact-secret';
+import { configErrorSummary, redactSecret, redactedMessage } from '@/lib/redact-secret';
 import { acquireTokenLock } from '@/lib/agent-token-lock';
 import { buildCreateRunArgs } from '@/lib/agent-create-args';
 import { parseLimitMb, mbToBytes } from '@/lib/agent-memory-limit';
@@ -381,7 +381,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Read the config OpenClaw generated on first boot
         const raw = execSync(
           `docker exec ${containerName} cat /root/.openclaw/openclaw.json`,
-          { timeout: 8000, encoding: 'utf-8' },
+          { timeout: 8000, encoding: 'utf-8', stdio: 'pipe' },
         ).trim();
         const config = JSON.parse(raw);
 
@@ -423,7 +423,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Single write
         execSync(
           `docker exec -i ${containerName} sh -c 'cat > /root/.openclaw/openclaw.json'`,
-          { timeout: 15000, input: JSON.stringify(config, null, 2) },
+          { timeout: 15000, input: JSON.stringify(config, null, 2), stdio: 'pipe' },
         );
       });
 
@@ -433,10 +433,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (e: unknown) {
       // post-creation config is non-fatal; can be synced manually. Parse and type errors quote the
       // openclaw.json they read, which holds credentials: log the error kind and exit code only.
-      const err = e as { name?: unknown; status?: unknown };
-      const kind = typeof err?.name === 'string' ? err.name : 'Error';
-      const exit = typeof err?.status === 'number' ? ` (exit ${err.status})` : '';
-      console.error(`[agent:create] post-creation config failed: ${kind}${exit}; openclaw.json was not updated.`);
+      console.error(`[agent:create] post-creation config failed: ${configErrorSummary(e)}; openclaw.json was not updated.`);
     }
 
     // Guarantee Rev4a runtime config (hooks, shared-skills, provider).
@@ -456,7 +453,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     } catch (e: unknown) {
       // runtime config patch is best-effort; log but don't fail the create
-      console.error('[agent:create] runtime config patch failed:', redactedMessage(e, agentsToken));
+      console.error('[agent:create] runtime config patch failed:', configErrorSummary(e));
     }
 
     finished = true;
