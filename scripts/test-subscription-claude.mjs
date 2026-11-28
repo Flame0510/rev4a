@@ -735,6 +735,60 @@ await testAsync('disconnect: a read-back that could not read the configuration d
   assert.equal(execs.some((argv) => argv.includes('logout')), false, 'the sign-out did not run after a failed removal');
 });
 
+await testAsync('disconnect: unreadable final sign-in status rejects with 502 after logout', async () => {
+  const signedIn = {
+    installed: true,
+    version: '2.1.325',
+    status: { loggedIn: true, authMethod: 'claude.ai' },
+    statusError: false,
+    models: null,
+    model: null,
+  };
+  const execs = [];
+  const { mod } = loadClaudeModule({
+    reads: [signedIn, signedIn, { ...signedIn, status: null, statusError: true }],
+    execs,
+  });
+  await assert.rejects(() => mod.disconnectClaudeAgent('a1'), {
+    status: 502,
+    message: 'Could not confirm the sign-out. Try again.',
+  });
+  assert.ok(execs.some((argv) => argv.includes('logout')), 'Claude Code logout ran');
+});
+
+await testAsync('disconnect: a read-back without an explicit loggedIn or installed boolean is not a sign-out', async () => {
+  const signedIn = {
+    installed: true,
+    version: '2.1.325',
+    status: { loggedIn: true, authMethod: 'claude.ai' },
+    statusError: false,
+    models: null,
+    model: null,
+  };
+  for (const [after, message] of [
+    [{ ...signedIn, status: { authMethod: 'claude.ai' } }, 'Could not confirm the sign-out. Try again.'],
+    [{ ...signedIn, status: { loggedIn: 'false' } }, 'Could not confirm the sign-out. Try again.'],
+    [{ status: null }, 'Could not read the subscription status from this agent.'],
+    [{ ...signedIn, installed: 'false', status: null }, 'Could not read the subscription status from this agent.'],
+  ]) {
+    const { mod } = loadClaudeModule({ reads: [signedIn, signedIn, after], execs: [] });
+    await assert.rejects(() => mod.disconnectClaudeAgent('a1'), { status: 502, message }, JSON.stringify(after));
+  }
+});
+
+test('disconnect: only a missing binary or an explicit signed-out status confirms logout', () => {
+  const cases = [
+    [{ installed: false, status: null, statusError: false }, 'ok'],
+    [{ installed: true, status: { loggedIn: false }, statusError: false }, 'ok'],
+    [{ installed: true, status: { loggedIn: true }, statusError: false }, 'signed-in'],
+    [{ installed: true, status: null, statusError: true }, 'unknown'],
+    [{ installed: true, status: null, statusError: false }, 'unknown'],
+  ];
+  for (const [after, expected] of cases) {
+    assert.equal(claude.claudeSignOutConfirmed(after), expected, JSON.stringify(after));
+  }
+});
+
 test('connect: the lean tools list is requested after the sandbox step and is not fatal', () => {
   const source = fsx.readFileSync(new URL('../lib/subscription-claude.ts', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('async function verifyAndConnect'));
@@ -883,6 +937,22 @@ test('status script: runs as written, whitelists and reports the configuration',
       claude.describeClaudeFacts({ installed: true, status: broken.status, statusError: broken.statusError, routeOn: true }).error,
       "Could not read Claude Code's sign-in state",
     );
+
+    // JSON without a boolean `loggedIn` (an error object, `{}`, a string "true") is a failed read,
+    // never a sign-out: a disconnect must not take a missing field for "signed out" (BUG-41).
+    for (const [name, body, code = 1] of [['error', '{"error":"status unavailable"}'], ['empty', '{}'], ['string', '{"loggedIn":"true"}'], ['array', '[{"loggedIn":false}]'], ['exit2', '{"loggedIn":false}', 2], ['exit124', '{"loggedIn":false}', 124]]) {
+      const oddBin = pathx.join(dir, `claude-odd-${name}`);
+      fsx.writeFileSync(oddBin, [
+        '#!/bin/sh',
+        'if [ "$1" = "--version" ]; then echo "2.1.325 (Claude Code)"; exit 0; fi',
+        `if [ "$1" = "auth" ]; then echo '${body}'; exit ${code}; fi`,
+        'exit 1',
+        '',
+      ].join('\n'), { mode: 0o755 });
+      const odd = JSON.parse(execFileSync(process.execPath, ['--no-warnings', '-e', script(oddBin, cfg)], { encoding: 'utf8' }));
+      assert.equal(odd.status, null, name);
+      assert.equal(odd.statusError, true, name);
+    }
   } finally {
     fsx.rmSync(dir, { recursive: true, force: true });
   }

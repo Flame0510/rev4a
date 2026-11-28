@@ -61,6 +61,7 @@ import {
   claudeLoginOnPrompt,
   claudeLoginSubmitState,
   claudeRouteOn,
+  claudeSignOutConfirmed,
   claudeState,
   describeClaudeFacts,
   parseClaudeLogin,
@@ -182,8 +183,12 @@ async function readClaudeRaw(container: string): Promise<ClaudeRaw> {
   if (a !== -1 && b > a) {
     try { parsed = JSON.parse(out.slice(a, b + 1)); } catch { parsed = null; }
   }
-  if (!isRecord(parsed)) throw new SubscriptionError(503, statusReadFailedMessage('the agent answered in an unexpected format'));
-  const status = isRecord(parsed.status) ? parseClaudeStatus(parsed.status) : null;
+  // The status script always prints both booleans: anything else is not a read Rev4a can trust
+  // (a disconnect must never take a missing field for "signed out").
+  if (!isRecord(parsed) || typeof parsed.installed !== 'boolean') {
+    throw new SubscriptionError(503, statusReadFailedMessage('the agent answered in an unexpected format'));
+  }
+  const status = isRecord(parsed.status) && typeof parsed.status.loggedIn === 'boolean' ? parseClaudeStatus(parsed.status) : null;
   const models = isRecord(parsed.models) ? parsed.models : null;
   const model = parsed.model === undefined || parsed.model === null
     ? null
@@ -874,7 +879,9 @@ export async function disconnectClaudeAgent(agentId: unknown): Promise<{ removed
     // A sign-out that timed out answers with no error: read the status back.
     const after = await readClaudeRaw(a.container).catch(() => null);
     if (!after) throw new SubscriptionError(502, 'Could not read the subscription status from this agent.');
-    if (after.status?.loggedIn) throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');
+    const confirmation = claudeSignOutConfirmed(after);
+    if (confirmation === 'signed-in') throw new SubscriptionError(502, 'The sign-out did not complete. Try again.');
+    if (confirmation === 'unknown') throw new SubscriptionError(502, 'Could not confirm the sign-out. Try again.');
     return { removed: wasLoggedIn ? 1 : 0 };
   });
 }

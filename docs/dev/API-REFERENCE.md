@@ -3731,7 +3731,10 @@ entry of `agents.list`, removing the `model` key when a subscription primary has
 The job verifies each model change before proceeding. It removes the Claude Code runtime rule with
 `openclaw config patch --stdin` (the `anthropic/*` key is sent as `null`; when it was the only key
 `models` itself is nulled, so no empty `models` object is left behind), runs
-`timeout 60 /root/.local/bin/claude auth logout` and reads the status back, which must say logged out.
+`timeout 60 /root/.local/bin/claude auth logout` when Claude Code is installed, and reads the status
+back. The job succeeds if the read-back shows Claude Code is missing or explicitly signed out.
+If the read-back shows Claude Code is installed but provides no sign-in status, the disconnect
+raises a **502** and the job fails with "Could not confirm the sign-out. Try again."
 The binary stays: it is the runtime the agent uses again on the next connect. 409 when the agent is
 stopped, busy (a running login included) or already has a subscription change running.
 
