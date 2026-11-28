@@ -119,7 +119,9 @@ async function runEdit(id: number, agentId: string, container: Awaited<ReturnTyp
     try {
       await patchRev4aProvider(agentId);
     } catch (e) {
-      console.error('[agent:edit] provider patch failed:', (e as Error).message);
+      // Loaded here: the lib tests load this file with a closed list of stubbed dependencies.
+      const { configErrorSummary } = await import('@/lib/redact-secret');
+      console.error('[agent:edit] provider patch failed:', configErrorSummary(e));
     }
 
     updateEditRow(id, { status: 'done', error: warning });

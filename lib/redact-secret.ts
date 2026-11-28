@@ -22,6 +22,37 @@ export function redactedMessage(e: unknown, secret?: string | null): string {
   const message = e instanceof Error ? e.message : String(e);
   return redactSecret(message, secret);
 }
+
+/** Summarize config failures whose message and command output may contain credentials. */
+export function configErrorSummary(e: unknown): string {
+  try {
+    const err = e as { name?: unknown; status?: unknown; code?: unknown; message?: unknown } | null | undefined;
+    // Each field is read once: a getter cannot pass the check and then return something else.
+    const name = err?.name;
+    const status = err?.status;
+    const code = err?.code;
+    const kind = typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(name) ? name : 'Error';
+    const exit = Number.isSafeInteger(status) ? status : Number.isSafeInteger(code) ? code : undefined;
+    if (exit !== undefined) return `${kind} (exit ${exit})`;
+    const cause = dockerExecCause(err?.message);
+    return cause ? `${kind} (${cause})` : kind;
+  } catch {
+    return 'Error';
+  }
+}
+
+/**
+ * The cause of a lib/docker-exec.ts failure, from the fixed prefix of its message only
+ * (`docker exec <c>: exit 2 — <stderr>` → `exit 2`). The stderr after it is never returned.
+ */
+function dockerExecCause(message: unknown): string | null {
+  if (typeof message !== 'string') return null;
+  const m = /^docker exec (?:\S+: )?(?:exit (-?\d{1,4})\b|exited with code (-?\d{1,4})\b|(timed out)\b|output (exceeded) \d+ bytes)/.exec(message);
+  if (!m) return message === 'Docker is not available' ? 'Docker not available' : null;
+  if (m[1] ?? m[2]) return `exit ${m[1] ?? m[2]}`;
+  return m[3] ? 'timed out' : 'output too large';
+}
+
 /**
  * Redact JSON by key and credential location, without mutating it. Private
  * containers retain their names/shape, but every leaf (including array members)

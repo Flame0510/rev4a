@@ -401,11 +401,19 @@ works.
 }
 ```
 
-`verify.ok` reports whether the trimmed read-back contains the literal
-`"primary"` anywhere. `verify.bytes` is the length of that string in UTF-16
-code units. An empty or failed read-back gives `{ "ok": false, "bytes": 0 }`.
-The read-back checks for the field name only. The response can still be HTTP
-**200** with `status: "ok"` when `verify.ok` is false.
+`verify.ok` is true when the read-back parses as JSON and
+`agents.defaults.model` has the primary and ordered fallback list just written.
+If the save updated the `main` entry in `agents.list`, its model primary must
+also match. An empty, failed or invalid read-back, or a mismatch, gives
+`verify.ok: false` with HTTP **200** and `status: "ok"`. The subscription
+model setup flow treats that result as a failed save. `verify.bytes` still
+reports the length of the trimmed read-back in UTF-16 code units, or 0 when
+the read is empty or fails.
+
+If the initial config is invalid JSON, the endpoint returns HTTP **500** with
+`{ "status": "error", "error": "Failed to parse config from container" }`.
+The response omits `detail`. Unexpected errors return HTTP **500** with
+`{ "status": "error", "error": "Could not set the model." }`.
 
 **Behaviour:**
 - Writes `agents.defaults.model`, and the entry in `agents.list` whose `id` is

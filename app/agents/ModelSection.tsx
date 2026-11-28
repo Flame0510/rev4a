@@ -370,7 +370,7 @@ export default function ModelSection({
         body: JSON.stringify({ containerName: agentId, model: primary, fallbacks }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success !== false) {
+      if (res.ok && data.success !== false && data.verify?.ok !== false) {
         setMsg({ text: 'Model saved. It applies immediately, no restart needed.', ok: true });
         setAutoFallback(null);
         // The card in the list reads a separate summary endpoint; without this it
@@ -379,7 +379,7 @@ export default function ModelSection({
         await load();
         setSubKey((k) => k + 1);
       } else {
-        setMsg({ text: data.error || 'Save failed', ok: false });
+        setMsg({ text: data.error || (res.ok ? 'Could not confirm the saved model. Reload and check it.' : 'Save failed'), ok: false });
       }
     } catch (e) {
       setMsg({ text: (e as Error).message, ok: false });

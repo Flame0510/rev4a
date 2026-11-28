@@ -48,7 +48,7 @@ import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { DEFAULT_FINISH_TIMINGS, dueForRecheck, evaluateResolution, finishAfterRecreate, resolutionText, offersRollback, offersRollbackAnyway, verifyJsonForStore, whenEligible, type ContainerState } from '@/lib/agent-update-resolution';
 import { adoptCronInferenceAccount, type CronAccountAdoption } from '@/lib/agent-update-cron-account';
 import { readPreUpdateCronEvidence } from '@/lib/backup-cron-evidence';
-import { redactSecret } from '@/lib/redact-secret';
+import { configErrorSummary, redactSecret } from '@/lib/redact-secret';
 import { AGENTS_TOKEN_FILE } from '@/lib/rev4a-paths';
 import fs from 'node:fs';
 import { acquireAgentResourcePreflight } from '@/lib/agent-resource-preflight';
@@ -291,7 +291,7 @@ async function runUpdate(id: number, agentId: string, name: string, fromVersion:
           try {
             await patchRev4aProvider(agentId);
           } catch (e) {
-            console.error('[agent:update] provider patch failed:', redactSecret((e as Error).message, readAgentsToken()));
+            console.error('[agent:update] provider patch failed:', configErrorSummary(e));
           }
         },
         // The slow-start note ("still starting") is stale once the Gateway answers.
@@ -531,7 +531,7 @@ async function runRollback(row: AgentUpdateRow, container: AgentContainerInspect
     const version = parseOpenClawVersion(await dockerExecNoFail(agentId, ['openclaw', '--version'], { timeoutMs: 60_000 }));
     if (version !== fromVersion) throw new Error(`The agent reports OpenClaw ${version ?? 'no version'} instead of ${fromVersion}`);
 
-    void reapplyWhenReady(name).catch((e) => console.warn(`[rollback] credential re-apply failed on ${name}:`, redactSecret((e as Error).message, readAgentsToken())));
+    void reapplyWhenReady(name).catch((e) => console.warn(`[rollback] credential re-apply failed on ${name}:`, configErrorSummary(e)));
     updateRow(row.id, { status: 'rolled_back' });
   } catch (e) {
     updateRow(row.id, { status: 'rollback_failed', error: shortError(e) });
@@ -598,14 +598,16 @@ export async function checkUpdateResolution(agentId: string): Promise<boolean> {
     try {
       await applyRuntimeConfig(agentId);
     } catch (e) {
-      console.warn(`[agent:update] could not re-apply Rev4a's config on ${agentId}: ${redactSecret((e as Error).message, readAgentsToken())}`);
-      failures.push(shortError(e));
+      const summary = configErrorSummary(e);
+      console.warn(`[agent:update] could not re-apply Rev4a's config on ${agentId}: ${summary}`);
+      failures.push(summary);
     }
     try {
       await patchRev4aProvider(agentId);
     } catch (e) {
-      console.warn(`[agent:update] provider patch failed on ${agentId}: ${redactSecret((e as Error).message, readAgentsToken())}`);
-      failures.push(shortError(e));
+      const summary = configErrorSummary(e);
+      console.warn(`[agent:update] provider patch failed on ${agentId}: ${summary}`);
+      failures.push(summary);
     }
     const configNote = failures.length ? `Rev4a's config could not be re-applied: ${failures[0]}` : null;
     const text = resolutionText(row.status, row.to_version, later, configNote);

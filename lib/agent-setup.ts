@@ -14,6 +14,7 @@ import { dockerExec, dockerExecWithInput } from '@/lib/docker-exec';
 import { gatewayCliArgv } from '@/lib/gateway-cli';
 import { reapplyWhenReady } from '@/lib/credentials/delivery';
 import { withAgentConfigLock } from '@/lib/agent-config-lock';
+import { configErrorSummary } from '@/lib/redact-secret';
 
 // ── Volumes ──────────────────────────────────────────────────────────────────
 
@@ -177,18 +178,18 @@ export async function applyRuntimeConfig(containerName: string): Promise<void> {
     try {
       await withAgentConfigLock(containerName, () => patchConfig(containerName, patch));
     } catch (e) {
-      console.warn(`[agent-setup] config patch failed on ${containerName}:`, (e as Error).message);
+      console.warn(`[agent-setup] config patch failed on ${containerName}:`, configErrorSummary(e));
     }
   }
   try {
     await applyControlUiPolicy(containerName);
   } catch (e) {
-    console.warn(`[agent-setup] Control UI origin policy not applied on ${containerName}:`, (e as Error).message);
+    console.warn(`[agent-setup] Control UI origin policy not applied on ${containerName}:`, configErrorSummary(e));
   }
   // Credentials switched on for this agent (secret store + skill config). Not awaited: the
   // calls take seconds and create, recreate, update and edit must not wait for them. The
   // assignments are the source of truth; each outcome is kept on its own assignment.
   void reapplyWhenReady(containerName).catch((e) => {
-    console.warn(`[agent-setup] credentials not re-applied on ${containerName}:`, (e as Error).message);
+    console.warn(`[agent-setup] credentials not re-applied on ${containerName}:`, configErrorSummary(e));
   });
 }
