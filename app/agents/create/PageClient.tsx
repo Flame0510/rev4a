@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, MemoryLimitPicker, Surface, TemplateOption, useDockerTotalMb } from '../../components/ui';
 import { OpenControlUiButton, useControlUiPublicUrl } from '../BrowserAccessSection';
 import { findAvailablePortBlock, validatePortInput } from '@/lib/agent-ports';
-import { memoryLimitPolicyError } from '@/lib/agent-resource-policy';
+import { gb, memoryLimitPolicyError } from '@/lib/agent-resource-policy';
+import type { AgentResourcePreview } from '@/lib/agent-resource-preflight';
 
 interface TemplateInfo {
   id: string;
@@ -75,6 +76,58 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
   const [memoryLimitMb, setMemoryLimitMb] = useState<number | null>(defaultMemoryLimitMb ?? null);
   const [memoryError, setMemoryError] = useState('');
   const dockerTotalMb = useDockerTotalMb();
+  const [memoryCheck, setMemoryCheck] = useState<AgentResourcePreview | null>(null);
+  const [checkingMemory, setCheckingMemory] = useState<'automatic' | 'retry' | null>('automatic');
+  const [checkNonce, setCheckNonce] = useState(0);
+  const memoryCheckAbort = useRef<AbortController | null>(null);
+  const checkMemory = useCallback(async (limitMb: number | null, signal: AbortSignal) => {
+    if (signal.aborted) return;
+    const query = limitMb === null ? '' : `?limitMb=${limitMb}`;
+    const checkError = 'Could not check Docker memory. Try again later.';
+    try {
+      const response = await fetch(`/api/agents/create/resources${query}`, { signal, cache: 'no-store' });
+      const data: AgentResourcePreview | null = await response.json();
+      if (signal.aborted) return;
+      const validSuccess = data?.ok === true && Number.isFinite(data.breakdown?.requiredMb)
+        && Number.isFinite(data.breakdown?.dockerTotalMb);
+      if (response.ok && (data?.ok === false || validSuccess)) {
+        setMemoryCheck(data);
+      } else {
+        setMemoryCheck({ ok: false, code: 'request-failed', error: (data?.ok === false && data.error) || checkError });
+      }
+    } catch (error) {
+      if (!signal.aborted && (error as Error).name !== 'AbortError') {
+        setMemoryCheck({ ok: false, code: 'request-failed', error: checkError });
+      }
+    } finally {
+      if (!signal.aborted) setCheckingMemory(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (memoryError) {
+      setMemoryCheck(null);
+      return;
+    }
+    const controller = new AbortController();
+    memoryCheckAbort.current = controller;
+    setCheckingMemory('automatic');
+    const timer = setTimeout(() => void checkMemory(memoryLimitMb, controller.signal), 400);
+    return () => {
+      clearTimeout(timer);
+      memoryCheckAbort.current?.abort();
+    };
+  }, [checkMemory, memoryLimitMb, memoryError, checkNonce]);
+
+  const checkMemoryAgain = () => {
+    memoryCheckAbort.current?.abort();
+    const controller = new AbortController();
+    memoryCheckAbort.current = controller;
+    setCheckingMemory('retry');
+    void checkMemory(memoryLimitMb, controller.signal);
+  };
+
+  const memoryRefusal = memoryCheck?.ok === false && memoryCheck.code === 'insufficient-host' ? memoryCheck.breakdown : undefined;
   // The picker remounts when the step is revisited and opens on the chosen size (none if it was invalid): drop the stale error.
   useEffect(() => { if (step !== 'config') setMemoryError(''); }, [step]);
   // The server render seeds this; the same endpoint the Edit panel uses refreshes it, so
@@ -161,6 +214,14 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
       const data = await res.json();
 
       if (!res.ok || !data.success) {
+        if (res.status === 409 && data.resources) {
+          memoryCheckAbort.current?.abort();
+          setCheckingMemory(null);
+          setMemoryCheck({ ok: false, code: data.code, error: data.error, breakdown: data.resources });
+          setStep('config');
+          setSubmitting(false);
+          return;
+        }
         setErrorMsg(data.error || 'Unknown error');
         setStep('error');
         setSubmitting(false);
@@ -343,6 +404,41 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
             />
           </div>
 
+          <section aria-labelledby="create-memory-check" className="ui-text-small" style={{ marginBottom: 16, overflowWrap: 'anywhere' }}>
+            <div id="create-memory-check" style={{ marginBottom: 6 }}>Memory check</div>
+            <div aria-live="polite">
+              {memoryError && <div className="ui-muted">Fix the memory limit to check memory.</div>}
+              {!memoryError && checkingMemory && <div className="ui-muted">Checking memory…</div>}
+              {!memoryError && checkingMemory !== 'automatic' && memoryCheck && (
+                memoryCheck.ok ? (
+                  <div className="ui-muted">
+                    Memory: needs {gb(memoryCheck.breakdown.requiredMb, false)} of {gb(memoryCheck.breakdown.dockerTotalMb)} available in Docker.
+                  </div>
+                ) : memoryRefusal ? (
+                  <Surface tone="danger" compact>
+                    <div>{memoryCheck.error}</div>
+                    <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+                      <li>New agent · {gb(memoryRefusal.target.reserveMb)}</li>
+                      {memoryRefusal.others.map((entry, index) => (
+                        <li key={index}>
+                          {entry.name || entry.agentId || 'Container'} · {gb(entry.reservedMb)}
+                          {entry.basis === 'claim' && ' (in-flight reservation)'}
+                        </li>
+                      ))}
+                      <li>Kept free · {gb(memoryRefusal.headroomMb)}</li>
+                      <li>Total · {gb(memoryRefusal.requiredMb)} needed of {gb(memoryRefusal.dockerTotalMb)} available in Docker</li>
+                    </ul>
+                    <Button type="button" size="sm" onClick={checkMemoryAgain} loading={checkingMemory === 'retry'}>
+                      {checkingMemory === 'retry' ? 'Checking…' : 'Check again'}
+                    </Button>
+                  </Surface>
+                ) : (
+                  <div className="ui-muted">Memory check unavailable: {memoryCheck.error}</div>
+                )
+              )}
+            </div>
+          </section>
+
           {/* Model */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 6 }}>Model (optional)</label>
@@ -423,6 +519,10 @@ export default function CreatePageClient({ templates, models, usedNames, usedPor
               View All Agents
             </Button>
             <Button variant="primary" size="md" onClick={() => {
+              memoryCheckAbort.current?.abort();
+              setMemoryCheck(null);
+              setCheckingMemory('automatic');
+              setCheckNonce((nonce) => nonce + 1);
               setToast(null);
               setStep('template');
               setSelectedTemplate('');

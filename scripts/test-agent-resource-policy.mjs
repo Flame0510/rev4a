@@ -49,8 +49,15 @@ await test('unknown version/capacity is explicit and cannot authorize mutation',
   }
 });
 await test('exact host boundary includes 1 GiB host headroom', () => {
-  assert.equal(policy.evaluateAgentResources(create({ dockerTotalMb: 5119 })).code, 'insufficient-host');
-  assert.equal(policy.evaluateAgentResources(create({ dockerTotalMb: 5120 })).ok, true);
+  const refused = policy.evaluateAgentResources(create({ dockerTotalMb: 5119 }));
+  const admitted = policy.evaluateAgentResources(create({ dockerTotalMb: 5120 }));
+  assert.equal(refused.code, 'insufficient-host');
+  assert.equal(admitted.ok, true);
+  assert.equal(refused.breakdown.requiredMb, 5120);
+  assert.equal(admitted.requiredMb, 5120);
+  assert.equal(refused.breakdown.shortfallMb, 1);
+  assert.equal(admitted.breakdown.shortfallMb, 0);
+  assert.deepEqual(admitted.breakdown.target, { reserveMb: 4096, basis: 'limit' });
 });
 await test('other finite agents count by cap, unlimited agents by working set plus headroom', () => {
   const result = policy.evaluateAgentResources(create({ containers: [
@@ -71,12 +78,81 @@ await test('updating target counts once, and unlimited current usage must be kno
     targetUsageMb: 4096, dockerTotalMb: 8000, containers: [{ agentId: 'ours', limitMb: null, usageMb: 4096 }] }));
   assert.equal(result.targetReserveMb, 5120);
   assert.equal(result.otherReserveMb, 0);
+  assert.deepEqual(result.breakdown.target, { reserveMb: 5120, basis: 'usage' });
   assert.equal(policy.evaluateAgentResources(create({ operation: 'update', limitMb: null })).code, 'unknown-usage');
 });
 await test('reservations deduplicate visible agents and prefer a larger prospective allocation', () => {
   const result = policy.evaluateAgentResources(create({ containers: [{ agentId: 'other', limitMb: 2048, usageMb: null }],
     reservations: [{ agentId: 'other', reservedMb: 3072 }, { agentId: 'future', reservedMb: 512 }] }));
   assert.equal(result.otherReserveMb, 3584);
+  assert.deepEqual(result.breakdown.others, [
+    { agentId: 'other', name: null, reservedMb: 3072, basis: 'claim', kind: 'agent', claimed: true },
+    { agentId: 'future', name: null, reservedMb: 512, basis: 'claim', kind: 'agent' },
+  ]);
+});
+
+const liveCase = {
+  limitMb: null, dockerTotalMb: 7834, dockerDesktop: true,
+  containers: [{ agentId: 'agent_ee11671b', name: 'test', limitMb: null, usageMb: 2215 }],
+};
+const desktopRefusal = 'Not enough memory for the new agent. Docker has 7.65 GB; creating it needs 8.16 GB: 4 GB for the new agent (OpenClaw 2026.10.10), 3.16 GB for running agents and containers, 1 GB kept free. To continue, stop "test" (frees 3.16 GB) or give Docker at least 9 GB (Docker Desktop: Settings → Resources → Memory). Nothing was changed.';
+
+await test('the 8.16 GB Create refusal explains the numbers and actions on Docker Desktop and Linux', () => {
+  const decision = policy.evaluateAgentResources(create(liveCase));
+  assert.equal(decision.ok, false);
+  assert.equal(decision.code, 'insufficient-host');
+  assert.equal(decision.error, desktopRefusal);
+  assert.deepEqual(decision.breakdown, {
+    dockerTotalMb: 7834, requiredMb: 8359, shortfallMb: 525, headroomMb: 1024,
+    target: { reserveMb: 4096, basis: 'policy' },
+    others: [{ agentId: 'agent_ee11671b', name: 'test', reservedMb: 3239, basis: 'usage', kind: 'agent' }],
+    suggestion: { stopAgentId: 'agent_ee11671b', stopAgentName: 'test', freesMb: 3239, dockerMemoryGb: 9 },
+  });
+  assert.equal(policy.evaluateAgentResources(create({ ...liveCase, dockerDesktop: false })).error,
+    desktopRefusal.replace(' (Docker Desktop: Settings → Resources → Memory)', ' of memory'));
+});
+
+await test('Update uses its own wording and omits the other reservation when it is zero', () => {
+  const input = create({ ...liveCase, operation: 'update', targetUsageMb: 1536 });
+  assert.equal(policy.evaluateAgentResources(input).error,
+    desktopRefusal.replaceAll('the new agent', 'this agent').replace('creating it', 'updating it'));
+  assert.equal(policy.evaluateAgentResources({ ...input, dockerTotalMb: 4096, containers: [], dockerDesktop: false }).error,
+    'Not enough memory for this agent. Docker has 4 GB; updating it needs 5 GB: 4 GB for this agent (OpenClaw 2026.10.10), 1 GB kept free. To continue, stop running agents or give Docker at least 6 GB of memory. Nothing was changed.');
+});
+
+await test('the smallest eligible running agent is suggested by id when it has no display name', () => {
+  const containers = [
+    { agentId: 'small', limitMb: 900, usageMb: null },
+    { agentId: 'large', name: 'Large', limitMb: 1500, usageMb: null },
+    { agentId: 'medium', limitMb: 1100, usageMb: null },
+  ];
+  const decision = policy.evaluateAgentResources(create({ dockerTotalMb: 6900, containers }));
+  assert.equal(decision.breakdown.shortfallMb, 1720);
+  assert.equal(decision.breakdown.suggestion.stopAgentId, null);
+  assert.match(decision.error, /To continue, stop running agents/);
+  const retry = policy.evaluateAgentResources(create({ dockerTotalMb: 7550, containers }));
+  assert.deepEqual(retry.breakdown.others.map(({ agentId }) => agentId), ['large', 'medium', 'small']);
+  assert.equal(retry.breakdown.shortfallMb, 1070);
+  assert.deepEqual(retry.breakdown.suggestion, {
+    stopAgentId: 'medium', stopAgentName: null, freesMb: 1100, dockerMemoryGb: 9,
+  });
+  assert.match(retry.error, /stop "medium" \(frees 1.07 GB\)/);
+});
+
+await test('a plain container and in-flight claims are never suggested as agents to stop', () => {
+  const decision = policy.evaluateAgentResources(create({ dockerTotalMb: 7300,
+    containers: [{ agentId: null, name: 'database', limitMb: 1536, usageMb: 1200 }],
+    reservations: [{ agentId: 'future', reservedMb: 2048 }],
+  }));
+  assert.equal(decision.breakdown.shortfallMb, 1068);
+  assert.deepEqual(decision.breakdown.others, [
+    { agentId: 'future', name: null, reservedMb: 2048, basis: 'claim', kind: 'agent' },
+    { agentId: null, name: 'database', reservedMb: 1200, basis: 'usage', kind: 'container' },
+  ]);
+  assert.deepEqual(decision.breakdown.suggestion, {
+    stopAgentId: null, stopAgentName: null, freesMb: null, dockerMemoryGb: 9,
+  });
+  assert.match(decision.error, /To continue, stop running agents/);
 });
 
 // Transpile the real server modules into isolated contexts. Only declared mock dependencies exist.
@@ -196,8 +272,19 @@ await test('actual Create refuses unknown/insufficient host facts before mutatio
     const { route, calls } = createRoute((input) => pre.acquireAgentResourcePreflight(input, facts({ dockerTotalMb })));
     const result = await route.POST({ json: async () => ({ name: 'oc-eval-test', template: 'custom', memoryLimitMb: 4096 }) });
     assert.equal(result.status, 409);
+    assert.equal(result.body.code, dockerTotalMb === null ? 'unknown-host' : 'insufficient-host');
+    assert.equal(result.body.resources?.requiredMb, dockerTotalMb === null ? undefined : 5120);
     assert.ok(!calls.some((cmd) => /MUTATION|network|volume|docker run/.test(cmd)));
   }
+});
+await test('actual Create returns the same refusal and breakdown as the policy for the 8.16 GB case', async () => {
+  const { route } = createRoute((input) => pre.acquireAgentResourcePreflight(input, facts(liveCase)));
+  const result = await route.POST({ json: async () => ({ name: 'oc-eval-test', template: 'custom' }) });
+  assert.equal(result.status, 409);
+  assert.deepEqual({ ...result.body }, {
+    success: false, code: 'insufficient-host', error: desktopRefusal,
+    resources: policy.evaluateAgentResources(create(liveCase)).breakdown,
+  });
 });
 await test('actual Create releases admitted resources on an early post-preflight error', async () => {
   const { route } = createRoute((input) => pre.acquireAgentResourcePreflight(input, facts()));

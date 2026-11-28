@@ -27,6 +27,6 @@ export function dockerAvailable(): boolean {
  * GET/POST against the Docker Engine API, resolving the response as JSON.
  * Rejects when Docker is unreachable or the payload isn't JSON.
  */
-export function dockerFetch<T = any>(method: string, apiPath: string): Promise<T> {
-  return dockerRequestJson<T>(method, apiPath);
+export function dockerFetch<T = any>(method: string, apiPath: string, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
+  return dockerRequestJson<T>(method, apiPath, timeoutMs, signal);
 }

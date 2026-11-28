@@ -480,10 +480,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       removed = ' ' + rollbackCreate(rollbackTarget);
       rollbackTarget = null;
     }
-    return NextResponse.json(
-      { success: false, error: redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) + removed },
-      { status: e instanceof AgentResourceRefusedError ? 409 : 500 },
-    );
+    const error = redactSecret(redactSecret((e as Error).message || 'Unknown error', createToken), laterToken) + removed;
+    if (e instanceof AgentResourceRefusedError) {
+      return NextResponse.json({ success: false, error, code: e.code, resources: e.breakdown }, { status: 409 });
+    }
+    return NextResponse.json({ success: false, error }, { status: 500 });
   } finally {
     releaseTokenLock();
     releaseResources();

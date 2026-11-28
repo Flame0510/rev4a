@@ -71,13 +71,26 @@ function versionFromTags(tags: string[]): string | null {
 }
 
 /** Local `openclaw-agent-base` images, through the Docker API. */
-export async function listLocalAgentImages(): Promise<LocalAgentImage[]> {
+export async function listLocalAgentImages({ timeoutMs }: { timeoutMs?: number } = {}): Promise<LocalAgentImage[]> {
   const imageFilter = encodeURIComponent(JSON.stringify({ reference: [LOCAL_IMAGE_REPOSITORY] }));
   const agentFilter = encodeURIComponent(JSON.stringify({ label: ['AGENT_ID'] }));
-  const [images, containers] = await Promise.all([
-    dockerFetch<DockerImage[]>('GET', `/images/json?filters=${imageFilter}`),
-    dockerFetch<DockerContainer[]>('GET', `/containers/json?all=true&filters=${agentFilter}`),
-  ]);
+  const controller = timeoutMs ? new AbortController() : undefined;
+  // The socket timeout measures inactivity. Bound the whole lookup and cancel its sibling on failure.
+  const timer = controller && setTimeout(() => controller.abort(new Error('Docker image listing timed out')), timeoutMs);
+  let images: DockerImage[];
+  let containers: DockerContainer[];
+  try {
+    [images, containers] = await Promise.all([
+      dockerFetch<DockerImage[]>('GET', `/images/json?filters=${imageFilter}`, timeoutMs, controller?.signal),
+      dockerFetch<DockerContainer[]>('GET', `/containers/json?all=true&filters=${agentFilter}`, timeoutMs, controller?.signal),
+    ]);
+    if (controller && (!Array.isArray(images) || !Array.isArray(containers))) {
+      throw new Error('Docker image listing was incomplete');
+    }
+  } finally {
+    clearTimeout(timer);
+    controller?.abort();
+  }
 
   const usedBy = new Map<string, string[]>();
   for (const c of Array.isArray(containers) ? containers : []) {

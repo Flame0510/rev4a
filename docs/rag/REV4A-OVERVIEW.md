@@ -30,6 +30,8 @@ The RESOURCES section of an agent's panel starts with its **memory limit**: the 
 1. Pick a template: **Atlas** (general dev), **Argus** (security/audit), **Prometheus** (client-facing), or **Custom** (blank slate)
 2. Configure: name, optional port, optional model → Deploy
 
+The create page checks Docker memory before Create and explains a refusal with the numbers and what to do.
+
 **Custom template:** starts with no preset identity. On first run, the agent runs a bootstrap ritual (BOOTSTRAP.md): introduces itself, asks who the user is, and together they define name, personality, tone, and boundaries. No AI generation needed — it's a native OpenClaw feature.
 
 **Channel Manager:** Each agent detail panel has a "CHANNELS" section with TG status badge and a "Manage Channels" button. The modal lets you:

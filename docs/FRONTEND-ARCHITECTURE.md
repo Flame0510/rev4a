@@ -406,6 +406,13 @@ policy as the server. The create page reads the newest local supported target wi
 five-second advice lookup; Resources receives the agent's known runtime version. Unknown/stale
 advice never bypasses server admission. Values/defaults and existing cap editing remain unchanged.
 
+Under the picker, Create's **Memory check** uses `GET /api/agents/create/resources`
+on mount, after valid limit changes, and after **Create Another**, with a 400 ms
+debounce and an `AbortController` ref. An invalid limit pauses the check and prompts
+the user to fix the field. Insufficient memory shows a danger `Surface` with the breakdown and a
+**Check again** button with its own loading state. Deploy uses server admission,
+and a `409` with `resources` replaces the preview on the Config step.
+
 BACKUP loads an active restore before a cold backup, because a restore owns its cold recovery copy.
 Polling aborts an earlier request before the next tick and stale responses cannot replace new state.
 It shows preflight/recovery/startup phases, retains failure/recovery guidance after reload, and labels
